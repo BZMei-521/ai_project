@@ -1,0 +1,13 @@
+{
+  "name": "storyboard-pro-windows-web",
+  "createdAt": "2026-03-01T13:35:18.138Z",
+  "files": [
+    "dist/",
+    "check-storyboard-windows-env.bat",
+    "scripts/windows-web-server.mjs",
+    "start-storyboard-windows.bat",
+    "start-storyboard-windows-debug.bat",
+    "start-storyboard-web.bat",
+    "README-Windows-Web.txt"
+  ]
+}

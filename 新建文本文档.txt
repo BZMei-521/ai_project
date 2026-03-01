@@ -1,0 +1,11 @@
+[20:01:27] [INFO] 自动探测成功，已切换 Comfy 地址：http://127.0.0.1:8188
+[20:01:35] [INFO] 一键生成整片开始，共 2 个镜头
+[20:01:35] [INFO] 开始生成分镜图
+[20:01:35] [INFO] 开始生成分镜图：Wide Establishing
+[20:01:35] [ERROR] 生成失败：Wide Establishing，Error: 提交 Comfy 任务失败: HTTP 400 {"error": {"type": "missing_node_type", "message": "Node 'Power Lora Loader (rgthree)' not found. The custom node may not be installed.", "details": "Node ID '#216'", "extra_info": {"node_id": "216", "class_type": "Power Lora Loader (rgthree)", "node_title": "Power Lora Loader (rgthree)"}}, "node_errors": {}}
+[20:01:35] [INFO] 开始生成分镜图：Character Close-up
+[20:01:35] [ERROR] 生成失败：Character Close-up，Error: 提交 Comfy 任务失败: HTTP 400 {"error": {"type": "missing_node_type", "message": "Node 'Power Lora Loader (rgthree)' not found. The custom node may not be installed.", "details": "Node ID '#216'", "extra_info": {"node_id": "216", "class_type": "Power Lora Loader (rgthree)", "node_title": "Power Lora Loader (rgthree)"}}, "node_errors": {}}
+[20:01:35] [INFO] 分镜图生成完成，成功 0 条，尝试 2 条，跳过 0 条
+[20:01:35] [ERROR] 分镜图阶段未产出可用图片，已中断后续步骤
+[20:01:35] [ERROR] 一键生成中断：分镜图阶段未完成
+git clone https://github.com/rgthree/rgthree-comfy

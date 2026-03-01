@@ -1,0 +1,60 @@
+{
+  "shots": [
+    {
+      "id": "shot_demo_001",
+      "title": "河边远景开场",
+      "prompt": "cinematic wide shot, two people standing by a calm riverside at sunset, soft golden light, willow trees, gentle breeze, natural color grading, high detail",
+      "negative_prompt": "blurry, low quality, extra arms, deformed face, text watermark",
+      "video_prompt": "subtle camera push-in, leaves and water move naturally, two characters talking casually",
+      "video_mode": "auto",
+      "duration_sec": 1.25,
+      "duration_frames": 30,
+      "dialogue": "A: 今天天气不错。",
+      "notes": "建立环境与人物关系",
+      "tags": ["河边", "双人", "开场"],
+      "scene_ref_id": "asset_scene_riverbank"
+    },
+    {
+      "id": "shot_demo_002",
+      "title": "双人中景对话",
+      "prompt": "medium two-shot, two young adults talking near river, one gestures with hand, relaxed expressions, realistic cinematic style, soft backlight",
+      "negative_prompt": "cartoon style, overexposed, noisy image, extra fingers",
+      "video_prompt": "small body movement and hand gesture while speaking, stable framing",
+      "video_mode": "auto",
+      "duration_sec": 1.25,
+      "duration_frames": 30,
+      "dialogue": "B: 对，风也很舒服。",
+      "notes": "主要对话镜头",
+      "tags": ["对话", "中景"],
+      "scene_ref_id": "asset_scene_riverbank"
+    },
+    {
+      "id": "shot_demo_003",
+      "title": "A肩后看B",
+      "prompt": "over-shoulder shot from character A to character B, river in background, B speaking with slight smile, cinematic depth of field",
+      "negative_prompt": "distorted eyes, duplicated person, artifacts",
+      "video_prompt": "B lip movement and slight head nod, background water ripple",
+      "video_mode": "auto",
+      "duration_sec": 1.25,
+      "duration_frames": 30,
+      "dialogue": "A: 要不再走一段？",
+      "notes": "加入镜头变化",
+      "tags": ["肩后", "对话"],
+      "scene_ref_id": "asset_scene_riverbank"
+    },
+    {
+      "id": "shot_demo_004",
+      "title": "近景收尾",
+      "prompt": "close-up two characters by riverside smiling, warm light, emotional ending, cinematic portrait composition",
+      "negative_prompt": "bad anatomy, low contrast, text",
+      "video_prompt": "slight smile and eye movement, soft ending hold",
+      "video_mode": "auto",
+      "duration_sec": 1.25,
+      "duration_frames": 30,
+      "dialogue": "B: 好啊，边走边聊。",
+      "notes": "情绪收尾",
+      "tags": ["近景", "收尾"],
+      "scene_ref_id": "asset_scene_riverbank"
+    }
+  ]
+}
