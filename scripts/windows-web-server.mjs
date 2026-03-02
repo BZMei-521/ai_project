@@ -25,6 +25,8 @@ const shouldOpen = cli.open === true;
 const dataRoot = resolveDataRoot();
 const workspaceRoot = path.join(dataRoot, "workspace");
 const currentProjectMarker = path.join(dataRoot, "current-project.txt");
+const bridgeLogsRoot = path.join(dataRoot, "logs");
+const pipelineRuntimeLogPath = path.join(bridgeLogsRoot, "pipeline-runtime-latest.log");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".gif"]);
 const AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a", ".opus"]);
@@ -32,6 +34,7 @@ const AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a
 async function main() {
   await ensureDir(dataRoot);
   await ensureDir(workspaceRoot);
+  await ensureDir(bridgeLogsRoot);
   await assertDistReady();
   runtimeBuildInfo = await resolveBuildInfo();
 
@@ -147,6 +150,10 @@ async function routeRequest(req, res) {
     });
   }
 
+  if (requestUrl.pathname === "/api/runtime-log/latest") {
+    return serveRuntimeLog(res);
+  }
+
   if (requestUrl.pathname === "/api/local-file") {
     return serveLocalFile(requestUrl, res);
   }
@@ -232,6 +239,15 @@ async function serveLocalFile(requestUrl, res) {
   res.end(data);
 }
 
+async function serveRuntimeLog(res) {
+  const text = (await safeReadText(pipelineRuntimeLogPath)) ?? "";
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  res.end(text);
+}
+
 async function invokeCommand(cmd, args) {
   switch (cmd) {
     case "find_missing_paths":
@@ -288,9 +304,23 @@ async function invokeCommand(cmd, args) {
       return comfyCheckModelHealth(args?.comfyRootDir);
     case "comfy_read_server_log_tail":
       return comfyReadServerLogTail(args?.comfyRootDir, args?.baseUrl, args?.maxLines);
+    case "save_pipeline_logs":
+      return savePipelineLogs(args?.text);
+    case "read_pipeline_logs":
+      return readPipelineLogs();
     default:
       throw new Error(`Unsupported bridge command: ${cmd}`);
   }
+}
+
+async function savePipelineLogs(text) {
+  await ensureDir(bridgeLogsRoot);
+  await fs.writeFile(pipelineRuntimeLogPath, typeof text === "string" ? text : "", "utf8");
+  return { path: pipelineRuntimeLogPath };
+}
+
+async function readPipelineLogs() {
+  return (await safeReadText(pipelineRuntimeLogPath)) ?? "";
 }
 
 async function findMissingPaths(paths) {
@@ -1183,6 +1213,14 @@ function sendText(res, status, body) {
 async function safeStat(target) {
   try {
     return await fs.stat(target);
+  } catch {
+    return null;
+  }
+}
+
+async function safeReadText(target) {
+  try {
+    return await fs.readFile(target, "utf8");
   } catch {
     return null;
   }

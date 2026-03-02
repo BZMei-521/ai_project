@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { selectShotStartFrame, useStoryboardStore } from "../storyboard-core/store";
 import type { Asset, Shot } from "../storyboard-core/types";
 import { pushToast } from "../ui/toastStore";
-import { toDesktopMediaSource } from "../platform/desktopBridge";
+import { invokeDesktopCommand, isWebBridgeRuntime, toDesktopMediaSource } from "../platform/desktopBridge";
 import {
   checkComfyModelHealth,
   concatShotVideos,
@@ -134,6 +134,10 @@ function formatAssetStatus(status: AssetStatus): string {
   if (status === "success") return "成功";
   if (status === "failed") return "失败";
   return "待生成";
+}
+
+function formatPipelineLogText(items: PipelineLogItem[]): string {
+  return items.map((item) => `[${item.timestamp}] [${item.level.toUpperCase()}] ${item.message}`).join("\n");
 }
 
 function looksLikeVideoPath(path: string): boolean {
@@ -564,13 +568,24 @@ export function ComfyPipelinePanel() {
     setLogs((previous) => [...previous.slice(-499), item]);
   };
 
+  useEffect(() => {
+    if (!isWebBridgeRuntime()) return;
+    const timer = window.setTimeout(() => {
+      void invokeDesktopCommand("save_pipeline_logs", {
+        text: formatPipelineLogText(logs)
+      }).catch(() => {
+        // Ignore bridge log sync failures. The local UI log remains the source of truth.
+      });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [logs]);
+
   const copyLogs = async () => {
     if (logs.length === 0) {
       pushToast("暂无日志可复制", "warning");
       return;
     }
-    const lines = logs.map((item) => `[${item.timestamp}] [${item.level.toUpperCase()}] ${item.message}`);
-    const text = lines.join("\n");
+    const text = formatPipelineLogText(logs);
     try {
       await navigator.clipboard.writeText(text);
       pushToast("日志已复制", "success");

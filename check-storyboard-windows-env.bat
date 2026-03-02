@@ -53,6 +53,26 @@ if errorlevel 1 (
   )
 )
 
+where tailscale >nul 2>nul
+if errorlevel 1 (
+  echo [WARN] Tailscale was not found.
+  echo [WARN] Install Tailscale if you want remote access or log sync across different networks.
+) else (
+  echo [INFO] Tailscale found
+  set TAILSCALE_IPV4=
+  for /f "delims=" %%i in ('tailscale ip -4 2^>nul') do (
+    if not defined TAILSCALE_IPV4 set TAILSCALE_IPV4=%%i
+  )
+  if defined TAILSCALE_IPV4 (
+    echo [INFO] Tailscale IPv4: !TAILSCALE_IPV4!
+    echo [INFO] Remote health URL: http://!TAILSCALE_IPV4!:3210/api/health
+    echo [INFO] Remote log URL: http://!TAILSCALE_IPV4!:3210/api/runtime-log/latest
+  ) else (
+    echo [WARN] Tailscale is installed but no IPv4 address was returned.
+    echo [WARN] Make sure Tailscale is logged in and connected.
+  )
+)
+
 set PORT_3210_PID=
 for /f "tokens=5" %%i in ('netstat -ano ^| findstr /r /c:":3210 .*LISTENING"') do (
   if not defined PORT_3210_PID set PORT_3210_PID=%%i

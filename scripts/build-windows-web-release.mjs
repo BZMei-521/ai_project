@@ -18,6 +18,7 @@ async function main() {
 
   await copyDir(distDir, path.join(releaseRoot, "dist"));
   await copyFile("check-storyboard-windows-env.bat");
+  await copyFile("update-storyboard-windows.bat");
   await copyFile("start-storyboard-windows.bat");
   await copyFile("start-storyboard-windows-debug.bat");
   await copyFile("start-storyboard-web.bat");
@@ -30,13 +31,16 @@ async function main() {
       "",
       "1. Install Node.js 18+",
       "2. If you need video export, install ffmpeg and make sure ffmpeg.exe is in PATH",
-      "3. If you need AI generation, launch ComfyUI separately",
-      "4. Double-click check-storyboard-windows-env.bat if you want a preflight check",
-      "5. Double-click start-storyboard-windows.bat",
-      "6. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\\windows-web-latest.log",
+      "3. Install Tailscale if you need remote access or log sync across different networks",
+      "4. If you need AI generation, launch ComfyUI separately",
+      "5. After pulling new source changes, run update-storyboard-windows.bat to rebuild dist locally",
+      "6. Double-click check-storyboard-windows-env.bat if you want a preflight check",
+      "7. Double-click start-storyboard-windows.bat",
+      "8. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\\windows-web-latest.log",
       "",
       "Default URL: http://127.0.0.1:3210",
-      "Default data dir: %APPDATA%\\StoryboardProWeb"
+      "Default data dir: %APPDATA%\\StoryboardProWeb",
+      "Remote log URL: http://<tailscale-ip>:3210/api/runtime-log/latest"
     ].join("\r\n"),
     "utf8"
   );
@@ -50,6 +54,7 @@ async function main() {
         files: [
           "dist/",
           "check-storyboard-windows-env.bat",
+          "update-storyboard-windows.bat",
           "scripts/windows-web-server.mjs",
           "start-storyboard-windows.bat",
           "start-storyboard-windows-debug.bat",
