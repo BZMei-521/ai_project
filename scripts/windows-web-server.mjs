@@ -21,6 +21,7 @@ const cli = parseCliArgs(process.argv.slice(2));
 const host = cli.host || "127.0.0.1";
 const port = Number.parseInt(cli.port || "3210", 10) || 3210;
 const shouldOpen = cli.open === true;
+const openHost = cli.openHost || (host === "0.0.0.0" ? "127.0.0.1" : host);
 
 const dataRoot = resolveDataRoot();
 const workspaceRoot = path.join(dataRoot, "workspace");
@@ -57,14 +58,18 @@ async function main() {
     });
   });
 
-  const url = `http://${host}:${port}`;
-  console.log(`[INFO] Storyboard Pro Windows Web Bridge running at ${url}`);
+  const bindUrl = `http://${host}:${port}`;
+  const browserUrl = `http://${openHost}:${port}`;
+  console.log(`[INFO] Storyboard Pro Windows Web Bridge running at ${bindUrl}`);
   console.log(`[INFO] Workspace: ${workspaceRoot}`);
   console.log(`[INFO] Build: ${runtimeBuildInfo.buildId}`);
   console.log(`[INFO] Dist: ${runtimeBuildInfo.distDir}`);
+  if (browserUrl !== bindUrl) {
+    console.log(`[INFO] Browser URL: ${browserUrl}`);
+  }
 
   if (shouldOpen) {
-    openUrl(url).catch((error) => {
+    openUrl(browserUrl).catch((error) => {
       console.error(`[WARN] Failed to open browser automatically: ${String(error)}`);
     });
   }
@@ -94,6 +99,15 @@ function parseCliArgs(argv) {
     }
     if (token.startsWith("--port=")) {
       output.port = token.slice("--port=".length);
+      continue;
+    }
+    if (token === "--open-host") {
+      output.openHost = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--open-host=")) {
+      output.openHost = token.slice("--open-host=".length);
     }
   }
   return output;

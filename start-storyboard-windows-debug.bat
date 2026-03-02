@@ -16,11 +16,12 @@ set LOG_FILE=%~dp0logs\windows-web-latest.log
 echo [INFO] Starting Storyboard Pro Windows Web in debug mode...
 echo [INFO] Log file: %LOG_FILE%
 echo [INFO] URL: http://127.0.0.1:3210
+echo [INFO] Remote bind: http://0.0.0.0:3210
 echo [INFO] Press Ctrl+C to stop the service
 echo. > "%LOG_FILE%"
 echo [%date% %time%] [INFO] Debug launch started >> "%LOG_FILE%"
 
-node scripts\windows-web-server.mjs --host 127.0.0.1 --port 3210 --open >> "%LOG_FILE%" 2>&1
+node scripts\windows-web-server.mjs --host 0.0.0.0 --open-host 127.0.0.1 --port 3210 --open >> "%LOG_FILE%" 2>&1
 
 set EXIT_CODE=%ERRORLEVEL%
 echo.

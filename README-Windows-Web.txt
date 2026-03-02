@@ -8,6 +8,7 @@ Storyboard Pro Windows Web Release
 6. Double-click check-storyboard-windows-env.bat if you want a preflight check
 7. Double-click start-storyboard-windows.bat
 8. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\windows-web-latest.log
+9. After updating from an older build, stop the old process on port 3210 and restart so the service binds to 0.0.0.0 for Tailscale access
 
 Default URL: http://127.0.0.1:3210
 Default data dir: %APPDATA%\StoryboardProWeb

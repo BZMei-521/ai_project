@@ -11,7 +11,7 @@ if errorlevel 1 (
 )
 
 echo [INFO] Starting Storyboard Pro Windows Web...
-node scripts\windows-web-server.mjs --host 127.0.0.1 --port 3210 --open
+node scripts\windows-web-server.mjs --host 0.0.0.0 --open-host 127.0.0.1 --port 3210 --open
 
 if errorlevel 1 (
   echo [ERROR] Startup failed.
