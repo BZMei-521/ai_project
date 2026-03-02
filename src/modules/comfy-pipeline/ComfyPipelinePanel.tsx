@@ -55,6 +55,19 @@ type DialogueSegment = {
   speechRate: string;
 };
 
+type ParsedScriptShot = {
+  id: string;
+  title: string;
+  prompt: string;
+  negative_prompt: string;
+  video_prompt: string;
+  video_mode: "auto" | "single_frame" | "first_last_frame";
+  duration_sec: number;
+  dialogue: string;
+  notes: string;
+  tags: string[];
+};
+
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
 const LOCAL_MOTION_PRESET_OPTIONS: Array<{ value: LocalMotionPreset; label: string }> = [
   { value: "auto", label: "自动" },
@@ -65,6 +78,192 @@ const LOCAL_MOTION_PRESET_OPTIONS: Array<{ value: LocalMotionPreset; label: stri
   { value: "pan_left", label: "左移" },
   { value: "pan_right", label: "右移" }
 ];
+
+function normalizeStoryInput(raw: string): string {
+  return raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, " ").trim();
+}
+
+function splitStorySentences(raw: string): string[] {
+  return normalizeStoryInput(raw)
+    .split(/(?<=[。！？!?；;])/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function splitStoryBlocks(raw: string): Array<{ heading: string; body: string }> {
+  const text = normalizeStoryInput(raw);
+  if (!text) return [];
+  const lines = text.split("\n").map((line) => line.trim());
+  const headingPattern = /^(?:镜头|shot|scene|场景)\s*[\d一二三四五六七八九十]*[:：.\-、\s]*/i;
+  const numberedPattern = /^\d+\s*[.)、．]\s*/;
+  const blocks: Array<{ heading: string; body: string }> = [];
+  let currentHeading = "";
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    const body = currentLines.join("\n").trim();
+    if (!body) return;
+    blocks.push({ heading: currentHeading.trim(), body });
+    currentHeading = "";
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    if (!line) {
+      if (currentLines.length > 0) {
+        currentLines.push("");
+      } else {
+        flush();
+      }
+      continue;
+    }
+    const isHeading = headingPattern.test(line) || numberedPattern.test(line);
+    if (isHeading && currentLines.length > 0) {
+      flush();
+    }
+    if (isHeading) {
+      currentHeading = line.replace(headingPattern, "").replace(numberedPattern, "").trim();
+      continue;
+    }
+    currentLines.push(line);
+  }
+  flush();
+
+  const nonEmpty = blocks.filter((item) => item.body.trim().length > 0);
+  if (nonEmpty.length > 1) return nonEmpty;
+
+  const paragraphs = text
+    .split(/\n\s*\n+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (paragraphs.length > 1) {
+    return paragraphs.map((body, index) => ({ heading: `段落 ${index + 1}`, body }));
+  }
+
+  const sentences = splitStorySentences(text);
+  if (sentences.length <= 3) return [{ heading: "段落 1", body: text }];
+
+  const grouped: Array<{ heading: string; body: string }> = [];
+  for (let index = 0; index < sentences.length; index += 3) {
+    grouped.push({
+      heading: `段落 ${grouped.length + 1}`,
+      body: sentences.slice(index, index + 3).join("")
+    });
+  }
+  return grouped;
+}
+
+function extractDialogueLines(raw: string): string[] {
+  return normalizeStoryInput(raw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /[:：]/.test(line) || /[“"].+[”"]/.test(line));
+}
+
+function stripDialogueLines(raw: string): string {
+  return normalizeStoryInput(raw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !/[:：]/.test(line))
+    .join(" ");
+}
+
+function inferShotScale(text: string, index: number, total: number): string {
+  if (/特写|细节|表情|眼神|手部|嘴角|指尖/.test(text)) return "特写";
+  if (/远处|全貌|整体|街道|建筑|河边|天空|外景/.test(text)) return "大全景";
+  if (/对话|交谈|面对面|并肩|两人|多人/.test(text)) return "中景";
+  if (index === 0 && total > 1) return "建立镜头";
+  if (index === total - 1 && total > 1) return "近景收束";
+  return "中近景";
+}
+
+function inferShotTitle(text: string, heading: string, index: number, total: number): string {
+  if (heading && heading !== `段落 ${index + 1}`) return heading;
+  if (/对话|说道|问道|回答|看着.*说|[:：]/.test(text)) return total > 1 && index === 0 ? "对话开场" : "对话推进";
+  if (/走|跑|转身|打开|进入|离开|抬手|放下|靠近|远离/.test(text)) return total > 1 && index === 0 ? "动作起势" : "动作推进";
+  if (index === 0) return "开场建立";
+  if (index === total - 1) return "情绪收束";
+  return `叙事镜头 ${index + 1}`;
+}
+
+function inferShotTags(text: string, dialogue: string): string[] {
+  const tags = new Set<string>();
+  if (/夜|黑夜|凌晨|月光/.test(text)) tags.add("夜景");
+  if (/清晨|早晨|黎明|日出/.test(text)) tags.add("晨景");
+  if (/室内|房间|客厅|门厅|走廊|楼梯/.test(text)) tags.add("室内");
+  if (/街道|河边|庭院|广场|外景|天空/.test(text)) tags.add("外景");
+  if (dialogue.trim()) tags.add("对白");
+  if (/走|跑|转身|推门|开门|抬手|进入|离开/.test(text)) tags.add("动作");
+  return [...tags];
+}
+
+function inferDurationSec(text: string, dialogue: string): number {
+  const length = text.length + dialogue.length;
+  if (dialogue.trim()) return Math.min(6, Math.max(3, Math.round(length / 28)));
+  if (length <= 40) return 2;
+  if (length <= 90) return 3;
+  if (length <= 160) return 4;
+  return 5;
+}
+
+function chunkNarrationForShots(text: string, dialogue: string): string[] {
+  const narration = stripDialogueLines(text) || normalizeStoryInput(text);
+  const sentences = splitStorySentences(narration);
+  if (sentences.length <= 2 || dialogue.trim()) {
+    return [narration.trim()];
+  }
+  const chunkSize = sentences.length >= 6 ? 3 : 2;
+  const chunks: string[] = [];
+  for (let index = 0; index < sentences.length; index += chunkSize) {
+    chunks.push(sentences.slice(index, index + chunkSize).join(""));
+  }
+  return chunks.filter((item) => item.trim().length > 0);
+}
+
+function buildStoryShotPrompt(text: string, scale: string): string {
+  const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
+  return `${clean}。电影分镜，${scale}，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
+}
+
+function buildStoryVideoPrompt(text: string): string {
+  if (/走|跑|转身|抬手|放下|靠近|远离|打开|进入|离开/.test(text)) {
+    return `${normalizeStoryInput(text)}。主体产生连续动作，镜头保持平稳推进。`;
+  }
+  return `${normalizeStoryInput(text)}。主体有轻微呼吸感动作，镜头稳定。`;
+}
+
+function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
+  const blocks = splitStoryBlocks(raw);
+  if (blocks.length === 0) {
+    throw new Error("故事内容为空");
+  }
+  const shots: ParsedScriptShot[] = [];
+  let shotIndex = 1;
+  for (const block of blocks) {
+    const dialogue = extractDialogueLines(block.body).join("\n");
+    const chunks = chunkNarrationForShots(block.body, dialogue);
+    chunks.forEach((chunk, chunkIndex) => {
+      const scale = inferShotScale(chunk, chunkIndex, chunks.length);
+      const title = inferShotTitle(chunk, block.heading, chunkIndex, chunks.length);
+      const prompt = buildStoryShotPrompt(chunk, scale);
+      const videoPrompt = buildStoryVideoPrompt(chunk);
+      shots.push({
+        id: `story_shot_${shotIndex}`,
+        title,
+        prompt,
+        negative_prompt: "",
+        video_prompt: videoPrompt,
+        video_mode: "auto",
+        duration_sec: inferDurationSec(chunk, chunkIndex === 0 ? dialogue : ""),
+        dialogue: chunkIndex === 0 ? dialogue : "",
+        notes: normalizeStoryInput(chunk),
+        tags: inferShotTags(chunk, chunkIndex === 0 ? dialogue : "")
+      });
+      shotIndex += 1;
+    });
+  }
+  return { shots };
+}
 
 function withLocalMotionToken(prompt: string, preset: LocalMotionPreset): string {
   const base = stripLocalMotionPresetToken(prompt).trim();
@@ -456,6 +655,7 @@ export function ComfyPipelinePanel() {
   const upsertAudioTrack = useStoryboardStore((state) => state.upsertAudioTrack);
   const updateAudioTrack = useStoryboardStore((state) => state.updateAudioTrack);
   const removeAudioTrack = useStoryboardStore((state) => state.removeAudioTrack);
+  const [storyText, setStoryText] = useState("");
   const [scriptText, setScriptText] = useState("");
   const [phase, setPhase] = useState<GenerationPhase>("idle");
   const [pipelineState, setPipelineState] = useState("空闲");
@@ -659,49 +859,56 @@ export function ComfyPipelinePanel() {
     return map;
   }, [audioTracks]);
 
-  const onImportScript = () => {
-    try {
-      const parsed = JSON.parse(scriptText) as { shots?: Array<Record<string, unknown>> };
-      const list = Array.isArray(parsed.shots) ? parsed.shots : [];
-      if (list.length === 0) {
-        pushToast("脚本格式无效：缺少 shots 数组", "error");
-        return;
-      }
-      replaceShotsForCurrentSequence(
-        list.map((item, index) => ({
-          id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
-          title: String(item.title ?? `镜头 ${index + 1}`),
-          prompt: String(item.prompt ?? ""),
-          negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
-          videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
-          videoMode:
-            item.video_mode === "single_frame" || item.videoMode === "single_frame"
-              ? "single_frame"
-              : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
-                ? "first_last_frame"
-                : "auto",
-          videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
-          videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
-          skyboxFace:
-            item.skybox_face === "front" ||
-            item.skybox_face === "right" ||
-            item.skybox_face === "back" ||
-            item.skybox_face === "left" ||
-            item.skybox_face === "up" ||
-            item.skybox_face === "down" ||
-            item.skybox_face === "auto"
-              ? item.skybox_face
-              : item.skyboxFace === "front" ||
-                  item.skyboxFace === "right" ||
-                  item.skyboxFace === "back" ||
-                  item.skyboxFace === "left" ||
-                  item.skyboxFace === "up" ||
-                  item.skyboxFace === "down" ||
-                  item.skyboxFace === "auto"
-                ? item.skyboxFace
-                : "auto",
-          skyboxFaces: Array.isArray(item.skybox_faces)
-            ? item.skybox_faces.filter(
+  const applyImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }) => {
+    const list = Array.isArray(parsed.shots) ? parsed.shots : [];
+    if (list.length === 0) {
+      throw new Error("脚本格式无效：缺少 shots 数组");
+    }
+    replaceShotsForCurrentSequence(
+      list.map((item, index) => ({
+        id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
+        title: String(item.title ?? `镜头 ${index + 1}`),
+        prompt: String(item.prompt ?? ""),
+        negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
+        videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
+        videoMode:
+          item.video_mode === "single_frame" || item.videoMode === "single_frame"
+            ? "single_frame"
+            : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
+              ? "first_last_frame"
+              : "auto",
+        videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
+        videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
+        skyboxFace:
+          item.skybox_face === "front" ||
+          item.skybox_face === "right" ||
+          item.skybox_face === "back" ||
+          item.skybox_face === "left" ||
+          item.skybox_face === "up" ||
+          item.skybox_face === "down" ||
+          item.skybox_face === "auto"
+            ? item.skybox_face
+            : item.skyboxFace === "front" ||
+                item.skyboxFace === "right" ||
+                item.skyboxFace === "back" ||
+                item.skyboxFace === "left" ||
+                item.skyboxFace === "up" ||
+                item.skyboxFace === "down" ||
+                item.skyboxFace === "auto"
+              ? item.skyboxFace
+              : "auto",
+        skyboxFaces: Array.isArray(item.skybox_faces)
+          ? item.skybox_faces.filter(
+              (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
+                face === "front" ||
+                face === "right" ||
+                face === "back" ||
+                face === "left" ||
+                face === "up" ||
+                face === "down"
+            )
+          : Array.isArray(item.skyboxFaces)
+            ? item.skyboxFaces.filter(
                 (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
                   face === "front" ||
                   face === "right" ||
@@ -710,52 +917,68 @@ export function ComfyPipelinePanel() {
                   face === "up" ||
                   face === "down"
               )
-            : Array.isArray(item.skyboxFaces)
-              ? item.skyboxFaces.filter(
-                  (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
-                    face === "front" ||
-                    face === "right" ||
-                    face === "back" ||
-                    face === "left" ||
-                    face === "up" ||
-                    face === "down"
-                )
-              : [],
-          skyboxFaceWeights:
-            item.skybox_face_weights && typeof item.skybox_face_weights === "object"
-              ? (item.skybox_face_weights as Record<string, number>)
-              : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
-                ? (item.skyboxFaceWeights as Record<string, number>)
-                : {},
-          durationSec:
-            typeof item.duration_sec === "number"
-              ? item.duration_sec
-              : typeof item.durationSec === "number"
-                ? item.durationSec
-                : undefined,
-          durationFrames:
-            typeof item.duration_frames === "number"
-              ? item.duration_frames
-              : typeof item.durationFrames === "number"
-                ? item.durationFrames
-                : undefined,
-          seed: typeof item.seed === "number" ? item.seed : undefined,
-          characterRefs: Array.isArray(item.character_refs)
-            ? (item.character_refs as string[])
-            : Array.isArray(item.characterRefs)
-              ? (item.characterRefs as string[])
-              : [],
-          sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
-          dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
-          notes: typeof item.notes === "string" ? item.notes : "",
-          tags: Array.isArray(item.tags) ? (item.tags as string[]) : []
-        }))
-      );
-      pushToast(`已导入 ${list.length} 个镜头`, "success");
-      appendLog(`导入镜头脚本成功，共 ${list.length} 条`);
+            : [],
+        skyboxFaceWeights:
+          item.skybox_face_weights && typeof item.skybox_face_weights === "object"
+            ? (item.skybox_face_weights as Record<string, number>)
+            : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
+              ? (item.skyboxFaceWeights as Record<string, number>)
+              : {},
+        durationSec:
+          typeof item.duration_sec === "number"
+            ? item.duration_sec
+            : typeof item.durationSec === "number"
+              ? item.durationSec
+              : undefined,
+        durationFrames:
+          typeof item.duration_frames === "number"
+            ? item.duration_frames
+            : typeof item.durationFrames === "number"
+              ? item.durationFrames
+              : undefined,
+        seed: typeof item.seed === "number" ? item.seed : undefined,
+        characterRefs: Array.isArray(item.character_refs)
+          ? (item.character_refs as string[])
+          : Array.isArray(item.characterRefs)
+            ? (item.characterRefs as string[])
+            : [],
+        sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
+        dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
+        notes: typeof item.notes === "string" ? item.notes : "",
+        tags: Array.isArray(item.tags) ? (item.tags as string[]) : []
+      }))
+    );
+    return list.length;
+  };
+
+  const onImportScript = () => {
+    try {
+      const parsed = JSON.parse(scriptText) as { shots?: Array<Record<string, unknown>> };
+      const count = applyImportedShots(parsed);
+      pushToast(`已导入 ${count} 个镜头`, "success");
+      appendLog(`导入镜头脚本成功，共 ${count} 条`);
     } catch (error) {
       pushToast(`导入失败：${String(error)}`, "error");
       appendLog(`导入镜头脚本失败：${String(error)}`, "error");
+    }
+  };
+
+  const onParseStory = (shouldImport = false) => {
+    try {
+      const parsed = parseStoryToShotScript(storyText);
+      const formatted = JSON.stringify(parsed, null, 2);
+      setScriptText(formatted);
+      appendLog(`故事解析成功，共生成 ${parsed.shots.length} 条镜头脚本`);
+      if (shouldImport) {
+        const count = applyImportedShots(parsed as { shots?: Array<Record<string, unknown>> });
+        pushToast(`故事已解析并导入 ${count} 个镜头`, "success");
+        appendLog(`故事解析并导入成功，共 ${count} 条`);
+      } else {
+        pushToast(`故事解析成功，共 ${parsed.shots.length} 个镜头`, "success");
+      }
+    } catch (error) {
+      pushToast(`故事解析失败：${String(error)}`, "error");
+      appendLog(`故事解析失败：${String(error)}`, "error");
     }
   };
 
@@ -2485,6 +2708,23 @@ export function ComfyPipelinePanel() {
         <div className="comfy-stage-head">
           <span className="comfy-stage-index">02</span>
           <h3>生成执行</h3>
+        </div>
+        <label className="comfy-script-block">
+          原始故事文本
+          <textarea
+            onChange={(event) => setStoryText(event.target.value)}
+            placeholder={"输入故事正文、分段剧情或对白文本。我会先按段落/句子拆成镜头，再生成可导入的 shots JSON。"}
+            rows={6}
+            value={storyText}
+          />
+        </label>
+        <div className="comfy-primary-actions">
+          <button className="btn-ghost" onClick={() => onParseStory(false)} type="button">
+            解析故事为镜头脚本
+          </button>
+          <button className="btn-ghost" onClick={() => onParseStory(true)} type="button">
+            解析并直接导入
+          </button>
         </div>
         <label className="comfy-script-block">
           已分镜脚本（JSON）
