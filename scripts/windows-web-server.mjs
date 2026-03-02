@@ -45,9 +45,16 @@ async function main() {
     try {
       await routeRequest(req, res);
     } catch (error) {
-      console.error("[bridge] request failed", error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Comfy server log not found under:/i.test(message)) {
+        console.warn(`[bridge] ${message}`);
+      } else if (/missing_node_type|prompt_outputs_failed_validation/i.test(message)) {
+        console.warn(`[bridge] comfy request failed: ${message}`);
+      } else {
+        console.error("[bridge] request failed", error);
+      }
       sendJson(res, 500, {
-        error: error instanceof Error ? error.message : String(error)
+        error: message
       });
     }
   });
@@ -1440,7 +1447,7 @@ async function comfyCheckModelHealth(comfyRootDir) {
 async function comfyReadServerLogTail(comfyRootDir, baseUrl, maxLines) {
   const logPath = await resolveComfyServerLogPath(comfyRootDir, baseUrl);
   if (!logPath) {
-    throw new Error(`Comfy server log not found under: ${comfyLogRootCandidates(comfyRootDir).join(" | ")}`);
+    return "";
   }
   const raw = await fs.readFile(logPath, "utf8");
   const lines = raw.split(/\r?\n/);
