@@ -1166,11 +1166,12 @@ async function comfyPing(baseUrl) {
 }
 
 async function comfyQueuePrompt(baseUrl, prompt, clientId) {
+  const sanitizedPrompt = sanitizePromptForKnownOptionalNodes(prompt);
   const response = await fetchWithTimeout(`${normalizeBaseUrl(baseUrl)}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt,
+      prompt: sanitizedPrompt,
       client_id: String(clientId || "")
     })
   }, 15000);
@@ -1181,6 +1182,83 @@ async function comfyQueuePrompt(baseUrl, prompt, clientId) {
   const promptId = String(payload?.prompt_id || "");
   if (!promptId) throw new Error("Comfy 未返回 prompt_id");
   return promptId;
+}
+
+function sanitizePromptForKnownOptionalNodes(prompt) {
+  if (!prompt || typeof prompt !== "object" || Array.isArray(prompt)) {
+    return prompt;
+  }
+  const cloned = JSON.parse(JSON.stringify(prompt));
+  const nodeMap = cloned;
+
+  rewirePromptReferences(nodeMap, {
+    "177": ["203", 0],
+    "179": ["203", 0],
+    "178": ["204", 0],
+    "180": ["204", 0],
+    "133": ["152", 0],
+    "149": ["152", 0],
+    "134": ["153", 0],
+    "154": ["153", 0]
+  });
+
+  const intScalar =
+    extractScalarNodeValue(nodeMap["201"]) ??
+    extractScalarNodeValue(nodeMap["202"]) ??
+    extractScalarNodeValue(nodeMap["161"]) ??
+    null;
+  if (intScalar !== null) {
+    replacePromptNodeReferenceWithScalar(nodeMap, "187", intScalar);
+  }
+
+  for (const obsoleteId of ["133", "134", "149", "154", "177", "178", "179", "180", "187"]) {
+    delete nodeMap[obsoleteId];
+  }
+
+  return nodeMap;
+}
+
+function rewirePromptReferences(nodeMap, mapping) {
+  for (const node of Object.values(nodeMap)) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) continue;
+    const inputs = node.inputs;
+    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) continue;
+    for (const [key, value] of Object.entries(inputs)) {
+      if (!Array.isArray(value) || value.length < 2) continue;
+      const refId = String(value[0]);
+      if (!Object.prototype.hasOwnProperty.call(mapping, refId)) continue;
+      inputs[key] = mapping[refId];
+    }
+  }
+}
+
+function replacePromptNodeReferenceWithScalar(nodeMap, sourceNodeId, scalarValue) {
+  for (const node of Object.values(nodeMap)) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) continue;
+    const inputs = node.inputs;
+    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) continue;
+    for (const [key, value] of Object.entries(inputs)) {
+      if (!Array.isArray(value) || value.length < 2) continue;
+      if (String(value[0]) !== String(sourceNodeId)) continue;
+      inputs[key] = scalarValue;
+    }
+  }
+}
+
+function extractScalarNodeValue(node) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return null;
+  const inputs = node.inputs;
+  if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return null;
+  for (const candidate of ["value", "number", "int", "integer"]) {
+    const value = inputs[candidate];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && !Number.isNaN(Number(value))) return Number(value);
+  }
+  for (const value of Object.values(inputs)) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && !Number.isNaN(Number(value))) return Number(value);
+  }
+  return null;
 }
 
 async function comfyGetHistory(baseUrl, promptId) {
@@ -1375,6 +1453,8 @@ async function resolveComfyServerLogPath(comfyRootDir, baseUrl) {
     const candidate = path.join(root, "user", `comfyui_${port}.log`);
     if (await fileExists(candidate)) return candidate;
   }
+  const discovered = await discoverComfyLogBySearch(port);
+  if (discovered) return discovered;
   return "";
 }
 
@@ -1400,6 +1480,34 @@ function comfyLogRootCandidates(comfyRootDir) {
   }
 
   return candidates;
+}
+
+async function discoverComfyLogBySearch(port) {
+  if (process.platform !== "win32") return "";
+  const home = os.homedir();
+  if (!home) return "";
+  const searchRoots = [
+    home,
+    path.join(home, "Desktop"),
+    path.join(home, "Documents"),
+    path.join(home, "Downloads")
+  ];
+  for (const root of uniquePreserveOrder(searchRoots)) {
+    try {
+      const { stdout } = await runCommand("powershell", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `Get-ChildItem -Path '${root.replace(/'/g, "''")}' -Filter 'comfyui_${port}.log' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`
+      ]);
+      const resolved = String(stdout || "").trim().split(/\r?\n/).find(Boolean) || "";
+      if (resolved && (await fileExists(resolved))) return resolved;
+    } catch {
+      // ignore
+    }
+  }
+  return "";
 }
 
 async function openUrl(targetUrl) {
