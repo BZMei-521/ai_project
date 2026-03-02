@@ -47,6 +47,27 @@ print(f"[INFO] Bind URL: {bind.get('bindUrl')}")
 print(f"[INFO] Browser URL: {bind.get('browserUrl')}")
 print(f"[INFO] Listening PID: {payload.get('portStatus', {}).get('pid')}")
 
+comfy = payload.get("comfy", {})
+config = comfy.get("config", {})
+ping = comfy.get("ping", {})
+print(f"[INFO] Comfy base URL: {config.get('baseUrl')}")
+print(f"[INFO] Comfy root dir: {config.get('comfyRootDir')}")
+print(f"[INFO] Comfy video mode: {config.get('videoGenerationMode')}")
+print(f"[INFO] Comfy ping ok: {ping.get('ok')}")
+print(f"[INFO] Comfy ping message: {ping.get('message')}")
+pipeline_error = (comfy.get("pipelineLastError") or "").strip()
+if pipeline_error:
+    print("[INFO] Latest Comfy pipeline error:")
+    print(pipeline_error)
+server_tail = comfy.get("serverLogTail", {})
+if server_tail.get("lastErrorLine"):
+    print("[INFO] Latest Comfy server error line:")
+    print(server_tail.get("lastErrorLine"))
+preview = (server_tail.get("preview") or "").strip()
+if preview:
+    print("[INFO] Latest Comfy server log preview:")
+    print(preview)
+
 for label in ("runtime", "startup"):
     entry = payload.get("logs", {}).get(label, {})
     print(f"[INFO] {label.title()} log exists: {entry.get('exists')}")

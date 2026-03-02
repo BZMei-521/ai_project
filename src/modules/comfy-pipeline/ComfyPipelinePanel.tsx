@@ -580,6 +580,30 @@ export function ComfyPipelinePanel() {
     return () => window.clearTimeout(timer);
   }, [logs]);
 
+  useEffect(() => {
+    if (!isWebBridgeRuntime()) return;
+    const timer = window.setTimeout(() => {
+      void invokeDesktopCommand("save_comfy_runtime_config", {
+        config: {
+          baseUrl: settings.baseUrl,
+          comfyRootDir: settings.comfyRootDir,
+          comfyInputDir: settings.comfyInputDir,
+          outputDir: settings.outputDir,
+          videoGenerationMode: settings.videoGenerationMode
+        }
+      }).catch(() => {
+        // Ignore bridge config sync failures. Diagnostics is best-effort only.
+      });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [
+    settings.baseUrl,
+    settings.comfyInputDir,
+    settings.comfyRootDir,
+    settings.outputDir,
+    settings.videoGenerationMode
+  ]);
+
   const copyLogs = async () => {
     if (logs.length === 0) {
       pushToast("暂无日志可复制", "warning");

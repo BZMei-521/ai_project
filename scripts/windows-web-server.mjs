@@ -28,6 +28,7 @@ const workspaceRoot = path.join(dataRoot, "workspace");
 const currentProjectMarker = path.join(dataRoot, "current-project.txt");
 const bridgeLogsRoot = path.join(dataRoot, "logs");
 const pipelineRuntimeLogPath = path.join(bridgeLogsRoot, "pipeline-runtime-latest.log");
+const comfyRuntimeConfigPath = path.join(bridgeLogsRoot, "comfy-runtime-config.json");
 const startupLogPath = path.join(projectRoot, "logs", "windows-web-latest.log");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".gif"]);
@@ -281,6 +282,8 @@ async function serveDiagnostics(res) {
   const runtimeLog = await buildLogSummary(pipelineRuntimeLogPath, 40);
   const startupLog = await buildLogSummary(startupLogPath, 40);
   const portPid = await detectListeningPid(port);
+  const comfyConfig = await readJsonFile(comfyRuntimeConfigPath);
+  const comfyDiagnostics = await buildComfyDiagnostics(comfyConfig, runtimeLog);
 
   return sendJson(res, 200, {
     ok: true,
@@ -305,6 +308,7 @@ async function serveDiagnostics(res) {
       port,
       pid: portPid
     },
+    comfy: comfyDiagnostics,
     logs: {
       runtime: runtimeLog,
       startup: startupLog
@@ -334,6 +338,88 @@ async function buildLogSummary(filePath, previewLines = 20) {
     preview: lines.slice(-previewLines).join("\n"),
     text
   };
+}
+
+async function buildComfyDiagnostics(config, runtimeLog) {
+  const normalizedConfig = {
+    baseUrl: String(config?.baseUrl || "").trim(),
+    comfyRootDir: String(config?.comfyRootDir || "").trim(),
+    comfyInputDir: String(config?.comfyInputDir || "").trim(),
+    outputDir: String(config?.outputDir || "").trim(),
+    videoGenerationMode: String(config?.videoGenerationMode || "").trim(),
+    updatedAt: String(config?.updatedAt || "").trim() || null
+  };
+  const baseUrl = normalizedConfig.baseUrl ? normalizeBaseUrl(normalizedConfig.baseUrl) : "";
+  const ping = baseUrl ? await comfyPing(baseUrl) : { ok: false, statusCode: null, message: "Comfy baseUrl not synced yet" };
+  const pipelineLastError = extractLastComfyError(runtimeLog?.text || "");
+  let serverLogTail = {
+    available: false,
+    path: null,
+    preview: "",
+    error: "",
+    lastErrorLine: ""
+  };
+
+  if (normalizedConfig.comfyRootDir && baseUrl) {
+    try {
+      const tail = await comfyReadServerLogTail(normalizedConfig.comfyRootDir, baseUrl, 80);
+      serverLogTail = {
+        available: true,
+        path: path.join(
+          path.resolve(normalizedConfig.comfyRootDir),
+          "user",
+          `comfyui_${Number(normalizeBaseUrl(baseUrl).split(":").pop()) || 8188}.log`
+        ),
+        preview: tail.split(/\r?\n/).slice(-40).join("\n"),
+        error: "",
+        lastErrorLine: extractLastErrorLine(tail)
+      };
+    } catch (error) {
+      serverLogTail = {
+        available: false,
+        path: null,
+        preview: "",
+        error: error instanceof Error ? error.message : String(error),
+        lastErrorLine: ""
+      };
+    }
+  }
+
+  return {
+    config: normalizedConfig,
+    ping,
+    pipelineLastError,
+    serverLogTail
+  };
+}
+
+function extractLastComfyError(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!/\[ERROR\]/i.test(line)) continue;
+    if (/comfy|workflow|prompt|节点|node|history|object_info|system_stats/i.test(line)) {
+      return line;
+    }
+  }
+  return "";
+}
+
+function extractLastErrorLine(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (/error|exception|traceback|not found|failed|missing/i.test(line)) {
+      return line;
+    }
+  }
+  return "";
 }
 
 async function detectListeningPid(targetPort) {
@@ -413,6 +499,8 @@ async function invokeCommand(cmd, args) {
       return comfyReadServerLogTail(args?.comfyRootDir, args?.baseUrl, args?.maxLines);
     case "save_pipeline_logs":
       return savePipelineLogs(args?.text);
+    case "save_comfy_runtime_config":
+      return saveComfyRuntimeConfig(args?.config);
     case "read_pipeline_logs":
       return readPipelineLogs();
     default:
@@ -424,6 +512,20 @@ async function savePipelineLogs(text) {
   await ensureDir(bridgeLogsRoot);
   await fs.writeFile(pipelineRuntimeLogPath, typeof text === "string" ? text : "", "utf8");
   return { path: pipelineRuntimeLogPath };
+}
+
+async function saveComfyRuntimeConfig(config) {
+  await ensureDir(bridgeLogsRoot);
+  const next = {
+    baseUrl: String(config?.baseUrl || "").trim(),
+    comfyRootDir: String(config?.comfyRootDir || "").trim(),
+    comfyInputDir: String(config?.comfyInputDir || "").trim(),
+    outputDir: String(config?.outputDir || "").trim(),
+    videoGenerationMode: String(config?.videoGenerationMode || "").trim(),
+    updatedAt: new Date().toISOString()
+  };
+  await fs.writeFile(comfyRuntimeConfigPath, JSON.stringify(next, null, 2), "utf8");
+  return { path: comfyRuntimeConfigPath };
 }
 
 async function readPipelineLogs() {
@@ -1328,6 +1430,16 @@ async function safeStat(target) {
 async function safeReadText(target) {
   try {
     return await fs.readFile(target, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function readJsonFile(target) {
+  const text = await safeReadText(target);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
   } catch {
     return null;
   }
