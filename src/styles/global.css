@@ -2964,6 +2964,19 @@ button.export-panel-collapsed:hover {
   color: #9ec1e7;
 }
 
+.comfy-import-override-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.comfy-import-override-grid label {
+  display: grid;
+  gap: 6px;
+  color: #bcd4ef;
+  font-size: 12px;
+}
+
 .comfy-shot-preview {
   display: block;
   border: 1px solid #2f496b;

@@ -392,6 +392,46 @@ function summarizeAssetProvisionPlan(
   };
 }
 
+type AssetProvisionChoice = {
+  key: string;
+  name: string;
+  matchedAssetId: string;
+  matchedAssetName: string;
+};
+
+function listAssetProvisionChoices(
+  assets: Asset[],
+  items: Array<{ characterNames: string[]; sceneName: string }>
+): {
+  characters: AssetProvisionChoice[];
+  skyboxes: AssetProvisionChoice[];
+} {
+  const characterNames = uniqueEntities(items.flatMap((item) => item.characterNames));
+  const sceneNames = uniqueEntities(items.map((item) => item.sceneName).filter(Boolean));
+  return {
+    characters: characterNames.map((name) => {
+      const matchedAssetId = findMatchingAssetId(assets, "character", name);
+      const matchedAssetName = assets.find((asset) => asset.id === matchedAssetId)?.name ?? "";
+      return {
+        key: normalizeEntityKey(name),
+        name,
+        matchedAssetId,
+        matchedAssetName
+      };
+    }),
+    skyboxes: sceneNames.map((name) => {
+      const matchedAssetId = findMatchingAssetId(assets, "skybox", name);
+      const matchedAssetName = assets.find((asset) => asset.id === matchedAssetId)?.name ?? "";
+      return {
+        key: normalizeEntityKey(name),
+        name,
+        matchedAssetId,
+        matchedAssetName
+      };
+    })
+  };
+}
+
 function inferSceneName(text: string): string {
   const patterns = [
     /(?:在|来到|走到|进入|站在)([^，。；\n]{2,16}?(?:河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库))/,
@@ -902,6 +942,124 @@ function hasUsableGeneratedAsset(
   return looksLikeVideoPath(shot.generatedVideoPath ?? "");
 }
 
+type NormalizedImportedShot = {
+  id: string;
+  title: string;
+  prompt: string;
+  negativePrompt: string;
+  videoPrompt: string;
+  videoMode: "auto" | "single_frame" | "first_last_frame";
+  videoStartFramePath: string;
+  videoEndFramePath: string;
+  skyboxFace: "auto" | "front" | "right" | "back" | "left" | "up" | "down";
+  skyboxFaces: Array<"front" | "right" | "back" | "left" | "up" | "down">;
+  skyboxFaceWeights: Record<string, number>;
+  durationSec?: number;
+  durationFrames?: number;
+  seed?: number;
+  characterRefs: string[];
+  sceneRefId: string;
+  dialogue: string;
+  notes: string;
+  tags: string[];
+  characterNames: string[];
+  sceneName: string;
+  scenePrompt: string;
+};
+
+function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] {
+  const list = Array.isArray(parsed.shots) ? parsed.shots : [];
+  return list.map((item, index) => ({
+    id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
+    title: String(item.title ?? `镜头 ${index + 1}`),
+    prompt: String(item.prompt ?? ""),
+    negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
+    videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
+    videoMode:
+      item.video_mode === "single_frame" || item.videoMode === "single_frame"
+        ? "single_frame"
+        : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
+          ? "first_last_frame"
+          : "auto",
+    videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
+    videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
+    skyboxFace:
+      item.skybox_face === "front" ||
+      item.skybox_face === "right" ||
+      item.skybox_face === "back" ||
+      item.skybox_face === "left" ||
+      item.skybox_face === "up" ||
+      item.skybox_face === "down" ||
+      item.skybox_face === "auto"
+        ? item.skybox_face
+        : item.skyboxFace === "front" ||
+            item.skyboxFace === "right" ||
+            item.skyboxFace === "back" ||
+            item.skyboxFace === "left" ||
+            item.skyboxFace === "up" ||
+            item.skyboxFace === "down" ||
+            item.skyboxFace === "auto"
+          ? item.skyboxFace
+          : "auto",
+    skyboxFaces: Array.isArray(item.skybox_faces)
+      ? item.skybox_faces.filter(
+          (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
+            face === "front" ||
+            face === "right" ||
+            face === "back" ||
+            face === "left" ||
+            face === "up" ||
+            face === "down"
+        )
+      : Array.isArray(item.skyboxFaces)
+        ? item.skyboxFaces.filter(
+            (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
+              face === "front" ||
+              face === "right" ||
+              face === "back" ||
+              face === "left" ||
+              face === "up" ||
+              face === "down"
+          )
+        : [],
+    skyboxFaceWeights:
+      item.skybox_face_weights && typeof item.skybox_face_weights === "object"
+        ? (item.skybox_face_weights as Record<string, number>)
+        : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
+          ? (item.skyboxFaceWeights as Record<string, number>)
+          : {},
+    durationSec:
+      typeof item.duration_sec === "number"
+        ? item.duration_sec
+        : typeof item.durationSec === "number"
+          ? item.durationSec
+          : undefined,
+    durationFrames:
+      typeof item.duration_frames === "number"
+        ? item.duration_frames
+        : typeof item.durationFrames === "number"
+          ? item.durationFrames
+          : undefined,
+    seed: typeof item.seed === "number" ? item.seed : undefined,
+    characterRefs: Array.isArray(item.character_refs)
+      ? (item.character_refs as string[])
+      : Array.isArray(item.characterRefs)
+        ? (item.characterRefs as string[])
+        : [],
+    sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
+    dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
+    notes: typeof item.notes === "string" ? item.notes : "",
+    tags: Array.isArray(item.tags) ? (item.tags as string[]) : [],
+    characterNames: Array.isArray(item.character_names)
+      ? uniqueEntities((item.character_names as string[]).map((value) => String(value)))
+      : Array.isArray(item.characterNames)
+        ? uniqueEntities((item.characterNames as string[]).map((value) => String(value)))
+        : [],
+    sceneName: String(item.scene_name ?? item.sceneName ?? "").trim(),
+    scenePrompt: String(item.scene_prompt ?? item.scenePrompt ?? "").trim()
+  }));
+}
+
 export function ComfyPipelinePanel() {
   const project = useStoryboardStore((state) => state.project);
   const shots = useStoryboardStore((state) => state.shots);
@@ -918,6 +1076,10 @@ export function ComfyPipelinePanel() {
   const [storyText, setStoryText] = useState("");
   const [scriptText, setScriptText] = useState("");
   const [autoProvisionAssets, setAutoProvisionAssets] = useState(true);
+  const [storyCharacterOverrides, setStoryCharacterOverrides] = useState<Record<string, string>>({});
+  const [storySkyboxOverrides, setStorySkyboxOverrides] = useState<Record<string, string>>({});
+  const [scriptCharacterOverrides, setScriptCharacterOverrides] = useState<Record<string, string>>({});
+  const [scriptSkyboxOverrides, setScriptSkyboxOverrides] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<GenerationPhase>("idle");
   const [pipelineState, setPipelineState] = useState("空闲");
   const [runAllActive, setRunAllActive] = useState(false);
@@ -939,20 +1101,25 @@ export function ComfyPipelinePanel() {
   const [lastModelChecklist, setLastModelChecklist] = useState("");
   const checkingRef = useRef(false);
 
-  const storyParsePreview = useMemo(() => {
+  const storyNormalizedItems = useMemo(() => {
     const text = storyText.trim();
-    if (!text) return null;
+    if (!text) return [] as NormalizedImportedShot[];
     try {
       const parsed = parseStoryToShotScript(text);
-      const totalSec = parsed.shots.reduce((sum, item) => sum + Number(item.duration_sec || 0), 0);
-      return {
-        count: parsed.shots.length,
-        totalSec
-      };
+      return normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
     } catch {
-      return null;
+      return [] as NormalizedImportedShot[];
     }
   }, [storyText]);
+
+  const storyParsePreview = useMemo(() => {
+    if (storyNormalizedItems.length === 0) return null;
+    const totalSec = storyNormalizedItems.reduce((sum, item) => sum + Number(item.durationSec || 0), 0);
+    return {
+      count: storyNormalizedItems.length,
+      totalSec
+    };
+  }, [storyNormalizedItems]);
 
   const scopedShots = useMemo(
     () =>
@@ -1044,159 +1211,92 @@ export function ComfyPipelinePanel() {
     setLogs((previous) => [...previous.slice(-499), item]);
   };
 
-  type NormalizedImportedShot = {
-    id: string;
-    title: string;
-    prompt: string;
-    negativePrompt: string;
-    videoPrompt: string;
-    videoMode: "auto" | "single_frame" | "first_last_frame";
-    videoStartFramePath: string;
-    videoEndFramePath: string;
-    skyboxFace: "auto" | "front" | "right" | "back" | "left" | "up" | "down";
-    skyboxFaces: Array<"front" | "right" | "back" | "left" | "up" | "down">;
-    skyboxFaceWeights: Record<string, number>;
-    durationSec?: number;
-    durationFrames?: number;
-    seed?: number;
-    characterRefs: string[];
-    sceneRefId: string;
-    dialogue: string;
-    notes: string;
-    tags: string[];
-    characterNames: string[];
-    sceneName: string;
-    scenePrompt: string;
-  };
-
-  const normalizeImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] => {
-    const list = Array.isArray(parsed.shots) ? parsed.shots : [];
-    return list.map((item, index) => ({
-      id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
-      title: String(item.title ?? `镜头 ${index + 1}`),
-      prompt: String(item.prompt ?? ""),
-      negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
-      videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
-      videoMode:
-        item.video_mode === "single_frame" || item.videoMode === "single_frame"
-          ? "single_frame"
-          : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
-            ? "first_last_frame"
-            : "auto",
-      videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
-      videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
-      skyboxFace:
-        item.skybox_face === "front" ||
-        item.skybox_face === "right" ||
-        item.skybox_face === "back" ||
-        item.skybox_face === "left" ||
-        item.skybox_face === "up" ||
-        item.skybox_face === "down" ||
-        item.skybox_face === "auto"
-          ? item.skybox_face
-          : item.skyboxFace === "front" ||
-              item.skyboxFace === "right" ||
-              item.skyboxFace === "back" ||
-              item.skyboxFace === "left" ||
-              item.skyboxFace === "up" ||
-              item.skyboxFace === "down" ||
-              item.skyboxFace === "auto"
-            ? item.skyboxFace
-            : "auto",
-      skyboxFaces: Array.isArray(item.skybox_faces)
-        ? item.skybox_faces.filter(
-            (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
-              face === "front" ||
-              face === "right" ||
-              face === "back" ||
-              face === "left" ||
-              face === "up" ||
-              face === "down"
-          )
-        : Array.isArray(item.skyboxFaces)
-          ? item.skyboxFaces.filter(
-              (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
-                face === "front" ||
-                face === "right" ||
-                face === "back" ||
-                face === "left" ||
-                face === "up" ||
-                face === "down"
-            )
-          : [],
-      skyboxFaceWeights:
-        item.skybox_face_weights && typeof item.skybox_face_weights === "object"
-          ? (item.skybox_face_weights as Record<string, number>)
-          : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
-            ? (item.skyboxFaceWeights as Record<string, number>)
-            : {},
-      durationSec:
-        typeof item.duration_sec === "number"
-          ? item.duration_sec
-          : typeof item.durationSec === "number"
-            ? item.durationSec
-            : undefined,
-      durationFrames:
-        typeof item.duration_frames === "number"
-          ? item.duration_frames
-          : typeof item.durationFrames === "number"
-            ? item.durationFrames
-            : undefined,
-      seed: typeof item.seed === "number" ? item.seed : undefined,
-      characterRefs: Array.isArray(item.character_refs)
-        ? (item.character_refs as string[])
-        : Array.isArray(item.characterRefs)
-          ? (item.characterRefs as string[])
-          : [],
-      sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
-      dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
-      notes: typeof item.notes === "string" ? item.notes : "",
-      tags: Array.isArray(item.tags) ? (item.tags as string[]) : [],
-      characterNames: Array.isArray(item.character_names)
-        ? uniqueEntities((item.character_names as string[]).map((value) => String(value)))
-        : Array.isArray(item.characterNames)
-          ? uniqueEntities((item.characterNames as string[]).map((value) => String(value)))
-          : [],
-      sceneName: String(item.scene_name ?? item.sceneName ?? "").trim(),
-      scenePrompt: String(item.scene_prompt ?? item.scenePrompt ?? "").trim()
-    }));
-  };
-
-  const storyAssetPreview = useMemo(() => {
-    const text = storyText.trim();
-    if (!text) return null;
-    try {
-      const parsed = parseStoryToShotScript(text);
-      const items = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
-      const summary = summarizeAssetProvisionPlan(assets, items);
-      const hasAny =
-        summary.reusedCharacters.length > 0 ||
-        summary.newCharacters.length > 0 ||
-        summary.reusedSkyboxes.length > 0 ||
-        summary.newSkyboxes.length > 0;
-      return hasAny ? summary : null;
-    } catch {
-      return null;
-    }
-  }, [assets, storyText]);
-
-  const scriptAssetPreview = useMemo(() => {
+  const scriptNormalizedItems = useMemo(() => {
     const text = scriptText.trim();
-    if (!text) return null;
+    if (!text) return [] as NormalizedImportedShot[];
     try {
       const parsed = JSON.parse(text) as { shots?: Array<Record<string, unknown>> };
-      const items = normalizeImportedShots(parsed);
-      const summary = summarizeAssetProvisionPlan(assets, items);
-      const hasAny =
-        summary.reusedCharacters.length > 0 ||
-        summary.newCharacters.length > 0 ||
-        summary.reusedSkyboxes.length > 0 ||
-        summary.newSkyboxes.length > 0;
-      return hasAny ? summary : null;
+      return normalizeImportedShots(parsed);
     } catch {
-      return null;
+      return [] as NormalizedImportedShot[];
     }
-  }, [assets, scriptText]);
+  }, [scriptText]);
+
+  const storyProvisionChoices = useMemo(
+    () => (storyNormalizedItems.length > 0 ? listAssetProvisionChoices(assets, storyNormalizedItems) : null),
+    [assets, storyNormalizedItems]
+  );
+
+  const scriptProvisionChoices = useMemo(
+    () => (scriptNormalizedItems.length > 0 ? listAssetProvisionChoices(assets, scriptNormalizedItems) : null),
+    [assets, scriptNormalizedItems]
+  );
+
+  const summarizeProvisionWithOverrides = (
+    choices: { characters: AssetProvisionChoice[]; skyboxes: AssetProvisionChoice[] } | null,
+    characterOverrides: Record<string, string>,
+    skyboxOverrides: Record<string, string>
+  ) => {
+    if (!choices) return null;
+    const reusedCharacters = choices.characters
+      .filter((item) => {
+        const override = characterOverrides[item.key];
+        if (override === "__new__") return false;
+        if (override) return true;
+        return Boolean(item.matchedAssetId);
+      })
+      .map((item) => item.name);
+    const newCharacters = choices.characters
+      .filter((item) => {
+        const override = characterOverrides[item.key];
+        if (override === "__new__") return true;
+        if (override) return false;
+        return !item.matchedAssetId;
+      })
+      .map((item) => item.name);
+    const reusedSkyboxes = choices.skyboxes
+      .filter((item) => {
+        const override = skyboxOverrides[item.key];
+        if (override === "__new__") return false;
+        if (override) return true;
+        return Boolean(item.matchedAssetId);
+      })
+      .map((item) => item.name);
+    const newSkyboxes = choices.skyboxes
+      .filter((item) => {
+        const override = skyboxOverrides[item.key];
+        if (override === "__new__") return true;
+        if (override) return false;
+        return !item.matchedAssetId;
+      })
+      .map((item) => item.name);
+    return {
+      reusedCharacters,
+      newCharacters,
+      reusedSkyboxes,
+      newSkyboxes
+    };
+  };
+
+  const storyAssetPreview = useMemo(
+    () => summarizeProvisionWithOverrides(storyProvisionChoices, storyCharacterOverrides, storySkyboxOverrides),
+    [storyCharacterOverrides, storyProvisionChoices, storySkyboxOverrides]
+  );
+
+  const scriptAssetPreview = useMemo(
+    () => summarizeProvisionWithOverrides(scriptProvisionChoices, scriptCharacterOverrides, scriptSkyboxOverrides),
+    [scriptCharacterOverrides, scriptProvisionChoices, scriptSkyboxOverrides]
+  );
+
+  const characterAssetOptions = useMemo(
+    () => assets.filter((asset) => asset.type === "character"),
+    [assets]
+  );
+
+  const skyboxAssetOptions = useMemo(
+    () => assets.filter((asset) => asset.type === "skybox"),
+    [assets]
+  );
 
   useEffect(() => {
     if (!isWebBridgeRuntime()) return;
@@ -1324,6 +1424,55 @@ export function ComfyPipelinePanel() {
   const findAssetIdByName = (type: "character" | "scene" | "skybox", name: string) => {
     return findMatchingAssetId(useStoryboardStore.getState().assets, type, name);
   };
+
+  const applyProvisionOverrides = (
+    items: NormalizedImportedShot[],
+    characterOverrides: Record<string, string>,
+    skyboxOverrides: Record<string, string>
+  ) =>
+    items.map((item) => {
+      const nextCharacterRefs = [...item.characterRefs];
+      const nextCharacterNames: string[] = [];
+      for (const name of item.characterNames) {
+        const key = normalizeEntityKey(name);
+        const override = characterOverrides[key] ?? "";
+        if (override === "__new__") {
+          nextCharacterNames.push(name);
+          continue;
+        }
+        const resolved = override || findAssetIdByName("character", name);
+        if (resolved) {
+          nextCharacterRefs.push(resolved);
+        } else {
+          nextCharacterNames.push(name);
+        }
+      }
+
+      let nextSceneRefId = item.sceneRefId;
+      let nextSceneName = item.sceneName;
+      let nextScenePrompt = item.scenePrompt;
+      if (item.sceneName) {
+        const key = normalizeEntityKey(item.sceneName);
+        const override = skyboxOverrides[key] ?? "";
+        if (override !== "__new__") {
+          const resolved = override || findAssetIdByName("skybox", item.sceneName);
+          if (resolved) {
+            nextSceneRefId = resolved;
+            nextSceneName = "";
+            nextScenePrompt = "";
+          }
+        }
+      }
+
+      return {
+        ...item,
+        characterRefs: uniqueEntities(nextCharacterRefs),
+        characterNames: uniqueEntities(nextCharacterNames),
+        sceneRefId: nextSceneRefId,
+        sceneName: nextSceneName,
+        scenePrompt: nextScenePrompt
+      };
+    });
 
   const createCharacterAssetIfMissing = async (runtimeSettings: ComfySettings, name: string, context: string) => {
     const existingId = findAssetIdByName("character", name);
@@ -1481,6 +1630,10 @@ export function ComfyPipelinePanel() {
 
   const applyImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }) => {
     const normalizedItems = normalizeImportedShots(parsed);
+    return applyImportedShotItems(normalizedItems);
+  };
+
+  const applyImportedShotItems = (normalizedItems: NormalizedImportedShot[]) => {
     if (normalizedItems.length === 0) {
       throw new Error("脚本格式无效：缺少 shots 数组");
     }
@@ -1513,7 +1666,10 @@ export function ComfyPipelinePanel() {
   const onImportScript = async () => {
     try {
       const parsed = JSON.parse(scriptText) as { shots?: Array<Record<string, unknown>> };
-      const items = applyImportedShots(parsed);
+      const normalized = normalizeImportedShots(parsed);
+      const items = applyImportedShotItems(
+        applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
+      );
       pushToast(`已导入 ${items.length} 个镜头`, "success");
       appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
       await autoProvisionAssetsForImportedShots(items, settings);
@@ -1530,7 +1686,10 @@ export function ComfyPipelinePanel() {
       setScriptText(formatted);
       appendLog(`故事解析成功，共生成 ${parsed.shots.length} 条镜头脚本`);
       if (shouldImport) {
-        const items = applyImportedShots(parsed as { shots?: Array<Record<string, unknown>> });
+        const normalized = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
+        const items = applyImportedShotItems(
+          applyProvisionOverrides(normalized, storyCharacterOverrides, storySkyboxOverrides)
+        );
         pushToast(`故事已解析并导入 ${items.length} 个镜头`, "success");
         appendLog(`故事解析并导入成功，共 ${items.length} 条`);
         await autoProvisionAssetsForImportedShots(items, settings);
@@ -3320,6 +3479,58 @@ export function ComfyPipelinePanel() {
                 <span key={`story_new_skybox_${name}`}>新建天空盒 · {name}</span>
               ))}
             </div>
+            {storyProvisionChoices && (
+              <div className="comfy-import-override-grid">
+                {storyProvisionChoices.characters.map((item) => (
+                  <label key={`story_char_override_${item.key}`}>
+                    角色映射 · {item.name}
+                    <select
+                      onChange={(event) =>
+                        setStoryCharacterOverrides((previous) => ({
+                          ...previous,
+                          [item.key]: event.target.value
+                        }))
+                      }
+                      value={storyCharacterOverrides[item.key] ?? ""}
+                    >
+                      <option value="">
+                        {item.matchedAssetId ? `按系统判断（复用 ${item.matchedAssetName}）` : "按系统判断（将新建）"}
+                      </option>
+                      <option value="__new__">强制新建角色</option>
+                      {characterAssetOptions.map((asset) => (
+                        <option key={`story_char_option_${item.key}_${asset.id}`} value={asset.id}>
+                          复用 · {asset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+                {storyProvisionChoices.skyboxes.map((item) => (
+                  <label key={`story_skybox_override_${item.key}`}>
+                    场景映射 · {item.name}
+                    <select
+                      onChange={(event) =>
+                        setStorySkyboxOverrides((previous) => ({
+                          ...previous,
+                          [item.key]: event.target.value
+                        }))
+                      }
+                      value={storySkyboxOverrides[item.key] ?? ""}
+                    >
+                      <option value="">
+                        {item.matchedAssetId ? `按系统判断（复用 ${item.matchedAssetName}）` : "按系统判断（将新建天空盒）"}
+                      </option>
+                      <option value="__new__">强制新建天空盒</option>
+                      {skyboxAssetOptions.map((asset) => (
+                        <option key={`story_skybox_option_${item.key}_${asset.id}`} value={asset.id}>
+                          复用 · {asset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <label className="comfy-script-block">
@@ -3351,6 +3562,58 @@ export function ComfyPipelinePanel() {
                 <span key={`script_new_skybox_${name}`}>新建天空盒 · {name}</span>
               ))}
             </div>
+            {scriptProvisionChoices && (
+              <div className="comfy-import-override-grid">
+                {scriptProvisionChoices.characters.map((item) => (
+                  <label key={`script_char_override_${item.key}`}>
+                    角色映射 · {item.name}
+                    <select
+                      onChange={(event) =>
+                        setScriptCharacterOverrides((previous) => ({
+                          ...previous,
+                          [item.key]: event.target.value
+                        }))
+                      }
+                      value={scriptCharacterOverrides[item.key] ?? ""}
+                    >
+                      <option value="">
+                        {item.matchedAssetId ? `按系统判断（复用 ${item.matchedAssetName}）` : "按系统判断（将新建）"}
+                      </option>
+                      <option value="__new__">强制新建角色</option>
+                      {characterAssetOptions.map((asset) => (
+                        <option key={`script_char_option_${item.key}_${asset.id}`} value={asset.id}>
+                          复用 · {asset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+                {scriptProvisionChoices.skyboxes.map((item) => (
+                  <label key={`script_skybox_override_${item.key}`}>
+                    场景映射 · {item.name}
+                    <select
+                      onChange={(event) =>
+                        setScriptSkyboxOverrides((previous) => ({
+                          ...previous,
+                          [item.key]: event.target.value
+                        }))
+                      }
+                      value={scriptSkyboxOverrides[item.key] ?? ""}
+                    >
+                      <option value="">
+                        {item.matchedAssetId ? `按系统判断（复用 ${item.matchedAssetName}）` : "按系统判断（将新建天空盒）"}
+                      </option>
+                      <option value="__new__">强制新建天空盒</option>
+                      {skyboxAssetOptions.map((asset) => (
+                        <option key={`script_skybox_option_${item.key}_${asset.id}`} value={asset.id}>
+                          复用 · {asset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div className="comfy-primary-actions">
