@@ -660,6 +660,32 @@ function persistImportPresets(presets: ImportProvisionPreset[]): void {
   localStorage.setItem(IMPORT_PRESETS_KEY, JSON.stringify(presets));
 }
 
+function normalizeImportPresetRecords(raw: unknown): ImportProvisionPreset[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => {
+      const record = item as Partial<ImportProvisionPreset>;
+      const name = typeof record.name === "string" ? record.name.trim() : "";
+      return {
+        id:
+          typeof record.id === "string" && record.id.trim().length > 0
+            ? record.id
+            : `import_preset_${Date.now()}_${index}`,
+        name,
+        characterOverrides:
+          record.characterOverrides && typeof record.characterOverrides === "object"
+            ? (record.characterOverrides as Record<string, string>)
+            : {},
+        skyboxOverrides:
+          record.skyboxOverrides && typeof record.skyboxOverrides === "object"
+            ? (record.skyboxOverrides as Record<string, string>)
+            : {}
+      };
+    })
+    .filter((item) => item.name.length > 0);
+}
+
 function formatAssetStatus(status: AssetStatus): string {
   if (status === "running") return "生成中";
   if (status === "success") return "成功";
@@ -1457,6 +1483,67 @@ export function ComfyPipelinePanel() {
     setStorySelectedPresetId((previous) => (previous === presetId ? "" : previous));
     setScriptSelectedPresetId((previous) => (previous === presetId ? "" : previous));
     pushToast(`已删除导入预设：${preset.name}`, "success");
+  };
+
+  const renameImportPreset = (presetId: string) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    const nextName = window.prompt("输入新的预设名称", preset.name)?.trim() ?? "";
+    if (!nextName || nextName === preset.name) return;
+    setImportPresets((previous) => {
+      const next = previous.map((item) => (item.id === presetId ? { ...item, name: nextName } : item));
+      persistImportPresets(next);
+      return next;
+    });
+    pushToast(`预设已重命名为：${nextName}`, "success");
+  };
+
+  const exportImportPreset = async (presetId: string) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(preset, null, 2));
+      pushToast(`预设 JSON 已复制：${preset.name}`, "success");
+    } catch (error) {
+      pushToast(`复制预设失败：${String(error)}`, "error");
+    }
+  };
+
+  const importImportPresets = () => {
+    const input = window.prompt("粘贴导入预设 JSON（支持单个对象或数组）", "");
+    if (!input || !input.trim()) return;
+    try {
+      const parsed = JSON.parse(input) as ImportProvisionPreset | ImportProvisionPreset[];
+      const normalized = normalizeImportPresetRecords(Array.isArray(parsed) ? parsed : [parsed]);
+      if (normalized.length === 0) {
+        pushToast("未识别到有效导入预设", "warning");
+        return;
+      }
+      let lastImportedId = "";
+      const importBatchId = Date.now();
+      setImportPresets((previous) => {
+        const deduped = previous.filter(
+          (item) => !normalized.some((incoming) => incoming.name.trim() === item.name.trim())
+        );
+        const imported = normalized.map((item, index) => {
+          lastImportedId = `import_preset_${importBatchId}_${index}`;
+          return {
+            ...item,
+            id: `import_preset_${importBatchId}_${index}`
+          };
+        });
+        const next = [...deduped, ...imported];
+        persistImportPresets(next);
+        return next;
+      });
+      if (lastImportedId) {
+        setStorySelectedPresetId(lastImportedId);
+        setScriptSelectedPresetId(lastImportedId);
+      }
+      pushToast(`已导入 ${normalized.length} 个预设`, "success");
+    } catch (error) {
+      pushToast(`导入预设失败：${String(error)}`, "error");
+    }
   };
 
   useEffect(() => {
@@ -3697,6 +3784,25 @@ export function ComfyPipelinePanel() {
                   >
                     删除预设
                   </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
+                    onClick={() => renameImportPreset(storySelectedPresetId)}
+                    type="button"
+                  >
+                    重命名预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
+                    onClick={() => void exportImportPreset(storySelectedPresetId)}
+                    type="button"
+                  >
+                    导出预设 JSON
+                  </button>
+                  <button className="btn-ghost" onClick={() => importImportPresets()} type="button">
+                    导入预设 JSON
+                  </button>
                 </div>
                 {(storyProvisionChoices.characters.length > 0 || storyProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
@@ -3939,6 +4045,25 @@ export function ComfyPipelinePanel() {
                     type="button"
                   >
                     删除预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
+                    onClick={() => renameImportPreset(scriptSelectedPresetId)}
+                    type="button"
+                  >
+                    重命名预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
+                    onClick={() => void exportImportPreset(scriptSelectedPresetId)}
+                    type="button"
+                  >
+                    导出预设 JSON
+                  </button>
+                  <button className="btn-ghost" onClick={() => importImportPresets()} type="button">
+                    导入预设 JSON
                   </button>
                 </div>
                 {(scriptProvisionChoices.characters.length > 0 || scriptProvisionChoices.skyboxes.length > 0) && (
