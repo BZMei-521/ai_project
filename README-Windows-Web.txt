@@ -4,12 +4,13 @@ Storyboard Pro Windows Web Release
 2. If you need video export, install ffmpeg and make sure ffmpeg.exe is in PATH
 3. If Tailscale is missing, running check-storyboard-windows-env.bat will download the official installer
 4. If you need AI generation, launch ComfyUI separately
-5. After pulling new source changes, run update-storyboard-windows.bat to rebuild dist locally
-6. Double-click check-storyboard-windows-env.bat if you want a preflight check
-7. Double-click start-storyboard-windows.bat
-8. Both start-storyboard-windows.bat and start-storyboard-windows-debug.bat write startup logs to logs\windows-web-latest.log
-9. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\windows-web-latest.log
-10. After updating from an older build, stop the old process on port 3210 and restart so the service binds to 0.0.0.0 for Tailscale access
+5. Double-click start-storyboard-windows.bat for the full startup pipeline: git pull -> update/build -> env check -> start
+6. Use start-storyboard-windows.bat --fast if you want to skip pull and rebuild
+7. You can still run update-storyboard-windows.bat manually if you only want to rebuild dist
+8. Double-click check-storyboard-windows-env.bat if you want a preflight check
+9. Both start-storyboard-windows.bat and start-storyboard-windows-debug.bat write startup logs to logs\windows-web-latest.log
+10. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\windows-web-latest.log
+11. After updating from an older build, stop the old process on port 3210 and restart so the service binds to 0.0.0.0 for Tailscale access
 
 Default URL: http://127.0.0.1:3210
 Default data dir: %APPDATA%\StoryboardProWeb
