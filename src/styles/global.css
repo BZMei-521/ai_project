@@ -2954,6 +2954,16 @@ button.export-panel-collapsed:hover {
   box-shadow: inset 0 0 0 1px rgba(58, 84, 114, 0.55);
 }
 
+.comfy-import-asset-preview {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.comfy-import-asset-preview small {
+  color: #9ec1e7;
+}
+
 .comfy-shot-preview {
   display: block;
   border: 1px solid #2f496b;

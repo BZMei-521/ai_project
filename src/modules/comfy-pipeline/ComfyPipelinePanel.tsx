@@ -332,6 +332,66 @@ function computeAssetNameScore(type: "character" | "scene" | "skybox", input: st
   return overlap / Math.max(charsA.size, charsB.size);
 }
 
+function findMatchingAssetId(
+  assets: Asset[],
+  type: "character" | "scene" | "skybox",
+  name: string
+): string {
+  const sourceName = name.trim();
+  if (!sourceName) return "";
+  const allAssets = assets.filter((asset) => asset.type === type);
+  const exact = allAssets.find((asset) => canonicalAssetName(type, asset.name) === canonicalAssetName(type, sourceName));
+  if (exact) return exact.id;
+  const scored = allAssets
+    .map((asset) => ({
+      id: asset.id,
+      score: computeAssetNameScore(type, sourceName, asset.name)
+    }))
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  const threshold = type === "character" ? 0.72 : 0.58;
+  return best && best.score >= threshold ? best.id : "";
+}
+
+function summarizeAssetProvisionPlan(
+  assets: Asset[],
+  items: Array<{ characterNames: string[]; sceneName: string }>
+): {
+  reusedCharacters: string[];
+  newCharacters: string[];
+  reusedSkyboxes: string[];
+  newSkyboxes: string[];
+} {
+  const characterNames = uniqueEntities(items.flatMap((item) => item.characterNames));
+  const sceneNames = uniqueEntities(items.map((item) => item.sceneName).filter(Boolean));
+  const reusedCharacters: string[] = [];
+  const newCharacters: string[] = [];
+  const reusedSkyboxes: string[] = [];
+  const newSkyboxes: string[] = [];
+
+  for (const name of characterNames) {
+    if (findMatchingAssetId(assets, "character", name)) {
+      reusedCharacters.push(name);
+    } else {
+      newCharacters.push(name);
+    }
+  }
+  for (const name of sceneNames) {
+    if (findMatchingAssetId(assets, "skybox", name)) {
+      reusedSkyboxes.push(name);
+    } else {
+      newSkyboxes.push(name);
+    }
+  }
+
+  return {
+    reusedCharacters,
+    newCharacters,
+    reusedSkyboxes,
+    newSkyboxes
+  };
+}
+
 function inferSceneName(text: string): string {
   const patterns = [
     /(?:在|来到|走到|进入|站在)([^，。；\n]{2,16}?(?:河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库))/,
@@ -1102,6 +1162,42 @@ export function ComfyPipelinePanel() {
     }));
   };
 
+  const storyAssetPreview = useMemo(() => {
+    const text = storyText.trim();
+    if (!text) return null;
+    try {
+      const parsed = parseStoryToShotScript(text);
+      const items = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
+      const summary = summarizeAssetProvisionPlan(assets, items);
+      const hasAny =
+        summary.reusedCharacters.length > 0 ||
+        summary.newCharacters.length > 0 ||
+        summary.reusedSkyboxes.length > 0 ||
+        summary.newSkyboxes.length > 0;
+      return hasAny ? summary : null;
+    } catch {
+      return null;
+    }
+  }, [assets, storyText]);
+
+  const scriptAssetPreview = useMemo(() => {
+    const text = scriptText.trim();
+    if (!text) return null;
+    try {
+      const parsed = JSON.parse(text) as { shots?: Array<Record<string, unknown>> };
+      const items = normalizeImportedShots(parsed);
+      const summary = summarizeAssetProvisionPlan(assets, items);
+      const hasAny =
+        summary.reusedCharacters.length > 0 ||
+        summary.newCharacters.length > 0 ||
+        summary.reusedSkyboxes.length > 0 ||
+        summary.newSkyboxes.length > 0;
+      return hasAny ? summary : null;
+    } catch {
+      return null;
+    }
+  }, [assets, scriptText]);
+
   useEffect(() => {
     if (!isWebBridgeRuntime()) return;
     const timer = window.setTimeout(() => {
@@ -1226,20 +1322,7 @@ export function ComfyPipelinePanel() {
   };
 
   const findAssetIdByName = (type: "character" | "scene" | "skybox", name: string) => {
-    const sourceName = name.trim();
-    if (!sourceName) return "";
-    const allAssets = useStoryboardStore.getState().assets.filter((asset) => asset.type === type);
-    const exact = allAssets.find((asset) => canonicalAssetName(type, asset.name) === canonicalAssetName(type, sourceName));
-    if (exact) return exact.id;
-    const scored = allAssets
-      .map((asset) => ({
-        id: asset.id,
-        score: computeAssetNameScore(type, sourceName, asset.name)
-      }))
-      .sort((a, b) => b.score - a.score);
-    const best = scored[0];
-    const threshold = type === "character" ? 0.72 : 0.58;
-    return best && best.score >= threshold ? best.id : "";
+    return findMatchingAssetId(useStoryboardStore.getState().assets, type, name);
   };
 
   const createCharacterAssetIfMissing = async (runtimeSettings: ComfySettings, name: string, context: string) => {
@@ -3217,6 +3300,28 @@ export function ComfyPipelinePanel() {
             预计解析为 {storyParsePreview.count} 个镜头，预估总时长 {storyParsePreview.totalSec.toFixed(1)} 秒
           </small>
         )}
+        {storyAssetPreview && (
+          <div className="comfy-import-asset-preview">
+            <small>
+              故事资产预判：复用角色 {storyAssetPreview.reusedCharacters.length} / 新建角色 {storyAssetPreview.newCharacters.length}；
+              复用天空盒 {storyAssetPreview.reusedSkyboxes.length} / 新建天空盒 {storyAssetPreview.newSkyboxes.length}
+            </small>
+            <div className="shot-tags">
+              {storyAssetPreview.reusedCharacters.map((name) => (
+                <span key={`story_reuse_char_${name}`}>复用角色 · {name}</span>
+              ))}
+              {storyAssetPreview.newCharacters.map((name) => (
+                <span key={`story_new_char_${name}`}>新建角色 · {name}</span>
+              ))}
+              {storyAssetPreview.reusedSkyboxes.map((name) => (
+                <span key={`story_reuse_skybox_${name}`}>复用天空盒 · {name}</span>
+              ))}
+              {storyAssetPreview.newSkyboxes.map((name) => (
+                <span key={`story_new_skybox_${name}`}>新建天空盒 · {name}</span>
+              ))}
+            </div>
+          </div>
+        )}
         <label className="comfy-script-block">
           已分镜脚本（JSON）
           <textarea
@@ -3226,6 +3331,28 @@ export function ComfyPipelinePanel() {
             value={scriptText}
           />
         </label>
+        {scriptAssetPreview && (
+          <div className="comfy-import-asset-preview">
+            <small>
+              脚本资产预判：复用角色 {scriptAssetPreview.reusedCharacters.length} / 新建角色 {scriptAssetPreview.newCharacters.length}；
+              复用天空盒 {scriptAssetPreview.reusedSkyboxes.length} / 新建天空盒 {scriptAssetPreview.newSkyboxes.length}
+            </small>
+            <div className="shot-tags">
+              {scriptAssetPreview.reusedCharacters.map((name) => (
+                <span key={`script_reuse_char_${name}`}>复用角色 · {name}</span>
+              ))}
+              {scriptAssetPreview.newCharacters.map((name) => (
+                <span key={`script_new_char_${name}`}>新建角色 · {name}</span>
+              ))}
+              {scriptAssetPreview.reusedSkyboxes.map((name) => (
+                <span key={`script_reuse_skybox_${name}`}>复用天空盒 · {name}</span>
+              ))}
+              {scriptAssetPreview.newSkyboxes.map((name) => (
+                <span key={`script_new_skybox_${name}`}>新建天空盒 · {name}</span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="comfy-primary-actions">
           <button className="btn-ghost" onClick={() => void onImportScript()} type="button">导入镜头脚本</button>
           <button className="btn-primary comfy-action-main" disabled={phase === "running" || runAllActive} onClick={() => void onGenerateAll()} type="button">
