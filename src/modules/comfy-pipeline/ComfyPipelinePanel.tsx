@@ -12,6 +12,7 @@ import {
   DEFAULT_TOKEN_MAPPING,
   extractLocalMotionPresetFromText,
   generateShotAsset,
+  generateSkyboxFaces,
   inferComfyRootDir,
   installSuggestedPlugins,
   inspectWorkflowDependencies,
@@ -1219,6 +1220,11 @@ export function ComfyPipelinePanel() {
     return `${prompt}。无人物，空间关系清晰，环境一致，材质稳定，光影明确，场景设定图，写实电影美术。`;
   };
 
+  const buildSkyboxDescription = (sceneName: string, scenePrompt: string) => {
+    const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
+    return `${prompt}。生成可复用天空盒六面，要求空间结构统一、材质一致、无人物、可支撑不同镜头角度下的场景一致性。`;
+  };
+
   const findAssetIdByName = (type: "character" | "scene" | "skybox", name: string) => {
     const sourceName = name.trim();
     if (!sourceName) return "";
@@ -1283,30 +1289,38 @@ export function ComfyPipelinePanel() {
     return created;
   };
 
-  const createSceneAssetIfMissing = async (runtimeSettings: ComfySettings, sceneName: string, scenePrompt: string) => {
-    const existingId = findAssetIdByName("scene", sceneName);
+  const createSkyboxAssetIfMissing = async (runtimeSettings: ComfySettings, sceneName: string, scenePrompt: string) => {
+    const existingId = findAssetIdByName("skybox", sceneName);
     if (existingId) return existingId;
-    appendLog(`开始生成场景图：${sceneName}`);
-    const output = await generateShotAsset(
-      runtimeSettings,
-      makeAssetGenerationShot(`asset_scene_${sceneName}`, sceneName, buildSceneImagePrompt(sceneName, scenePrompt)),
-      0,
-      "image",
-      [],
-      []
-    );
+    const description = buildSkyboxDescription(sceneName, scenePrompt || buildSceneImagePrompt(sceneName, scenePrompt));
+    appendLog(`开始生成场景天空盒：${sceneName}`);
+    const result = await generateSkyboxFaces(runtimeSettings, description);
+    const primaryPath =
+      result.faces.front ||
+      result.faces.right ||
+      result.faces.back ||
+      result.faces.left ||
+      result.faces.up ||
+      result.faces.down ||
+      "";
+    if (!primaryPath) {
+      throw new Error("天空盒生成完成但未拿到任何可用面");
+    }
     const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
     addAsset({
-      type: "scene",
+      type: "skybox",
       name: sceneName,
-      filePath: output.localPath || output.previewUrl
+      filePath: primaryPath,
+      skyboxDescription: description,
+      skyboxFaces: result.faces,
+      skyboxUpdateEvents: []
     });
     const created =
       useStoryboardStore
         .getState()
-        .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "scene" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName))
-        ?.id ?? findAssetIdByName("scene", sceneName);
-    appendLog(`场景图生成成功：${sceneName}`);
+        .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "skybox" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName))
+        ?.id ?? findAssetIdByName("skybox", sceneName);
+    appendLog(`场景天空盒生成成功：${sceneName}`);
     return created;
   };
 
@@ -1341,16 +1355,20 @@ export function ComfyPipelinePanel() {
         const key = normalizeEntityKey(item.sceneName);
         if (!sceneIdMap.has(key)) {
           try {
-            const reusedId = findAssetIdByName("scene", item.sceneName);
+            const reusedId = findAssetIdByName("skybox", item.sceneName);
             if (reusedId) {
               sceneIdMap.set(key, reusedId);
-              appendLog(`复用已有场景资产：${item.sceneName}`);
+              appendLog(`复用已有场景天空盒：${item.sceneName}`);
               continue;
             }
-            const assetId = await createSceneAssetIfMissing(runtimeSettings, item.sceneName, item.scenePrompt || item.prompt || item.notes);
+            const assetId = await createSkyboxAssetIfMissing(
+              runtimeSettings,
+              item.sceneName,
+              item.scenePrompt || item.prompt || item.notes
+            );
             if (assetId) sceneIdMap.set(key, assetId);
           } catch (error) {
-            appendLog(`场景图生成失败：${item.sceneName}，${String(error)}`, "error");
+            appendLog(`场景天空盒生成失败：${item.sceneName}，${String(error)}`, "error");
           }
         }
       }
@@ -1368,7 +1386,7 @@ export function ComfyPipelinePanel() {
       const sceneRefId =
         item.sceneRefId ||
         (item.sceneName
-          ? sceneIdMap.get(normalizeEntityKey(item.sceneName)) || findAssetIdByName("scene", item.sceneName)
+          ? sceneIdMap.get(normalizeEntityKey(item.sceneName)) || findAssetIdByName("skybox", item.sceneName)
           : "");
       updateShotFields(item.id, {
         characterRefs,
@@ -3191,7 +3209,7 @@ export function ComfyPipelinePanel() {
               onChange={(event) => setAutoProvisionAssets(event.target.checked)}
               type="checkbox"
             />
-            新角色/新场景自动生成并绑定
+            新角色三视图 / 新场景天空盒自动生成并绑定
           </label>
         </div>
         {storyParsePreview && (
