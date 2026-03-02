@@ -11,6 +11,7 @@ else
 fi
 
 HEALTH_URL="${BASE_URL}/api/health"
+DIAGNOSTICS_URL="${BASE_URL}/api/diagnostics"
 LOG_URL="${BASE_URL}/api/runtime-log/latest"
 STARTUP_LOG_URL="${BASE_URL}/api/startup-log/latest"
 
@@ -25,6 +26,49 @@ else
   echo "[WARN] Local Tailscale command not found"
 fi
 
+echo
+echo "[INFO] Checking diagnostics endpoint..."
+if DIAGNOSTICS_RESPONSE="$(curl -fsS --max-time 8 "${DIAGNOSTICS_URL}")"; then
+  if command -v python3 >/dev/null 2>&1; then
+    DIAG_FILE="$(mktemp)"
+    printf "%s" "${DIAGNOSTICS_RESPONSE}" > "${DIAG_FILE}"
+    python3 - <<'PY' "${DIAG_FILE}"
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text())
+print(f"[INFO] Runtime: {payload.get('runtime')}")
+print(f"[INFO] Build ID: {payload.get('build', {}).get('buildId')}")
+print(f"[INFO] Dist dir: {payload.get('build', {}).get('distDir')}")
+print(f"[INFO] Checked at: {payload.get('checkedAt')}")
+bind = payload.get('bind', {})
+print(f"[INFO] Bind URL: {bind.get('bindUrl')}")
+print(f"[INFO] Browser URL: {bind.get('browserUrl')}")
+print(f"[INFO] Listening PID: {payload.get('portStatus', {}).get('pid')}")
+
+for label in ("runtime", "startup"):
+    entry = payload.get("logs", {}).get(label, {})
+    print(f"[INFO] {label.title()} log exists: {entry.get('exists')}")
+    print(f"[INFO] {label.title()} log bytes: {entry.get('bytes')}")
+    print(f"[INFO] {label.title()} log updated: {entry.get('updatedAt')}")
+    preview = (entry.get("preview") or "").strip()
+    if preview:
+        print(f"[INFO] Latest {label} log preview:")
+        print(preview)
+    else:
+        print(f"[WARN] {label.title()} log preview is empty")
+PY
+    rm -f "${DIAG_FILE}"
+  else
+    echo "${DIAGNOSTICS_RESPONSE}"
+  fi
+  echo
+  echo "[RESULT] Remote Windows access check passed"
+  exit 0
+fi
+
+echo "[WARN] Diagnostics endpoint unavailable. Falling back to legacy endpoints."
 echo
 echo "[INFO] Checking health endpoint..."
 HEALTH_RESPONSE="$(curl -fsS --max-time 5 "${HEALTH_URL}")"
@@ -60,6 +104,5 @@ else
   echo "[INFO] Latest runtime log preview:"
   printf "%s\n" "${LOG_RESPONSE}" | sed -n '1,20p'
 fi
-
 echo
 echo "[RESULT] Remote Windows access check passed"

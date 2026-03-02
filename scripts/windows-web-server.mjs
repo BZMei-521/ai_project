@@ -171,6 +171,10 @@ async function routeRequest(req, res) {
     });
   }
 
+  if (requestUrl.pathname === "/api/diagnostics") {
+    return serveDiagnostics(res);
+  }
+
   if (requestUrl.pathname === "/api/runtime-log/latest") {
     return serveRuntimeLog(res);
   }
@@ -273,6 +277,41 @@ async function serveRuntimeLog(res) {
   res.end(text);
 }
 
+async function serveDiagnostics(res) {
+  const runtimeLog = await buildLogSummary(pipelineRuntimeLogPath, 40);
+  const startupLog = await buildLogSummary(startupLogPath, 40);
+  const portPid = await detectListeningPid(port);
+
+  return sendJson(res, 200, {
+    ok: true,
+    runtime: "windows-web-bridge",
+    checkedAt: new Date().toISOString(),
+    bind: {
+      host,
+      port,
+      openHost,
+      browserUrl: `http://${openHost}:${port}`,
+      bindUrl: `http://${host}:${port}`
+    },
+    build: runtimeBuildInfo,
+    paths: {
+      dataRoot,
+      workspaceRoot,
+      bridgeLogsRoot,
+      pipelineRuntimeLogPath,
+      startupLogPath
+    },
+    portStatus: {
+      port,
+      pid: portPid
+    },
+    logs: {
+      runtime: runtimeLog,
+      startup: startupLog
+    }
+  });
+}
+
 async function serveStartupLog(res) {
   const text = (await safeReadText(startupLogPath)) ?? "";
   res.writeHead(200, {
@@ -280,6 +319,40 @@ async function serveStartupLog(res) {
     "Cache-Control": "no-store"
   });
   res.end(text);
+}
+
+async function buildLogSummary(filePath, previewLines = 20) {
+  const stat = await safeStat(filePath);
+  const text = (await safeReadText(filePath)) ?? "";
+  const lines = text ? text.split(/\r?\n/) : [];
+  return {
+    path: filePath,
+    exists: Boolean(stat?.isFile()),
+    bytes: Buffer.byteLength(text, "utf8"),
+    updatedAt: stat?.mtime?.toISOString?.() ?? null,
+    lineCount: lines.filter((line) => line.length > 0).length,
+    preview: lines.slice(-previewLines).join("\n"),
+    text
+  };
+}
+
+async function detectListeningPid(targetPort) {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  try {
+    const { stdout } = await runCommand("cmd", ["/c", `netstat -ano | findstr :${targetPort}`]);
+    const match = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .find((line) => /LISTENING/i.test(line));
+    if (!match) return null;
+    const columns = match.split(/\s+/);
+    return columns.at(-1) || null;
+  } catch {
+    return null;
+  }
 }
 
 async function invokeCommand(cmd, args) {

@@ -14,10 +14,12 @@ Storyboard Pro Windows Web Release
 
 Default URL: http://127.0.0.1:3210
 Default data dir: %APPDATA%\StoryboardProWeb
+Remote diagnostics URL: http://<tailscale-ip>:3210/api/diagnostics
 Remote log URL: http://<tailscale-ip>:3210/api/runtime-log/latest
 Startup log URL: http://<tailscale-ip>:3210/api/startup-log/latest
 
 Mac helpers:
 - check-windows-remote-access.command <tailscale-ip> 3210
+- copy-windows-diagnostics.command <tailscale-ip> 3210
 - copy-windows-runtime-log.command <tailscale-ip> 3210
 - watch-windows-runtime-log.command <tailscale-ip> 3210

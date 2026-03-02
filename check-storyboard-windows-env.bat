@@ -83,6 +83,7 @@ if errorlevel 1 (
   if defined TAILSCALE_IPV4 (
     echo [INFO] Tailscale IPv4: !TAILSCALE_IPV4!
     echo [INFO] Remote health URL: http://!TAILSCALE_IPV4!:3210/api/health
+    echo [INFO] Remote diagnostics URL: http://!TAILSCALE_IPV4!:3210/api/diagnostics
     echo [INFO] Remote log URL: http://!TAILSCALE_IPV4!:3210/api/runtime-log/latest
   ) else (
     echo [WARN] Tailscale is installed but no IPv4 address was returned.
