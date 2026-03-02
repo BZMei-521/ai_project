@@ -2579,6 +2579,13 @@ function summarizeComfyServerLogFailure(logTail: string): string | null {
   return `服务端诊断：${normalized}`;
 }
 
+function shouldFallbackToLocalVideo(errorText: string): boolean {
+  const normalized = String(errorText || "");
+  if (!normalized) return false;
+  if (!/missing_node_type/i.test(normalized)) return false;
+  return true;
+}
+
 export async function generateShotAsset(
   settings: ComfySettings,
   shot: Shot,
@@ -2666,6 +2673,10 @@ export async function generateShotAsset(
     };
   } catch (error) {
     const baseMessage = String(error);
+    if (kind === "video" && settings.videoGenerationMode !== "local_motion" && shouldFallbackToLocalVideo(baseMessage)) {
+      options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
+      return await generateLocalCompatibleVideo(settings, shot, index, allShots);
+    }
     if (kind !== "video") throw error;
     const logTail = await readComfyServerLogTail(settings);
     const diagnosis = logTail ? summarizeComfyServerLogFailure(logTail) : null;
