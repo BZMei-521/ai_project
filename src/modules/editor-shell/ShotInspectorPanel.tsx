@@ -1,5 +1,6 @@
 import { selectSelectedShot, useStoryboardStore } from "../storyboard-core/store";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
+import { inferSkyboxReferencePlan } from "../comfy-pipeline/comfyService";
 
 export function ShotInspectorPanel() {
   const selectedShot = useStoryboardStore(selectSelectedShot);
@@ -24,6 +25,8 @@ export function ShotInspectorPanel() {
   }
 
   const previewSource = toDesktopMediaSource(selectedShot.generatedImagePath);
+  const inferredSkyboxPlan =
+    selectedSceneAsset?.type === "skybox" ? inferSkyboxReferencePlan(selectedShot) : null;
 
   return (
     <section className="panel inspector-panel">
@@ -104,6 +107,21 @@ export function ShotInspectorPanel() {
         </label>
         {selectedSceneAsset?.type === "skybox" && (
           <>
+            {inferredSkyboxPlan && (
+              <div className="shot-inspector-skybox-plan">
+                <small>
+                  自动推断：
+                  主面 {inferredSkyboxPlan.primaryFace}；
+                  使用 {inferredSkyboxPlan.faces.join(" + ")}；
+                  权重{" "}
+                  {inferredSkyboxPlan.faces
+                    .map((face) => `${face}:${(inferredSkyboxPlan.weights[face] ?? 1).toFixed(2)}`)
+                    .join(" / ")}
+                  。
+                  {inferredSkyboxPlan.manualFaces || inferredSkyboxPlan.manualWeights ? "当前镜头存在手动覆盖。" : "当前镜头使用系统自动推断。"}
+                </small>
+              </div>
+            )}
             <label>
               主面向（兼容单面）
               <select

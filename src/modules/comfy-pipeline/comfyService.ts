@@ -929,6 +929,36 @@ function inferAutoSkyboxProfile(shot: Shot): { faces: SkyboxFace[]; weights: Par
   return { faces, weights };
 }
 
+export function inferSkyboxReferencePlan(shot: Shot): {
+  primaryFace: SkyboxFace;
+  faces: SkyboxFace[];
+  weights: Partial<Record<SkyboxFace, number>>;
+  manualFaces: boolean;
+  manualWeights: boolean;
+} {
+  const primaryFace = inferSkyboxFaceFromShot(shot);
+  const autoProfile = inferAutoSkyboxProfile(shot);
+  const manualFaces = Array.isArray(shot.skyboxFaces) && shot.skyboxFaces.length > 0;
+  const manualWeights = Boolean(
+    shot.skyboxFaceWeights &&
+      Object.values(shot.skyboxFaceWeights).some((value) => typeof value === "number" && Number.isFinite(value))
+  );
+  const faces = manualFaces ? inferSkyboxFacesFromShot(shot) : autoProfile.faces;
+  const weights: Partial<Record<SkyboxFace, number>> = {};
+  for (const face of faces) {
+    weights[face] = manualWeights
+      ? skyboxFaceWeight(shot, face)
+      : autoProfile.weights[face] ?? skyboxFaceWeight(shot, face);
+  }
+  return {
+    primaryFace,
+    faces,
+    weights,
+    manualFaces,
+    manualWeights
+  };
+}
+
 function inferSkyboxFacesFromShot(shot: Shot): SkyboxFace[] {
   const manual = (shot.skyboxFaces ?? []).filter(
     (face): face is SkyboxFace =>
