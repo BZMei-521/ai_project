@@ -66,6 +66,9 @@ type ParsedScriptShot = {
   dialogue: string;
   notes: string;
   tags: string[];
+  character_names?: string[];
+  scene_name?: string;
+  scene_prompt?: string;
 };
 
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
@@ -238,6 +241,122 @@ function splitDialogueTurns(raw: string): Array<{ speaker: string; text: string 
     .filter((item) => item.text.length > 0);
 }
 
+function normalizeEntityKey(value: string): string {
+  return value.replace(/\s+/g, "").replace(/[【】[\]（）()《》"'“”‘’]/g, "").trim().toLowerCase();
+}
+
+function uniqueEntities(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = normalizeEntityKey(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(trimmed);
+  }
+  return output;
+}
+
+const CHARACTER_ROLE_HINTS = [
+  "女主",
+  "男主",
+  "主角",
+  "女孩",
+  "男孩",
+  "女人",
+  "男人",
+  "老人",
+  "孩子",
+  "母亲",
+  "父亲",
+  "警察",
+  "医生",
+  "司机",
+  "服务员",
+  "老板",
+  "记者",
+  "老师",
+  "学生"
+];
+
+function extractCharacterCandidates(text: string): string[] {
+  const explicitCandidates: string[] = [];
+  const roleCandidates: string[] = [];
+  const dialogueTurns = splitDialogueTurns(text);
+  for (const item of dialogueTurns) {
+    if (item.speaker && !/旁白|内心|心声|独白|narration|voice[- ]?over|vo/i.test(item.speaker)) {
+      explicitCandidates.push(item.speaker);
+    }
+  }
+  for (const label of CHARACTER_ROLE_HINTS) {
+    if (text.includes(label)) roleCandidates.push(label);
+  }
+  const nameMatches = text.match(/[\u4e00-\u9fa5]{2,4}(?=说|问|答|看向|转身|走向|站在|坐在)/g) ?? [];
+  explicitCandidates.push(...nameMatches);
+  const normalizedExplicit = uniqueEntities(explicitCandidates);
+  if (normalizedExplicit.length > 0) return normalizedExplicit;
+  return uniqueEntities(roleCandidates);
+}
+
+function canonicalAssetName(type: "character" | "scene" | "skybox", value: string): string {
+  let normalized = normalizeEntityKey(value);
+  if (type === "character") {
+    normalized = normalized
+      .replace(/^(角色|人物|主角)/, "")
+      .replace(/(角色|人物|主角|形象|设定图|三视图)$/g, "");
+  } else {
+    normalized = normalized
+      .replace(/^(场景|环境|地点)/, "")
+      .replace(/(场景|场景图|环境图|设定图)$/g, "");
+  }
+  return normalized.trim();
+}
+
+function computeAssetNameScore(type: "character" | "scene" | "skybox", input: string, candidate: string): number {
+  const a = canonicalAssetName(type, input);
+  const b = canonicalAssetName(type, candidate);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) {
+    return Math.min(a.length, b.length) / Math.max(a.length, b.length);
+  }
+  const charsA = new Set(a.split(""));
+  const charsB = new Set(b.split(""));
+  let overlap = 0;
+  for (const char of charsA) {
+    if (charsB.has(char)) overlap += 1;
+  }
+  return overlap / Math.max(charsA.size, charsB.size);
+}
+
+function inferSceneName(text: string): string {
+  const patterns = [
+    /(?:在|来到|走到|进入|站在)([^，。；\n]{2,16}?(?:河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库))/,
+    /([^，。；\n]{2,16}?(?:河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库))/,
+    /(?:外景|室内)[：: ]?([^，。；\n]{2,16})/
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const value = match?.[1]?.trim();
+    if (value) return value;
+  }
+  if (/河边/.test(text)) return "河边";
+  if (/走廊/.test(text)) return "走廊";
+  if (/门厅/.test(text)) return "门厅";
+  if (/房间|卧室|客厅/.test(text)) return "室内房间";
+  if (/街道|巷子/.test(text)) return "街道";
+  if (/庭院/.test(text)) return "庭院";
+  return "";
+}
+
+function buildScenePrompt(text: string, sceneName: string): string {
+  const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
+  const sceneLabel = sceneName.trim() || "该场景";
+  return `${sceneLabel} 场景设定图，无人物，环境一致，材质统一，空间关系清晰。${clean}`;
+}
+
 function buildStoryShotPrompt(text: string, scale: string): string {
   const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
   return `${clean}。电影分镜，${scale}，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
@@ -285,6 +404,9 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
   const shots: ParsedScriptShot[] = [];
   let shotIndex = 1;
   for (const block of blocks) {
+    const characterNames = extractCharacterCandidates(block.body);
+    const sceneName = inferSceneName(block.body);
+    const scenePrompt = sceneName ? buildScenePrompt(block.body, sceneName) : "";
     const dialogueLines = splitDialogueTurns(block.body);
     const dialogue = dialogueLines.map((item) => (item.speaker ? `${item.speaker}: ${item.text}` : item.text)).join("\n");
     const chunks = chunkNarrationForShots(block.body, dialogue);
@@ -305,7 +427,10 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
         duration_sec: inferDurationSec(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : ""),
         dialogue: shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : "",
         notes: normalizeStoryInput(chunk),
-        tags: inferShotTags(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : "")
+        tags: inferShotTags(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : ""),
+        character_names: characterNames,
+        scene_name: sceneName || undefined,
+        scene_prompt: scenePrompt || undefined
       });
       shotIndex += 1;
     });
@@ -326,7 +451,10 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
           duration_sec: inferDurationSec("", text),
           dialogue: item.speaker ? `${item.speaker}: ${text}` : text,
           notes: normalizeStoryInput(narrationContext),
-          tags: inferShotTags(narrationContext, text)
+          tags: inferShotTags(narrationContext, text),
+          character_names: uniqueEntities([item.speaker, ...characterNames]),
+          scene_name: sceneName || undefined,
+          scene_prompt: scenePrompt || undefined
         });
         shotIndex += 1;
       });
@@ -721,12 +849,14 @@ export function ComfyPipelinePanel() {
   const currentSequenceId = useStoryboardStore((state) => state.currentSequenceId);
   const replaceShotsForCurrentSequence = useStoryboardStore((state) => state.replaceShotsForCurrentSequence);
   const updateShotFields = useStoryboardStore((state) => state.updateShotFields);
+  const addAsset = useStoryboardStore((state) => state.addAsset);
   const setShotDuration = useStoryboardStore((state) => state.setShotDuration);
   const upsertAudioTrack = useStoryboardStore((state) => state.upsertAudioTrack);
   const updateAudioTrack = useStoryboardStore((state) => state.updateAudioTrack);
   const removeAudioTrack = useStoryboardStore((state) => state.removeAudioTrack);
   const [storyText, setStoryText] = useState("");
   const [scriptText, setScriptText] = useState("");
+  const [autoProvisionAssets, setAutoProvisionAssets] = useState(true);
   const [phase, setPhase] = useState<GenerationPhase>("idle");
   const [pipelineState, setPipelineState] = useState("空闲");
   const [runAllActive, setRunAllActive] = useState(false);
@@ -853,6 +983,124 @@ export function ComfyPipelinePanel() {
     setLogs((previous) => [...previous.slice(-499), item]);
   };
 
+  type NormalizedImportedShot = {
+    id: string;
+    title: string;
+    prompt: string;
+    negativePrompt: string;
+    videoPrompt: string;
+    videoMode: "auto" | "single_frame" | "first_last_frame";
+    videoStartFramePath: string;
+    videoEndFramePath: string;
+    skyboxFace: "auto" | "front" | "right" | "back" | "left" | "up" | "down";
+    skyboxFaces: Array<"front" | "right" | "back" | "left" | "up" | "down">;
+    skyboxFaceWeights: Record<string, number>;
+    durationSec?: number;
+    durationFrames?: number;
+    seed?: number;
+    characterRefs: string[];
+    sceneRefId: string;
+    dialogue: string;
+    notes: string;
+    tags: string[];
+    characterNames: string[];
+    sceneName: string;
+    scenePrompt: string;
+  };
+
+  const normalizeImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] => {
+    const list = Array.isArray(parsed.shots) ? parsed.shots : [];
+    return list.map((item, index) => ({
+      id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
+      title: String(item.title ?? `镜头 ${index + 1}`),
+      prompt: String(item.prompt ?? ""),
+      negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
+      videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
+      videoMode:
+        item.video_mode === "single_frame" || item.videoMode === "single_frame"
+          ? "single_frame"
+          : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
+            ? "first_last_frame"
+            : "auto",
+      videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
+      videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
+      skyboxFace:
+        item.skybox_face === "front" ||
+        item.skybox_face === "right" ||
+        item.skybox_face === "back" ||
+        item.skybox_face === "left" ||
+        item.skybox_face === "up" ||
+        item.skybox_face === "down" ||
+        item.skybox_face === "auto"
+          ? item.skybox_face
+          : item.skyboxFace === "front" ||
+              item.skyboxFace === "right" ||
+              item.skyboxFace === "back" ||
+              item.skyboxFace === "left" ||
+              item.skyboxFace === "up" ||
+              item.skyboxFace === "down" ||
+              item.skyboxFace === "auto"
+            ? item.skyboxFace
+            : "auto",
+      skyboxFaces: Array.isArray(item.skybox_faces)
+        ? item.skybox_faces.filter(
+            (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
+              face === "front" ||
+              face === "right" ||
+              face === "back" ||
+              face === "left" ||
+              face === "up" ||
+              face === "down"
+          )
+        : Array.isArray(item.skyboxFaces)
+          ? item.skyboxFaces.filter(
+              (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
+                face === "front" ||
+                face === "right" ||
+                face === "back" ||
+                face === "left" ||
+                face === "up" ||
+                face === "down"
+            )
+          : [],
+      skyboxFaceWeights:
+        item.skybox_face_weights && typeof item.skybox_face_weights === "object"
+          ? (item.skybox_face_weights as Record<string, number>)
+          : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
+            ? (item.skyboxFaceWeights as Record<string, number>)
+            : {},
+      durationSec:
+        typeof item.duration_sec === "number"
+          ? item.duration_sec
+          : typeof item.durationSec === "number"
+            ? item.durationSec
+            : undefined,
+      durationFrames:
+        typeof item.duration_frames === "number"
+          ? item.duration_frames
+          : typeof item.durationFrames === "number"
+            ? item.durationFrames
+            : undefined,
+      seed: typeof item.seed === "number" ? item.seed : undefined,
+      characterRefs: Array.isArray(item.character_refs)
+        ? (item.character_refs as string[])
+        : Array.isArray(item.characterRefs)
+          ? (item.characterRefs as string[])
+          : [],
+      sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
+      dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
+      notes: typeof item.notes === "string" ? item.notes : "",
+      tags: Array.isArray(item.tags) ? (item.tags as string[]) : [],
+      characterNames: Array.isArray(item.character_names)
+        ? uniqueEntities((item.character_names as string[]).map((value) => String(value)))
+        : Array.isArray(item.characterNames)
+          ? uniqueEntities((item.characterNames as string[]).map((value) => String(value)))
+          : [],
+      sceneName: String(item.scene_name ?? item.sceneName ?? "").trim(),
+      scenePrompt: String(item.scene_prompt ?? item.scenePrompt ?? "").trim()
+    }));
+  };
+
   useEffect(() => {
     if (!isWebBridgeRuntime()) return;
     const timer = window.setTimeout(() => {
@@ -944,120 +1192,247 @@ export function ComfyPipelinePanel() {
     return map;
   }, [audioTracks]);
 
+  const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = ""): Shot => ({
+    id,
+    sequenceId: currentSequenceId,
+    order: 1,
+    title,
+    durationFrames: Math.max(1, project.fps || 24),
+    dialogue: "",
+    notes: "",
+    tags: [],
+    storyPrompt: prompt,
+    negativePrompt,
+    videoPrompt: "",
+    videoMode: "single_frame",
+    characterRefs: [],
+    sceneRefId: ""
+  });
+
+  const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
+    const viewLabel = view === "front" ? "正视图" : view === "side" ? "侧视图" : "背视图";
+    return `角色设定三视图，${viewLabel}，单人全身，角色：${name}。${normalizeStoryInput(context)}。中性纯净背景，人物完整无遮挡，服装统一，脸部与身体比例稳定，设定图风格，写实电影美术。`;
+  };
+
+  const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
+    const prompt = scenePrompt.trim() || `${sceneName} 场景设定图`;
+    return `${prompt}。无人物，空间关系清晰，环境一致，材质稳定，光影明确，场景设定图，写实电影美术。`;
+  };
+
+  const findAssetIdByName = (type: "character" | "scene" | "skybox", name: string) => {
+    const sourceName = name.trim();
+    if (!sourceName) return "";
+    const allAssets = useStoryboardStore.getState().assets.filter((asset) => asset.type === type);
+    const exact = allAssets.find((asset) => canonicalAssetName(type, asset.name) === canonicalAssetName(type, sourceName));
+    if (exact) return exact.id;
+    const scored = allAssets
+      .map((asset) => ({
+        id: asset.id,
+        score: computeAssetNameScore(type, sourceName, asset.name)
+      }))
+      .sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    const threshold = type === "character" ? 0.72 : 0.58;
+    return best && best.score >= threshold ? best.id : "";
+  };
+
+  const createCharacterAssetIfMissing = async (runtimeSettings: ComfySettings, name: string, context: string) => {
+    const existingId = findAssetIdByName("character", name);
+    if (existingId) return existingId;
+    const safeContext = context.trim() || `${name} 的角色设定`;
+    appendLog(`开始生成角色三视图：${name}`);
+    const front = await generateShotAsset(
+      runtimeSettings,
+      makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, safeContext, "front")),
+      0,
+      "image",
+      [],
+      []
+    );
+    const side = await generateShotAsset(
+      runtimeSettings,
+      makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, safeContext, "side")),
+      0,
+      "image",
+      [],
+      []
+    );
+    const back = await generateShotAsset(
+      runtimeSettings,
+      makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, safeContext, "back")),
+      0,
+      "image",
+      [],
+      []
+    );
+    const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
+    addAsset({
+      type: "character",
+      name,
+      filePath: front.localPath || front.previewUrl,
+      characterFrontPath: front.localPath || front.previewUrl,
+      characterSidePath: side.localPath || side.previewUrl,
+      characterBackPath: back.localPath || back.previewUrl
+    });
+    const created =
+      useStoryboardStore
+        .getState()
+        .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "character" && normalizeEntityKey(asset.name) === normalizeEntityKey(name))
+        ?.id ?? findAssetIdByName("character", name);
+    appendLog(`角色三视图生成成功：${name}`);
+    return created;
+  };
+
+  const createSceneAssetIfMissing = async (runtimeSettings: ComfySettings, sceneName: string, scenePrompt: string) => {
+    const existingId = findAssetIdByName("scene", sceneName);
+    if (existingId) return existingId;
+    appendLog(`开始生成场景图：${sceneName}`);
+    const output = await generateShotAsset(
+      runtimeSettings,
+      makeAssetGenerationShot(`asset_scene_${sceneName}`, sceneName, buildSceneImagePrompt(sceneName, scenePrompt)),
+      0,
+      "image",
+      [],
+      []
+    );
+    const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
+    addAsset({
+      type: "scene",
+      name: sceneName,
+      filePath: output.localPath || output.previewUrl
+    });
+    const created =
+      useStoryboardStore
+        .getState()
+        .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "scene" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName))
+        ?.id ?? findAssetIdByName("scene", sceneName);
+    appendLog(`场景图生成成功：${sceneName}`);
+    return created;
+  };
+
+  const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
+    if (!autoProvisionAssets || items.length === 0) return;
+    if (!(await ensureComfyReady())) {
+      appendLog("自动资产生成跳过：ComfyUI 未连接", "error");
+      return;
+    }
+    const characterIdMap = new Map<string, string>();
+    const sceneIdMap = new Map<string, string>();
+
+    for (const item of items) {
+      for (const name of item.characterNames) {
+        const key = normalizeEntityKey(name);
+        if (!key || characterIdMap.has(key)) continue;
+        try {
+          const context = [item.prompt, item.notes, item.dialogue].filter(Boolean).join(" ");
+          const reusedId = findAssetIdByName("character", name);
+          if (reusedId) {
+            characterIdMap.set(key, reusedId);
+            appendLog(`复用已有角色资产：${name}`);
+            continue;
+          }
+          const assetId = await createCharacterAssetIfMissing(runtimeSettings, name, context);
+          if (assetId) characterIdMap.set(key, assetId);
+        } catch (error) {
+          appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
+        }
+      }
+      if (item.sceneName) {
+        const key = normalizeEntityKey(item.sceneName);
+        if (!sceneIdMap.has(key)) {
+          try {
+            const reusedId = findAssetIdByName("scene", item.sceneName);
+            if (reusedId) {
+              sceneIdMap.set(key, reusedId);
+              appendLog(`复用已有场景资产：${item.sceneName}`);
+              continue;
+            }
+            const assetId = await createSceneAssetIfMissing(runtimeSettings, item.sceneName, item.scenePrompt || item.prompt || item.notes);
+            if (assetId) sceneIdMap.set(key, assetId);
+          } catch (error) {
+            appendLog(`场景图生成失败：${item.sceneName}，${String(error)}`, "error");
+          }
+        }
+      }
+    }
+
+    for (const item of items) {
+      const characterRefs = uniqueEntities(
+        [
+          ...item.characterRefs,
+          ...item.characterNames
+            .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findAssetIdByName("character", name))
+            .filter((value): value is string => Boolean(value))
+        ].filter(Boolean)
+      );
+      const sceneRefId =
+        item.sceneRefId ||
+        (item.sceneName
+          ? sceneIdMap.get(normalizeEntityKey(item.sceneName)) || findAssetIdByName("scene", item.sceneName)
+          : "");
+      updateShotFields(item.id, {
+        characterRefs,
+        sceneRefId
+      });
+    }
+    appendLog("自动资产生成与镜头绑定完成");
+  };
+
   const applyImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }) => {
-    const list = Array.isArray(parsed.shots) ? parsed.shots : [];
-    if (list.length === 0) {
+    const normalizedItems = normalizeImportedShots(parsed);
+    if (normalizedItems.length === 0) {
       throw new Error("脚本格式无效：缺少 shots 数组");
     }
     replaceShotsForCurrentSequence(
-      list.map((item, index) => ({
-        id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
-        title: String(item.title ?? `镜头 ${index + 1}`),
-        prompt: String(item.prompt ?? ""),
-        negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
-        videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
-        videoMode:
-          item.video_mode === "single_frame" || item.videoMode === "single_frame"
-            ? "single_frame"
-            : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
-              ? "first_last_frame"
-              : "auto",
-        videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
-        videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
-        skyboxFace:
-          item.skybox_face === "front" ||
-          item.skybox_face === "right" ||
-          item.skybox_face === "back" ||
-          item.skybox_face === "left" ||
-          item.skybox_face === "up" ||
-          item.skybox_face === "down" ||
-          item.skybox_face === "auto"
-            ? item.skybox_face
-            : item.skyboxFace === "front" ||
-                item.skyboxFace === "right" ||
-                item.skyboxFace === "back" ||
-                item.skyboxFace === "left" ||
-                item.skyboxFace === "up" ||
-                item.skyboxFace === "down" ||
-                item.skyboxFace === "auto"
-              ? item.skyboxFace
-              : "auto",
-        skyboxFaces: Array.isArray(item.skybox_faces)
-          ? item.skybox_faces.filter(
-              (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
-                face === "front" ||
-                face === "right" ||
-                face === "back" ||
-                face === "left" ||
-                face === "up" ||
-                face === "down"
-            )
-          : Array.isArray(item.skyboxFaces)
-            ? item.skyboxFaces.filter(
-                (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
-                  face === "front" ||
-                  face === "right" ||
-                  face === "back" ||
-                  face === "left" ||
-                  face === "up" ||
-                  face === "down"
-              )
-            : [],
-        skyboxFaceWeights:
-          item.skybox_face_weights && typeof item.skybox_face_weights === "object"
-            ? (item.skybox_face_weights as Record<string, number>)
-            : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
-              ? (item.skyboxFaceWeights as Record<string, number>)
-              : {},
-        durationSec:
-          typeof item.duration_sec === "number"
-            ? item.duration_sec
-            : typeof item.durationSec === "number"
-              ? item.durationSec
-              : undefined,
-        durationFrames:
-          typeof item.duration_frames === "number"
-            ? item.duration_frames
-            : typeof item.durationFrames === "number"
-              ? item.durationFrames
-              : undefined,
-        seed: typeof item.seed === "number" ? item.seed : undefined,
-        characterRefs: Array.isArray(item.character_refs)
-          ? (item.character_refs as string[])
-          : Array.isArray(item.characterRefs)
-            ? (item.characterRefs as string[])
-            : [],
-        sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
-        dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
-        notes: typeof item.notes === "string" ? item.notes : "",
-        tags: Array.isArray(item.tags) ? (item.tags as string[]) : []
+      normalizedItems.map((item) => ({
+        id: item.id,
+        title: item.title,
+        prompt: item.prompt,
+        negativePrompt: item.negativePrompt,
+        videoPrompt: item.videoPrompt,
+        videoMode: item.videoMode,
+        videoStartFramePath: item.videoStartFramePath,
+        videoEndFramePath: item.videoEndFramePath,
+        skyboxFace: item.skyboxFace,
+        skyboxFaces: item.skyboxFaces,
+        skyboxFaceWeights: item.skyboxFaceWeights,
+        durationSec: item.durationSec,
+        durationFrames: item.durationFrames,
+        seed: item.seed,
+        characterRefs: item.characterRefs,
+        sceneRefId: item.sceneRefId,
+        dialogue: item.dialogue,
+        notes: item.notes,
+        tags: item.tags
       }))
     );
-    return list.length;
+    return normalizedItems;
   };
 
-  const onImportScript = () => {
+  const onImportScript = async () => {
     try {
       const parsed = JSON.parse(scriptText) as { shots?: Array<Record<string, unknown>> };
-      const count = applyImportedShots(parsed);
-      pushToast(`已导入 ${count} 个镜头`, "success");
-      appendLog(`导入镜头脚本成功，共 ${count} 条`);
+      const items = applyImportedShots(parsed);
+      pushToast(`已导入 ${items.length} 个镜头`, "success");
+      appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
+      await autoProvisionAssetsForImportedShots(items, settings);
     } catch (error) {
       pushToast(`导入失败：${String(error)}`, "error");
       appendLog(`导入镜头脚本失败：${String(error)}`, "error");
     }
   };
 
-  const onParseStory = (shouldImport = false) => {
+  const onParseStory = async (shouldImport = false) => {
     try {
       const parsed = parseStoryToShotScript(storyText);
       const formatted = JSON.stringify(parsed, null, 2);
       setScriptText(formatted);
       appendLog(`故事解析成功，共生成 ${parsed.shots.length} 条镜头脚本`);
       if (shouldImport) {
-        const count = applyImportedShots(parsed as { shots?: Array<Record<string, unknown>> });
-        pushToast(`故事已解析并导入 ${count} 个镜头`, "success");
-        appendLog(`故事解析并导入成功，共 ${count} 条`);
+        const items = applyImportedShots(parsed as { shots?: Array<Record<string, unknown>> });
+        pushToast(`故事已解析并导入 ${items.length} 个镜头`, "success");
+        appendLog(`故事解析并导入成功，共 ${items.length} 条`);
+        await autoProvisionAssetsForImportedShots(items, settings);
       } else {
         pushToast(`故事解析成功，共 ${parsed.shots.length} 个镜头`, "success");
       }
@@ -2804,12 +3179,20 @@ export function ComfyPipelinePanel() {
           />
         </label>
         <div className="comfy-primary-actions">
-          <button className="btn-ghost" onClick={() => onParseStory(false)} type="button">
+          <button className="btn-ghost" onClick={() => void onParseStory(false)} type="button">
             解析故事为镜头脚本
           </button>
-          <button className="btn-ghost" onClick={() => onParseStory(true)} type="button">
+          <button className="btn-ghost" onClick={() => void onParseStory(true)} type="button">
             解析并直接导入
           </button>
+          <label className="timeline-snap-toggle">
+            <input
+              checked={autoProvisionAssets}
+              onChange={(event) => setAutoProvisionAssets(event.target.checked)}
+              type="checkbox"
+            />
+            新角色/新场景自动生成并绑定
+          </label>
         </div>
         {storyParsePreview && (
           <small>
@@ -2826,7 +3209,7 @@ export function ComfyPipelinePanel() {
           />
         </label>
         <div className="comfy-primary-actions">
-          <button className="btn-ghost" onClick={onImportScript} type="button">导入镜头脚本</button>
+          <button className="btn-ghost" onClick={() => void onImportScript()} type="button">导入镜头脚本</button>
           <button className="btn-primary comfy-action-main" disabled={phase === "running" || runAllActive} onClick={() => void onGenerateAll()} type="button">
             一键生成整片
           </button>
