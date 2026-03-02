@@ -12,6 +12,7 @@ fi
 
 HEALTH_URL="${BASE_URL}/api/health"
 LOG_URL="${BASE_URL}/api/runtime-log/latest"
+STARTUP_LOG_URL="${BASE_URL}/api/startup-log/latest"
 
 echo "[INFO] Checking remote Windows access"
 echo "[INFO] Base URL: ${BASE_URL}"
@@ -35,6 +36,20 @@ LOG_RESPONSE="$(curl -fsS --max-time 5 "${LOG_URL}")"
 
 if [[ -z "${LOG_RESPONSE}" ]]; then
   echo "[WARN] Runtime log is currently empty"
+  echo "[INFO] Checking startup log endpoint..."
+  STARTUP_LOG_RESPONSE="$(curl -fsS --max-time 5 "${STARTUP_LOG_URL}")"
+  if [[ -z "${STARTUP_LOG_RESPONSE}" ]]; then
+    echo "[WARN] Startup log is currently empty"
+  else
+    if command -v python3 >/dev/null 2>&1; then
+      STARTUP_LOG_LENGTH="$(printf "%s" "${STARTUP_LOG_RESPONSE}" | python3 -c 'import sys; print(len(sys.stdin.read()))')"
+    else
+      STARTUP_LOG_LENGTH="$(printf "%s" "${STARTUP_LOG_RESPONSE}" | wc -c | tr -d ' ')"
+    fi
+    echo "[INFO] Startup log bytes: ${STARTUP_LOG_LENGTH}"
+    echo "[INFO] Latest startup log preview:"
+    printf "%s\n" "${STARTUP_LOG_RESPONSE}" | sed -n '1,20p'
+  fi
 else
   if command -v python3 >/dev/null 2>&1; then
     LOG_LENGTH="$(printf "%s" "${LOG_RESPONSE}" | python3 -c 'import sys; print(len(sys.stdin.read()))')"

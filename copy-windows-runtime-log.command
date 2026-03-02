@@ -11,12 +11,20 @@ else
 fi
 
 URL="${BASE_URL}/api/runtime-log/latest"
+STARTUP_URL="${BASE_URL}/api/startup-log/latest"
 
 CONTENT="$(curl -fsS --max-time 5 "$URL")"
 if [[ -z "$CONTENT" ]]; then
-  echo "[WARN] Windows runtime log is empty at ${URL}"
-  echo "[WARN] Trigger an action in the Windows UI first, for example: Detect Connection or Generate."
-  exit 2
+  STARTUP_CONTENT="$(curl -fsS --max-time 5 "$STARTUP_URL")"
+  if [[ -z "$STARTUP_CONTENT" ]]; then
+    echo "[WARN] Windows runtime log is empty at ${URL}"
+    echo "[WARN] Windows startup log is also empty at ${STARTUP_URL}"
+    echo "[WARN] Trigger an action in the Windows UI first, for example: Detect Connection or Generate."
+    exit 2
+  fi
+  printf "%s" "$STARTUP_CONTENT" | pbcopy
+  echo "[INFO] Runtime log is empty. Copied Windows startup log from ${STARTUP_URL} to clipboard"
+  exit 0
 fi
 
 printf "%s" "$CONTENT" | pbcopy

@@ -28,6 +28,7 @@ const workspaceRoot = path.join(dataRoot, "workspace");
 const currentProjectMarker = path.join(dataRoot, "current-project.txt");
 const bridgeLogsRoot = path.join(dataRoot, "logs");
 const pipelineRuntimeLogPath = path.join(bridgeLogsRoot, "pipeline-runtime-latest.log");
+const startupLogPath = path.join(projectRoot, "logs", "windows-web-latest.log");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".gif"]);
 const AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a", ".opus"]);
@@ -174,6 +175,10 @@ async function routeRequest(req, res) {
     return serveRuntimeLog(res);
   }
 
+  if (requestUrl.pathname === "/api/startup-log/latest") {
+    return serveStartupLog(res);
+  }
+
   if (requestUrl.pathname === "/api/local-file") {
     return serveLocalFile(requestUrl, res);
   }
@@ -261,6 +266,15 @@ async function serveLocalFile(requestUrl, res) {
 
 async function serveRuntimeLog(res) {
   const text = (await safeReadText(pipelineRuntimeLogPath)) ?? "";
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  res.end(text);
+}
+
+async function serveStartupLog(res) {
+  const text = (await safeReadText(startupLogPath)) ?? "";
   res.writeHead(200, {
     "Content-Type": "text/plain; charset=utf-8",
     "Cache-Control": "no-store"
