@@ -220,6 +220,24 @@ function chunkNarrationForShots(text: string, dialogue: string): string[] {
   return chunks.filter((item) => item.trim().length > 0);
 }
 
+function splitDialogueTurns(raw: string): Array<{ speaker: string; text: string }> {
+  return extractDialogueLines(raw)
+    .map((line) => {
+      const parsed = matchSpeakerLine(line);
+      if (parsed) {
+        return {
+          speaker: parsed.speaker.trim(),
+          text: parsed.text.trim()
+        };
+      }
+      return {
+        speaker: "",
+        text: line.trim()
+      };
+    })
+    .filter((item) => item.text.length > 0);
+}
+
 function buildStoryShotPrompt(text: string, scale: string): string {
   const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
   return `${clean}。电影分镜，${scale}，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
@@ -232,6 +250,33 @@ function buildStoryVideoPrompt(text: string): string {
   return `${normalizeStoryInput(text)}。主体有轻微呼吸感动作，镜头稳定。`;
 }
 
+function inferVideoModeForStory(text: string, dialogue: string): "auto" | "single_frame" | "first_last_frame" {
+  const combined = `${text} ${dialogue}`.trim();
+  if (/从.+到|逐渐|慢慢|转身|起身|坐下|走向|走到|靠近|远离|推门|开门|关门|拿起|放下|抬手|落下/.test(combined)) {
+    return "first_last_frame";
+  }
+  if (dialogue.trim() || /注视|停顿|沉默|凝视|特写|近景|反应/.test(combined)) {
+    return "single_frame";
+  }
+  return "auto";
+}
+
+function inferDialogueShotTitle(speaker: string, index: number, total: number): string {
+  if (speaker) {
+    if (total === 1) return `${speaker} 对白`;
+    if (index === 0) return `${speaker} 起话`;
+    if (index === total - 1) return `${speaker} 收尾`;
+    return `${speaker} 反应`;
+  }
+  return total === 1 ? "对白镜头" : `对白镜头 ${index + 1}`;
+}
+
+function buildDialogueShotPrompt(context: string, speaker: string, line: string): string {
+  const speakerPart = speaker ? `角色 ${speaker}` : "角色";
+  const normalizedContext = normalizeStoryInput(context).replace(/\n+/g, " ").trim();
+  return `${normalizedContext}。${speakerPart} 说：“${line}”。电影对白分镜，中近景或近景，人物表情清晰，视线关系明确，镜头稳定，光影自然。`;
+}
+
 function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
   const blocks = splitStoryBlocks(raw);
   if (blocks.length === 0) {
@@ -240,8 +285,11 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
   const shots: ParsedScriptShot[] = [];
   let shotIndex = 1;
   for (const block of blocks) {
-    const dialogue = extractDialogueLines(block.body).join("\n");
+    const dialogueLines = splitDialogueTurns(block.body);
+    const dialogue = dialogueLines.map((item) => (item.speaker ? `${item.speaker}: ${item.text}` : item.text)).join("\n");
     const chunks = chunkNarrationForShots(block.body, dialogue);
+    const shouldSplitDialogueShots = dialogueLines.length >= 2;
+
     chunks.forEach((chunk, chunkIndex) => {
       const scale = inferShotScale(chunk, chunkIndex, chunks.length);
       const title = inferShotTitle(chunk, block.heading, chunkIndex, chunks.length);
@@ -253,14 +301,36 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
         prompt,
         negative_prompt: "",
         video_prompt: videoPrompt,
-        video_mode: "auto",
-        duration_sec: inferDurationSec(chunk, chunkIndex === 0 ? dialogue : ""),
-        dialogue: chunkIndex === 0 ? dialogue : "",
+        video_mode: inferVideoModeForStory(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : ""),
+        duration_sec: inferDurationSec(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : ""),
+        dialogue: shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : "",
         notes: normalizeStoryInput(chunk),
-        tags: inferShotTags(chunk, chunkIndex === 0 ? dialogue : "")
+        tags: inferShotTags(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : "")
       });
       shotIndex += 1;
     });
+
+    if (shouldSplitDialogueShots) {
+      const narrationContext = stripDialogueLines(block.body) || block.body;
+      dialogueLines.forEach((item, dialogueIndex) => {
+        const text = item.text.trim();
+        const title = inferDialogueShotTitle(item.speaker, dialogueIndex, dialogueLines.length);
+        const prompt = buildDialogueShotPrompt(narrationContext, item.speaker, text);
+        shots.push({
+          id: `story_shot_${shotIndex}`,
+          title,
+          prompt,
+          negative_prompt: "",
+          video_prompt: `${normalizeStoryInput(text)}。对白镜头，人物保持轻微表情和视线变化。`,
+          video_mode: inferVideoModeForStory("", text),
+          duration_sec: inferDurationSec("", text),
+          dialogue: item.speaker ? `${item.speaker}: ${text}` : text,
+          notes: normalizeStoryInput(narrationContext),
+          tags: inferShotTags(narrationContext, text)
+        });
+        shotIndex += 1;
+      });
+    }
   }
   return { shots };
 }
@@ -677,6 +747,21 @@ export function ComfyPipelinePanel() {
   const [lastDependencyHints, setLastDependencyHints] = useState<WorkflowDependencyHint[]>([]);
   const [lastModelChecklist, setLastModelChecklist] = useState("");
   const checkingRef = useRef(false);
+
+  const storyParsePreview = useMemo(() => {
+    const text = storyText.trim();
+    if (!text) return null;
+    try {
+      const parsed = parseStoryToShotScript(text);
+      const totalSec = parsed.shots.reduce((sum, item) => sum + Number(item.duration_sec || 0), 0);
+      return {
+        count: parsed.shots.length,
+        totalSec
+      };
+    } catch {
+      return null;
+    }
+  }, [storyText]);
 
   const scopedShots = useMemo(
     () =>
@@ -2726,6 +2811,11 @@ export function ComfyPipelinePanel() {
             解析并直接导入
           </button>
         </div>
+        {storyParsePreview && (
+          <small>
+            预计解析为 {storyParsePreview.count} 个镜头，预估总时长 {storyParsePreview.totalSec.toFixed(1)} 秒
+          </small>
+        )}
         <label className="comfy-script-block">
           已分镜脚本（JSON）
           <textarea
