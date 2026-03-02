@@ -9,8 +9,8 @@ Storyboard Pro Windows Web Release
 7. You can still run update-storyboard-windows.bat manually if you only want to rebuild dist
 8. Double-click check-storyboard-windows-env.bat if you want a preflight check
 9. Both start-storyboard-windows.bat and start-storyboard-windows-debug.bat write startup logs to logs\windows-web-latest.log
-10. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\windows-web-latest.log
-11. After updating from an older build, stop the old process on port 3210 and restart so the service binds to 0.0.0.0 for Tailscale access
+10. If port 3210 is already occupied, the startup scripts will stop the old PID automatically before relaunching
+11. If startup still fails, run start-storyboard-windows-debug.bat and inspect logs\windows-web-latest.log
 
 Default URL: http://127.0.0.1:3210
 Default data dir: %APPDATA%\StoryboardProWeb
