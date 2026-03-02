@@ -67,6 +67,31 @@ preview = (server_tail.get("preview") or "").strip()
 if preview:
     print("[INFO] Latest Comfy server log preview:")
     print(preview)
+dependency_report = comfy.get("dependencyReport", {})
+print(f"[INFO] Comfy object_info available: {dependency_report.get('objectInfoAvailable')}")
+if dependency_report.get("objectInfoError"):
+    print("[WARN] Comfy object_info error:")
+    print(dependency_report.get("objectInfoError"))
+for workflow_name in ("image", "video", "audio", "sound"):
+    workflow = dependency_report.get("workflows", {}).get(workflow_name, {})
+    if not workflow:
+        continue
+    print(f"[INFO] {workflow_name.title()} workflow configured: {workflow.get('configured')}")
+    if workflow.get("parseError"):
+        print(f"[WARN] {workflow_name.title()} workflow parse error: {workflow.get('parseError')}")
+        continue
+    print(
+        f"[INFO] {workflow_name.title()} workflow nodes: "
+        f"{workflow.get('availableNodeTypes')}/{workflow.get('totalNodeTypes')}"
+    )
+    missing = workflow.get("missingNodeTypes") or []
+    if missing:
+        print(f"[WARN] {workflow_name.title()} missing nodes: {', '.join(missing[:12])}")
+    hints = workflow.get("hints") or []
+    if hints:
+        plugins = [item.get("plugin") for item in hints if item.get("plugin")]
+        if plugins:
+            print(f"[WARN] {workflow_name.title()} suggested plugins: {', '.join(plugins)}")
 
 for label in ("runtime", "startup"):
     entry = payload.get("logs", {}).get(label, {})

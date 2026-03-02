@@ -347,11 +347,20 @@ async function buildComfyDiagnostics(config, runtimeLog) {
     comfyInputDir: String(config?.comfyInputDir || "").trim(),
     outputDir: String(config?.outputDir || "").trim(),
     videoGenerationMode: String(config?.videoGenerationMode || "").trim(),
+    imageWorkflowJson: String(config?.imageWorkflowJson || ""),
+    videoWorkflowJson: String(config?.videoWorkflowJson || ""),
+    audioWorkflowJson: String(config?.audioWorkflowJson || ""),
+    soundWorkflowJson: String(config?.soundWorkflowJson || ""),
     updatedAt: String(config?.updatedAt || "").trim() || null
   };
   const baseUrl = normalizedConfig.baseUrl ? normalizeBaseUrl(normalizedConfig.baseUrl) : "";
   const ping = baseUrl ? await comfyPing(baseUrl) : { ok: false, statusCode: null, message: "Comfy baseUrl not synced yet" };
   const pipelineLastError = extractLastComfyError(runtimeLog?.text || "");
+  let dependencyReport = {
+    objectInfoAvailable: false,
+    objectInfoError: "",
+    workflows: {}
+  };
   let serverLogTail = {
     available: false,
     path: null,
@@ -385,10 +394,33 @@ async function buildComfyDiagnostics(config, runtimeLog) {
     }
   }
 
+  if (baseUrl && ping?.ok) {
+    try {
+      const objectInfo = await comfyGetObjectInfo(baseUrl);
+      dependencyReport = {
+        objectInfoAvailable: true,
+        objectInfoError: "",
+        workflows: {
+          image: inspectWorkflowDependencyReport(normalizedConfig.imageWorkflowJson, objectInfo),
+          video: inspectWorkflowDependencyReport(normalizedConfig.videoWorkflowJson, objectInfo),
+          audio: inspectWorkflowDependencyReport(normalizedConfig.audioWorkflowJson, objectInfo),
+          sound: inspectWorkflowDependencyReport(normalizedConfig.soundWorkflowJson, objectInfo)
+        }
+      };
+    } catch (error) {
+      dependencyReport = {
+        objectInfoAvailable: false,
+        objectInfoError: error instanceof Error ? error.message : String(error),
+        workflows: {}
+      };
+    }
+  }
+
   return {
     config: normalizedConfig,
     ping,
     pipelineLastError,
+    dependencyReport,
     serverLogTail
   };
 }
@@ -420,6 +452,94 @@ function extractLastErrorLine(text) {
     }
   }
   return "";
+}
+
+const NODE_HINT_MAP = [
+  { pattern: /qwen|qwenedit|imageeditplus/i, plugin: "qweneditutils", repo: "https://github.com/kijai/ComfyUI-Qwen-Image-Edit" },
+  { pattern: /rgthree|power lora loader/i, plugin: "rgthree-comfy", repo: "https://github.com/rgthree/rgthree-comfy" },
+  { pattern: /kjnodes|sageattention|modelpatchtorchsettings|intconstant|pathchsageattention|simplemath\+/i, plugin: "ComfyUI-KJNodes", repo: "https://github.com/kijai/ComfyUI-KJNodes" },
+  { pattern: /wan|wanvideo|wanmoe|wan.*ksampler/i, plugin: "ComfyUI-WanMoeKSampler / ComfyUI-wanBlockswap", repo: "https://github.com/stduhpf/ComfyUI-WanMoeKSampler" },
+  { pattern: /impact|detailer|segs/i, plugin: "ComfyUI-Impact-Pack", repo: "https://github.com/ltdrdata/ComfyUI-Impact-Pack" },
+  { pattern: /animatediff|motion/i, plugin: "ComfyUI-AnimateDiff-Evolved", repo: "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved" },
+  { pattern: /controlnet|advancedcontrolnet|acn_/i, plugin: "ComfyUI-Advanced-ControlNet", repo: "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet" },
+  { pattern: /ipadapter/i, plugin: "comfyui_ipadapter_plus", repo: "https://github.com/cubiq/ComfyUI_IPAdapter_plus" },
+  { pattern: /vhs|videohelper|loadvideo|savevideo/i, plugin: "comfyui-videohelpersuite", repo: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite" },
+  { pattern: /easy.*use/i, plugin: "comfyui-easy-use", repo: "https://github.com/yolain/ComfyUI-Easy-Use" }
+];
+
+function inspectWorkflowDependencyReport(workflowJson, objectInfo) {
+  const raw = String(workflowJson || "").trim();
+  if (!raw) {
+    return {
+      configured: false,
+      parseError: "",
+      totalNodeTypes: 0,
+      availableNodeTypes: 0,
+      missingNodeTypes: [],
+      hints: []
+    };
+  }
+  try {
+    const workflow = ensureWorkflowJsonText(raw);
+    const requiredNodeTypes = extractWorkflowNodeTypesFromJson(workflow);
+    if (requiredNodeTypes.length === 0) {
+      return {
+        configured: true,
+        parseError: "",
+        totalNodeTypes: 0,
+        availableNodeTypes: 0,
+        missingNodeTypes: [],
+        hints: []
+      };
+    }
+    const availableTypes = new Set(Object.keys(objectInfo || {}));
+    const missingNodeTypes = requiredNodeTypes.filter((type) => !availableTypes.has(type));
+    return {
+      configured: true,
+      parseError: "",
+      totalNodeTypes: requiredNodeTypes.length,
+      availableNodeTypes: requiredNodeTypes.length - missingNodeTypes.length,
+      missingNodeTypes,
+      hints: buildDependencyHints(missingNodeTypes)
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      parseError: error instanceof Error ? error.message : String(error),
+      totalNodeTypes: 0,
+      availableNodeTypes: 0,
+      missingNodeTypes: [],
+      hints: []
+    };
+  }
+}
+
+function ensureWorkflowJsonText(raw) {
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("workflow JSON must be an object");
+  }
+  return parsed;
+}
+
+function extractWorkflowNodeTypesFromJson(workflow) {
+  const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
+  const nodeTypes = nodes
+    .map((node) => (node && typeof node === "object" && typeof node.type === "string" ? node.type.trim() : ""))
+    .filter((type) => type.length > 0);
+  return uniquePreserveOrder(nodeTypes);
+}
+
+function buildDependencyHints(missingNodeTypes) {
+  const hints = [];
+  for (const nodeType of missingNodeTypes) {
+    for (const rule of NODE_HINT_MAP) {
+      if (!rule.pattern.test(nodeType)) continue;
+      if (hints.some((item) => item.plugin === rule.plugin)) continue;
+      hints.push({ plugin: rule.plugin, repo: rule.repo });
+    }
+  }
+  return hints;
 }
 
 async function detectListeningPid(targetPort) {
@@ -522,6 +642,10 @@ async function saveComfyRuntimeConfig(config) {
     comfyInputDir: String(config?.comfyInputDir || "").trim(),
     outputDir: String(config?.outputDir || "").trim(),
     videoGenerationMode: String(config?.videoGenerationMode || "").trim(),
+    imageWorkflowJson: String(config?.imageWorkflowJson || ""),
+    videoWorkflowJson: String(config?.videoWorkflowJson || ""),
+    audioWorkflowJson: String(config?.audioWorkflowJson || ""),
+    soundWorkflowJson: String(config?.soundWorkflowJson || ""),
     updatedAt: new Date().toISOString()
   };
   await fs.writeFile(comfyRuntimeConfigPath, JSON.stringify(next, null, 2), "utf8");
@@ -1338,6 +1462,17 @@ function slugifyProjectName(name) {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
   return normalized || "project";
+}
+
+function uniquePreserveOrder(values) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    output.push(value);
+  }
+  return output;
 }
 
 function normalizePath(value) {

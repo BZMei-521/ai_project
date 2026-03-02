@@ -589,7 +589,11 @@ export function ComfyPipelinePanel() {
           comfyRootDir: settings.comfyRootDir,
           comfyInputDir: settings.comfyInputDir,
           outputDir: settings.outputDir,
-          videoGenerationMode: settings.videoGenerationMode
+          videoGenerationMode: settings.videoGenerationMode,
+          imageWorkflowJson: settings.imageWorkflowJson,
+          videoWorkflowJson: settings.videoWorkflowJson,
+          audioWorkflowJson: settings.audioWorkflowJson,
+          soundWorkflowJson: settings.soundWorkflowJson
         }
       }).catch(() => {
         // Ignore bridge config sync failures. Diagnostics is best-effort only.
@@ -598,9 +602,13 @@ export function ComfyPipelinePanel() {
     return () => window.clearTimeout(timer);
   }, [
     settings.baseUrl,
+    settings.audioWorkflowJson,
     settings.comfyInputDir,
     settings.comfyRootDir,
+    settings.imageWorkflowJson,
     settings.outputDir,
+    settings.soundWorkflowJson,
+    settings.videoWorkflowJson,
     settings.videoGenerationMode
   ]);
 
