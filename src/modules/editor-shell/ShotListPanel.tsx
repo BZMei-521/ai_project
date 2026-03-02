@@ -7,6 +7,7 @@ import {
 } from "../storyboard-core/store";
 import { confirmDialog, promptDialog } from "../ui/dialogStore";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
+import { inferSkyboxReferencePlan } from "../comfy-pipeline/comfyService";
 
 export function ShotListPanel() {
   const shots = useStoryboardStore(selectFilteredShotsForCurrentSequence);
@@ -16,6 +17,7 @@ export function ShotListPanel() {
   const shotFilterQuery = useStoryboardStore((state) => state.shotFilterQuery);
   const shotFilterTag = useStoryboardStore((state) => state.shotFilterTag);
   const shotStrokes = useStoryboardStore((state) => state.shotStrokes);
+  const assets = useStoryboardStore((state) => state.assets);
   const selectedShotId = useStoryboardStore((state) => state.selectedShotId);
   const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
   const selectShot = useStoryboardStore((state) => state.selectShot);
@@ -56,6 +58,11 @@ export function ShotListPanel() {
   const totalDuration = shots.reduce((sum, shot) => sum + shot.durationFrames, 0);
   const shotCardRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const shotRailRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const sceneAssetById = new Map(
+    assets
+      .filter((asset) => asset.type === "scene" || asset.type === "skybox")
+      .map((asset) => [asset.id, asset] as const)
+  );
 
   const onDeleteShot = async (shotId: string) => {
     const confirmed = await confirmDialog({
@@ -287,46 +294,59 @@ export function ShotListPanel() {
               shotCardRefs.current[shot.id] = node;
             }}
           >
-            <label className="shot-select">
-              <input
-                checked={selectedShotIds.includes(shot.id)}
-                onChange={() => toggleShotSelection(shot.id)}
-                type="checkbox"
-              />
-              <span>选择</span>
-            </label>
-            <button
-              className={shot.id === selectedShotId ? "shot-card selected" : "shot-card"}
-              onClick={() => selectShot(shot.id)}
-              type="button"
-            >
-              <div className="shot-card-main">
-                <div className={shot.generatedImagePath?.trim() ? "shot-thumb has-image" : "shot-thumb"}>
-                  {toDesktopMediaSource(shot.generatedImagePath) ? (
-                    <img
-                      alt={`${shot.title} 分镜图`}
-                      loading="lazy"
-                      src={toDesktopMediaSource(shot.generatedImagePath)}
+            {(() => {
+              const sceneAsset = shot.sceneRefId ? sceneAssetById.get(shot.sceneRefId) : undefined;
+              const skyboxPlan = sceneAsset?.type === "skybox" ? inferSkyboxReferencePlan(shot) : null;
+              return (
+                <>
+                  <label className="shot-select">
+                    <input
+                      checked={selectedShotIds.includes(shot.id)}
+                      onChange={() => toggleShotSelection(shot.id)}
+                      type="checkbox"
                     />
-                  ) : (
-                    <span>{String(shot.order).padStart(2, "0")}</span>
-                  )}
-                </div>
-                <div className="shot-meta">
-                  <strong>{shot.order}. {shot.title}</strong>
-                  <small>
-                    {shot.durationFrames} 帧 · {(shotStrokes[shot.id]?.length ?? 0)} 条笔画
-                  </small>
-                  {shot.tags.length > 0 && (
-                    <div className="shot-tags">
-                      {shot.tags.slice(0, 3).map((tag) => (
-                        <span key={`${shot.id}_${tag}`}>{tag}</span>
-                      ))}
+                    <span>选择</span>
+                  </label>
+                  <button
+                    className={shot.id === selectedShotId ? "shot-card selected" : "shot-card"}
+                    onClick={() => selectShot(shot.id)}
+                    type="button"
+                  >
+                    <div className="shot-card-main">
+                      <div className={shot.generatedImagePath?.trim() ? "shot-thumb has-image" : "shot-thumb"}>
+                        {toDesktopMediaSource(shot.generatedImagePath) ? (
+                          <img
+                            alt={`${shot.title} 分镜图`}
+                            loading="lazy"
+                            src={toDesktopMediaSource(shot.generatedImagePath)}
+                          />
+                        ) : (
+                          <span>{String(shot.order).padStart(2, "0")}</span>
+                        )}
+                      </div>
+                      <div className="shot-meta">
+                        <strong>{shot.order}. {shot.title}</strong>
+                        <small>
+                          {shot.durationFrames} 帧 · {(shotStrokes[shot.id]?.length ?? 0)} 条笔画
+                        </small>
+                        {skyboxPlan && (
+                          <small className="shot-skybox-meta">
+                            天空盒：{sceneAsset?.name ?? "未命名天空盒"} · {skyboxPlan.faces.join("+")}
+                          </small>
+                        )}
+                        {shot.tags.length > 0 && (
+                          <div className="shot-tags">
+                            {shot.tags.slice(0, 3).map((tag) => (
+                              <span key={`${shot.id}_${tag}`}>{tag}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              </div>
-            </button>
+                  </button>
+                </>
+              );
+            })()}
             <div className="shot-duration-bar">
               <span style={{ width: `${Math.round((shot.durationFrames / maxDuration) * 100)}%` }} />
             </div>

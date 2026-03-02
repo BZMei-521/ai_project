@@ -1138,6 +1138,12 @@ body.is-resizing-timeline {
   color: #9ab0cb;
 }
 
+.shot-skybox-meta {
+  color: #7dd3fc;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
 .shot-tags {
   display: flex;
   flex-wrap: wrap;
