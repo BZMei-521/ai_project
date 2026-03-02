@@ -21,5 +21,6 @@ Startup log URL: http://<tailscale-ip>:3210/api/startup-log/latest
 Mac helpers:
 - check-windows-remote-access.command <tailscale-ip> 3210
 - copy-windows-diagnostics.command <tailscale-ip> 3210
+- copy-windows-diagnostics-summary.command <tailscale-ip> 3210
 - copy-windows-runtime-log.command <tailscale-ip> 3210
 - watch-windows-runtime-log.command <tailscale-ip> 3210
