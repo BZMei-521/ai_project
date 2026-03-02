@@ -1298,6 +1298,25 @@ export function ComfyPipelinePanel() {
     [assets]
   );
 
+  const applyBatchOverrides = (
+    keys: string[],
+    setter: (updater: (previous: Record<string, string>) => Record<string, string>) => void,
+    value: string
+  ) => {
+    setter((previous) => {
+      const next = { ...previous };
+      for (const key of keys) {
+        if (!key) continue;
+        if (!value) {
+          delete next[key];
+        } else {
+          next[key] = value;
+        }
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (!isWebBridgeRuntime()) return;
     const timer = window.setTimeout(() => {
@@ -3481,6 +3500,110 @@ export function ComfyPipelinePanel() {
             </div>
             {storyProvisionChoices && (
               <div className="comfy-import-override-grid">
+                {(storyProvisionChoices.characters.length > 0 || storyProvisionChoices.skyboxes.length > 0) && (
+                  <div className="comfy-import-override-actions">
+                    {storyProvisionChoices.characters.length > 0 && (
+                      <>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              storyProvisionChoices.characters.map((item) => item.key),
+                              setStoryCharacterOverrides,
+                              ""
+                            )
+                          }
+                          type="button"
+                        >
+                          角色全部按系统
+                        </button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              storyProvisionChoices.characters.map((item) => item.key),
+                              setStoryCharacterOverrides,
+                              "__new__"
+                            )
+                          }
+                          type="button"
+                        >
+                          角色全部新建
+                        </button>
+                        <label>
+                          角色批量复用
+                          <select
+                            onChange={(event) =>
+                              applyBatchOverrides(
+                                storyProvisionChoices.characters.map((item) => item.key),
+                                setStoryCharacterOverrides,
+                                event.target.value
+                              )
+                            }
+                            value=""
+                          >
+                            <option value="">选择现有角色资产…</option>
+                            {characterAssetOptions.map((asset) => (
+                              <option key={`story_char_batch_${asset.id}`} value={asset.id}>
+                                复用 · {asset.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                    {storyProvisionChoices.skyboxes.length > 0 && (
+                      <>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              storyProvisionChoices.skyboxes.map((item) => item.key),
+                              setStorySkyboxOverrides,
+                              ""
+                            )
+                          }
+                          type="button"
+                        >
+                          天空盒全部按系统
+                        </button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              storyProvisionChoices.skyboxes.map((item) => item.key),
+                              setStorySkyboxOverrides,
+                              "__new__"
+                            )
+                          }
+                          type="button"
+                        >
+                          天空盒全部新建
+                        </button>
+                        <label>
+                          天空盒批量复用
+                          <select
+                            onChange={(event) =>
+                              applyBatchOverrides(
+                                storyProvisionChoices.skyboxes.map((item) => item.key),
+                                setStorySkyboxOverrides,
+                                event.target.value
+                              )
+                            }
+                            value=""
+                          >
+                            <option value="">选择现有天空盒资产…</option>
+                            {skyboxAssetOptions.map((asset) => (
+                              <option key={`story_skybox_batch_${asset.id}`} value={asset.id}>
+                                复用 · {asset.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
                 {storyProvisionChoices.characters.map((item) => (
                   <label key={`story_char_override_${item.key}`}>
                     角色映射 · {item.name}
@@ -3564,6 +3687,110 @@ export function ComfyPipelinePanel() {
             </div>
             {scriptProvisionChoices && (
               <div className="comfy-import-override-grid">
+                {(scriptProvisionChoices.characters.length > 0 || scriptProvisionChoices.skyboxes.length > 0) && (
+                  <div className="comfy-import-override-actions">
+                    {scriptProvisionChoices.characters.length > 0 && (
+                      <>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              scriptProvisionChoices.characters.map((item) => item.key),
+                              setScriptCharacterOverrides,
+                              ""
+                            )
+                          }
+                          type="button"
+                        >
+                          角色全部按系统
+                        </button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              scriptProvisionChoices.characters.map((item) => item.key),
+                              setScriptCharacterOverrides,
+                              "__new__"
+                            )
+                          }
+                          type="button"
+                        >
+                          角色全部新建
+                        </button>
+                        <label>
+                          角色批量复用
+                          <select
+                            onChange={(event) =>
+                              applyBatchOverrides(
+                                scriptProvisionChoices.characters.map((item) => item.key),
+                                setScriptCharacterOverrides,
+                                event.target.value
+                              )
+                            }
+                            value=""
+                          >
+                            <option value="">选择现有角色资产…</option>
+                            {characterAssetOptions.map((asset) => (
+                              <option key={`script_char_batch_${asset.id}`} value={asset.id}>
+                                复用 · {asset.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                    {scriptProvisionChoices.skyboxes.length > 0 && (
+                      <>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              scriptProvisionChoices.skyboxes.map((item) => item.key),
+                              setScriptSkyboxOverrides,
+                              ""
+                            )
+                          }
+                          type="button"
+                        >
+                          天空盒全部按系统
+                        </button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() =>
+                            applyBatchOverrides(
+                              scriptProvisionChoices.skyboxes.map((item) => item.key),
+                              setScriptSkyboxOverrides,
+                              "__new__"
+                            )
+                          }
+                          type="button"
+                        >
+                          天空盒全部新建
+                        </button>
+                        <label>
+                          天空盒批量复用
+                          <select
+                            onChange={(event) =>
+                              applyBatchOverrides(
+                                scriptProvisionChoices.skyboxes.map((item) => item.key),
+                                setScriptSkyboxOverrides,
+                                event.target.value
+                              )
+                            }
+                            value=""
+                          >
+                            <option value="">选择现有天空盒资产…</option>
+                            {skyboxAssetOptions.map((asset) => (
+                              <option key={`script_skybox_batch_${asset.id}`} value={asset.id}>
+                                复用 · {asset.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
                 {scriptProvisionChoices.characters.map((item) => (
                   <label key={`script_char_override_${item.key}`}>
                     角色映射 · {item.name}
