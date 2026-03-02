@@ -371,14 +371,11 @@ async function buildComfyDiagnostics(config, runtimeLog) {
 
   if (normalizedConfig.comfyRootDir && baseUrl) {
     try {
+      const resolvedLogPath = await resolveComfyServerLogPath(normalizedConfig.comfyRootDir, baseUrl);
       const tail = await comfyReadServerLogTail(normalizedConfig.comfyRootDir, baseUrl, 80);
       serverLogTail = {
         available: true,
-        path: path.join(
-          path.resolve(normalizedConfig.comfyRootDir),
-          "user",
-          `comfyui_${Number(normalizeBaseUrl(baseUrl).split(":").pop()) || 8188}.log`
-        ),
+        path: resolvedLogPath || null,
         preview: tail.split(/\r?\n/).slice(-40).join("\n"),
         error: "",
         lastErrorLine: extractLastErrorLine(tail)
@@ -1360,17 +1357,49 @@ async function comfyCheckModelHealth(comfyRootDir) {
 }
 
 async function comfyReadServerLogTail(comfyRootDir, baseUrl, maxLines) {
-  const root = path.resolve(String(comfyRootDir || ""));
-  if (!(await dirExists(root))) throw new Error("comfy_root_dir is empty");
-  const port = Number(normalizeBaseUrl(baseUrl).split(":").pop()) || 8188;
-  const logPath = path.join(root, "user", `comfyui_${port}.log`);
-  if (!(await fileExists(logPath))) {
-    throw new Error(`Comfy server log not found: ${logPath}`);
+  const logPath = await resolveComfyServerLogPath(comfyRootDir, baseUrl);
+  if (!logPath) {
+    throw new Error(`Comfy server log not found under: ${comfyLogRootCandidates(comfyRootDir).join(" | ")}`);
   }
   const raw = await fs.readFile(logPath, "utf8");
   const lines = raw.split(/\r?\n/);
   const start = Math.max(0, lines.length - Math.max(1, Number(maxLines || 160)));
   return lines.slice(start).join("\n");
+}
+
+async function resolveComfyServerLogPath(comfyRootDir, baseUrl) {
+  const roots = comfyLogRootCandidates(comfyRootDir);
+  if (roots.length === 0) return "";
+  const port = Number(normalizeBaseUrl(baseUrl).split(":").pop()) || 8188;
+  for (const root of roots) {
+    const candidate = path.join(root, "user", `comfyui_${port}.log`);
+    if (await fileExists(candidate)) return candidate;
+  }
+  return "";
+}
+
+function comfyLogRootCandidates(comfyRootDir) {
+  const raw = String(comfyRootDir || "").trim();
+  const candidates = [];
+  const push = (value) => {
+    const resolved = path.resolve(String(value || "").trim());
+    if (!resolved) return;
+    if (candidates.includes(resolved)) return;
+    candidates.push(resolved);
+  };
+
+  if (raw) {
+    push(raw);
+    push(path.join(raw, "ComfyUI"));
+  }
+
+  const home = os.homedir();
+  if (home) {
+    push(path.join(home, "Documents", "ComfyUI"));
+    push(path.join(home, "Desktop", "ComfyUI"));
+  }
+
+  return candidates;
 }
 
 async function openUrl(targetUrl) {

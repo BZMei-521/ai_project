@@ -949,14 +949,14 @@ function bypassFisherSageAttentionNodes(
       ];
 
   for (const item of rewires) {
-    setNodeEnabled(byId.get(item.patchId), false);
-    setNodeEnabled(byId.get(item.torchPatchId), false);
     removeIncomingLinks(workflow, item.patchId, [0]);
     removeOutgoingLinks(workflow, item.patchId, 0);
     removeIncomingLinks(workflow, item.torchPatchId, [0]);
     removeOutgoingLinks(workflow, item.torchPatchId, 0);
     removeIncomingLinks(workflow, item.samplerTargetId, [item.samplerInput]);
     ensureWorkflowLink(workflow, item.sourceId, 0, item.samplerTargetId, item.samplerInput, "MODEL");
+    deleteWorkflowNode(workflow, item.patchId);
+    deleteWorkflowNode(workflow, item.torchPatchId);
   }
 }
 
@@ -973,12 +973,12 @@ function bypassFisherSimpleMathNode(
   const safeFrameCount = Number.isFinite(frameCount) ? Math.max(1, Math.round(frameCount)) : undefined;
   if (safeFrameCount === undefined) return;
 
-  setNodeEnabled(byId.get(187), false);
   removeIncomingLinks(workflow, 187, [0, 1, 2, 3]);
   removeOutgoingLinks(workflow, 187, 0);
   removeOutgoingLinks(workflow, 187, 1);
   removeIncomingLinks(workflow, 197, [7]);
   ensureWorkflowLink(workflow, 201, 0, 197, 7, "INT");
+  deleteWorkflowNode(workflow, 187);
 }
 
 function applyFisherWorkflowModes(
@@ -1200,6 +1200,24 @@ function removeOutgoingLinks(
     targetNode.inputs[link[4]]!.link = null;
   }
   return outgoing;
+}
+
+function deleteWorkflowNode(workflow: Record<string, unknown>, nodeId: number) {
+  const node = findWorkflowNodeById(workflow, nodeId);
+  if (!node) return;
+  const inputs = Array.isArray(node.inputs) ? node.inputs : [];
+  if (inputs.length > 0) {
+    removeIncomingLinks(
+      workflow,
+      nodeId,
+      inputs.map((_, index) => index)
+    );
+  }
+  const outputs = Array.isArray(node.outputs) ? node.outputs : [];
+  for (let outputIndex = 0; outputIndex < outputs.length; outputIndex += 1) {
+    removeOutgoingLinks(workflow, nodeId, outputIndex);
+  }
+  workflow.nodes = workflowNodes(workflow).filter((item) => item.id !== nodeId);
 }
 
 function hasWorkflowLink(
