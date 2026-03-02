@@ -57,6 +57,23 @@ where tailscale >nul 2>nul
 if errorlevel 1 (
   echo [WARN] Tailscale was not found.
   echo [WARN] Install Tailscale if you want remote access or log sync across different networks.
+  if not "%CHECK_ONLY%"=="1" (
+    set TAILSCALE_INSTALLER=%TEMP%\tailscale-setup-latest.exe
+    echo [INFO] Downloading Tailscale installer from the official stable URL...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe' -OutFile '%TEMP%\tailscale-setup-latest.exe'"
+    if errorlevel 1 (
+      echo [ERROR] Failed to download the Tailscale installer.
+      echo [ERROR] Download it manually from https://tailscale.com/download/windows
+      set HAS_ERROR=1
+    ) else (
+      echo [INFO] Tailscale installer downloaded to !TAILSCALE_INSTALLER!
+      echo [INFO] Launching installer...
+      start "" "!TAILSCALE_INSTALLER!"
+      echo [INFO] Complete the installer, log in to Tailscale, then run this check again.
+      set HAS_ERROR=1
+    )
+  )
 ) else (
   echo [INFO] Tailscale found
   set TAILSCALE_IPV4=

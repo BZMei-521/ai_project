@@ -31,7 +31,7 @@ async function main() {
       "",
       "1. Install Node.js 18+",
       "2. If you need video export, install ffmpeg and make sure ffmpeg.exe is in PATH",
-      "3. Install Tailscale if you need remote access or log sync across different networks",
+      "3. If Tailscale is missing, running check-storyboard-windows-env.bat will download the official installer",
       "4. If you need AI generation, launch ComfyUI separately",
       "5. After pulling new source changes, run update-storyboard-windows.bat to rebuild dist locally",
       "6. Double-click check-storyboard-windows-env.bat if you want a preflight check",
