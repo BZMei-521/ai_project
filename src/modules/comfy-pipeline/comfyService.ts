@@ -344,7 +344,7 @@ function ensureComfyProgressSocket(baseUrl: string) {
       if (data.node) {
         emitPromptProgress(promptId, 0.12, `执行节点 ${String(data.node)}`);
       } else {
-        emitPromptProgress(promptId, 0.99, "执行完成，等待输出");
+        emitPromptProgress(promptId, 0.95, "执行完成，等待输出文件");
       }
       return;
     }
@@ -362,7 +362,7 @@ function ensureComfyProgressSocket(baseUrl: string) {
       return;
     }
     if (type === "execution_success") {
-      emitPromptProgress(promptId, 0.99, "执行成功，等待输出");
+      emitPromptProgress(promptId, 0.97, "执行成功，正在收集输出");
       return;
     }
     if (type === "execution_error") {
@@ -2296,8 +2296,22 @@ async function waitForComfyOutput(
       if (promptHistory && isPromptCompleted(promptHistory)) {
         throw new Error(`ComfyUI 任务已完成但未检测到输出文件，请检查工作流输出节点。${summarizePromptHistory(promptHistory)}`);
       }
-      fallbackProgress = Math.min(0.92, fallbackProgress + 0.0022);
-      notify(fallbackProgress, "等待 ComfyUI 执行中");
+      const status = getPromptStatus(promptHistory);
+      const statusText = String(status?.status_str ?? "").trim().toLowerCase();
+      const waitingForOutput =
+        statusText === "success" ||
+        statusText === "executing" ||
+        statusText === "running" ||
+        statusText === "processing";
+      if (fallbackProgress < 0.92) {
+        fallbackProgress = Math.min(0.92, fallbackProgress + 0.0022);
+      } else {
+        fallbackProgress = Math.min(0.985, fallbackProgress + 0.00035);
+      }
+      notify(
+        fallbackProgress,
+        waitingForOutput && fallbackProgress >= 0.92 ? "后处理中，等待输出文件写入" : "等待 ComfyUI 执行中"
+      );
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
     throw new Error("ComfyUI 任务超时（等待超过 30 分钟），未获取到输出");
