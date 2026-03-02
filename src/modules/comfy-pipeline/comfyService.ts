@@ -842,6 +842,93 @@ function inferSkyboxFaceFromShot(shot: Shot): SkyboxFace {
   return "front";
 }
 
+function autoSkyboxAdjacentFaces(face: SkyboxFace): SkyboxFace[] {
+  if (face === "front") return ["left", "right"];
+  if (face === "back") return ["left", "right"];
+  if (face === "left") return ["front", "back"];
+  if (face === "right") return ["front", "back"];
+  if (face === "up" || face === "down") return ["front"];
+  return [];
+}
+
+function inferAutoSkyboxProfile(shot: Shot): { faces: SkyboxFace[]; weights: Partial<Record<SkyboxFace, number>> } {
+  const primary = inferSkyboxFaceFromShot(shot);
+  const corpus = [
+    shot.title ?? "",
+    shot.storyPrompt ?? "",
+    shot.videoPrompt ?? "",
+    shot.notes ?? "",
+    ...(shot.tags ?? [])
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const isCloseShot = containsAnyKeyword(corpus, ["特写", "近景", "中近景", "表情", "反应", "肖像", "半身"]);
+  const isWideSpatialShot = containsAnyKeyword(corpus, [
+    "全景",
+    "大全景",
+    "建立",
+    "建立镜头",
+    "广角",
+    "空间",
+    "环境",
+    "室内",
+    "走廊",
+    "门厅",
+    "房间",
+    "客厅",
+    "卧室",
+    "街道",
+    "河边",
+    "桥上",
+    "庭院",
+    "仓库",
+    "车内",
+    "天台"
+  ]);
+  const isDiagonalShot = containsAnyKeyword(corpus, ["斜侧", "斜角", "45度", "对角", "偏角度", "过肩", "肩后"]);
+  const favorsLeft = containsAnyKeyword(corpus, ["左侧", "左边", "偏左", "向左"]);
+  const favorsRight = containsAnyKeyword(corpus, ["右侧", "右边", "偏右", "向右"]);
+
+  const faces: SkyboxFace[] = [primary];
+  const weights: Partial<Record<SkyboxFace, number>> = { [primary]: 1 };
+
+  if (isCloseShot) {
+    return { faces, weights };
+  }
+
+  const pushFace = (face: SkyboxFace, weight: number) => {
+    if (!faces.includes(face)) faces.push(face);
+    weights[face] = Math.max(weights[face] ?? 0, weight);
+  };
+
+  if (primary === "up" || primary === "down") {
+    pushFace("front", 0.6);
+    return { faces, weights };
+  }
+
+  if (isWideSpatialShot) {
+    for (const face of autoSkyboxAdjacentFaces(primary)) {
+      pushFace(face, 0.72);
+    }
+  } else if (isDiagonalShot) {
+    if (favorsLeft) {
+      pushFace("left", primary === "left" ? 0.82 : 0.62);
+    } else if (favorsRight) {
+      pushFace("right", primary === "right" ? 0.82 : 0.62);
+    } else {
+      const fallback = primary === "left" || primary === "back" ? "front" : "right";
+      pushFace(fallback, 0.58);
+    }
+  } else if (favorsLeft && primary !== "left") {
+    pushFace("left", 0.52);
+  } else if (favorsRight && primary !== "right") {
+    pushFace("right", 0.52);
+  }
+
+  return { faces, weights };
+}
+
 function inferSkyboxFacesFromShot(shot: Shot): SkyboxFace[] {
   const manual = (shot.skyboxFaces ?? []).filter(
     (face): face is SkyboxFace =>
@@ -853,12 +940,14 @@ function inferSkyboxFacesFromShot(shot: Shot): SkyboxFace[] {
       face === "down"
   );
   if (manual.length > 0) return uniquePreserveOrder(manual) as SkyboxFace[];
-  return [inferSkyboxFaceFromShot(shot)];
+  return inferAutoSkyboxProfile(shot).faces;
 }
 
 function skyboxFaceWeight(shot: Shot, face: SkyboxFace): number {
   const raw = shot.skyboxFaceWeights?.[face];
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return 1;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return inferAutoSkyboxProfile(shot).weights[face] ?? 1;
+  }
   return Math.max(0, Math.min(1, raw));
 }
 
