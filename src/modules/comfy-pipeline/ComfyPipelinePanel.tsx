@@ -73,6 +73,14 @@ type ParsedScriptShot = {
 };
 
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
+const IMPORT_PRESETS_KEY = "storyboard-pro/import-provision-presets/v1";
+
+type ImportProvisionPreset = {
+  id: string;
+  name: string;
+  characterOverrides: Record<string, string>;
+  skyboxOverrides: Record<string, string>;
+};
 const LOCAL_MOTION_PRESET_OPTIONS: Array<{ value: LocalMotionPreset; label: string }> = [
   { value: "auto", label: "自动" },
   { value: "still", label: "静帧" },
@@ -627,6 +635,31 @@ function loadSettings(): ComfySettings {
   }
 }
 
+function loadImportPresets(): ImportProvisionPreset[] {
+  const raw = localStorage.getItem(IMPORT_PRESETS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as ImportProvisionPreset[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.name === "string" && typeof item.id === "string")
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        characterOverrides:
+          item.characterOverrides && typeof item.characterOverrides === "object" ? item.characterOverrides : {},
+        skyboxOverrides:
+          item.skyboxOverrides && typeof item.skyboxOverrides === "object" ? item.skyboxOverrides : {}
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function persistImportPresets(presets: ImportProvisionPreset[]): void {
+  localStorage.setItem(IMPORT_PRESETS_KEY, JSON.stringify(presets));
+}
+
 function formatAssetStatus(status: AssetStatus): string {
   if (status === "running") return "生成中";
   if (status === "success") return "成功";
@@ -1080,6 +1113,9 @@ export function ComfyPipelinePanel() {
   const [storySkyboxOverrides, setStorySkyboxOverrides] = useState<Record<string, string>>({});
   const [scriptCharacterOverrides, setScriptCharacterOverrides] = useState<Record<string, string>>({});
   const [scriptSkyboxOverrides, setScriptSkyboxOverrides] = useState<Record<string, string>>({});
+  const [importPresets, setImportPresets] = useState<ImportProvisionPreset[]>(() => loadImportPresets());
+  const [storySelectedPresetId, setStorySelectedPresetId] = useState("");
+  const [scriptSelectedPresetId, setScriptSelectedPresetId] = useState("");
   const [phase, setPhase] = useState<GenerationPhase>("idle");
   const [pipelineState, setPipelineState] = useState("空闲");
   const [runAllActive, setRunAllActive] = useState(false);
@@ -1315,6 +1351,112 @@ export function ComfyPipelinePanel() {
       }
       return next;
     });
+  };
+
+  const buildPresetPayload = (
+    choices: { characters: AssetProvisionChoice[]; skyboxes: AssetProvisionChoice[] } | null,
+    characterOverrides: Record<string, string>,
+    skyboxOverrides: Record<string, string>
+  ) => {
+    if (!choices) {
+      return {
+        characterOverrides: {},
+        skyboxOverrides: {}
+      };
+    }
+    const nextCharacterOverrides: Record<string, string> = {};
+    const nextSkyboxOverrides: Record<string, string> = {};
+    for (const item of choices.characters) {
+      const value = characterOverrides[item.key];
+      if (value) nextCharacterOverrides[item.key] = value;
+    }
+    for (const item of choices.skyboxes) {
+      const value = skyboxOverrides[item.key];
+      if (value) nextSkyboxOverrides[item.key] = value;
+    }
+    return {
+      characterOverrides: nextCharacterOverrides,
+      skyboxOverrides: nextSkyboxOverrides
+    };
+  };
+
+  const applyImportPreset = (
+    presetId: string,
+    choices: { characters: AssetProvisionChoice[]; skyboxes: AssetProvisionChoice[] } | null,
+    setCharacterOverrides: (value: Record<string, string>) => void,
+    setSkyboxOverrides: (value: Record<string, string>) => void
+  ) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset || !choices) return;
+    const characterAssetIds = new Set(characterAssetOptions.map((asset) => asset.id));
+    const skyboxAssetIds = new Set(skyboxAssetOptions.map((asset) => asset.id));
+    const nextCharacterOverrides: Record<string, string> = {};
+    const nextSkyboxOverrides: Record<string, string> = {};
+
+    for (const item of choices.characters) {
+      const value = preset.characterOverrides[item.key];
+      if (!value) continue;
+      if (value === "__new__" || characterAssetIds.has(value)) {
+        nextCharacterOverrides[item.key] = value;
+      }
+    }
+    for (const item of choices.skyboxes) {
+      const value = preset.skyboxOverrides[item.key];
+      if (!value) continue;
+      if (value === "__new__" || skyboxAssetIds.has(value)) {
+        nextSkyboxOverrides[item.key] = value;
+      }
+    }
+
+    setCharacterOverrides(nextCharacterOverrides);
+    setSkyboxOverrides(nextSkyboxOverrides);
+    pushToast(`已应用导入预设：${preset.name}`, "success");
+  };
+
+  const saveImportPreset = (
+    presetName: string,
+    choices: { characters: AssetProvisionChoice[]; skyboxes: AssetProvisionChoice[] } | null,
+    characterOverrides: Record<string, string>,
+    skyboxOverrides: Record<string, string>
+  ) => {
+    const payload = buildPresetPayload(choices, characterOverrides, skyboxOverrides);
+    if (
+      Object.keys(payload.characterOverrides).length === 0 &&
+      Object.keys(payload.skyboxOverrides).length === 0
+    ) {
+      pushToast("当前没有可保存的手工映射", "warning");
+      return "";
+    }
+    const name = presetName.trim();
+    if (!name) return "";
+    const nextPreset: ImportProvisionPreset = {
+      id: `import_preset_${Date.now()}`,
+      name,
+      characterOverrides: payload.characterOverrides,
+      skyboxOverrides: payload.skyboxOverrides
+    };
+    setImportPresets((previous) => {
+      const filtered = previous.filter((item) => item.name !== name);
+      const next = [...filtered, nextPreset];
+      persistImportPresets(next);
+      return next;
+    });
+    pushToast(`导入预设已保存：${name}`, "success");
+    return nextPreset.id;
+  };
+
+  const deleteImportPreset = (presetId: string) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (!window.confirm(`确定删除导入预设「${preset.name}」吗？`)) return;
+    setImportPresets((previous) => {
+      const next = previous.filter((item) => item.id !== presetId);
+      persistImportPresets(next);
+      return next;
+    });
+    setStorySelectedPresetId((previous) => (previous === presetId ? "" : previous));
+    setScriptSelectedPresetId((previous) => (previous === presetId ? "" : previous));
+    pushToast(`已删除导入预设：${preset.name}`, "success");
   };
 
   useEffect(() => {
@@ -3500,6 +3642,62 @@ export function ComfyPipelinePanel() {
             </div>
             {storyProvisionChoices && (
               <div className="comfy-import-override-grid">
+                <div className="comfy-import-preset-actions">
+                  <label>
+                    导入预设
+                    <select
+                      onChange={(event) => setStorySelectedPresetId(event.target.value)}
+                      value={storySelectedPresetId}
+                    >
+                      <option value="">选择已保存预设…</option>
+                      {importPresets.map((preset) => (
+                        <option key={`story_import_preset_${preset.id}`} value={preset.id}>
+                          {preset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
+                    onClick={() =>
+                      applyImportPreset(
+                        storySelectedPresetId,
+                        storyProvisionChoices,
+                        setStoryCharacterOverrides,
+                        setStorySkyboxOverrides
+                      )
+                    }
+                    type="button"
+                  >
+                    应用预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => {
+                      const name = window.prompt("输入导入预设名称", "故事导入预设");
+                      if (!name) return;
+                      const presetId = saveImportPreset(
+                        name,
+                        storyProvisionChoices,
+                        storyCharacterOverrides,
+                        storySkyboxOverrides
+                      );
+                      if (presetId) setStorySelectedPresetId(presetId);
+                    }}
+                    type="button"
+                  >
+                    保存当前为预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
+                    onClick={() => deleteImportPreset(storySelectedPresetId)}
+                    type="button"
+                  >
+                    删除预设
+                  </button>
+                </div>
                 {(storyProvisionChoices.characters.length > 0 || storyProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
                     {storyProvisionChoices.characters.length > 0 && (
@@ -3687,6 +3885,62 @@ export function ComfyPipelinePanel() {
             </div>
             {scriptProvisionChoices && (
               <div className="comfy-import-override-grid">
+                <div className="comfy-import-preset-actions">
+                  <label>
+                    导入预设
+                    <select
+                      onChange={(event) => setScriptSelectedPresetId(event.target.value)}
+                      value={scriptSelectedPresetId}
+                    >
+                      <option value="">选择已保存预设…</option>
+                      {importPresets.map((preset) => (
+                        <option key={`script_import_preset_${preset.id}`} value={preset.id}>
+                          {preset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
+                    onClick={() =>
+                      applyImportPreset(
+                        scriptSelectedPresetId,
+                        scriptProvisionChoices,
+                        setScriptCharacterOverrides,
+                        setScriptSkyboxOverrides
+                      )
+                    }
+                    type="button"
+                  >
+                    应用预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => {
+                      const name = window.prompt("输入导入预设名称", "脚本导入预设");
+                      if (!name) return;
+                      const presetId = saveImportPreset(
+                        name,
+                        scriptProvisionChoices,
+                        scriptCharacterOverrides,
+                        scriptSkyboxOverrides
+                      );
+                      if (presetId) setScriptSelectedPresetId(presetId);
+                    }}
+                    type="button"
+                  >
+                    保存当前为预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
+                    onClick={() => deleteImportPreset(scriptSelectedPresetId)}
+                    type="button"
+                  >
+                    删除预设
+                  </button>
+                </div>
                 {(scriptProvisionChoices.characters.length > 0 || scriptProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
                     {scriptProvisionChoices.characters.length > 0 && (

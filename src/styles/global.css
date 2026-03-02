@@ -2970,6 +2970,23 @@ button.export-panel-collapsed:hover {
   gap: 8px;
 }
 
+.comfy-import-preset-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(12, 21, 36, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(58, 84, 114, 0.35);
+}
+
+.comfy-import-preset-actions label {
+  min-width: 220px;
+  flex: 1 1 240px;
+}
+
 .comfy-import-override-actions {
   grid-column: 1 / -1;
   display: flex;
