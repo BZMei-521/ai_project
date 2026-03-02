@@ -34,6 +34,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if exist dist (
+  echo [INFO] Removing previous dist bundle...
+  rmdir /s /q dist
+)
+
 echo [INFO] Rebuilding frontend bundle...
 npm run build
 if errorlevel 1 (

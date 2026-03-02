@@ -134,10 +134,16 @@ async function assertDistReady() {
 }
 
 async function resolveBuildInfo() {
+  const indexHtmlPath = path.join(distDir, "index.html");
+  const indexHtml = (await safeReadText(indexHtmlPath)) ?? "";
   const assetsDir = path.join(distDir, "assets");
   const entries = await safeReadDir(assetsDir);
   const assetFiles = entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+  const htmlMatch =
+    indexHtml.match(/assets\/(index-[^"'?#]+\.js)/i) ??
+    indexHtml.match(/assets\/(index-[^"'?#]+\.css)/i);
   const buildId =
+    htmlMatch?.[1] ??
     assetFiles.find((name) => /^index-[^.]+\.js$/i.test(name)) ??
     assetFiles.find((name) => /^index-[^.]+\.css$/i.test(name)) ??
     assetFiles[0] ??
