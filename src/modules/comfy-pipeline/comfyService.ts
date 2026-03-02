@@ -960,6 +960,27 @@ function bypassFisherSageAttentionNodes(
   }
 }
 
+function bypassFisherSimpleMathNode(
+  workflow: Record<string, unknown>,
+  byId: Map<number, WorkflowNode>,
+  kind: "image" | "video" | "audio",
+  tokens: Record<string, string>
+) {
+  if (!looksLikeFisherWorkflow(byId) || kind !== "video") return;
+  if (tokens.VIDEO_MODE === "FIRST_LAST_FRAME") return;
+
+  const frameCount = Number(tokens.DURATION_FRAMES);
+  const safeFrameCount = Number.isFinite(frameCount) ? Math.max(1, Math.round(frameCount)) : undefined;
+  if (safeFrameCount === undefined) return;
+
+  setNodeEnabled(byId.get(187), false);
+  removeIncomingLinks(workflow, 187, [0, 1, 2, 3]);
+  removeOutgoingLinks(workflow, 187, 0);
+  removeOutgoingLinks(workflow, 187, 1);
+  removeIncomingLinks(workflow, 197, [7]);
+  ensureWorkflowLink(workflow, 201, 0, 197, 7, "INT");
+}
+
 function applyFisherWorkflowModes(
   byId: Map<number, WorkflowNode>,
   kind: "image" | "video" | "audio",
@@ -1410,6 +1431,7 @@ function applyFisherWorkflowBindings(
   }
   applyFisherWorkflowModes(byId, kind, tokens);
   bypassFisherSageAttentionNodes(workflow, byId, kind, tokens);
+  bypassFisherSimpleMathNode(workflow, byId, kind, tokens);
 
   const seed = Number(tokens.SEED);
   const safeSeed = Number.isFinite(seed) ? Math.floor(seed) : undefined;
@@ -1460,8 +1482,8 @@ function applyFisherWorkflowBindings(
   }
   if (safeFrames !== undefined) {
     setNodeWidgetValue(byId.get(201), 0, safeFrames);
-    setNodeWidgetValue(byId.get(202), 0, safeFrames);
-    setNodeWidgetValue(byId.get(128), 0, safeFrames);
+    setNodeWidgetValue(byId.get(197), 3, safeFrames);
+    setNodeWidgetValue(byId.get(160), 3, safeFrames);
   }
 
   setNodeWidgetValue(byId.get(205), 0, isFirstLast ? firstFrame : fallbackFrame);
