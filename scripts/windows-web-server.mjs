@@ -458,6 +458,7 @@ const NODE_HINT_MAP = [
   { pattern: /wan|wanvideo|wanmoe|wan.*ksampler/i, plugin: "ComfyUI-WanMoeKSampler / ComfyUI-wanBlockswap", repo: "https://github.com/stduhpf/ComfyUI-WanMoeKSampler" },
   { pattern: /impact|detailer|segs/i, plugin: "ComfyUI-Impact-Pack", repo: "https://github.com/ltdrdata/ComfyUI-Impact-Pack" },
   { pattern: /animatediff|motion/i, plugin: "ComfyUI-AnimateDiff-Evolved", repo: "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved" },
+  { pattern: /rife|vfi|frame interpolation/i, plugin: "comfyui-frame-interpolation", repo: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation" },
   { pattern: /controlnet|advancedcontrolnet|acn_/i, plugin: "ComfyUI-Advanced-ControlNet", repo: "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet" },
   { pattern: /ipadapter/i, plugin: "comfyui_ipadapter_plus", repo: "https://github.com/cubiq/ComfyUI_IPAdapter_plus" },
   { pattern: /vhs|videohelper|loadvideo|savevideo/i, plugin: "comfyui-videohelpersuite", repo: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite" },
@@ -1199,7 +1200,9 @@ function sanitizePromptForKnownOptionalNodes(prompt) {
     "133": ["152", 0],
     "149": ["152", 0],
     "134": ["153", 0],
-    "154": ["153", 0]
+    "154": ["153", 0],
+    "142": ["141", 0],
+    "194": ["192", 0]
   });
 
   const intScalar =
@@ -1211,7 +1214,7 @@ function sanitizePromptForKnownOptionalNodes(prompt) {
     replacePromptNodeReferenceWithScalar(nodeMap, "187", intScalar);
   }
 
-  for (const obsoleteId of ["133", "134", "149", "154", "177", "178", "179", "180", "187"]) {
+  for (const obsoleteId of ["133", "134", "142", "149", "154", "177", "178", "179", "180", "187", "194"]) {
     delete nodeMap[obsoleteId];
   }
 
@@ -1490,7 +1493,9 @@ async function discoverComfyLogBySearch(port) {
     home,
     path.join(home, "Desktop"),
     path.join(home, "Documents"),
-    path.join(home, "Downloads")
+    path.join(home, "Downloads"),
+    "C:\\",
+    "D:\\"
   ];
   for (const root of uniquePreserveOrder(searchRoots)) {
     try {

@@ -981,6 +981,22 @@ function bypassFisherSimpleMathNode(
   deleteWorkflowNode(workflow, 187);
 }
 
+function bypassFisherRifeNodes(
+  workflow: Record<string, unknown>,
+  byId: Map<number, WorkflowNode>,
+  kind: "image" | "video" | "audio"
+) {
+  if (!looksLikeFisherWorkflow(byId) || kind !== "video") return;
+
+  removeIncomingLinks(workflow, 148, [0]);
+  ensureWorkflowLink(workflow, 141, 0, 148, 0, "IMAGE");
+  deleteWorkflowNode(workflow, 142);
+
+  removeIncomingLinks(workflow, 195, [0]);
+  ensureWorkflowLink(workflow, 192, 0, 195, 0, "IMAGE");
+  deleteWorkflowNode(workflow, 194);
+}
+
 function applyFisherWorkflowModes(
   byId: Map<number, WorkflowNode>,
   kind: "image" | "video" | "audio",
@@ -1450,6 +1466,7 @@ function applyFisherWorkflowBindings(
   applyFisherWorkflowModes(byId, kind, tokens);
   bypassFisherSageAttentionNodes(workflow, byId, kind, tokens);
   bypassFisherSimpleMathNode(workflow, byId, kind, tokens);
+  bypassFisherRifeNodes(workflow, byId, kind);
 
   const seed = Number(tokens.SEED);
   const safeSeed = Number.isFinite(seed) ? Math.floor(seed) : undefined;
@@ -1804,6 +1821,7 @@ const NODE_HINT_MAP: Array<{ pattern: RegExp; plugin: string; repo: string }> = 
   { pattern: /wan|wanvideo|wanmoe|wan.*ksampler/i, plugin: "ComfyUI-WanMoeKSampler / ComfyUI-wanBlockswap", repo: "https://github.com/stduhpf/ComfyUI-WanMoeKSampler" },
   { pattern: /impact|detailer|segs/i, plugin: "ComfyUI-Impact-Pack", repo: "https://github.com/ltdrdata/ComfyUI-Impact-Pack" },
   { pattern: /animatediff|motion/i, plugin: "ComfyUI-AnimateDiff-Evolved", repo: "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved" },
+  { pattern: /rife|vfi|frame interpolation/i, plugin: "comfyui-frame-interpolation", repo: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation" },
   { pattern: /controlnet|advancedcontrolnet|acn_/i, plugin: "ComfyUI-Advanced-ControlNet", repo: "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet" },
   { pattern: /ipadapter/i, plugin: "comfyui_ipadapter_plus", repo: "https://github.com/cubiq/ComfyUI_IPAdapter_plus" },
   { pattern: /vhs|videohelper|loadvideo|savevideo/i, plugin: "comfyui-videohelpersuite", repo: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite" },
