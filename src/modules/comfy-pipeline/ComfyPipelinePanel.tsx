@@ -1887,29 +1887,46 @@ export function ComfyPipelinePanel() {
   };
 
   const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
-    items.map((shot) => ({
-      id: shot.id,
-      title: shot.title,
-      prompt: shot.storyPrompt?.trim() ?? "",
-      negativePrompt: shot.negativePrompt?.trim() ?? "",
-      videoPrompt: shot.videoPrompt?.trim() ?? "",
-      videoMode: shot.videoMode ?? "auto",
-      videoStartFramePath: shot.videoStartFramePath?.trim() ?? "",
-      videoEndFramePath: shot.videoEndFramePath?.trim() ?? "",
-      skyboxFace: shot.skyboxFace ?? "auto",
-      skyboxFaces: shot.skyboxFaces ?? [],
-      skyboxFaceWeights: shot.skyboxFaceWeights ?? {},
-      durationFrames: shot.durationFrames,
-      seed: shot.seed,
-      characterRefs: shot.characterRefs ?? [],
-      sceneRefId: shot.sceneRefId ?? "",
-      dialogue: shot.dialogue ?? "",
-      notes: shot.notes ?? "",
-      tags: shot.tags ?? [],
-      characterNames: shot.sourceCharacterNames ?? [],
-      sceneName: shot.sourceSceneName ?? "",
-      scenePrompt: shot.sourceScenePrompt ?? ""
-    }));
+    items.map((shot) => {
+      const prompt = shot.storyPrompt?.trim() ?? "";
+      const dialogue = shot.dialogue ?? "";
+      const notes = shot.notes ?? "";
+      const context = [shot.title, prompt, dialogue, notes].filter(Boolean).join("\n");
+      const inferredCharacterNames =
+        (shot.characterRefs?.length ?? 0) > 0 ? [] : extractCharacterCandidates(context);
+      const sceneName =
+        shot.sourceSceneName?.trim() ||
+        (shot.sceneRefId?.trim() ? "" : inferSceneName(context));
+      const scenePrompt =
+        shot.sourceScenePrompt?.trim() ||
+        (sceneName ? buildScenePrompt(context, sceneName) : "");
+      return {
+        id: shot.id,
+        title: shot.title,
+        prompt,
+        negativePrompt: shot.negativePrompt?.trim() ?? "",
+        videoPrompt: shot.videoPrompt?.trim() ?? "",
+        videoMode: shot.videoMode ?? "auto",
+        videoStartFramePath: shot.videoStartFramePath?.trim() ?? "",
+        videoEndFramePath: shot.videoEndFramePath?.trim() ?? "",
+        skyboxFace: shot.skyboxFace ?? "auto",
+        skyboxFaces: shot.skyboxFaces ?? [],
+        skyboxFaceWeights: shot.skyboxFaceWeights ?? {},
+        durationFrames: shot.durationFrames,
+        seed: shot.seed,
+        characterRefs: shot.characterRefs ?? [],
+        sceneRefId: shot.sceneRefId ?? "",
+        dialogue,
+        notes,
+        tags: shot.tags ?? [],
+        characterNames:
+          shot.sourceCharacterNames && shot.sourceCharacterNames.length > 0
+            ? uniqueEntities(shot.sourceCharacterNames)
+            : inferredCharacterNames,
+        sceneName,
+        scenePrompt
+      };
+    });
 
   const findAssetIdByName = (type: "character" | "scene" | "skybox", name: string) => {
     return findMatchingAssetId(useStoryboardStore.getState().assets, type, name);
