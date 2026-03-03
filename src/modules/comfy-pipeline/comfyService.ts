@@ -2749,20 +2749,24 @@ async function materializeStillImagePath(
   const trimmed = source.trim();
   if (!trimmed) return "";
   if (canUseAbsoluteLocalPath(trimmed)) return trimmed;
+  const downloadSource = inferComfyOutputDownloadSource(trimmed, settings.outputDir);
+  if (downloadSource) {
+    try {
+      const url = toComfyViewDownloadUrl(downloadSource, settings.baseUrl);
+      const base64 = await invokeDesktop<string>("comfy_fetch_view_base64", { url });
+      const written = await invokeDesktop<FileWriteResult>("write_base64_file", {
+        filePath: localStillCachePath(settings, label, trimmed),
+        base64Data: base64
+      });
+      return written.filePath;
+    } catch {
+      // fall back to a direct output path only when view download is unavailable
+    }
+  }
   const relative = parseComfyViewPath(trimmed);
   if (relative && settings.outputDir.trim()) {
     const direct = `${settings.outputDir.trim().replace(/\/+$/, "")}/${relative.replace(/^\/+/, "")}`;
     if (canUseAbsoluteLocalPath(direct)) return direct;
-  }
-  const downloadSource = inferComfyOutputDownloadSource(trimmed, settings.outputDir);
-  if (downloadSource) {
-    const url = toComfyViewDownloadUrl(downloadSource, settings.baseUrl);
-    const base64 = await invokeDesktop<string>("comfy_fetch_view_base64", { url });
-    const written = await invokeDesktop<FileWriteResult>("write_base64_file", {
-      filePath: localStillCachePath(settings, label, trimmed),
-      base64Data: base64
-    });
-    return written.filePath;
   }
   return trimmed;
 }
