@@ -193,6 +193,46 @@ function buildSkyboxAssetModeSpec(mode: SkyboxAssetWorkflowMode, selectedModel: 
     ]
   };
 }
+
+function buildAssetIssueSummary(args: {
+  kind: "character" | "skybox";
+  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode;
+  modeSpec: AssetWorkflowModeSpec;
+  workflowConfigured: boolean;
+  strictMode: boolean;
+  selectedModel: string;
+  modelVisible: boolean | null;
+  diagnostic: AssetWorkflowDiagnostic | null;
+}): string[] {
+  const lines: string[] = [];
+  const label = args.kind === "character" ? "角色三视图" : "天空盒";
+  if (
+    ((args.kind === "character" && args.mode === "advanced_multiview") ||
+      (args.kind === "skybox" && args.mode === "advanced_panorama")) &&
+    !args.workflowConfigured
+  ) {
+    lines.push(`${label}当前已切到高级资产模式，但尚未配置专用工作流 JSON。`);
+  }
+  if (args.strictMode && !args.workflowConfigured) {
+    lines.push(`${label}严格资产模式已开启，未配置专用工作流时正式生成会被拦截。`);
+  }
+  if (args.modelVisible === false) {
+    lines.push(`${label}当前选中模型未出现在 Comfy checkpoint 下拉：${args.selectedModel}`);
+  }
+  if (args.diagnostic?.templateValid === false && args.diagnostic.templateMissing.length > 0) {
+    lines.push(`${label}工作流缺少 token：${args.diagnostic.templateMissing.join("、")}`);
+  }
+  if (args.diagnostic?.dependencyReport?.missingNodeTypes.length) {
+    lines.push(`${label}缺失节点：${args.diagnostic.dependencyReport.missingNodeTypes.join("、")}`);
+  }
+  if (args.diagnostic?.modeSpec.recommendedPlugins.length) {
+    lines.push(`${label}推荐插件：${args.diagnostic.modeSpec.recommendedPlugins.join("、")}`);
+  }
+  if (lines.length === 0) {
+    lines.push(`${label}当前模式：${args.modeSpec.label}。当前没有阻塞项。`);
+  }
+  return lines;
+}
 const loadExportService = () => import("../export-service/animaticExport");
 
 function cloneJson<T>(value: T): T {
@@ -1762,6 +1802,50 @@ export function ComfyPipelinePanel() {
       ),
     [skyboxAssetWorkflowMode, settings.skyboxAssetModelName]
   );
+  const characterIssueSummary = useMemo(
+    () =>
+      buildAssetIssueSummary({
+        kind: "character",
+        mode: characterAssetWorkflowMode,
+        modeSpec: characterAssetModeSpec,
+        workflowConfigured: Boolean(settings.characterWorkflowJson?.trim()),
+        strictMode: settings.requireDedicatedCharacterWorkflow !== false,
+        selectedModel: settings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+        modelVisible: characterModelVisible,
+        diagnostic: characterWorkflowDiagnostic
+      }),
+    [
+      characterAssetWorkflowMode,
+      characterAssetModeSpec,
+      settings.characterWorkflowJson,
+      settings.requireDedicatedCharacterWorkflow,
+      settings.characterAssetModelName,
+      characterModelVisible,
+      characterWorkflowDiagnostic
+    ]
+  );
+  const skyboxIssueSummary = useMemo(
+    () =>
+      buildAssetIssueSummary({
+        kind: "skybox",
+        mode: skyboxAssetWorkflowMode,
+        modeSpec: skyboxAssetModeSpec,
+        workflowConfigured: Boolean(settings.skyboxWorkflowJson?.trim()),
+        strictMode: settings.requireDedicatedSkyboxWorkflow !== false,
+        selectedModel: settings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+        modelVisible: skyboxModelVisible,
+        diagnostic: skyboxWorkflowDiagnostic
+      }),
+    [
+      skyboxAssetWorkflowMode,
+      skyboxAssetModeSpec,
+      settings.skyboxWorkflowJson,
+      settings.requireDedicatedSkyboxWorkflow,
+      settings.skyboxAssetModelName,
+      skyboxModelVisible,
+      skyboxWorkflowDiagnostic
+    ]
+  );
 
   const storyNormalizedItems = useMemo(() => {
     const text = storyText.trim();
@@ -2507,6 +2591,30 @@ export function ComfyPipelinePanel() {
       pushToast(`${kind === "character" ? "角色三视图" : "天空盒"}模式清单已复制`, "success");
     } catch (error) {
       pushToast(`复制模式清单失败：${String(error)}`, "error");
+    }
+  };
+
+  const copyAssetDiagnosticSummary = async (kind: "character" | "skybox") => {
+    const diagnostic = kind === "character" ? characterWorkflowDiagnostic : skyboxWorkflowDiagnostic;
+    const spec = kind === "character" ? characterAssetModeSpec : skyboxAssetModeSpec;
+    const issues = kind === "character" ? characterIssueSummary : skyboxIssueSummary;
+    const label = kind === "character" ? "角色三视图" : "天空盒";
+    const lines = [
+      `${label}当前模式：${spec.label}`,
+      `工作流配置：${diagnostic?.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}`,
+      `问题摘要：${issues.join("；")}`
+    ];
+    if (diagnostic) {
+      lines.push(`Token 预检：${diagnostic.templateValid ? "通过" : `缺少 ${diagnostic.templateMissing.join("、")}`}`);
+      lines.push(`节点体检：${summarizeDependencyReport(diagnostic.dependencyReport)}`);
+      lines.push(`缺失节点：${formatMissingNodes(diagnostic.dependencyReport)}`);
+      lines.push(`建议插件：${formatHintPlugins(diagnostic.dependencyReport)}`);
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      pushToast(`${label}体检结论已复制`, "success");
+    } catch (error) {
+      pushToast(`复制体检结论失败：${String(error)}`, "error");
     }
   };
 
@@ -4831,9 +4939,14 @@ export function ComfyPipelinePanel() {
         <div className="comfy-asset-mode-card">
           <div className="comfy-asset-mode-head">
             <strong>{characterAssetModeSpec.label}</strong>
-            <button className="btn-ghost" onClick={() => void copyAssetModeSummary("character")} type="button">
-              复制模式清单
-            </button>
+            <div className="timeline-actions">
+              <button className="btn-ghost" onClick={() => void copyAssetModeSummary("character")} type="button">
+                复制模式清单
+              </button>
+              <button className="btn-ghost" onClick={() => void copyAssetDiagnosticSummary("character")} type="button">
+                复制当前体检结论
+              </button>
+            </div>
           </div>
           <p>{characterAssetModeSpec.summary}</p>
           <div className="comfy-asset-mode-grid">
@@ -4873,6 +4986,14 @@ export function ComfyPipelinePanel() {
                 ))}
               </ul>
             </div>
+          </div>
+        </div>
+        <div className="comfy-asset-alert-strip">
+          <strong>角色三视图当前摘要</strong>
+          <div className={`comfy-asset-alert-list ${characterIssueSummary.some((item) => item.includes("缺失") || item.includes("拦截") || item.includes("未配置") || item.includes("未出现在")) ? "is-error" : "is-ok"}`}>
+            {characterIssueSummary.map((item) => (
+              <div key={item}>{item}</div>
+            ))}
           </div>
         </div>
         <label>
@@ -5190,9 +5311,14 @@ export function ComfyPipelinePanel() {
         <div className="comfy-asset-mode-card">
           <div className="comfy-asset-mode-head">
             <strong>{skyboxAssetModeSpec.label}</strong>
-            <button className="btn-ghost" onClick={() => void copyAssetModeSummary("skybox")} type="button">
-              复制模式清单
-            </button>
+            <div className="timeline-actions">
+              <button className="btn-ghost" onClick={() => void copyAssetModeSummary("skybox")} type="button">
+                复制模式清单
+              </button>
+              <button className="btn-ghost" onClick={() => void copyAssetDiagnosticSummary("skybox")} type="button">
+                复制当前体检结论
+              </button>
+            </div>
           </div>
           <p>{skyboxAssetModeSpec.summary}</p>
           <div className="comfy-asset-mode-grid">
@@ -5232,6 +5358,14 @@ export function ComfyPipelinePanel() {
                 ))}
               </ul>
             </div>
+          </div>
+        </div>
+        <div className="comfy-asset-alert-strip">
+          <strong>天空盒当前摘要</strong>
+          <div className={`comfy-asset-alert-list ${skyboxIssueSummary.some((item) => item.includes("缺失") || item.includes("拦截") || item.includes("未配置") || item.includes("未出现在")) ? "is-error" : "is-ok"}`}>
+            {skyboxIssueSummary.map((item) => (
+              <div key={item}>{item}</div>
+            ))}
           </div>
         </div>
         <label>

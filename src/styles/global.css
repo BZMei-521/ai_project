@@ -2905,6 +2905,35 @@ button.export-panel-collapsed:hover {
   font-size: 12px;
 }
 
+.comfy-asset-alert-strip {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(117, 79, 79, 0.75);
+  background: rgba(43, 16, 20, 0.78);
+}
+
+.comfy-asset-alert-strip > strong {
+  color: #ffd7d7;
+  font-size: 12px;
+}
+
+.comfy-asset-alert-list {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.comfy-asset-alert-list.is-error {
+  color: #ffb3b3;
+}
+
+.comfy-asset-alert-list.is-ok {
+  color: #bbefd0;
+}
+
 .comfy-connection-actions {
   display: grid;
   grid-template-columns: 1fr;
