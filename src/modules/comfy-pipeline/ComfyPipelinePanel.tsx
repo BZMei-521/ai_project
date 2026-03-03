@@ -27,6 +27,8 @@ import {
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
+const DEFAULT_CHARACTER_WORKFLOW_JSON = FISHER_WORKFLOW_JSON;
+const DEFAULT_SKYBOX_WORKFLOW_JSON = FISHER_WORKFLOW_JSON;
 const loadExportService = () => import("../export-service/animaticExport");
 
 type GenerationPhase = "idle" | "running";
@@ -3957,6 +3959,30 @@ export function ComfyPipelinePanel() {
             value={settings.characterWorkflowJson ?? ""}
           />
         </label>
+        <div className="timeline-actions">
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              persistSettings((previous) => ({ ...previous, characterWorkflowJson: DEFAULT_CHARACTER_WORKFLOW_JSON }));
+              appendLog("已写入内置角色三视图默认工作流模板");
+              pushToast("已写入内置角色三视图默认工作流模板", "success");
+            }}
+            type="button"
+          >
+            写入内置角色三视图模板
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              persistSettings((previous) => ({ ...previous, characterWorkflowJson: previous.imageWorkflowJson }));
+              appendLog("已将当前图片工作流复制为角色三视图工作流");
+              pushToast("已将当前图片工作流复制为角色三视图工作流", "success");
+            }}
+            type="button"
+          >
+            从图片工作流复制
+          </button>
+        </div>
         <div className="timeline-meta">
           角色三视图会强制使用单角色、单角度、纯背景约束。建议使用专门的角色设定工作流，而不是普通分镜图工作流。
         </div>
@@ -3971,6 +3997,30 @@ export function ComfyPipelinePanel() {
             value={settings.skyboxWorkflowJson ?? ""}
           />
         </label>
+        <div className="timeline-actions">
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: DEFAULT_SKYBOX_WORKFLOW_JSON }));
+              appendLog("已写入内置天空盒默认工作流模板");
+              pushToast("已写入内置天空盒默认工作流模板", "success");
+            }}
+            type="button"
+          >
+            写入内置天空盒模板
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: previous.imageWorkflowJson }));
+              appendLog("已将当前图片工作流复制为天空盒工作流");
+              pushToast("已将当前图片工作流复制为天空盒工作流", "success");
+            }}
+            type="button"
+          >
+            从图片工作流复制
+          </button>
+        </div>
         <div className="timeline-meta">
           天空盒工作流必须只生成环境，不允许出现人物。建议使用去人物、去叙事主体的专用场景工作流。
         </div>
