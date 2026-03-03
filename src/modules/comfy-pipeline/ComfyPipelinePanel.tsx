@@ -2490,16 +2490,18 @@ export function ComfyPipelinePanel() {
       };
     }
     const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
-    const characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
-    if (runtimeSettings.requireDedicatedCharacterWorkflow !== false && !characterWorkflow) {
-      throw new Error("未配置专用角色三视图工作流。当前已启用严格资产模式，禁止回退普通分镜工作流。");
+    let characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
+    if (!characterWorkflow) {
+      characterWorkflow = buildCharacterWorkflowTemplateJson(
+        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+        runtimeSettings.characterTemplatePreset ?? "portrait",
+        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+      );
+      persistSettings((previous) => ({ ...previous, characterWorkflowJson: characterWorkflow! }));
+      appendLog("未配置专用角色三视图工作流，已自动写入当前内置三视图模板");
     }
     appendLog(`开始生成角色三视图：${name}`);
-    appendLog(
-      characterWorkflow
-        ? `角色三视图使用专用工作流：${name}`
-        : `角色三视图未配置专用工作流，已回退到图片工作流：${name}`
-    );
+    appendLog(`角色三视图使用专用工作流：${name}`);
     const front = await generateShotAsset(
       runtimeSettings,
       makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, safeContext, "front")),
@@ -2508,7 +2510,7 @@ export function ComfyPipelinePanel() {
       [],
       [],
       {
-        workflowJsonOverride: characterWorkflow || runtimeSettings.imageWorkflowJson,
+        workflowJsonOverride: characterWorkflow,
         tokenOverrides: {
           NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         }
@@ -2522,7 +2524,7 @@ export function ComfyPipelinePanel() {
       [],
       [],
       {
-        workflowJsonOverride: characterWorkflow || runtimeSettings.imageWorkflowJson,
+        workflowJsonOverride: characterWorkflow,
         tokenOverrides: {
           NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         }
@@ -2536,7 +2538,7 @@ export function ComfyPipelinePanel() {
       [],
       [],
       {
-        workflowJsonOverride: characterWorkflow || runtimeSettings.imageWorkflowJson,
+        workflowJsonOverride: characterWorkflow,
         tokenOverrides: {
           NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         }
@@ -2591,20 +2593,21 @@ export function ComfyPipelinePanel() {
       sceneName,
       sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
     );
-    const skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
-    if (runtimeSettings.requireDedicatedSkyboxWorkflow !== false && !skyboxWorkflow) {
-      throw new Error("未配置专用天空盒工作流。当前已启用严格资产模式，禁止回退普通分镜工作流。");
+    let skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
+    if (!skyboxWorkflow) {
+      skyboxWorkflow = buildSkyboxWorkflowTemplateJson(
+        runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+        runtimeSettings.skyboxTemplatePreset ?? "wide"
+      );
+      persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: skyboxWorkflow! }));
+      appendLog("未配置专用天空盒工作流，已自动写入当前内置天空盒模板");
     }
     appendLog(`开始生成场景天空盒：${sceneName}`);
-    appendLog(
-      skyboxWorkflow
-        ? `场景天空盒使用专用工作流：${sceneName}`
-        : `场景天空盒未配置专用工作流，已回退到图片工作流：${sceneName}`
-    );
+    appendLog(`场景天空盒使用专用工作流：${sceneName}`);
     const result = await generateSkyboxFaces(
       {
         ...runtimeSettings,
-        skyboxWorkflowJson: skyboxWorkflow || runtimeSettings.imageWorkflowJson
+        skyboxWorkflowJson: skyboxWorkflow
       },
       description
     );
