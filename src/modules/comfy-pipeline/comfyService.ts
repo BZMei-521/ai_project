@@ -2645,11 +2645,35 @@ async function materializeVideoAssetPath(settings: ComfySettings, asset: ComfyOu
   return written.filePath;
 }
 
+async function materializeImageAssetPath(settings: ComfySettings, asset: ComfyOutputAsset): Promise<string> {
+  const cachePath = localAssetCachePath(settings, asset);
+  const directPath = toLocalOutputPath(settings.outputDir, asset);
+  if (directPath) {
+    try {
+      const copied = await invokeDesktop<FileWriteResult>("copy_file_to", {
+        sourcePath: directPath,
+        targetPath: cachePath
+      });
+      return copied.filePath;
+    } catch {
+      // fallback to downloading from /view
+    }
+  }
+
+  const url = toComfyViewUrl(settings.baseUrl, asset);
+  const base64 = await invokeDesktop<string>("comfy_fetch_view_base64", { url });
+  const written = await invokeDesktop<FileWriteResult>("write_base64_file", {
+    filePath: cachePath,
+    base64Data: base64
+  });
+  return written.filePath;
+}
+
 async function materializeOutputAssetPath(settings: ComfySettings, asset: ComfyOutputAsset): Promise<string> {
   if (isVideoOutputAsset(asset) || isAudioOutputAsset(asset)) {
     return materializeVideoAssetPath(settings, asset);
   }
-  return toLocalOutputPath(settings.outputDir, asset);
+  return materializeImageAssetPath(settings, asset);
 }
 
 async function readComfyServerLogTail(settings: ComfySettings, maxLines = 180): Promise<string | null> {
@@ -2917,7 +2941,7 @@ export async function generateSkyboxFaces(
     const outputs = await waitForComfyOutput(settings.baseUrl, promptId);
     const first = outputs[0];
     if (!first) continue;
-    faces[face] = toLocalOutputPath(settings.outputDir, first) || toComfyViewUrl(settings.baseUrl, first);
+    faces[face] = await materializeImageAssetPath(settings, first);
     previews[face] = toComfyViewUrl(settings.baseUrl, first);
   }
   return { faces, previews };
@@ -2947,7 +2971,7 @@ export async function generateSkyboxFaceUpdate(
   const first = outputs[0];
   if (!first) throw new Error("天空盒更新完成但未获取到输出");
   return {
-    filePath: toLocalOutputPath(settings.outputDir, first) || toComfyViewUrl(settings.baseUrl, first),
+    filePath: await materializeImageAssetPath(settings, first),
     previewUrl: toComfyViewUrl(settings.baseUrl, first)
   };
 }

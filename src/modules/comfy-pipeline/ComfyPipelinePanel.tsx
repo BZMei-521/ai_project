@@ -371,9 +371,19 @@ function sanitizeSceneCandidate(value: string): string {
     .replace(/[\]】)）]\s*$/, "")
     .replace(/^(主体|角色|人物|主角|场景|环境|地点|动作|镜头|美术|构图|光线|光影|色调|机位|景别|画面|提示词|备注)\s*[:：]\s*/g, "")
     .replace(/\s+/g, "");
-  const locationMatch = trimmed.match(/(?:^|.*(?:在|于|到|进入|来到|走到|站在))([^，。；\n]{1,12}?(?:河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库))$/);
-  if (locationMatch?.[1]) {
-    trimmed = locationMatch[1].trim();
+  const locationSuffix = /(河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库)$/;
+  if (locationSuffix.test(trimmed)) {
+    const markers = ["站在", "走到", "来到", "进入", "到", "于", "在"];
+    for (const marker of markers) {
+      const markerIndex = trimmed.lastIndexOf(marker);
+      if (markerIndex >= 0) {
+        const candidate = trimmed.slice(markerIndex + marker.length).trim();
+        if (locationSuffix.test(candidate)) {
+          trimmed = candidate;
+          break;
+        }
+      }
+    }
   }
   if (!trimmed) return "";
   if (GENERIC_SCENE_LABELS.has(trimmed)) return "";
