@@ -1866,6 +1866,31 @@ export function ComfyPipelinePanel() {
     return `${prompt}。生成可复用天空盒六面，要求空间结构统一、材质一致、无人物、可支撑不同镜头角度下的场景一致性。`;
   };
 
+  const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
+    items.map((shot) => ({
+      id: shot.id,
+      title: shot.title,
+      prompt: shot.storyPrompt?.trim() ?? "",
+      negativePrompt: shot.negativePrompt?.trim() ?? "",
+      videoPrompt: shot.videoPrompt?.trim() ?? "",
+      videoMode: shot.videoMode ?? "auto",
+      videoStartFramePath: shot.videoStartFramePath?.trim() ?? "",
+      videoEndFramePath: shot.videoEndFramePath?.trim() ?? "",
+      skyboxFace: shot.skyboxFace ?? "auto",
+      skyboxFaces: shot.skyboxFaces ?? [],
+      skyboxFaceWeights: shot.skyboxFaceWeights ?? {},
+      durationFrames: shot.durationFrames,
+      seed: shot.seed,
+      characterRefs: shot.characterRefs ?? [],
+      sceneRefId: shot.sceneRefId ?? "",
+      dialogue: shot.dialogue ?? "",
+      notes: shot.notes ?? "",
+      tags: shot.tags ?? [],
+      characterNames: shot.sourceCharacterNames ?? [],
+      sceneName: shot.sourceSceneName ?? "",
+      scenePrompt: shot.sourceScenePrompt ?? ""
+    }));
+
   const findAssetIdByName = (type: "character" | "scene" | "skybox", name: string) => {
     return findMatchingAssetId(useStoryboardStore.getState().assets, type, name);
   };
@@ -2004,7 +2029,7 @@ export function ComfyPipelinePanel() {
   const provisionAssetsForItems = async (
     items: NormalizedImportedShot[],
     runtimeSettings: ComfySettings,
-    options?: { bindShots?: boolean }
+    options?: { bindShots?: boolean; onProgress?: (current: number, total: number, message: string) => void }
   ) => {
     const characterIdMap = new Map<string, string>();
     const sceneIdMap = new Map<string, string>();
@@ -2012,11 +2037,27 @@ export function ComfyPipelinePanel() {
     let createdCharacters = 0;
     let reusedSkyboxes = 0;
     let createdSkyboxes = 0;
+    const tasks: Array<{ kind: "character" | "skybox"; name: string }> = [];
+    for (const item of items) {
+      for (const name of item.characterNames) {
+        const key = normalizeEntityKey(name);
+        if (!key || tasks.some((task) => task.kind === "character" && normalizeEntityKey(task.name) === key)) continue;
+        tasks.push({ kind: "character", name });
+      }
+      if (item.sceneName) {
+        const key = normalizeEntityKey(item.sceneName);
+        if (!key || tasks.some((task) => task.kind === "skybox" && normalizeEntityKey(task.name) === key)) continue;
+        tasks.push({ kind: "skybox", name: item.sceneName });
+      }
+    }
+    let progressIndex = 0;
 
     for (const item of items) {
       for (const name of item.characterNames) {
         const key = normalizeEntityKey(name);
         if (!key || characterIdMap.has(key)) continue;
+        progressIndex += 1;
+        options?.onProgress?.(progressIndex, tasks.length, `角色三视图：${name}`);
         try {
           const context = [item.prompt, item.notes, item.dialogue].filter(Boolean).join(" ");
           const reusedId = findAssetIdByName("character", name);
@@ -2038,6 +2079,8 @@ export function ComfyPipelinePanel() {
       if (item.sceneName) {
         const key = normalizeEntityKey(item.sceneName);
         if (!sceneIdMap.has(key)) {
+          progressIndex += 1;
+          options?.onProgress?.(progressIndex, tasks.length, `场景天空盒：${item.sceneName}`);
           try {
             const reusedId = findAssetIdByName("skybox", item.sceneName);
             if (reusedId) {
@@ -2088,8 +2131,47 @@ export function ComfyPipelinePanel() {
       reusedCharacters,
       createdCharacters,
       reusedSkyboxes,
-      createdSkyboxes
+      createdSkyboxes,
+      totalTasks: tasks.length
     };
+  };
+
+  const ensureProvisionedAssetsForCurrentShots = async (
+    shotsForRun: Shot[],
+    runtimeSettings: ComfySettings,
+    sourceLabel: string
+  ) => {
+    const items = buildProvisionItemsFromShots(shotsForRun).filter(
+      (item) => item.characterNames.length > 0 || Boolean(item.sceneName)
+    );
+    if (items.length === 0) {
+      appendLog(`${sourceLabel}跳过：当前镜头没有待识别的新角色或新场景元数据`);
+      return true;
+    }
+    if (!(await ensureComfyReady())) {
+      appendLog(`${sourceLabel}中断：ComfyUI 未连接`, "error");
+      setPipelineState(`${sourceLabel}中断：ComfyUI 未连接`);
+      return false;
+    }
+    appendLog(`${sourceLabel}开始`);
+    const summary = await provisionAssetsForItems(items, runtimeSettings, {
+      bindShots: true,
+      onProgress: (current, total, message) => {
+        const prefix = total > 0 ? `(${current}/${total})` : "";
+        setPipelineState(`${sourceLabel}${prefix} ${message}`);
+        if (runAllActive) {
+          const base = 8;
+          const span = 14;
+          const ratio = total > 0 ? current / total : 1;
+          setRunAllProgress(base + span * ratio);
+          setRunAllStage(`步骤 1/6 资产预生成 · ${message}`);
+        }
+      }
+    });
+    appendLog(
+      `${sourceLabel}完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
+    );
+    return true;
   };
 
   const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
@@ -2209,6 +2291,9 @@ export function ComfyPipelinePanel() {
         seed: item.seed,
         characterRefs: item.characterRefs,
         sceneRefId: item.sceneRefId,
+        sourceCharacterNames: item.characterNames,
+        sourceSceneName: item.sceneName,
+        sourceScenePrompt: item.scenePrompt,
         dialogue: item.dialogue,
         notes: item.notes,
         tags: item.tags
@@ -2853,7 +2938,7 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const onGenerateImages = async (retryFailedOnly = false): Promise<boolean> => {
+  const onGenerateImages = async (retryFailedOnly = false, skipProvision = false): Promise<boolean> => {
     try {
       if (phase === "running") {
         appendLog("分镜图生成被跳过：当前已有任务在运行", "error");
@@ -2891,19 +2976,28 @@ export function ComfyPipelinePanel() {
         return false;
       }
       setPhase("running");
+      if (!skipProvision) {
+        setPipelineState("分镜图前置：准备生成角色三视图与场景天空盒");
+        const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, runtimeSettings, "分镜图前置资产生成");
+        if (!provisionOk) {
+          appendLog("分镜图生成中断：前置资产生成未完成", "error");
+          return false;
+        }
+      }
+      const latestShotsForRun = getScopedShotsSnapshot();
       let successCount = 0;
       let attemptedCount = 0;
       let skippedCount = 0;
       appendLog(retryFailedOnly ? "开始重试失败分镜图" : "开始生成分镜图");
-      for (let index = 0; index < shotsForRun.length; index += 1) {
-        const shot = shotsForRun[index];
+      for (let index = 0; index < latestShotsForRun.length; index += 1) {
+        const shot = latestShotsForRun[index];
         if (retryFailedOnly && imageStatusByShot[shot.id] !== "failed") continue;
         if (skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
           skippedCount += 1;
           continue;
         }
         attemptedCount += 1;
-        setPipelineState(`生成分镜图：${shot.title} (${index + 1}/${shotsForRun.length})`);
+        setPipelineState(`生成分镜图：${shot.title} (${index + 1}/${latestShotsForRun.length})`);
         const ok = await onGenerateSingle("image", shot.id, retryFailedOnly, runtimeSettings);
         if (ok) successCount += 1;
       }
@@ -3248,19 +3342,29 @@ export function ComfyPipelinePanel() {
     appendLog(`一键生成整片开始，共 ${shotsForRun.length} 个镜头`);
     pushToast("已开始一键生成整片", "success");
     try {
-      setPipelineState("一键生成整片：步骤 1/5 生成分镜图");
-      setRunAllProgress(12);
-      setRunAllStage("步骤 1/5 生成分镜图");
-      const imageOk = await onGenerateImages(false);
+      setPipelineState("一键生成整片：步骤 1/6 预生成角色三视图与场景天空盒");
+      setRunAllProgress(8);
+      setRunAllStage("步骤 1/6 预生成角色三视图与场景天空盒");
+      const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, settings, "一键生成前置资产生成");
+      if (!provisionOk) {
+        setPipelineState("一键生成中断：前置资产生成未完成");
+        appendLog("一键生成中断：前置资产生成未完成", "error");
+        return;
+      }
+
+      setPipelineState("一键生成整片：步骤 2/6 生成分镜图");
+      setRunAllProgress(24);
+      setRunAllStage("步骤 2/6 生成分镜图");
+      const imageOk = await onGenerateImages(false, true);
       if (!imageOk) {
         setPipelineState("一键生成中断：分镜图阶段未完成");
         appendLog("一键生成中断：分镜图阶段未完成", "error");
         return;
       }
 
-      setPipelineState("一键生成整片：步骤 2/5 生成镜头视频");
-      setRunAllProgress(38);
-      setRunAllStage("步骤 2/5 生成镜头视频");
+      setPipelineState("一键生成整片：步骤 3/6 生成镜头视频");
+      setRunAllProgress(44);
+      setRunAllStage("步骤 3/6 生成镜头视频");
       const videoOk = await onGenerateVideos(false);
       if (!videoOk) {
         setPipelineState("一键生成中断：镜头视频阶段未完成");
@@ -3268,9 +3372,9 @@ export function ComfyPipelinePanel() {
         return;
       }
 
-      setPipelineState("一键生成整片：步骤 3/5 生成镜头配音");
-      setRunAllProgress(58);
-      setRunAllStage("步骤 3/5 生成镜头配音");
+      setPipelineState("一键生成整片：步骤 4/6 生成镜头配音");
+      setRunAllProgress(62);
+      setRunAllStage("步骤 4/6 生成镜头配音");
       if (settings.audioWorkflowJson?.trim()) {
         const audioOk = await onGenerateAudios(false);
         if (!audioOk) {
@@ -3280,9 +3384,9 @@ export function ComfyPipelinePanel() {
         appendLog("一键生成提示：未配置配音工作流，已跳过镜头配音");
       }
 
-      setPipelineState("一键生成整片：步骤 4/5 生成环境/音效");
-      setRunAllProgress(74);
-      setRunAllStage("步骤 4/5 生成环境/音效");
+      setPipelineState("一键生成整片：步骤 5/6 生成环境/音效");
+      setRunAllProgress(78);
+      setRunAllStage("步骤 5/6 生成环境/音效");
       if (settings.soundWorkflowJson?.trim()) {
         const soundOk = await onGenerateSoundDesign(false);
         if (!soundOk) {
@@ -3292,9 +3396,9 @@ export function ComfyPipelinePanel() {
         appendLog("一键生成提示：未配置环境/音效工作流，已跳过环境/音效生成");
       }
 
-      setPipelineState("一键生成整片：步骤 5/5 拼接整片并融合音频");
-      setRunAllProgress(88);
-      setRunAllStage("步骤 5/5 拼接整片并融合音频");
+      setPipelineState("一键生成整片：步骤 6/6 拼接整片并融合音频");
+      setRunAllProgress(92);
+      setRunAllStage("步骤 6/6 拼接整片并融合音频");
       const concatOk = await onConcatVideos();
       if (!concatOk) {
         setPipelineState("一键生成中断：整片拼接未完成");

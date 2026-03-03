@@ -29,6 +29,9 @@ export type Shot = {
   seed?: number;
   characterRefs?: string[];
   sceneRefId?: string;
+  sourceCharacterNames?: string[];
+  sourceSceneName?: string;
+  sourceScenePrompt?: string;
   videoPrompt?: string;
   videoMode?: "auto" | "single_frame" | "first_last_frame";
   videoStartFramePath?: string;

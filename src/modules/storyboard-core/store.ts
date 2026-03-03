@@ -19,6 +19,9 @@ export type ImportedShotScriptItem = {
   seed?: number;
   characterRefs?: string[];
   sceneRefId?: string;
+  sourceCharacterNames?: string[];
+  sourceSceneName?: string;
+  sourceScenePrompt?: string;
   dialogue?: string;
   notes?: string;
   tags?: string[];
@@ -155,6 +158,9 @@ type StoryboardState = {
         | "seed"
         | "characterRefs"
         | "sceneRefId"
+        | "sourceCharacterNames"
+        | "sourceSceneName"
+        | "sourceScenePrompt"
         | "generatedImagePath"
         | "generatedVideoPath"
       >
@@ -763,6 +769,9 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
               seed: patch.seed ?? shot.seed,
               characterRefs: patch.characterRefs ?? shot.characterRefs,
               sceneRefId: patch.sceneRefId ?? shot.sceneRefId,
+              sourceCharacterNames: patch.sourceCharacterNames ?? shot.sourceCharacterNames,
+              sourceSceneName: patch.sourceSceneName ?? shot.sourceSceneName,
+              sourceScenePrompt: patch.sourceScenePrompt ?? shot.sourceScenePrompt,
               generatedImagePath: patch.generatedImagePath ?? shot.generatedImagePath,
               generatedVideoPath: patch.generatedVideoPath ?? shot.generatedVideoPath
             }
@@ -835,6 +844,9 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           seed: item.seed,
           characterRefs: item.characterRefs ?? [],
           sceneRefId: item.sceneRefId ?? "",
+          sourceCharacterNames: item.sourceCharacterNames ?? [],
+          sourceSceneName: item.sourceSceneName ?? "",
+          sourceScenePrompt: item.sourceScenePrompt ?? "",
           generatedImagePath: "",
           generatedVideoPath: ""
         });
