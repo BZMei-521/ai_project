@@ -2910,7 +2910,15 @@ export async function concatShotVideos(paths: string[]): Promise<string | null> 
 }
 
 function makeSkyboxPrompt(description: string, face: SkyboxFace, eventPrompt?: string): string {
-  const base = `场景天空盒 ${face} 面，超广角，环境一致，材质一致，光照一致。${description.trim()}`;
+  const faceInstruction: Record<SkyboxFace, string> = {
+    front: "front 面，正前方视角，作为主参考方向，空间主体朝前展开。",
+    right: "right 面，相对 front 顺时针右转 90 度，展示右侧连续空间。",
+    back: "back 面，相对 front 反向 180 度，展示后方连续空间。",
+    left: "left 面，相对 front 左转 90 度，展示左侧连续空间。",
+    up: "up 面，抬头仰视顶部空间，只展示上方结构与天花/天空。",
+    down: "down 面，俯视下方面，只展示地面、地表、地砖、浅滩或底部结构。"
+  };
+  const base = `场景天空盒 ${faceInstruction[face]} cubemap face reference, wide environment plate, no characters, no action. ${description.trim()}`;
   const event = eventPrompt?.trim();
   if (!event) return base;
   return `${base}\n局部事件更新：${event}`;

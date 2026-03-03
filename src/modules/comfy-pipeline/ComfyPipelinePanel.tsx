@@ -2274,7 +2274,16 @@ export function ComfyPipelinePanel() {
     return map;
   }, [audioTracks]);
 
-  const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = ""): Shot => ({
+  const stableAssetSeed = (key: string) => {
+    let hash = 2166136261;
+    for (let index = 0; index < key.length; index += 1) {
+      hash ^= key.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return Math.abs(hash >>> 0);
+  };
+
+  const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
     id,
     sequenceId: currentSequenceId,
     order: 1,
@@ -2287,16 +2296,23 @@ export function ComfyPipelinePanel() {
     negativePrompt,
     videoPrompt: "",
     videoMode: "single_frame",
+    seed,
     characterRefs: [],
     sceneRefId: ""
   });
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
-    const viewLabel = view === "front" ? "正视图" : view === "side" ? "侧视图" : "背视图";
+    const viewLabel = view === "front" ? "正视图" : view === "side" ? "左侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
-    return `角色标准三视图，${viewLabel}，单人，全身完整，单张图只允许一个角色，角色：${name}。仅保留角色设定信息，不要叙事场景，不要与他人互动。${normalizeStoryInput(
+    const orthographicInstruction =
+      view === "front"
+        ? "正面 0 度，身体朝向镜头，双脚完整落地，标准角色设定板。"
+        : view === "side"
+          ? "左侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面左侧，只展示单人侧面轮廓。"
+          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟。";
+    return `角色正交三视图设定板，${viewLabel}，single character turnaround sheet，orthographic view，full body centered。角色：${name}。${orthographicInstruction} 仅保留角色设定信息，不要叙事场景，不要与他人互动。${normalizeStoryInput(
       context
-    )}。严格要求：${backgroundPrompt}，无第二人物，无群像，无场景叙事，无武打动作，无道具遮挡，无裁切，服装统一，面部与体型一致，角色设定图风格，写实电影美术。`;
+    )}。严格要求：${backgroundPrompt}，A-pose 或自然站姿，站立稳定，单张图只允许一个角色，无第二人物，无群像，无场景叙事，无武打动作，无道具遮挡，无裁切，服装统一，面部与体型一致，写实角色设定板，美术统一。`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -2321,12 +2337,12 @@ export function ComfyPipelinePanel() {
     "傍晚河边，桥梁与浅滩清晰，可供人物调度，环境纯净，无人物"
   );
   const skyboxFacePromptPreviews: Array<{ face: string; prompt: string }> = [
-    { face: "front", prompt: `场景天空盒 front 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
-    { face: "right", prompt: `场景天空盒 right 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
-    { face: "back", prompt: `场景天空盒 back 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
-    { face: "left", prompt: `场景天空盒 left 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
-    { face: "up", prompt: `场景天空盒 up 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
-    { face: "down", prompt: `场景天空盒 down 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` }
+    { face: "front", prompt: `场景天空盒 front 面，正前方主参考方向，空间朝前展开，纯环境。${skyboxPromptPreviewBase}` },
+    { face: "right", prompt: `场景天空盒 right 面，相对 front 右转 90 度，展示右侧连续空间，纯环境。${skyboxPromptPreviewBase}` },
+    { face: "back", prompt: `场景天空盒 back 面，相对 front 反向 180 度，展示后方连续空间，纯环境。${skyboxPromptPreviewBase}` },
+    { face: "left", prompt: `场景天空盒 left 面，相对 front 左转 90 度，展示左侧连续空间，纯环境。${skyboxPromptPreviewBase}` },
+    { face: "up", prompt: `场景天空盒 up 面，抬头仰视顶部空间，只保留天空或天花结构，纯环境。${skyboxPromptPreviewBase}` },
+    { face: "down", prompt: `场景天空盒 down 面，俯视地面或底部结构，只保留底部环境，纯环境。${skyboxPromptPreviewBase}` }
   ];
 
   const summarizeDependencyReport = (report: WorkflowDependencyReport | null): string => {
@@ -2490,6 +2506,7 @@ export function ComfyPipelinePanel() {
       };
     }
     const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
+    const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
     let characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
     if (!characterWorkflow) {
       characterWorkflow = buildCharacterWorkflowTemplateJson(
@@ -2504,7 +2521,7 @@ export function ComfyPipelinePanel() {
     appendLog(`角色三视图使用专用工作流：${name}`);
     const front = await generateShotAsset(
       runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, safeContext, "front")),
+      makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, safeContext, "front"), "", baseSeed),
       0,
       "image",
       [],
@@ -2518,7 +2535,7 @@ export function ComfyPipelinePanel() {
     );
     const side = await generateShotAsset(
       runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, safeContext, "side")),
+      makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, safeContext, "side"), "", baseSeed + 1),
       0,
       "image",
       [],
@@ -2532,7 +2549,7 @@ export function ComfyPipelinePanel() {
     );
     const back = await generateShotAsset(
       runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, safeContext, "back")),
+      makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, safeContext, "back"), "", baseSeed + 2),
       0,
       "image",
       [],
