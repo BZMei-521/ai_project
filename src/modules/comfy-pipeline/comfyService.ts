@@ -2008,6 +2008,30 @@ async function fetchObjectInfo(baseUrl: string): Promise<Record<string, unknown>
   return parsed as Record<string, unknown>;
 }
 
+function extractStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item === "string")) {
+      return value.map((item) => item.trim()).filter((item) => item.length > 0);
+    }
+    for (const item of value) {
+      const nested = extractStringList(item);
+      if (nested.length > 0) return nested;
+    }
+  }
+  return [];
+}
+
+export async function listComfyCheckpointOptions(baseUrl: string): Promise<string[]> {
+  const objectInfo = await fetchObjectInfo(baseUrl);
+  const loader = objectInfo["CheckpointLoaderSimple"];
+  if (!loader || typeof loader !== "object") return [];
+  const input = (loader as { input?: Record<string, unknown> }).input;
+  if (!input || typeof input !== "object") return [];
+  const required = (input as { required?: Record<string, unknown> }).required;
+  if (!required || typeof required !== "object") return [];
+  return extractStringList((required as Record<string, unknown>).ckpt_name);
+}
+
 export async function inspectWorkflowDependencies(
   baseUrl: string,
   workflowJson: string

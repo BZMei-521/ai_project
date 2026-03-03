@@ -16,6 +16,7 @@ import {
   inferComfyRootDir,
   installSuggestedPlugins,
   inspectWorkflowDependencies,
+  listComfyCheckpointOptions,
   pingComfyWithDetail,
   stripLocalMotionPresetToken,
   validateWorkflowJsonSyntax,
@@ -43,6 +44,8 @@ const SKYBOX_ASSET_MODEL_OPTIONS = [
   "dreamshaper_8.safetensors",
   "Qwen-Rapid-AIO-SFW-v5.safetensors"
 ] as const;
+const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [...CHARACTER_ASSET_MODEL_OPTIONS];
+const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
@@ -89,6 +92,13 @@ const loadExportService = () => import("../export-service/animaticExport");
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function pickFirstAvailableModel(preferred: readonly string[], available: string[]): string | null {
+  for (const name of preferred) {
+    if (available.includes(name)) return name;
+  }
+  return available[0] ?? null;
 }
 
 function buildCharacterWorkflowTemplateJson(
@@ -1582,11 +1592,24 @@ export function ComfyPipelinePanel() {
   const [logs, setLogs] = useState<PipelineLogItem[]>([]);
   const [provisionPreviews, setProvisionPreviews] = useState<ProvisionPreviewItem[]>([]);
   const [connectionLabel, setConnectionLabel] = useState("待检测");
+  const [availableCheckpointOptions, setAvailableCheckpointOptions] = useState<string[]>([]);
   const [showShotEditor, setShowShotEditor] = useState(false);
   const [shotFilter, setShotFilter] = useState<"all" | "failed">("all");
   const [lastDependencyHints, setLastDependencyHints] = useState<WorkflowDependencyHint[]>([]);
   const [lastModelChecklist, setLastModelChecklist] = useState("");
   const checkingRef = useRef(false);
+  const characterModelVisible = useMemo(() => {
+    const selected = settings.characterAssetModelName?.trim();
+    if (!selected) return null;
+    if (availableCheckpointOptions.length === 0) return null;
+    return availableCheckpointOptions.includes(selected);
+  }, [availableCheckpointOptions, settings.characterAssetModelName]);
+  const skyboxModelVisible = useMemo(() => {
+    const selected = settings.skyboxAssetModelName?.trim();
+    if (!selected) return null;
+    if (availableCheckpointOptions.length === 0) return null;
+    return availableCheckpointOptions.includes(selected);
+  }, [availableCheckpointOptions, settings.skyboxAssetModelName]);
 
   const storyNormalizedItems = useMemo(() => {
     const text = storyText.trim();
@@ -2985,10 +3008,23 @@ export function ComfyPipelinePanel() {
     try {
       const result = await pingComfyWithDetail(settings.baseUrl);
       setConnectionLabel(result.ok ? "已连接" : "未连接");
+      if (result.ok) {
+        try {
+          const options = await listComfyCheckpointOptions(settings.baseUrl);
+          setAvailableCheckpointOptions(options);
+          appendLog(`已读取 Comfy checkpoint 下拉，共 ${options.length} 项`);
+        } catch (error) {
+          setAvailableCheckpointOptions([]);
+          appendLog(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+        }
+      } else {
+        setAvailableCheckpointOptions([]);
+      }
       pushToast(result.ok ? "ComfyUI 连接正常" : result.message, result.ok ? "success" : "warning");
       appendLog(result.ok ? "ComfyUI 连接正常" : `ComfyUI 连接失败：${result.message}`, result.ok ? "info" : "error");
     } catch (error) {
       setConnectionLabel("未连接");
+      setAvailableCheckpointOptions([]);
       pushToast(`连接失败：${String(error)}`, "error");
       appendLog(`ComfyUI 连接失败：${String(error)}`, "error");
     }
@@ -3221,9 +3257,22 @@ export function ComfyPipelinePanel() {
       }
       const ping = await pingComfyWithDetail(first);
       setConnectionLabel(ping.ok ? "已连接" : "未连接");
+      if (ping.ok) {
+        try {
+          const options = await listComfyCheckpointOptions(first);
+          setAvailableCheckpointOptions(options);
+          appendLog(`已读取 Comfy checkpoint 下拉，共 ${options.length} 项`);
+        } catch (error) {
+          setAvailableCheckpointOptions([]);
+          appendLog(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+        }
+      } else {
+        setAvailableCheckpointOptions([]);
+      }
     } catch (error) {
       if (!quiet) pushToast(`自动探测失败：${String(error)}`, "error");
       setConnectionLabel("未连接");
+      setAvailableCheckpointOptions([]);
       appendLog(`自动探测 Comfy 地址失败：${String(error)}`, "error");
     }
   };
@@ -3235,6 +3284,12 @@ export function ComfyPipelinePanel() {
       const current = await pingComfyWithDetail(settings.baseUrl);
       if (current.ok) {
         setConnectionLabel("已连接");
+        try {
+          const options = await listComfyCheckpointOptions(settings.baseUrl);
+          setAvailableCheckpointOptions(options);
+        } catch {
+          setAvailableCheckpointOptions([]);
+        }
         return true;
       }
       const found = await discoverComfyEndpoints();
@@ -3268,6 +3323,16 @@ export function ComfyPipelinePanel() {
       }
       const next = await pingComfyWithDetail(first);
       setConnectionLabel(next.ok ? "已连接" : "未连接");
+      if (next.ok) {
+        try {
+          const options = await listComfyCheckpointOptions(first);
+          setAvailableCheckpointOptions(options);
+        } catch {
+          setAvailableCheckpointOptions([]);
+        }
+      } else {
+        setAvailableCheckpointOptions([]);
+      }
       if (!next.ok) appendLog(`ComfyUI 连接失败：${next.message}`, "error");
       return next.ok;
     } finally {
@@ -4268,6 +4333,55 @@ export function ComfyPipelinePanel() {
             ))}
           </select>
         </label>
+        <div className="timeline-actions">
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              try {
+                const options =
+                  availableCheckpointOptions.length > 0
+                    ? availableCheckpointOptions
+                    : await listComfyCheckpointOptions(settings.baseUrl);
+                setAvailableCheckpointOptions(options);
+                const next = pickFirstAvailableModel(CHARACTER_ASSET_MODEL_RECOMMEND_ORDER, options);
+                if (!next) {
+                  pushToast("未从 ComfyUI 读取到可用 checkpoint 下拉", "warning");
+                  appendLog("角色三视图推荐模型失败：未读取到可用 checkpoint 下拉", "error");
+                  return;
+                }
+                persistSettings((previous) => ({ ...previous, characterAssetModelName: next }));
+                appendLog(`角色三视图已切换推荐模型：${next}`);
+                pushToast(`角色三视图已切换推荐模型：${next}`, "success");
+              } catch (error) {
+                pushToast(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+                appendLog(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+              }
+            }}
+            type="button"
+          >
+            一键推荐角色模型
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              try {
+                const options = await listComfyCheckpointOptions(settings.baseUrl);
+                setAvailableCheckpointOptions(options);
+                appendLog(`已刷新 Comfy checkpoint 下拉，共 ${options.length} 项`);
+                pushToast(`已刷新 Comfy checkpoint 下拉，共 ${options.length} 项`, "success");
+              } catch (error) {
+                pushToast(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+                appendLog(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+              }
+            }}
+            type="button"
+          >
+            刷新可用模型
+          </button>
+        </div>
+        <div className="timeline-meta">
+          当前模型可见性：{characterModelVisible == null ? "未读取 Comfy 下拉" : characterModelVisible ? "已命中 Comfy 下拉" : "当前模型未出现在 Comfy 下拉"}
+        </div>
         <label>
           角色三视图内置模板比例
           <select
@@ -4437,6 +4551,38 @@ export function ComfyPipelinePanel() {
             ))}
           </select>
         </label>
+        <div className="timeline-actions">
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              try {
+                const options =
+                  availableCheckpointOptions.length > 0
+                    ? availableCheckpointOptions
+                    : await listComfyCheckpointOptions(settings.baseUrl);
+                setAvailableCheckpointOptions(options);
+                const next = pickFirstAvailableModel(SKYBOX_ASSET_MODEL_RECOMMEND_ORDER, options);
+                if (!next) {
+                  pushToast("未从 ComfyUI 读取到可用 checkpoint 下拉", "warning");
+                  appendLog("天空盒推荐模型失败：未读取到可用 checkpoint 下拉", "error");
+                  return;
+                }
+                persistSettings((previous) => ({ ...previous, skyboxAssetModelName: next }));
+                appendLog(`天空盒已切换推荐模型：${next}`);
+                pushToast(`天空盒已切换推荐模型：${next}`, "success");
+              } catch (error) {
+                pushToast(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+                appendLog(`读取 Comfy checkpoint 下拉失败：${String(error)}`, "error");
+              }
+            }}
+            type="button"
+          >
+            一键推荐天空盒模型
+          </button>
+        </div>
+        <div className="timeline-meta">
+          当前模型可见性：{skyboxModelVisible == null ? "未读取 Comfy 下拉" : skyboxModelVisible ? "已命中 Comfy 下拉" : "当前模型未出现在 Comfy 下拉"}
+        </div>
         <label>
           天空盒内置模板比例
           <select
