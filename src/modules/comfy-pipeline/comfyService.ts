@@ -10,6 +10,8 @@ export type ComfySettings = {
   videoWorkflowJson: string;
   characterWorkflowJson?: string;
   skyboxWorkflowJson?: string;
+  requireDedicatedCharacterWorkflow?: boolean;
+  requireDedicatedSkyboxWorkflow?: boolean;
   audioWorkflowJson?: string;
   soundWorkflowJson?: string;
   videoGenerationMode?: "comfy" | "local_motion";
