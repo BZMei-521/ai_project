@@ -2904,6 +2904,7 @@ export async function generateSkyboxFaces(
   for (const face of SKYBOX_FACES) {
     const workflow = ensureWorkflowJson(workflowRaw);
     const tokens = buildSkyboxTokens(settings, description, face);
+    applyDynamicCharacterRefsForImageWorkflow(workflow, []);
     const built = deepReplaceTokens(workflow, tokens) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, "image", tokens);
     try {
@@ -2932,6 +2933,7 @@ export async function generateSkyboxFaceUpdate(
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const workflow = ensureWorkflowJson(workflowRaw);
   const tokens = buildSkyboxTokens(settings, description, face, eventPrompt);
+  applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = deepReplaceTokens(workflow, tokens) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);
   try {

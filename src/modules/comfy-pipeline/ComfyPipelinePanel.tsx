@@ -365,12 +365,16 @@ function sanitizeCharacterCandidate(value: string): string {
 }
 
 function sanitizeSceneCandidate(value: string): string {
-  const trimmed = value
+  let trimmed = value
     .trim()
     .replace(/^[\[【(（]\s*/, "")
     .replace(/[\]】)）]\s*$/, "")
     .replace(/^(主体|角色|人物|主角|场景|环境|地点|动作|镜头|美术|构图|光线|光影|色调|机位|景别|画面|提示词|备注)\s*[:：]\s*/g, "")
     .replace(/\s+/g, "");
+  const locationMatch = trimmed.match(/(?:^|.*(?:在|于|到|进入|来到|走到|站在))([^，。；\n]{1,12}?(?:河边|桥上|街道|巷子|庭院|门厅|走廊|楼梯|房间|客厅|卧室|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库))$/);
+  if (locationMatch?.[1]) {
+    trimmed = locationMatch[1].trim();
+  }
   if (!trimmed) return "";
   if (GENERIC_SCENE_LABELS.has(trimmed)) return "";
   if (trimmed.length > 24) return "";
