@@ -1118,6 +1118,47 @@ function workflowIncludesAllNodeTypes(workflowJson: string, requiredNodeTypes: r
   return requiredNodeTypes.every((item) => nodeTypes.has(item));
 }
 
+function workflowLooksLikeLegacyBasicAssetWorkflow(workflowJson: string, kind: "character" | "skybox"): boolean {
+  const trimmed = workflowJson.trim();
+  if (!trimmed) return false;
+  const nodeTypes = new Set(collectWorkflowNodeTypesForHeuristics(trimmed));
+  const hasBasicCore =
+    nodeTypes.has("CheckpointLoaderSimple") &&
+    nodeTypes.has("CLIPTextEncode") &&
+    nodeTypes.has("EmptyLatentImage") &&
+    nodeTypes.has("KSampler") &&
+    nodeTypes.has("VAEDecode") &&
+    nodeTypes.has("SaveImage");
+  if (!hasBasicCore) return false;
+  const hasAdvancedCharacterNode = CHARACTER_ADVANCED_NODE_TYPES.some((item) => nodeTypes.has(item));
+  const hasAdvancedSkyboxNode = SKYBOX_ADVANCED_NODE_TYPES.some(
+    (item) => item !== "CheckpointLoaderSimple" && item !== "KSampler" && item !== "VAEDecode" && item !== "SaveImage" && nodeTypes.has(item)
+  );
+  if (kind === "character" && hasAdvancedCharacterNode) return false;
+  if (kind === "skybox" && hasAdvancedSkyboxNode) return false;
+  const legacyPrefix = kind === "character" ? "Storyboard/character_threeview" : "Storyboard/skybox";
+  return trimmed.includes(legacyPrefix);
+}
+
+function resolveEffectiveAssetWorkflowMode(
+  kind: "character" | "skybox",
+  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode,
+  workflowJson: string
+): CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode {
+  if (kind === "character") {
+    if (mode === "advanced_multiview") return mode;
+    if (!workflowJson.trim() || workflowHasBrokenApiPromptReferences(workflowJson) || workflowLooksLikeLegacyBasicAssetWorkflow(workflowJson, "character")) {
+      return "advanced_multiview";
+    }
+    return mode;
+  }
+  if (mode === "advanced_panorama") return mode;
+  if (!workflowJson.trim() || workflowHasBrokenApiPromptReferences(workflowJson) || workflowLooksLikeLegacyBasicAssetWorkflow(workflowJson, "skybox")) {
+    return "advanced_panorama";
+  }
+  return mode;
+}
+
 function shouldAutoRewriteAssetWorkflow(
   workflowJson: string,
   mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode,
@@ -1208,12 +1249,22 @@ function loadSettings(): ComfySettings {
       typeof parsed.characterWorkflowJson === "string" ? parsed.characterWorkflowJson : "";
     const parsedSkyboxWorkflowJson =
       typeof parsed.skyboxWorkflowJson === "string" ? parsed.skyboxWorkflowJson : "";
-    const shouldUpgradeCharacterMode =
-      parsed.characterAssetWorkflowMode !== "advanced_multiview" &&
-      (parsed.characterAssetWorkflowMode == null || workflowHasBrokenApiPromptReferences(parsedCharacterWorkflowJson));
-    const shouldUpgradeSkyboxMode =
-      parsed.skyboxAssetWorkflowMode !== "advanced_panorama" &&
-      (parsed.skyboxAssetWorkflowMode == null || workflowHasBrokenApiPromptReferences(parsedSkyboxWorkflowJson));
+    const resolvedCharacterMode = resolveEffectiveAssetWorkflowMode(
+      "character",
+      parsed.characterAssetWorkflowMode === "advanced_multiview" || parsed.characterAssetWorkflowMode === "basic_builtin"
+        ? parsed.characterAssetWorkflowMode
+        : DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      parsedCharacterWorkflowJson
+    ) as CharacterAssetWorkflowMode;
+    const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
+      "skybox",
+      parsed.skyboxAssetWorkflowMode === "advanced_panorama" || parsed.skyboxAssetWorkflowMode === "basic_builtin"
+        ? parsed.skyboxAssetWorkflowMode
+        : DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
+      parsedSkyboxWorkflowJson
+    ) as SkyboxAssetWorkflowMode;
+    const shouldUpgradeCharacterMode = resolvedCharacterMode === "advanced_multiview" && parsed.characterAssetWorkflowMode !== "advanced_multiview";
+    const shouldUpgradeSkyboxMode = resolvedSkyboxMode === "advanced_panorama" && parsed.skyboxAssetWorkflowMode !== "advanced_panorama";
     const resolvedImageWorkflowJson =
       typeof parsed.imageWorkflowJson === "string" && parsed.imageWorkflowJson.trim().length > 0
         ? parsed.imageWorkflowJson
@@ -1231,18 +1282,8 @@ function loadSettings(): ComfySettings {
       videoWorkflowJson: resolvedVideoWorkflowJson,
       characterWorkflowJson: shouldUpgradeCharacterMode ? "" : parsedCharacterWorkflowJson,
       skyboxWorkflowJson: shouldUpgradeSkyboxMode ? "" : parsedSkyboxWorkflowJson,
-      characterAssetWorkflowMode:
-        shouldUpgradeCharacterMode
-          ? "advanced_multiview"
-          : parsed.characterAssetWorkflowMode === "advanced_multiview" || parsed.characterAssetWorkflowMode === "basic_builtin"
-          ? parsed.characterAssetWorkflowMode
-          : DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
-      skyboxAssetWorkflowMode:
-        shouldUpgradeSkyboxMode
-          ? "advanced_panorama"
-          : parsed.skyboxAssetWorkflowMode === "advanced_panorama" || parsed.skyboxAssetWorkflowMode === "basic_builtin"
-          ? parsed.skyboxAssetWorkflowMode
-          : DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
+      characterAssetWorkflowMode: resolvedCharacterMode,
+      skyboxAssetWorkflowMode: resolvedSkyboxMode,
       requireDedicatedCharacterWorkflow:
         typeof parsed.requireDedicatedCharacterWorkflow === "boolean" ? parsed.requireDedicatedCharacterWorkflow : true,
       requireDedicatedSkyboxWorkflow:
@@ -2702,7 +2743,11 @@ export function ComfyPipelinePanel() {
 
   const resolveCharacterWorkflowJson = (runtimeSettings: ComfySettings): string => {
     const existing = runtimeSettings.characterWorkflowJson?.trim();
-    const mode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
+    const mode = resolveEffectiveAssetWorkflowMode(
+      "character",
+      runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      existing ?? ""
+    ) as CharacterAssetWorkflowMode;
     const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "character")) return existing;
     const builtIn =
@@ -2728,7 +2773,11 @@ export function ComfyPipelinePanel() {
 
   const resolveSkyboxWorkflowJson = (runtimeSettings: ComfySettings): string => {
     const existing = runtimeSettings.skyboxWorkflowJson?.trim();
-    const mode = runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
+    const mode = resolveEffectiveAssetWorkflowMode(
+      "skybox",
+      runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
+      existing ?? ""
+    ) as SkyboxAssetWorkflowMode;
     const selectedModel = runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL;
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "skybox")) return existing;
     const builtIn =
@@ -2757,7 +2806,11 @@ export function ComfyPipelinePanel() {
     context: string,
     baseSeed: number
   ) => {
-    const mode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
+    const mode = resolveEffectiveAssetWorkflowMode(
+      "character",
+      runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      runtimeSettings.characterWorkflowJson?.trim() ?? ""
+    ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
     const negativePrompt = runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
 

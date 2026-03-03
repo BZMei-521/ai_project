@@ -2937,10 +2937,16 @@ function summarizeComfyServerLogFailure(logTail: string): string | null {
 }
 
 function shouldFallbackToLocalVideo(errorText: string): boolean {
-  const normalized = String(errorText || "");
+  const normalized = String(errorText || "").toLowerCase();
   if (!normalized) return false;
-  if (!/missing_node_type/i.test(normalized)) return false;
-  return true;
+  return (
+    normalized.includes("missing_node_type") ||
+    normalized.includes("未检测到输出文件") ||
+    normalized.includes("未找到输出文件") ||
+    normalized.includes("未产出视频文件") ||
+    normalized.includes("outputkeys=none") ||
+    normalized.includes("status=error; completed=false")
+  );
 }
 
 export async function generateShotAsset(
