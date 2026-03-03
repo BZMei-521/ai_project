@@ -28,7 +28,9 @@ import {
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
+import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "./presets/asset-character-mvadapter-default.json";
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
+import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "./presets/asset-skybox-panorama-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 type CharacterAssetWorkflowMode = "basic_builtin" | "advanced_multiview";
@@ -43,15 +45,17 @@ type AssetWorkflowModeSpec = {
   notes: string[];
 };
 
-const DEFAULT_CHARACTER_ASSET_MODEL = "juggernautXL_v8Rundiffusion.safetensors";
-const DEFAULT_SKYBOX_ASSET_MODEL = "architecturerealmix_v11.safetensors";
+const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
+const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
+  "sd_xl_base_1.0.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
   "realisticVisionV60B1_v51VAE.safetensors",
-  "Qwen-Rapid-AIO-SFW-v5.safetensors",
-  "animagine-xl-4.0.safetensors"
+  "animagine-xl-4.0.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors"
 ] as const;
 const SKYBOX_ASSET_MODEL_OPTIONS = [
+  "sd_xl_base_1.0.safetensors",
   "architecturerealmix_v11.safetensors",
   "interiordesignsuperm_v2.safetensors",
   "dreamshaper_8.safetensors",
@@ -61,6 +65,9 @@ const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [...CHARACTER_ASSET_MODEL_OPTIONS]
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
 const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "basic_builtin";
 const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
+const DEFAULT_CHARACTER_ADVANCED_VAE = "sdxl.vae.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_ADAPTER = "mvadapter_i2mv_sdxl_beta.safetensors";
+const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
@@ -108,23 +115,26 @@ function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedM
   if (mode === "advanced_multiview") {
     return {
       label: "高级多视角角色工作流",
-      summary: "需要单独粘贴多视角角色工作流 JSON。推荐采用 MV-Adapter / MultiView 一类方案，而不是三次普通 txt2img。",
+      summary:
+        "推荐用 ComfyUI-MVAdapter 做 image-to-multi-view，一次从单张参考图稳定产出 front/right/back，而不是三次独立 txt2img。",
       requiredNodes: [
-        "主模型加载节点（CheckpointLoaderSimple 或等价节点）",
+        "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter / View Selector 等）",
+        "主模型加载节点（CheckpointLoaderSimple 或 Diffusers 模型加载节点）",
         "文本编码节点（CLIPTextEncode 或等价节点）",
-        "多视角角色一致性节点（MV-Adapter / MultiView 对应节点）",
-        "视角或相机控制节点（front / side / back 视角控制）",
+        "视角选择节点（front / right / back 或 front / left / back）",
         "单张图片输出节点（SaveImage / PreviewImage）"
       ],
       requiredModels: [
         `主模型：${selectedModel}`,
-        "多视角适配器权重（当前项目内置模板未提供）",
-        "可选：clip_vision_h.safetensors，用于参考图一致性"
+        "MV-Adapter 权重：mvadapter_i2mv_sdxl.safetensors（推荐）或 mvadapter_i2mv_sdxl_beta.safetensors",
+        "VAE：sdxl.vae.safetensors（推荐）",
+        "可选：OpenPose/Depth ControlNet，用于后续单张修姿"
       ],
-      recommendedPlugins: ["对应多视角角色插件（MV-Adapter / MultiView 类）"],
+      recommendedPlugins: ["ComfyUI-MVAdapter", "可选：ComfyUI-Advanced-ControlNet"],
       notes: [
-        "高级模式下不会自动写入内置基础模板。",
-        "没有专用角色三视图工作流 JSON 时，正式生成和单步试跑都会被拦截。",
+        "当前项目已内置一套基于 MVAdapter i2mv 的高级模板，可直接写入。",
+        "高级模式会先生成一张正面参考图，再用 MVAdapter 生成 front / side / back。",
+        "MV-Adapter 官方仓库明确支持 text/image-to-multi-view，并支持视角选择与 ControlNet 集成。",
         "目标是标准 front / side / back 视角一致性，而不是三次独立随机出图。"
       ]
     };
@@ -153,23 +163,26 @@ function buildSkyboxAssetModeSpec(mode: SkyboxAssetWorkflowMode, selectedModel: 
   if (mode === "advanced_panorama") {
     return {
       label: "高级全景转六面工作流",
-      summary: "需要单独粘贴全景/等距柱状图生成再转 cubemap 六面的工作流 JSON，不建议继续六次独立 txt2img 假装天空盒。",
+      summary:
+        "推荐先用 SDXL + 360Redmond 生成 2:1 equirectangular panorama，再用 ComfyUI_pytorch360convert 拆 front/right/back/left/up/down。",
       requiredNodes: [
         "主模型加载节点（CheckpointLoaderSimple 或等价节点）",
+        "LoRA 加载节点（加载 360Redmond 一类全景 LoRA）",
         "文本编码节点（CLIPTextEncode 或等价节点）",
-        "全景/等距柱状图生成节点",
-        "cubemap 六面拆分节点",
+        "全景修缝节点（E2E / Roll Image / Create Seam Mask，来自 pytorch360convert）",
+        "cubemap 六面拆分节点（E2C / E2Face，来自 pytorch360convert）",
         "单张图片输出节点（SaveImage / PreviewImage）"
       ],
       requiredModels: [
         `主模型：${selectedModel}`,
-        "可选：全景/360 适配模型或 LoRA",
-        "可选：全景转六面工具节点或脚本"
+        "全景 LoRA：360Redmond（基于 SDXL 1.0）",
+        "可选：放大模型 / Inpaint 模型，用于接缝修复"
       ],
-      recommendedPlugins: ["对应全景/立方体转换插件（3D Pack / py360convert 集成类）"],
+      recommendedPlugins: ["ComfyUI_pytorch360convert", "可选：ComfyUI_preview360panorama"],
       notes: [
-        "高级模式下不会自动写入内置基础模板。",
-        "没有专用天空盒工作流 JSON 时，正式生成和单步试跑都会被拦截。",
+        "当前项目已内置一套 Panorama -> 六面拆分模板，可直接写入。",
+        "高级模式会先生成一张 2:1 全景，再拆成 front/right/back/left/up/down。",
+        "360Redmond 模型卡明确建议先生成 1600x800 的 2:1 全景，再做放大。",
         "目标是先得到连贯全景，再拆成 front/right/back/left/up/down 六面。"
       ]
     };
@@ -270,6 +283,20 @@ function buildCharacterWorkflowTemplateJson(
   return JSON.stringify(template, null, 2);
 }
 
+function buildCharacterAdvancedWorkflowTemplateJson(checkpointName: string): string {
+  const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
+  if (template["3"]?.inputs) {
+    template["3"].inputs.vae_name = DEFAULT_CHARACTER_ADVANCED_VAE;
+  }
+  if (template["4"]?.inputs) {
+    template["4"].inputs.adapter_name = DEFAULT_CHARACTER_ADVANCED_ADAPTER;
+  }
+  return JSON.stringify(template, null, 2);
+}
+
 function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
   const template = cloneJson(SKYBOX_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
@@ -278,6 +305,28 @@ function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" 
   if (template["4"]?.inputs) {
     template["4"].inputs.width = preset === "square" ? 1024 : 1344;
     template["4"].inputs.height = preset === "square" ? 1024 : 768;
+  }
+  return JSON.stringify(template, null, 2);
+}
+
+function buildSkyboxPanoramaWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
+  const template = cloneJson(SKYBOX_PANORAMA_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  const width = preset === "square" ? 1280 : 1536;
+  const height = Math.max(512, Math.round(width / 2));
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
+  if (template["2"]?.inputs) {
+    template["2"].inputs.lora_name = DEFAULT_SKYBOX_LORA;
+  }
+  if (template["7"]?.inputs) {
+    template["7"].inputs.width = width;
+    template["7"].inputs.height = height;
+  }
+  for (const nodeId of ["11", "13", "15", "17", "19", "21"]) {
+    if (template[nodeId]?.inputs) {
+      template[nodeId].inputs.face_width = height;
+    }
   }
   return JSON.stringify(template, null, 2);
 }
@@ -1026,12 +1075,15 @@ function inspectAssetWorkflowHeuristics(
   const warnings: string[] = [];
   const notes: string[] = [];
   const hasFixedLoadImage = nodeTypes.includes("LoadImage");
+  const usesFrameImageToken = workflowJson.includes("{{FRAME_IMAGE_PATH}}");
   const hasVideoNode = nodeTypes.some((type) => /VideoCombine|VFI|WanImageToVideo|FrameInterpolation|RIFE/i.test(type));
   const hasAudioNode = nodeTypes.some((type) => /Audio|TTS|Whisper|EdgeTTS/i.test(type));
   const hasImageOutput = nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type));
 
-  if (hasFixedLoadImage) {
+  if (hasFixedLoadImage && !usesFrameImageToken) {
     warnings.push("检测到固定 LoadImage 节点。资产工作流不应依赖模板内写死的参考图。");
+  } else if (hasFixedLoadImage && usesFrameImageToken) {
+    notes.push("检测到 LoadImage + {{FRAME_IMAGE_PATH}}，说明该模板会在运行时动态喂参考图。");
   }
   if (hasVideoNode) {
     warnings.push("检测到视频相关节点。角色三视图/天空盒工作流应该只输出单张图片。");
@@ -2546,6 +2598,182 @@ export function ComfyPipelinePanel() {
     return `${prompt}。${presetPrompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
   };
 
+  const buildCharacterMultiviewPrompt = (name: string, context: string) =>
+    `single character turnaround sheet，orthographic multiview character reference，full body centered。角色：${name}。${normalizeStoryInput(
+      context
+    )}。严格要求：服装统一，发型统一，面部与体型一致，单张图只允许一个角色，无第二人物，无群像，无场景叙事，无裁切，无道具遮挡，写实角色设定板，美术统一。`;
+
+  const buildCharacterViewSelectionTokenOverrides = (
+    view: "front" | "side" | "back",
+    frameImagePath: string,
+    negativePrompt: string
+  ) => ({
+    FRAME_IMAGE_PATH: frameImagePath,
+    NEGATIVE_PROMPT: negativePrompt,
+    CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
+    CHARACTER_FRONT_RIGHT_VIEW: "false",
+    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
+    CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
+    CHARACTER_LEFT_VIEW: "false",
+    CHARACTER_FRONT_LEFT_VIEW: "false"
+  });
+
+  const resolveCharacterWorkflowJson = (runtimeSettings: ComfySettings): string => {
+    const existing = runtimeSettings.characterWorkflowJson?.trim();
+    if (existing) return existing;
+    const builtIn =
+      (runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE) === "advanced_multiview"
+        ? buildCharacterAdvancedWorkflowTemplateJson(
+            runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+          )
+        : buildCharacterWorkflowTemplateJson(
+            runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+            runtimeSettings.characterTemplatePreset ?? "portrait",
+            runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+          );
+    persistSettings((previous) => ({ ...previous, characterWorkflowJson: builtIn }));
+    appendLog(
+      (runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE) === "advanced_multiview"
+        ? "未配置专用角色三视图工作流，已自动写入内置高级多视角模板"
+        : "未配置专用角色三视图工作流，已自动写入当前内置三视图模板"
+    );
+    return builtIn;
+  };
+
+  const resolveSkyboxWorkflowJson = (runtimeSettings: ComfySettings): string => {
+    const existing = runtimeSettings.skyboxWorkflowJson?.trim();
+    if (existing) return existing;
+    const builtIn =
+      (runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE) === "advanced_panorama"
+        ? buildSkyboxPanoramaWorkflowTemplateJson(
+            runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+            runtimeSettings.skyboxTemplatePreset ?? "wide"
+          )
+        : buildSkyboxWorkflowTemplateJson(
+            runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+            runtimeSettings.skyboxTemplatePreset ?? "wide"
+          );
+    persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: builtIn }));
+    appendLog(
+      (runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE) === "advanced_panorama"
+        ? "未配置专用天空盒工作流，已自动写入内置高级全景转六面模板"
+        : "未配置专用天空盒工作流，已自动写入当前内置天空盒模板"
+    );
+    return builtIn;
+  };
+
+  const generateCharacterThreeViews = async (
+    runtimeSettings: ComfySettings,
+    name: string,
+    context: string,
+    baseSeed: number
+  ) => {
+    const mode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
+    const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
+    const negativePrompt = runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
+
+    if (mode !== "advanced_multiview") {
+      const [front, side, back] = await Promise.all([
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 1),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 2),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+          }
+        )
+      ]);
+      return { front, side, back };
+    }
+
+    const referenceWorkflow = buildCharacterWorkflowTemplateJson(
+      runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+      runtimeSettings.characterTemplatePreset ?? "portrait",
+      runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+    );
+    const referenceFront = await generateShotAsset(
+      runtimeSettings,
+      makeAssetGenerationShot(`asset_char_${name}_reference`, `${name} 参考正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed),
+      0,
+      "image",
+      [],
+      [],
+      {
+        workflowJsonOverride: referenceWorkflow,
+        tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+      }
+    );
+    const referencePath = referenceFront.localPath || referenceFront.previewUrl;
+    const multiviewPrompt = buildCharacterMultiviewPrompt(name, context);
+    const [front, side, back] = await Promise.all([
+      generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: workflowOverride,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides("front", referencePath, negativePrompt)
+        }
+      ),
+      generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: workflowOverride,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides("side", referencePath, negativePrompt)
+        }
+      ),
+      generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: workflowOverride,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides("back", referencePath, negativePrompt)
+        }
+      )
+    ]);
+    return { front, side, back };
+  };
+
   const characterPromptPreviewContext = "黑色长风衣，短发，身形修长，服装与体型统一，鞋靴完整可见";
   const characterPromptPreviews = {
     front: buildCharacterViewPrompt("示例角色", characterPromptPreviewContext, "front"),
@@ -2785,66 +3013,9 @@ export function ComfyPipelinePanel() {
     }
     const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
     const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
-    const characterMode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
-    let characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
-    if (!characterWorkflow) {
-      if (characterMode === "advanced_multiview") {
-        throw new Error(
-          "当前角色三视图已切换到高级多视角角色工作流模式，但尚未配置专用工作流 JSON。请先粘贴多视角角色工作流，或切回基础正交三视图模板。"
-        );
-      }
-      characterWorkflow = buildCharacterWorkflowTemplateJson(
-        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-        runtimeSettings.characterTemplatePreset ?? "portrait",
-        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
-      );
-      persistSettings((previous) => ({ ...previous, characterWorkflowJson: characterWorkflow! }));
-      appendLog("未配置专用角色三视图工作流，已自动写入当前内置三视图模板");
-    }
     appendLog(`开始生成角色三视图：${name}`);
     appendLog(`角色三视图使用专用工作流：${name}`);
-    const front = await generateShotAsset(
-      runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, safeContext, "front"), "", baseSeed),
-      0,
-      "image",
-      [],
-      [],
-      {
-        workflowJsonOverride: characterWorkflow,
-        tokenOverrides: {
-          NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
-        }
-      }
-    );
-    const side = await generateShotAsset(
-      runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, safeContext, "side"), "", baseSeed + 1),
-      0,
-      "image",
-      [],
-      [],
-      {
-        workflowJsonOverride: characterWorkflow,
-        tokenOverrides: {
-          NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
-        }
-      }
-    );
-    const back = await generateShotAsset(
-      runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, safeContext, "back"), "", baseSeed + 2),
-      0,
-      "image",
-      [],
-      [],
-      {
-        workflowJsonOverride: characterWorkflow,
-        tokenOverrides: {
-          NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
-        }
-      }
-    );
+    const { front, side, back } = await generateCharacterThreeViews(runtimeSettings, name, safeContext, baseSeed);
     const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
     addAsset({
       type: "character",
@@ -2894,21 +3065,7 @@ export function ComfyPipelinePanel() {
       sceneName,
       sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
     );
-    const skyboxMode = runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
-    let skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
-    if (!skyboxWorkflow) {
-      if (skyboxMode === "advanced_panorama") {
-        throw new Error(
-          "当前天空盒已切换到高级全景转六面模式，但尚未配置专用工作流 JSON。请先粘贴全景转六面工作流，或切回基础六次文生图模板。"
-        );
-      }
-      skyboxWorkflow = buildSkyboxWorkflowTemplateJson(
-        runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
-        runtimeSettings.skyboxTemplatePreset ?? "wide"
-      );
-      persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: skyboxWorkflow! }));
-      appendLog("未配置专用天空盒工作流，已自动写入当前内置天空盒模板");
-    }
+    const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
     appendLog(`开始生成场景天空盒：${sceneName}`);
     appendLog(`场景天空盒使用专用工作流：${sceneName}`);
     const result = await generateSkyboxFaces(
@@ -3637,18 +3794,6 @@ export function ComfyPipelinePanel() {
         renderHeight: project.height,
         renderFps: project.fps
       };
-      const characterMode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
-      const characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
-      if (characterMode === "advanced_multiview" && !characterWorkflow) {
-        pushToast("当前已选择高级多视角角色工作流模式，但尚未配置专用工作流 JSON", "error");
-        appendLog("角色三视图模板试跑失败：高级多视角角色工作流模式尚未配置专用工作流 JSON", "error");
-        return;
-      }
-      if (runtimeSettings.requireDedicatedCharacterWorkflow !== false && !characterWorkflow) {
-        pushToast("未配置专用角色三视图工作流，严格资产模式下禁止试跑", "error");
-        appendLog("角色三视图模板试跑失败：严格资产模式已开启且未配置专用工作流", "error");
-        return;
-      }
       setPipelineState("试跑角色三视图模板");
       appendLog("开始单步试跑角色三视图模板");
       upsertProvisionPreview({
@@ -3664,51 +3809,12 @@ export function ComfyPipelinePanel() {
         "黑色长风衣，短发，身形修长，鞋靴完整可见，服装统一，标准角色设定",
         [sampleName]
       );
-      const workflowOverride = characterWorkflow || runtimeSettings.imageWorkflowJson;
-      const [front, side, back] = await Promise.all([
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot("trial_char_front", `${sampleName} 正视图`, buildCharacterViewPrompt(sampleName, sampleContext, "front")),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: workflowOverride,
-            tokenOverrides: {
-              NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
-            }
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot("trial_char_side", `${sampleName} 侧视图`, buildCharacterViewPrompt(sampleName, sampleContext, "side")),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: workflowOverride,
-            tokenOverrides: {
-              NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
-            }
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot("trial_char_back", `${sampleName} 背视图`, buildCharacterViewPrompt(sampleName, sampleContext, "back")),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: workflowOverride,
-            tokenOverrides: {
-              NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
-            }
-          }
-        )
-      ]);
+      const { front, side, back } = await generateCharacterThreeViews(
+        runtimeSettings,
+        sampleName,
+        sampleContext,
+        stableAssetSeed(`trial|${sampleName}|${sampleContext}`)
+      );
       upsertProvisionPreview({
         key: "character:__trial__",
         kind: "character",
@@ -3748,18 +3854,6 @@ export function ComfyPipelinePanel() {
         renderHeight: project.height,
         renderFps: project.fps
       };
-      const skyboxMode = runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
-      const skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
-      if (skyboxMode === "advanced_panorama" && !skyboxWorkflow) {
-        pushToast("当前已选择高级全景转六面模式，但尚未配置专用工作流 JSON", "error");
-        appendLog("天空盒模板试跑失败：高级全景转六面模式尚未配置专用工作流 JSON", "error");
-        return;
-      }
-      if (runtimeSettings.requireDedicatedSkyboxWorkflow !== false && !skyboxWorkflow) {
-        pushToast("未配置专用天空盒工作流，严格资产模式下禁止试跑", "error");
-        appendLog("天空盒模板试跑失败：严格资产模式已开启且未配置专用工作流", "error");
-        return;
-      }
       setPipelineState("试跑天空盒模板");
       appendLog("开始单步试跑天空盒模板");
       upsertProvisionPreview({
@@ -3774,6 +3868,7 @@ export function ComfyPipelinePanel() {
         "模板试跑河边",
         "傍晚河边，桥梁与浅滩清晰，纯环境，无人物，可供镜头调度"
       );
+      const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
       const result = await generateSkyboxFaces(
         {
           ...runtimeSettings,
@@ -5124,34 +5219,34 @@ export function ComfyPipelinePanel() {
           <button
             className="btn-ghost"
             onClick={() => {
-              if (characterAssetWorkflowMode === "advanced_multiview") {
-                persistSettings((previous) => ({
-                  ...previous,
-                  characterAssetWorkflowMode: "basic_builtin",
-                  characterWorkflowJson: buildCharacterWorkflowTemplateJson(
-                    previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-                    previous.characterTemplatePreset ?? "portrait",
-                    previous.characterRenderPreset ?? "stable_fullbody"
-                  )
-                }));
-                appendLog("已切回基础正交三视图模板并写入内置角色三视图工作流");
-                pushToast("已切回基础正交三视图模板并写入内置角色三视图工作流", "success");
-                return;
-              }
               persistSettings((previous) => ({
                 ...previous,
-                characterWorkflowJson: buildCharacterWorkflowTemplateJson(
-                  previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-                  previous.characterTemplatePreset ?? "portrait",
-                  previous.characterRenderPreset ?? "stable_fullbody"
-                )
+                characterWorkflowJson:
+                  characterAssetWorkflowMode === "advanced_multiview"
+                    ? buildCharacterAdvancedWorkflowTemplateJson(
+                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+                      )
+                    : buildCharacterWorkflowTemplateJson(
+                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+                        previous.characterTemplatePreset ?? "portrait",
+                        previous.characterRenderPreset ?? "stable_fullbody"
+                      )
               }));
-              appendLog("已写入内置角色三视图默认工作流模板");
-              pushToast("已写入内置角色三视图默认工作流模板", "success");
+              appendLog(
+                characterAssetWorkflowMode === "advanced_multiview"
+                  ? "已写入内置高级多视角角色工作流模板"
+                  : "已写入内置角色三视图默认工作流模板"
+              );
+              pushToast(
+                characterAssetWorkflowMode === "advanced_multiview"
+                  ? "已写入内置高级多视角角色工作流模板"
+                  : "已写入内置角色三视图默认工作流模板",
+                "success"
+              );
             }}
             type="button"
           >
-            {characterAssetWorkflowMode === "advanced_multiview" ? "切回基础模式并写入内置三视图模板" : "写入内置角色三视图模板"}
+            {characterAssetWorkflowMode === "advanced_multiview" ? "写入内置高级多视角模板" : "写入内置角色三视图模板"}
           </button>
           <button
             className="btn-ghost"
@@ -5175,13 +5270,21 @@ export function ComfyPipelinePanel() {
           角色三视图会强制使用单角色、单角度、纯背景约束。建议使用专门的角色设定工作流，而不是普通分镜图工作流。
         </div>
         <div className="timeline-meta">
-          要求：一张图只能有一个角色、一个角度；不要输出拼图或三联图；不要依赖固定 LoadImage；最终必须稳定产出单张图片。
+          要求：一张图只能有一个角色、一个角度；不要输出拼图或三联图；
+          {characterAssetWorkflowMode === "advanced_multiview"
+            ? "允许使用动态参考图 {{FRAME_IMAGE_PATH}}，但不要写死固定 LoadImage。"
+            : "不要依赖固定 LoadImage；"}
+          最终必须稳定产出单张图片。
         </div>
         <div className="timeline-meta">
-          内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage
+          {characterAssetWorkflowMode === "advanced_multiview"
+            ? "内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup / ViewSelector / DiffusersMVSampler / SaveImage"
+            : "内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage"}
         </div>
         <div className="timeline-meta">
-          内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 {DEFAULT_CHARACTER_ASSET_MODEL}；可替换为 realisticVisionV60B1_v51VAE.safetensors 或 animagine-xl-4.0.safetensors。
+          {characterAssetWorkflowMode === "advanced_multiview"
+            ? `内置高级模板会使用 ${DEFAULT_CHARACTER_ASSET_MODEL} + ${DEFAULT_CHARACTER_ADVANCED_VAE} + ${DEFAULT_CHARACTER_ADVANCED_ADAPTER}。`
+            : `内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 ${DEFAULT_CHARACTER_ASSET_MODEL}；可替换为 realisticVisionV60B1_v51VAE.safetensors 或 animagine-xl-4.0.safetensors。`}
         </div>
         <div className="timeline-meta">
           当前采样预设：{CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].label} /
@@ -5480,32 +5583,34 @@ export function ComfyPipelinePanel() {
           <button
             className="btn-ghost"
             onClick={() => {
-              if (skyboxAssetWorkflowMode === "advanced_panorama") {
-                persistSettings((previous) => ({
-                  ...previous,
-                  skyboxAssetWorkflowMode: "basic_builtin",
-                  skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
-                    previous.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
-                    previous.skyboxTemplatePreset ?? "wide"
-                  )
-                }));
-                appendLog("已切回基础六次文生图模板并写入内置天空盒工作流");
-                pushToast("已切回基础六次文生图模板并写入内置天空盒工作流", "success");
-                return;
-              }
               persistSettings((previous) => ({
                 ...previous,
-                skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
-                  previous.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
-                  previous.skyboxTemplatePreset ?? "wide"
-                )
+                skyboxWorkflowJson:
+                  skyboxAssetWorkflowMode === "advanced_panorama"
+                    ? buildSkyboxPanoramaWorkflowTemplateJson(
+                        previous.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+                        previous.skyboxTemplatePreset ?? "wide"
+                      )
+                    : buildSkyboxWorkflowTemplateJson(
+                        previous.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+                        previous.skyboxTemplatePreset ?? "wide"
+                      )
               }));
-              appendLog("已写入内置天空盒默认工作流模板");
-              pushToast("已写入内置天空盒默认工作流模板", "success");
+              appendLog(
+                skyboxAssetWorkflowMode === "advanced_panorama"
+                  ? "已写入内置高级全景转六面工作流模板"
+                  : "已写入内置天空盒默认工作流模板"
+              );
+              pushToast(
+                skyboxAssetWorkflowMode === "advanced_panorama"
+                  ? "已写入内置高级全景转六面工作流模板"
+                  : "已写入内置天空盒默认工作流模板",
+                "success"
+              );
             }}
             type="button"
           >
-            {skyboxAssetWorkflowMode === "advanced_panorama" ? "切回基础模式并写入内置天空盒模板" : "写入内置天空盒模板"}
+            {skyboxAssetWorkflowMode === "advanced_panorama" ? "写入内置高级全景转六面模板" : "写入内置天空盒模板"}
           </button>
           <button
             className="btn-ghost"
@@ -5543,13 +5648,19 @@ export function ComfyPipelinePanel() {
           天空盒工作流必须只生成环境，不允许出现人物。建议使用去人物、去叙事主体的专用场景工作流。
         </div>
         <div className="timeline-meta">
-          要求：系统会按六个面逐次调用；每次必须只输出纯环境图；禁止人物、动物、群像、主体表演；不要混入视频/音频节点。
+          {skyboxAssetWorkflowMode === "advanced_panorama"
+            ? "要求：高级模式会先生成单张 2:1 全景，再自动拆成六面；禁止人物、动物、群像、主体表演；不要混入视频/音频节点。"
+            : "要求：系统会按六个面逐次调用；每次必须只输出纯环境图；禁止人物、动物、群像、主体表演；不要混入视频/音频节点。"}
         </div>
         <div className="timeline-meta">
-          内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage
+          {skyboxAssetWorkflowMode === "advanced_panorama"
+            ? "内置高级模板节点：CheckpointLoaderSimple / LoraLoader / Apply Circular Padding Model / Apply Circular Padding VAE / Equirectangular to Face / SaveImage"
+            : "内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage"}
         </div>
         <div className="timeline-meta">
-          内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 {DEFAULT_SKYBOX_ASSET_MODEL}；室内可切到 interiordesignsuperm_v2.safetensors，通用环境可切到 dreamshaper_8.safetensors。
+          {skyboxAssetWorkflowMode === "advanced_panorama"
+            ? `内置高级模板会使用 ${DEFAULT_SKYBOX_ASSET_MODEL} + ${DEFAULT_SKYBOX_LORA}。`
+            : `内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 ${DEFAULT_SKYBOX_ASSET_MODEL}；室内可切到 interiordesignsuperm_v2.safetensors，通用环境可切到 dreamshaper_8.safetensors。`}
         </div>
         <div className="timeline-meta">
           当前正向模板：{settings.skyboxPromptPreset === "night_exterior"

@@ -590,6 +590,32 @@ function deepReplaceTokens(value: unknown, tokens: Record<string, string>): unkn
   return value;
 }
 
+function coerceWorkflowLiteralValues(value: unknown): unknown {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "true") return true;
+    if (trimmed === "false") return false;
+    if (/^-?\d+$/.test(trimmed)) {
+      const parsed = Number.parseInt(trimmed, 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    if (/^-?(?:\d+\.\d+|\d+e[+-]?\d+|\d+\.\d+e[+-]?\d+)$/i.test(trimmed)) {
+      const parsed = Number.parseFloat(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => coerceWorkflowLiteralValues(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, coerceWorkflowLiteralValues(item)])
+    );
+  }
+  return value;
+}
+
 function normalizeLineBreaks(value: string): string {
   return value.replace(/\r\n?/g, "\n");
 }
@@ -688,10 +714,51 @@ function isAbsoluteLocalPath(path: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(path);
 }
 
+function isWindowsStyleAbsolutePath(path: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(path.trim());
+}
+
+function runtimeUsesWindowsPaths(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const fingerprint = `${navigator.userAgent ?? ""} ${navigator.platform ?? ""}`.toLowerCase();
+  return fingerprint.includes("win");
+}
+
+function canUseAbsoluteLocalPath(path: string): boolean {
+  const trimmed = path.trim();
+  if (!trimmed || !isAbsoluteLocalPath(trimmed)) return false;
+  if (isWindowsStyleAbsolutePath(trimmed)) return runtimeUsesWindowsPaths();
+  return !runtimeUsesWindowsPaths();
+}
+
+function normalizeComparablePath(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/+$/, "");
+}
+
+function inferComfyOutputDownloadSource(source: string, outputDir = ""): string {
+  const normalized = parseComfyViewPath(source).trim();
+  if (!normalized) return "";
+  if (!isAbsoluteLocalPath(normalized)) return normalized;
+
+  const normalizedSource = normalizeComparablePath(normalized);
+  const normalizedOutput = normalizeComparablePath(outputDir);
+  if (normalizedOutput) {
+    const sourceLower = normalizedSource.toLowerCase();
+    const outputLower = normalizedOutput.toLowerCase();
+    const prefix = `${outputLower}/`;
+    if (sourceLower.startsWith(prefix)) {
+      return normalizedSource.slice(normalizedOutput.length + 1);
+    }
+  }
+
+  return normalizedSource.split("/").pop() ?? "";
+}
+
 async function stageFrameFileToComfyInput(
   source: string,
   targetPath: string,
-  baseUrl: string
+  baseUrl: string,
+  outputDir = ""
 ): Promise<string> {
   const trimmed = source.trim();
   if (!trimmed) return "";
@@ -705,9 +772,10 @@ async function stageFrameFileToComfyInput(
     return result.filePath;
   }
   let downloadError: unknown = null;
-  // For values like "Batch_00003_.png", treat them as Comfy output filenames and fetch via /view.
-  if (!isAbsoluteLocalPath(trimmed)) {
-    const viewUrl = toComfyViewDownloadUrl(trimmed, baseUrl);
+  const downloadSource = inferComfyOutputDownloadSource(trimmed, outputDir);
+  // For values like "Batch_00003_.png" or remote absolute output paths, fetch via /view first.
+  if (downloadSource && !canUseAbsoluteLocalPath(trimmed)) {
+    const viewUrl = toComfyViewDownloadUrl(downloadSource, baseUrl);
     if (viewUrl) {
       try {
         const base64 = await invokeDesktop<string>("comfy_fetch_view_base64", { url: viewUrl });
@@ -759,9 +827,9 @@ async function stageVideoFrameTokens(
   const frameTargetAbs = `${inputDir}/shot_${safeShotId}_frame.${frameExt}`;
 
   const [firstWritten, lastWritten, frameWritten] = await Promise.all([
-    stageFrameFileToComfyInput(firstSource, firstTargetAbs, settings.baseUrl),
-    stageFrameFileToComfyInput(lastSource, lastTargetAbs, settings.baseUrl),
-    stageFrameFileToComfyInput(frameSource, frameTargetAbs, settings.baseUrl)
+    stageFrameFileToComfyInput(firstSource, firstTargetAbs, settings.baseUrl, settings.outputDir),
+    stageFrameFileToComfyInput(lastSource, lastTargetAbs, settings.baseUrl, settings.outputDir),
+    stageFrameFileToComfyInput(frameSource, frameTargetAbs, settings.baseUrl, settings.outputDir)
   ]);
 
   const firstName = firstWritten.split("/").pop() ?? `shot_${safeShotId}_first.${firstExt}`;
@@ -773,6 +841,29 @@ async function stageVideoFrameTokens(
     FIRST_FRAME_PATH: firstName,
     LAST_FRAME_PATH: lastName,
     FRAME_IMAGE_PATH: frameName
+  };
+}
+
+async function stageImageFrameToken(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>
+): Promise<Record<string, string>> {
+  const source = (tokens.FRAME_IMAGE_PATH || "").trim();
+  if (!source) return tokens;
+
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) {
+    throw new Error("图片工作流需要参考图输入，但未检测到 ComfyUI input 目录");
+  }
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const ext = fileExtensionFromSource(source || "png");
+  const targetAbs = `${inputDir}/shot_${safeShotId}_frame.${ext}`;
+  const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+  return {
+    ...tokens,
+    FRAME_IMAGE_PATH: written.split("/").pop() ?? written
   };
 }
 
@@ -1256,7 +1347,7 @@ async function stageCharacterReferenceImages(
     const { source, weight } = refs[index]!;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
-    const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl);
+    const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
     staged.push({
       filename: written.split("/").pop() ?? `shot_${safeShotId}_charref_${index + 1}.${ext}`,
       weight
@@ -1483,6 +1574,29 @@ function qwenImageInputIndexes(node: WorkflowNode): number[] {
   return slots;
 }
 
+function qwenPromptInputIndexes(node: WorkflowNode): number[] {
+  const inputs = Array.isArray(node.inputs) ? node.inputs : [];
+  const slots: number[] = [];
+  for (let index = 0; index < inputs.length; index += 1) {
+    const rawName = inputs[index]?.name ?? "";
+    const name = String(rawName).trim().toLowerCase();
+    if (name === "prompt" || name.endsWith("_prompt")) {
+      slots.push(index);
+    }
+  }
+  return slots.length > 0 ? slots : [8];
+}
+
+function normalizeQwenPromptInputBindings(workflow: Record<string, unknown>, promptText: string) {
+  const nodes = workflowNodes(workflow);
+  for (const node of nodes) {
+    if (node.type !== "TextEncodeQwenImageEditPlusAdvance_lrzjason" || typeof node.id !== "number") continue;
+    removeIncomingLinks(workflow, node.id, qwenPromptInputIndexes(node));
+    setNodeWidgetValue(node, 0, promptText);
+    setNodeWidgetNamedValue(node, "prompt", promptText);
+  }
+}
+
 function applyDynamicCharacterRefsForImageWorkflow(
   workflow: Record<string, unknown>,
   weightedImageRefs: Array<{ filename: string; weight: number }>
@@ -1617,11 +1731,11 @@ function applyFisherWorkflowBindings(
   setNodeWidgetValue(byId.get(208), 0, "wan_2.1_vae.safetensors");
 
   // Fisher/Qwen workflows often connect easy promptLine(COMBO) -> qwen prompt(STRING),
-  // which causes prompt validation errors in API mode. Always force prompt to widget text.
+  // which causes prompt validation errors in API mode. Always force prompt to widget text,
+  // including cloned encoders created for extra reference images.
   const qwenPromptText = tokens.NEXT_SCENE_PROMPT || tokens.PROMPT;
-  removeIncomingLinks(workflow, 21, [8]);
+  normalizeQwenPromptInputBindings(workflow, qwenPromptText);
   setNodeWidgetValue(byId.get(123), 0, qwenPromptText);
-  setNodeWidgetValue(byId.get(21), 0, qwenPromptText);
 
   if (kind === "image") {
     if (safeSeed !== undefined) setNodeWidgetValue(byId.get(10), 0, safeSeed);
@@ -1979,6 +2093,9 @@ const NODE_HINT_MAP: Array<{ pattern: RegExp; plugin: string; repo: string }> = 
   { pattern: /rife|vfi|frame interpolation/i, plugin: "comfyui-frame-interpolation", repo: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation" },
   { pattern: /controlnet|advancedcontrolnet|acn_/i, plugin: "ComfyUI-Advanced-ControlNet", repo: "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet" },
   { pattern: /ipadapter/i, plugin: "comfyui_ipadapter_plus", repo: "https://github.com/cubiq/ComfyUI_IPAdapter_plus" },
+  { pattern: /mvadapter|diffusersmv|ldmpipeline|viewselector|birefnet/i, plugin: "ComfyUI-MVAdapter", repo: "https://github.com/huanngzh/ComfyUI-MVAdapter" },
+  { pattern: /equirectangular|cubemap|seam mask|roll image axes|circular padding|panorama/i, plugin: "ComfyUI_pytorch360convert", repo: "https://github.com/ProGamerGov/ComfyUI_pytorch360convert" },
+  { pattern: /panoramaviewer/i, plugin: "ComfyUI_preview360panorama", repo: "https://github.com/ProGamerGov/ComfyUI_preview360panorama" },
   { pattern: /vhs|videohelper|loadvideo|savevideo/i, plugin: "comfyui-videohelpersuite", repo: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite" },
   { pattern: /easy.*use/i, plugin: "comfyui-easy-use", repo: "https://github.com/yolain/ComfyUI-Easy-Use" }
 ];
@@ -2111,6 +2228,11 @@ function inputTypeValue(input: Record<string, unknown>): unknown {
   return input.type;
 }
 
+const WIDGET_ONLY_INPUT_FALLBACKS: Record<string, string[]> = {
+  LoadImage: ["image", "upload"],
+  ConditioningAverage: ["conditioning_to_strength"]
+};
+
 function isNumericString(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -2198,6 +2320,14 @@ function buildWidgetValuesByInputName(node: WorkflowNode): Record<string, unknow
     cursor = chosenIndex + 1;
     output[name] = value;
   }
+
+  const fallbackNames = WIDGET_ONLY_INPUT_FALLBACKS[node.type ?? ""] ?? [];
+  for (let index = 0; index < fallbackNames.length; index += 1) {
+    const name = fallbackNames[index] ?? "";
+    if (!name || Object.prototype.hasOwnProperty.call(output, name)) continue;
+    if (index >= widgets.length) break;
+    output[name] = widgets[index];
+  }
   return output;
 }
 
@@ -2258,6 +2388,11 @@ function graphWorkflowToApiPrompt(workflow: Record<string, unknown>): Record<str
       if (Object.prototype.hasOwnProperty.call(widgetByInputName, name)) {
         inputValues[name] = widgetByInputName[name];
       }
+    }
+
+    for (const [name, value] of Object.entries(widgetByInputName)) {
+      if (Object.prototype.hasOwnProperty.call(inputValues, name)) continue;
+      inputValues[name] = value;
     }
 
     prompt[nodeId] = {
@@ -2613,14 +2748,15 @@ async function materializeStillImagePath(
 ): Promise<string> {
   const trimmed = source.trim();
   if (!trimmed) return "";
-  if (isAbsoluteLocalPath(trimmed)) return trimmed;
+  if (canUseAbsoluteLocalPath(trimmed)) return trimmed;
   const relative = parseComfyViewPath(trimmed);
   if (relative && settings.outputDir.trim()) {
     const direct = `${settings.outputDir.trim().replace(/\/+$/, "")}/${relative.replace(/^\/+/, "")}`;
-    if (isAbsoluteLocalPath(direct)) return direct;
+    if (canUseAbsoluteLocalPath(direct)) return direct;
   }
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.includes("/view?")) {
-    const url = toComfyViewDownloadUrl(trimmed, settings.baseUrl);
+  const downloadSource = inferComfyOutputDownloadSource(trimmed, settings.outputDir);
+  if (downloadSource) {
+    const url = toComfyViewDownloadUrl(downloadSource, settings.baseUrl);
     const base64 = await invokeDesktop<string>("comfy_fetch_view_base64", { url });
     const written = await invokeDesktop<FileWriteResult>("write_base64_file", {
       filePath: localStillCachePath(settings, label, trimmed),
@@ -2845,6 +2981,9 @@ export async function generateShotAsset(
     if (kind === "video") {
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
+    if (kind === "image") {
+      tokens = await stageImageFrameToken(settings, shot, tokens);
+    }
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets);
@@ -2853,7 +2992,7 @@ export async function generateShotAsset(
     }
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
     applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
-    const built = deepReplaceTokens(workflow, tokens) as Record<string, unknown>;
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, kind, tokens);
     try {
       const objectInfo = await fetchObjectInfo(settings.baseUrl);
@@ -2926,6 +3065,13 @@ function makeSkyboxPrompt(description: string, face: SkyboxFace, eventPrompt?: s
   return `${base}\n局部事件更新：${event}`;
 }
 
+function makeSkyboxPanoramaPrompt(description: string, eventPrompt?: string): string {
+  const base = `场景天空盒全景，360 equirectangular panorama，seamless environment plate，pure environment，no characters，no action。${description.trim()}`;
+  const event = eventPrompt?.trim();
+  if (!event) return base;
+  return `${base}\n局部事件更新：${event}`;
+}
+
 function buildSkyboxTokens(
   settings: ComfySettings,
   description: string,
@@ -2988,10 +3134,127 @@ function buildSkyboxTokens(
   return applyTokenAliases(settings.tokenMapping, baseTokens);
 }
 
+function buildSkyboxPanoramaTokens(
+  settings: ComfySettings,
+  description: string,
+  eventPrompt?: string
+): Record<string, string> {
+  const prompt = makeSkyboxPanoramaPrompt(description, eventPrompt);
+  const negativePrompt =
+    settings.skyboxAssetNegativePrompt?.trim() ||
+    "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal";
+  const baseTokens: Record<string, string> = {
+    SHOT_ID: "skybox_panorama",
+    SHOT_TITLE: "Skybox Panorama",
+    SHOT_INDEX: "1",
+    PROMPT: prompt,
+    NEXT_SCENE_PROMPT: `Next Scene: ${prompt}`,
+    VIDEO_PROMPT: prompt,
+    VIDEO_MODE: "SINGLE_FRAME",
+    NEGATIVE_PROMPT: negativePrompt,
+    DIALOGUE: "",
+    SPEAKER_NAME: "",
+    EMOTION: "",
+    DELIVERY_STYLE: "",
+    SPEECH_RATE: "",
+    VOICE_PROFILE: "",
+    CHARACTER_VOICE_PROFILES: "",
+    SEED: String(Math.floor(Math.random() * 1_000_000_000)),
+    DURATION_FRAMES: "24",
+    DURATION_SEC: "1.0",
+    CHARACTER_REFS: "",
+    SCENE_REF_PATH: "",
+    SCENE_REF_NAME: "",
+    CHARACTER_REF_PATHS: "",
+    CHARACTER_REF_NAMES: "",
+    CHARACTER_FRONT_PATHS: "",
+    CHARACTER_SIDE_PATHS: "",
+    CHARACTER_BACK_PATHS: "",
+    CHAR1_NAME: "",
+    CHAR1_FRONT_PATH: "",
+    CHAR1_SIDE_PATH: "",
+    CHAR1_BACK_PATH: "",
+    CHAR2_NAME: "",
+    CHAR2_FRONT_PATH: "",
+    CHAR2_SIDE_PATH: "",
+    CHAR2_BACK_PATH: "",
+    CHAR3_NAME: "",
+    CHAR3_FRONT_PATH: "",
+    CHAR3_SIDE_PATH: "",
+    CHAR3_BACK_PATH: "",
+    CHAR4_NAME: "",
+    CHAR4_FRONT_PATH: "",
+    CHAR4_SIDE_PATH: "",
+    CHAR4_BACK_PATH: "",
+    FRAME_IMAGE_PATH: "",
+    FIRST_FRAME_PATH: "",
+    LAST_FRAME_PATH: "",
+    SKYBOX_FACE: "PANORAMA",
+    SKYBOX_DESCRIPTION: description.trim()
+  };
+  return applyTokenAliases(settings.tokenMapping, baseTokens);
+}
+
+function pickSkyboxOutputByMarker(outputs: ComfyOutputAsset[], marker: string): ComfyOutputAsset | null {
+  const normalized = marker.trim().toLowerCase();
+  if (!normalized) return null;
+  return (
+    outputs.find((item) => item.filename.trim().toLowerCase().includes(normalized)) ??
+    outputs.find((item) => `${item.subfolder ?? ""}/${item.filename}`.toLowerCase().includes(normalized)) ??
+    null
+  );
+}
+
+async function generateSkyboxPanoramaFaces(
+  settings: ComfySettings,
+  description: string,
+  eventPrompt?: string
+): Promise<SkyboxGenerationResult> {
+  const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
+  if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
+
+  const workflow = ensureWorkflowJson(workflowRaw);
+  const tokens = buildSkyboxPanoramaTokens(settings, description, eventPrompt);
+  applyDynamicCharacterRefsForImageWorkflow(workflow, []);
+  const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
+  applyFisherWorkflowBindings(built, "image", tokens);
+  try {
+    const objectInfo = await fetchObjectInfo(settings.baseUrl);
+    applyComfyModelOptionBindings(built, objectInfo);
+  } catch {
+    // ignore object_info failures during skybox generation
+  }
+
+  const promptId = await queueComfyPrompt(settings.baseUrl, built);
+  const outputs = await waitForComfyOutput(settings.baseUrl, promptId);
+  const faces: Partial<Record<SkyboxFace, string>> = {};
+  const previews: Partial<Record<SkyboxFace, string>> = {};
+  const markers: Array<[SkyboxFace, string]> = [
+    ["front", "skybox_front_"],
+    ["right", "skybox_right_"],
+    ["back", "skybox_back_"],
+    ["left", "skybox_left_"],
+    ["up", "skybox_up_"],
+    ["down", "skybox_down_"]
+  ];
+
+  for (const [face, marker] of markers) {
+    const asset = pickSkyboxOutputByMarker(outputs, marker);
+    if (!asset) continue;
+    faces[face] = await materializeImageAssetPath(settings, asset);
+    previews[face] = toComfyViewUrl(settings.baseUrl, asset);
+  }
+
+  return { faces, previews };
+}
+
 export async function generateSkyboxFaces(
   settings: ComfySettings,
   description: string
 ): Promise<SkyboxGenerationResult> {
+  if (settings.skyboxAssetWorkflowMode === "advanced_panorama") {
+    return generateSkyboxPanoramaFaces(settings, description);
+  }
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const faces: Partial<Record<SkyboxFace, string>> = {};
@@ -3000,7 +3263,7 @@ export async function generateSkyboxFaces(
     const workflow = ensureWorkflowJson(workflowRaw);
     const tokens = buildSkyboxTokens(settings, description, face);
     applyDynamicCharacterRefsForImageWorkflow(workflow, []);
-    const built = deepReplaceTokens(workflow, tokens) as Record<string, unknown>;
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, "image", tokens);
     try {
       const objectInfo = await fetchObjectInfo(settings.baseUrl);
@@ -3024,12 +3287,19 @@ export async function generateSkyboxFaceUpdate(
   face: SkyboxFace,
   eventPrompt: string
 ): Promise<{ filePath: string; previewUrl: string }> {
+  if (settings.skyboxAssetWorkflowMode === "advanced_panorama") {
+    const result = await generateSkyboxPanoramaFaces(settings, description, eventPrompt);
+    const filePath = result.faces[face];
+    const previewUrl = result.previews[face];
+    if (!filePath || !previewUrl) throw new Error(`天空盒全景更新完成，但未找到 ${face} 面输出`);
+    return { filePath, previewUrl };
+  }
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const workflow = ensureWorkflowJson(workflowRaw);
   const tokens = buildSkyboxTokens(settings, description, face, eventPrompt);
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
-  const built = deepReplaceTokens(workflow, tokens) as Record<string, unknown>;
+  const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);
   try {
     const objectInfo = await fetchObjectInfo(settings.baseUrl);

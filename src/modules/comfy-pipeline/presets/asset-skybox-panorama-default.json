@@ -1,0 +1,256 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "lora_name": "View360.safetensors",
+      "strength_model": 0.8,
+      "strength_clip": 1
+    },
+    "class_type": "LoraLoader"
+  },
+  "3": {
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "inplace": true,
+      "x_axis_only": true
+    },
+    "class_type": "Apply Circular Padding Model"
+  },
+  "4": {
+    "inputs": {
+      "vae": [
+        "1",
+        2
+      ],
+      "inplace": true,
+      "x_axis_only": true
+    },
+    "class_type": "Apply Circular Padding VAE"
+  },
+  "5": {
+    "inputs": {
+      "text": "{{PROMPT}}",
+      "clip": [
+        "2",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "6": {
+    "inputs": {
+      "text": "{{NEGATIVE_PROMPT}}",
+      "clip": [
+        "2",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "7": {
+    "inputs": {
+      "width": 1536,
+      "height": 768,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage"
+  },
+  "8": {
+    "inputs": {
+      "seed": "{{SEED}}",
+      "steps": 30,
+      "cfg": 6,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "3",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "6",
+        0
+      ],
+      "latent_image": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "KSampler"
+  },
+  "9": {
+    "inputs": {
+      "samples": [
+        "8",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "10": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_panorama",
+      "images": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "11": {
+    "inputs": {
+      "e_img": [
+        "9",
+        0
+      ],
+      "face_width": 768,
+      "padding_mode": "bicubic",
+      "cube_face": "Front"
+    },
+    "class_type": "Equirectangular to Face"
+  },
+  "12": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_front",
+      "images": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "13": {
+    "inputs": {
+      "e_img": [
+        "9",
+        0
+      ],
+      "face_width": 768,
+      "padding_mode": "bicubic",
+      "cube_face": "Right"
+    },
+    "class_type": "Equirectangular to Face"
+  },
+  "14": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_right",
+      "images": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "15": {
+    "inputs": {
+      "e_img": [
+        "9",
+        0
+      ],
+      "face_width": 768,
+      "padding_mode": "bicubic",
+      "cube_face": "Back"
+    },
+    "class_type": "Equirectangular to Face"
+  },
+  "16": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_back",
+      "images": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "17": {
+    "inputs": {
+      "e_img": [
+        "9",
+        0
+      ],
+      "face_width": 768,
+      "padding_mode": "bicubic",
+      "cube_face": "Left"
+    },
+    "class_type": "Equirectangular to Face"
+  },
+  "18": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_left",
+      "images": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "19": {
+    "inputs": {
+      "e_img": [
+        "9",
+        0
+      ],
+      "face_width": 768,
+      "padding_mode": "bicubic",
+      "cube_face": "Up"
+    },
+    "class_type": "Equirectangular to Face"
+  },
+  "20": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_up",
+      "images": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "21": {
+    "inputs": {
+      "e_img": [
+        "9",
+        0
+      ],
+      "face_width": 768,
+      "padding_mode": "bicubic",
+      "cube_face": "Down"
+    },
+    "class_type": "Equirectangular to Face"
+  },
+  "22": {
+    "inputs": {
+      "filename_prefix": "Storyboard/skybox_down",
+      "images": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  }
+}
