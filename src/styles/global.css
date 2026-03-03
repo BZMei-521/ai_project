@@ -3112,6 +3112,19 @@ button.export-panel-collapsed:hover {
   background: #132036;
 }
 
+.comfy-preview-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin-top: 10px;
+}
+
+.comfy-preview-block textarea[readonly] {
+  min-height: 124px;
+  opacity: 0.92;
+  resize: vertical;
+}
+
 .comfy-shot-details {
   border: 1px dashed #3a5472;
   border-radius: 8px;

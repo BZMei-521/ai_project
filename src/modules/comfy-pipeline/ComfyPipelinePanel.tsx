@@ -2238,6 +2238,25 @@ export function ComfyPipelinePanel() {
     return `${prompt}。${presetPrompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
   };
 
+  const characterPromptPreviewContext = "黑色长风衣，短发，身形修长，服装与体型统一，鞋靴完整可见";
+  const characterPromptPreviews = {
+    front: buildCharacterViewPrompt("示例角色", characterPromptPreviewContext, "front"),
+    side: buildCharacterViewPrompt("示例角色", characterPromptPreviewContext, "side"),
+    back: buildCharacterViewPrompt("示例角色", characterPromptPreviewContext, "back")
+  };
+  const skyboxPromptPreviewBase = buildSkyboxDescription(
+    "河边",
+    "傍晚河边，桥梁与浅滩清晰，可供人物调度，环境纯净，无人物"
+  );
+  const skyboxFacePromptPreviews: Array<{ face: string; prompt: string }> = [
+    { face: "front", prompt: `场景天空盒 front 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
+    { face: "right", prompt: `场景天空盒 right 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
+    { face: "back", prompt: `场景天空盒 back 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
+    { face: "left", prompt: `场景天空盒 left 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
+    { face: "up", prompt: `场景天空盒 up 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
+    { face: "down", prompt: `场景天空盒 down 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` }
+  ];
+
   const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
     items.map((shot) => {
       const prompt = shot.storyPrompt?.trim() ?? "";
@@ -4310,6 +4329,20 @@ export function ComfyPipelinePanel() {
               ? "影棚背景"
               : "中性灰背景"}
         </div>
+        <div className="comfy-preview-grid">
+          <label className="comfy-script-block comfy-preview-block">
+            三视图喂词预览 · 正视图
+            <textarea readOnly rows={5} value={characterPromptPreviews.front} />
+          </label>
+          <label className="comfy-script-block comfy-preview-block">
+            三视图喂词预览 · 侧视图
+            <textarea readOnly rows={5} value={characterPromptPreviews.side} />
+          </label>
+          <label className="comfy-script-block comfy-preview-block">
+            三视图喂词预览 · 背视图
+            <textarea readOnly rows={5} value={characterPromptPreviews.back} />
+          </label>
+        </div>
         <label className="checkbox-row">
           <input
             checked={settings.requireDedicatedCharacterWorkflow !== false}
@@ -4458,6 +4491,14 @@ export function ComfyPipelinePanel() {
             : settings.skyboxNegativePreset === "interior"
               ? "室内空间"
               : "日景外景"}
+        </div>
+        <div className="comfy-preview-grid">
+          {skyboxFacePromptPreviews.map((item) => (
+            <label className="comfy-script-block comfy-preview-block" key={item.face}>
+              天空盒喂词预览 · {item.face}
+              <textarea readOnly rows={5} value={item.prompt} />
+            </label>
+          ))}
         </div>
         <label className="checkbox-row">
           <input
