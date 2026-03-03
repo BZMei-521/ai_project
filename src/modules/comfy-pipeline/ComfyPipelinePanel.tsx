@@ -710,6 +710,8 @@ function loadSettings(): ComfySettings {
       comfyRootDir: "",
       imageWorkflowJson: FISHER_WORKFLOW_JSON,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
+      characterWorkflowJson: "",
+      skyboxWorkflowJson: "",
       audioWorkflowJson: "",
       soundWorkflowJson: "",
       videoGenerationMode: defaultVideoGenerationMode(),
@@ -733,6 +735,8 @@ function loadSettings(): ComfySettings {
       comfyRootDir: parsed.comfyRootDir ?? "",
       imageWorkflowJson: resolvedImageWorkflowJson,
       videoWorkflowJson: resolvedVideoWorkflowJson,
+      characterWorkflowJson: typeof parsed.characterWorkflowJson === "string" ? parsed.characterWorkflowJson : "",
+      skyboxWorkflowJson: typeof parsed.skyboxWorkflowJson === "string" ? parsed.skyboxWorkflowJson : "",
       audioWorkflowJson: typeof parsed.audioWorkflowJson === "string" ? parsed.audioWorkflowJson : "",
       soundWorkflowJson: typeof parsed.soundWorkflowJson === "string" ? parsed.soundWorkflowJson : "",
       videoGenerationMode: parsed.videoGenerationMode ?? defaultVideoGenerationMode(),
@@ -749,6 +753,8 @@ function loadSettings(): ComfySettings {
       comfyRootDir: "",
       imageWorkflowJson: FISHER_WORKFLOW_JSON,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
+      characterWorkflowJson: "",
+      skyboxWorkflowJson: "",
       audioWorkflowJson: "",
       soundWorkflowJson: "",
       videoGenerationMode: defaultVideoGenerationMode(),
@@ -1904,6 +1910,8 @@ export function ComfyPipelinePanel() {
           videoGenerationMode: settings.videoGenerationMode,
           imageWorkflowJson: settings.imageWorkflowJson,
           videoWorkflowJson: settings.videoWorkflowJson,
+          characterWorkflowJson: settings.characterWorkflowJson,
+          skyboxWorkflowJson: settings.skyboxWorkflowJson,
           audioWorkflowJson: settings.audioWorkflowJson,
           soundWorkflowJson: settings.soundWorkflowJson
         }
@@ -1915,11 +1923,13 @@ export function ComfyPipelinePanel() {
   }, [
     settings.baseUrl,
     settings.audioWorkflowJson,
+    settings.characterWorkflowJson,
     settings.comfyInputDir,
     settings.comfyRootDir,
     settings.imageWorkflowJson,
     settings.outputDir,
     settings.soundWorkflowJson,
+    settings.skyboxWorkflowJson,
     settings.videoWorkflowJson,
     settings.videoGenerationMode
   ]);
@@ -1990,17 +2000,19 @@ export function ComfyPipelinePanel() {
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "侧视图" : "背视图";
-    return `角色设定三视图，${viewLabel}，单人全身，角色：${name}。${normalizeStoryInput(context)}。中性纯净背景，人物完整无遮挡，服装统一，脸部与身体比例稳定，设定图风格，写实电影美术。`;
+    return `角色标准三视图，${viewLabel}，单人，全身完整，单张图只允许一个角色，角色：${name}。${normalizeStoryInput(
+      context
+    )}。要求：纯色或中性背景，无第二人物，无群像，无场景叙事，无道具遮挡，无裁切，服装统一，面部与体型一致，角色设定图风格，写实电影美术。`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定图`;
-    return `${prompt}。无人物，空间关系清晰，环境一致，材质稳定，光影明确，场景设定图，写实电影美术。`;
+    return `${prompt}。无人物，无角色，无动物，无群像，无主体表演，仅保留环境本身。空间关系清晰，环境一致，材质稳定，光影明确，场景设定图，写实电影美术。`;
   };
 
   const buildSkyboxDescription = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
-    return `${prompt}。生成可复用天空盒六面，要求空间结构统一、材质一致、无人物、可支撑不同镜头角度下的场景一致性。`;
+    return `${prompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
   };
 
   const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
@@ -2111,13 +2123,24 @@ export function ComfyPipelinePanel() {
     }
     const safeContext = context.trim() || `${name} 的角色设定`;
     appendLog(`开始生成角色三视图：${name}`);
+    appendLog(
+      runtimeSettings.characterWorkflowJson?.trim()
+        ? `角色三视图使用专用工作流：${name}`
+        : `角色三视图未配置专用工作流，已回退到图片工作流：${name}`
+    );
     const front = await generateShotAsset(
       runtimeSettings,
       makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, safeContext, "front")),
       0,
       "image",
       [],
-      []
+      [],
+      {
+        workflowJsonOverride: runtimeSettings.characterWorkflowJson?.trim() || runtimeSettings.imageWorkflowJson,
+        tokenOverrides: {
+          NEGATIVE_PROMPT: "multiple people, two people, extra person, crowd, group shot, scene background, cut off body, half body, close-up crop, props blocking body"
+        }
+      }
     );
     const side = await generateShotAsset(
       runtimeSettings,
@@ -2125,7 +2148,13 @@ export function ComfyPipelinePanel() {
       0,
       "image",
       [],
-      []
+      [],
+      {
+        workflowJsonOverride: runtimeSettings.characterWorkflowJson?.trim() || runtimeSettings.imageWorkflowJson,
+        tokenOverrides: {
+          NEGATIVE_PROMPT: "multiple people, two people, extra person, crowd, group shot, scene background, cut off body, half body, close-up crop, props blocking body"
+        }
+      }
     );
     const back = await generateShotAsset(
       runtimeSettings,
@@ -2133,7 +2162,13 @@ export function ComfyPipelinePanel() {
       0,
       "image",
       [],
-      []
+      [],
+      {
+        workflowJsonOverride: runtimeSettings.characterWorkflowJson?.trim() || runtimeSettings.imageWorkflowJson,
+        tokenOverrides: {
+          NEGATIVE_PROMPT: "multiple people, two people, extra person, crowd, group shot, scene background, cut off body, half body, close-up crop, props blocking body"
+        }
+      }
     );
     const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
     addAsset({
@@ -2176,7 +2211,18 @@ export function ComfyPipelinePanel() {
     }
     const description = buildSkyboxDescription(sceneName, scenePrompt || buildSceneImagePrompt(sceneName, scenePrompt));
     appendLog(`开始生成场景天空盒：${sceneName}`);
-    const result = await generateSkyboxFaces(runtimeSettings, description);
+    appendLog(
+      runtimeSettings.skyboxWorkflowJson?.trim()
+        ? `场景天空盒使用专用工作流：${sceneName}`
+        : `场景天空盒未配置专用工作流，已回退到图片工作流：${sceneName}`
+    );
+    const result = await generateSkyboxFaces(
+      {
+        ...runtimeSettings,
+        skyboxWorkflowJson: runtimeSettings.skyboxWorkflowJson?.trim() || runtimeSettings.imageWorkflowJson
+      },
+      description
+    );
     const primaryPath =
       result.faces.front ||
       result.faces.right ||
@@ -3901,6 +3947,34 @@ export function ComfyPipelinePanel() {
           </div>
         )}
         <label className="comfy-script-block">
+          角色三视图工作流（JSON）
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, characterWorkflowJson: event.target.value }))
+            }
+            placeholder='可选。粘贴专用于角色三视图的 ComfyUI API 工作流 JSON；留空则回退到图片工作流。'
+            rows={5}
+            value={settings.characterWorkflowJson ?? ""}
+          />
+        </label>
+        <div className="timeline-meta">
+          角色三视图会强制使用单角色、单角度、纯背景约束。建议使用专门的角色设定工作流，而不是普通分镜图工作流。
+        </div>
+        <label className="comfy-script-block">
+          场景天空盒工作流（JSON）
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: event.target.value }))
+            }
+            placeholder='可选。粘贴专用于天空盒六面的 ComfyUI API 工作流 JSON；留空则回退到图片工作流。'
+            rows={5}
+            value={settings.skyboxWorkflowJson ?? ""}
+          />
+        </label>
+        <div className="timeline-meta">
+          天空盒工作流必须只生成环境，不允许出现人物。建议使用去人物、去叙事主体的专用场景工作流。
+        </div>
+        <label className="comfy-script-block">
           配音工作流（JSON）
           <textarea
             onChange={(event) =>
@@ -3927,6 +4001,48 @@ export function ComfyPipelinePanel() {
           />
         </label>
         <div className="timeline-actions">
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              const workflowText = settings.characterWorkflowJson?.trim() || settings.imageWorkflowJson;
+              const check = validateWorkflowTemplate(workflowText, settings.tokenMapping);
+              if (!check.ok) {
+                pushToast(`角色三视图工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
+                appendLog(`角色三视图工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
+              } else {
+                appendLog(
+                  settings.characterWorkflowJson?.trim()
+                    ? `角色三视图工作流预检通过，检测到 ${check.used.length} 个 token`
+                    : `角色三视图工作流未单独配置，已回退使用图片工作流，检测到 ${check.used.length} 个 token`
+                );
+                pushToast("角色三视图工作流预检通过", "success");
+              }
+            }}
+            type="button"
+          >
+            预检角色三视图工作流
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              const workflowText = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
+              const check = validateWorkflowTemplate(workflowText, settings.tokenMapping);
+              if (!check.ok) {
+                pushToast(`天空盒工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
+                appendLog(`天空盒工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
+              } else {
+                appendLog(
+                  settings.skyboxWorkflowJson?.trim()
+                    ? `天空盒工作流预检通过，检测到 ${check.used.length} 个 token`
+                    : `天空盒工作流未单独配置，已回退使用图片工作流，检测到 ${check.used.length} 个 token`
+                );
+                pushToast("天空盒工作流预检通过", "success");
+              }
+            }}
+            type="button"
+          >
+            预检天空盒工作流
+          </button>
           <button
             className="btn-ghost"
             onClick={() => {

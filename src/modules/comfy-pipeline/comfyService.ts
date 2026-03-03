@@ -8,6 +8,8 @@ export type ComfySettings = {
   comfyRootDir: string;
   imageWorkflowJson: string;
   videoWorkflowJson: string;
+  characterWorkflowJson?: string;
+  skyboxWorkflowJson?: string;
   audioWorkflowJson?: string;
   soundWorkflowJson?: string;
   videoGenerationMode?: "comfy" | "local_motion";
@@ -2873,7 +2875,7 @@ function buildSkyboxTokens(
     NEXT_SCENE_PROMPT: `Next Scene: ${prompt}`,
     VIDEO_PROMPT: prompt,
     VIDEO_MODE: "SINGLE_FRAME",
-    NEGATIVE_PROMPT: "",
+    NEGATIVE_PROMPT: "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal",
     DIALOGUE: "",
     SPEAKER_NAME: "",
     EMOTION: "",
@@ -2921,7 +2923,7 @@ export async function generateSkyboxFaces(
   settings: ComfySettings,
   description: string
 ): Promise<SkyboxGenerationResult> {
-  const workflowRaw = settings.imageWorkflowJson;
+  const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const faces: Partial<Record<SkyboxFace, string>> = {};
   const previews: Partial<Record<SkyboxFace, string>> = {};
@@ -2953,7 +2955,7 @@ export async function generateSkyboxFaceUpdate(
   face: SkyboxFace,
   eventPrompt: string
 ): Promise<{ filePath: string; previewUrl: string }> {
-  const workflowRaw = settings.imageWorkflowJson;
+  const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const workflow = ensureWorkflowJson(workflowRaw);
   const tokens = buildSkyboxTokens(settings, description, face, eventPrompt);
