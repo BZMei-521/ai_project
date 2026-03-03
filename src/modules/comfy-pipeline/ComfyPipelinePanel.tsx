@@ -29,9 +29,33 @@ import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-three
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
-const DEFAULT_CHARACTER_WORKFLOW_JSON = JSON.stringify(CHARACTER_THREEVIEW_WORKFLOW_OBJECT, null, 2);
-const DEFAULT_SKYBOX_WORKFLOW_JSON = JSON.stringify(SKYBOX_WORKFLOW_OBJECT, null, 2);
+const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
+const DEFAULT_SKYBOX_NEGATIVE_PROMPT =
+  "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene";
 const loadExportService = () => import("../export-service/animaticExport");
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function buildCharacterWorkflowTemplateJson(preset: "portrait" | "square"): string {
+  const template = cloneJson(CHARACTER_THREEVIEW_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["4"]?.inputs) {
+    template["4"].inputs.width = preset === "square" ? 1024 : 832;
+    template["4"].inputs.height = preset === "square" ? 1024 : 1216;
+  }
+  return JSON.stringify(template, null, 2);
+}
+
+function buildSkyboxWorkflowTemplateJson(preset: "wide" | "square"): string {
+  const template = cloneJson(SKYBOX_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["4"]?.inputs) {
+    template["4"].inputs.width = preset === "square" ? 1024 : 1344;
+    template["4"].inputs.height = preset === "square" ? 1024 : 768;
+  }
+  return JSON.stringify(template, null, 2);
+}
 
 type GenerationPhase = "idle" | "running";
 type AssetStatus = "idle" | "running" | "success" | "failed";
@@ -800,6 +824,10 @@ function loadSettings(): ComfySettings {
       skyboxWorkflowJson: "",
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
+      characterTemplatePreset: "portrait",
+      skyboxTemplatePreset: "wide",
+      characterAssetNegativePrompt: DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+      skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
       videoGenerationMode: defaultVideoGenerationMode(),
@@ -829,6 +857,22 @@ function loadSettings(): ComfySettings {
         typeof parsed.requireDedicatedCharacterWorkflow === "boolean" ? parsed.requireDedicatedCharacterWorkflow : true,
       requireDedicatedSkyboxWorkflow:
         typeof parsed.requireDedicatedSkyboxWorkflow === "boolean" ? parsed.requireDedicatedSkyboxWorkflow : true,
+      characterTemplatePreset:
+        parsed.characterTemplatePreset === "square" || parsed.characterTemplatePreset === "portrait"
+          ? parsed.characterTemplatePreset
+          : "portrait",
+      skyboxTemplatePreset:
+        parsed.skyboxTemplatePreset === "square" || parsed.skyboxTemplatePreset === "wide"
+          ? parsed.skyboxTemplatePreset
+          : "wide",
+      characterAssetNegativePrompt:
+        typeof parsed.characterAssetNegativePrompt === "string"
+          ? parsed.characterAssetNegativePrompt
+          : DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+      skyboxAssetNegativePrompt:
+        typeof parsed.skyboxAssetNegativePrompt === "string"
+          ? parsed.skyboxAssetNegativePrompt
+          : DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: typeof parsed.audioWorkflowJson === "string" ? parsed.audioWorkflowJson : "",
       soundWorkflowJson: typeof parsed.soundWorkflowJson === "string" ? parsed.soundWorkflowJson : "",
       videoGenerationMode: parsed.videoGenerationMode ?? defaultVideoGenerationMode(),
@@ -849,6 +893,10 @@ function loadSettings(): ComfySettings {
       skyboxWorkflowJson: "",
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
+      characterTemplatePreset: "portrait",
+      skyboxTemplatePreset: "wide",
+      characterAssetNegativePrompt: DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+      skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
       videoGenerationMode: defaultVideoGenerationMode(),
@@ -2236,7 +2284,7 @@ export function ComfyPipelinePanel() {
       {
         workflowJsonOverride: characterWorkflow || runtimeSettings.imageWorkflowJson,
         tokenOverrides: {
-          NEGATIVE_PROMPT: "multiple people, two people, extra person, crowd, group shot, scene background, cut off body, half body, close-up crop, props blocking body"
+          NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         }
       }
     );
@@ -2250,7 +2298,7 @@ export function ComfyPipelinePanel() {
       {
         workflowJsonOverride: characterWorkflow || runtimeSettings.imageWorkflowJson,
         tokenOverrides: {
-          NEGATIVE_PROMPT: "multiple people, two people, extra person, crowd, group shot, scene background, cut off body, half body, close-up crop, props blocking body"
+          NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         }
       }
     );
@@ -2264,7 +2312,7 @@ export function ComfyPipelinePanel() {
       {
         workflowJsonOverride: characterWorkflow || runtimeSettings.imageWorkflowJson,
         tokenOverrides: {
-          NEGATIVE_PROMPT: "multiple people, two people, extra person, crowd, group shot, scene background, cut off body, half body, close-up crop, props blocking body"
+          NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         }
       }
     );
@@ -4069,11 +4117,40 @@ export function ComfyPipelinePanel() {
             value={settings.characterWorkflowJson ?? ""}
           />
         </label>
+        <label>
+          角色三视图内置模板比例
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                characterTemplatePreset: event.target.value as "portrait" | "square"
+              }))
+            }
+            value={settings.characterTemplatePreset ?? "portrait"}
+          >
+            <option value="portrait">竖版全身（832x1216）</option>
+            <option value="square">方版设定（1024x1024）</option>
+          </select>
+        </label>
+        <label className="comfy-script-block">
+          角色三视图默认负面词
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, characterAssetNegativePrompt: event.target.value }))
+            }
+            placeholder="用于角色三视图的默认 NEGATIVE_PROMPT"
+            rows={3}
+            value={settings.characterAssetNegativePrompt ?? DEFAULT_CHARACTER_NEGATIVE_PROMPT}
+          />
+        </label>
         <div className="timeline-actions">
           <button
             className="btn-ghost"
             onClick={() => {
-              persistSettings((previous) => ({ ...previous, characterWorkflowJson: DEFAULT_CHARACTER_WORKFLOW_JSON }));
+              persistSettings((previous) => ({
+                ...previous,
+                characterWorkflowJson: buildCharacterWorkflowTemplateJson(previous.characterTemplatePreset ?? "portrait")
+              }));
               appendLog("已写入内置角色三视图默认工作流模板");
               pushToast("已写入内置角色三视图默认工作流模板", "success");
             }}
@@ -4129,11 +4206,40 @@ export function ComfyPipelinePanel() {
             value={settings.skyboxWorkflowJson ?? ""}
           />
         </label>
+        <label>
+          天空盒内置模板比例
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxTemplatePreset: event.target.value as "wide" | "square"
+              }))
+            }
+            value={settings.skyboxTemplatePreset ?? "wide"}
+          >
+            <option value="wide">横版环境（1344x768）</option>
+            <option value="square">方版环境（1024x1024）</option>
+          </select>
+        </label>
+        <label className="comfy-script-block">
+          天空盒默认负面词
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, skyboxAssetNegativePrompt: event.target.value }))
+            }
+            placeholder="用于天空盒的默认 NEGATIVE_PROMPT"
+            rows={3}
+            value={settings.skyboxAssetNegativePrompt ?? DEFAULT_SKYBOX_NEGATIVE_PROMPT}
+          />
+        </label>
         <div className="timeline-actions">
           <button
             className="btn-ghost"
             onClick={() => {
-              persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: DEFAULT_SKYBOX_WORKFLOW_JSON }));
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(previous.skyboxTemplatePreset ?? "wide")
+              }));
               appendLog("已写入内置天空盒默认工作流模板");
               pushToast("已写入内置天空盒默认工作流模板", "success");
             }}

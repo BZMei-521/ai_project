@@ -12,6 +12,10 @@ export type ComfySettings = {
   skyboxWorkflowJson?: string;
   requireDedicatedCharacterWorkflow?: boolean;
   requireDedicatedSkyboxWorkflow?: boolean;
+  characterTemplatePreset?: "portrait" | "square";
+  skyboxTemplatePreset?: "wide" | "square";
+  characterAssetNegativePrompt?: string;
+  skyboxAssetNegativePrompt?: string;
   audioWorkflowJson?: string;
   soundWorkflowJson?: string;
   videoGenerationMode?: "comfy" | "local_motion";
@@ -2889,6 +2893,9 @@ function buildSkyboxTokens(
   eventPrompt?: string
 ): Record<string, string> {
   const prompt = makeSkyboxPrompt(description, face, eventPrompt);
+  const negativePrompt =
+    settings.skyboxAssetNegativePrompt?.trim() ||
+    "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal";
   const baseTokens: Record<string, string> = {
     SHOT_ID: `skybox_${face}`,
     SHOT_TITLE: `Skybox ${face}`,
@@ -2897,7 +2904,7 @@ function buildSkyboxTokens(
     NEXT_SCENE_PROMPT: `Next Scene: ${prompt}`,
     VIDEO_PROMPT: prompt,
     VIDEO_MODE: "SINGLE_FRAME",
-    NEGATIVE_PROMPT: "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal",
+    NEGATIVE_PROMPT: negativePrompt,
     DIALOGUE: "",
     SPEAKER_NAME: "",
     EMOTION: "",
