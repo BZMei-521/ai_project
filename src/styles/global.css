@@ -2733,6 +2733,73 @@ button.export-panel-collapsed:hover {
   height: 8px;
 }
 
+.comfy-provision-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.comfy-provision-preview-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid #355173;
+  background: rgba(11, 25, 43, 0.88);
+}
+
+.comfy-provision-preview-card.is-success,
+.comfy-provision-preview-card.is-reused {
+  border-color: rgba(60, 152, 109, 0.72);
+}
+
+.comfy-provision-preview-card.is-failed {
+  border-color: rgba(165, 67, 89, 0.78);
+}
+
+.comfy-provision-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #dbe8f8;
+}
+
+.comfy-provision-preview-head strong {
+  font-size: 12px;
+}
+
+.comfy-provision-preview-card small {
+  color: #9eb5d2;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.comfy-provision-thumb-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.comfy-provision-thumb-row img,
+.comfy-provision-thumb-empty {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(70, 103, 145, 0.65);
+  background: rgba(9, 18, 31, 0.92);
+}
+
+.comfy-provision-thumb-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  color: #7f95b1;
+  font-size: 11px;
+}
+
 .comfy-connection-actions {
   display: grid;
   grid-template-columns: 1fr;

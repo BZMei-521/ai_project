@@ -40,6 +40,15 @@ type PipelineLogItem = {
   message: string;
 };
 
+type ProvisionPreviewItem = {
+  key: string;
+  kind: "character" | "skybox";
+  name: string;
+  status: "running" | "success" | "reused" | "failed";
+  detail: string;
+  thumbs: string[];
+};
+
 type SoundCueKind = "ambience" | "character" | "prop";
 type SoundCueSpec = {
   kind: SoundCueKind;
@@ -1204,6 +1213,7 @@ export function ComfyPipelinePanel() {
   const [lastErrorByShot, setLastErrorByShot] = useState<Record<string, string>>({});
   const [expandedShotId, setExpandedShotId] = useState("");
   const [logs, setLogs] = useState<PipelineLogItem[]>([]);
+  const [provisionPreviews, setProvisionPreviews] = useState<ProvisionPreviewItem[]>([]);
   const [connectionLabel, setConnectionLabel] = useState("待检测");
   const [showShotEditor, setShowShotEditor] = useState(false);
   const [shotFilter, setShotFilter] = useState<"all" | "failed">("all");
@@ -1319,6 +1329,16 @@ export function ComfyPipelinePanel() {
       message
     };
     setLogs((previous) => [...previous.slice(-499), item]);
+  };
+
+  const upsertProvisionPreview = (nextItem: ProvisionPreviewItem) => {
+    setProvisionPreviews((previous) => {
+      const existingIndex = previous.findIndex((item) => item.key === nextItem.key);
+      if (existingIndex < 0) return [...previous, nextItem];
+      const next = previous.slice();
+      next[existingIndex] = nextItem;
+      return next;
+    });
   };
 
   const scriptNormalizedItems = useMemo(() => {
@@ -1946,7 +1966,15 @@ export function ComfyPipelinePanel() {
 
   const createCharacterAssetIfMissing = async (runtimeSettings: ComfySettings, name: string, context: string) => {
     const existingId = findAssetIdByName("character", name);
-    if (existingId) return existingId;
+    if (existingId) {
+      const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+      return {
+        assetId: existingId,
+        previewPaths: [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath].filter(
+          (value): value is string => Boolean(value)
+        )
+      };
+    }
     const safeContext = context.trim() || `${name} 的角色设定`;
     appendLog(`开始生成角色三视图：${name}`);
     const front = await generateShotAsset(
@@ -1988,12 +2016,30 @@ export function ComfyPipelinePanel() {
         .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "character" && normalizeEntityKey(asset.name) === normalizeEntityKey(name))
         ?.id ?? findAssetIdByName("character", name);
     appendLog(`角色三视图生成成功：${name}`);
-    return created;
+    return {
+      assetId: created,
+      previewPaths: [
+        front.localPath || front.previewUrl,
+        side.localPath || side.previewUrl,
+        back.localPath || back.previewUrl
+      ].filter((value): value is string => Boolean(value))
+    };
   };
 
   const createSkyboxAssetIfMissing = async (runtimeSettings: ComfySettings, sceneName: string, scenePrompt: string) => {
     const existingId = findAssetIdByName("skybox", sceneName);
-    if (existingId) return existingId;
+    if (existingId) {
+      const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+      return {
+        assetId: existingId,
+        previewPaths: [
+          asset?.skyboxFaces?.front,
+          asset?.skyboxFaces?.right,
+          asset?.skyboxFaces?.left,
+          asset?.skyboxFaces?.back
+        ].filter((value): value is string => Boolean(value))
+      };
+    }
     const description = buildSkyboxDescription(sceneName, scenePrompt || buildSceneImagePrompt(sceneName, scenePrompt));
     appendLog(`开始生成场景天空盒：${sceneName}`);
     const result = await generateSkyboxFaces(runtimeSettings, description);
@@ -2023,7 +2069,15 @@ export function ComfyPipelinePanel() {
         .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "skybox" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName))
         ?.id ?? findAssetIdByName("skybox", sceneName);
     appendLog(`场景天空盒生成成功：${sceneName}`);
-    return created;
+    return {
+      assetId: created,
+      previewPaths: [
+        result.faces.front,
+        result.faces.right,
+        result.faces.left,
+        result.faces.back
+      ].filter((value): value is string => Boolean(value))
+    };
   };
 
   const provisionAssetsForItems = async (
@@ -2058,6 +2112,14 @@ export function ComfyPipelinePanel() {
         if (!key || characterIdMap.has(key)) continue;
         progressIndex += 1;
         options?.onProgress?.(progressIndex, tasks.length, `角色三视图：${name}`);
+        upsertProvisionPreview({
+          key: `character:${key}`,
+          kind: "character",
+          name,
+          status: "running",
+          detail: "正在生成三视图",
+          thumbs: []
+        });
         try {
           const context = [item.prompt, item.notes, item.dialogue].filter(Boolean).join(" ");
           const reusedId = findAssetIdByName("character", name);
@@ -2065,15 +2127,42 @@ export function ComfyPipelinePanel() {
             characterIdMap.set(key, reusedId);
             reusedCharacters += 1;
             appendLog(`复用已有角色资产：${name}`);
+            const asset = useStoryboardStore.getState().assets.find((assetItem) => assetItem.id === reusedId);
+            upsertProvisionPreview({
+              key: `character:${key}`,
+              kind: "character",
+              name,
+              status: "reused",
+              detail: "复用已有角色三视图",
+              thumbs: [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath].filter(
+                (value): value is string => Boolean(value)
+              )
+            });
             continue;
           }
-          const assetId = await createCharacterAssetIfMissing(runtimeSettings, name, context);
-          if (assetId) {
-            characterIdMap.set(key, assetId);
+          const result = await createCharacterAssetIfMissing(runtimeSettings, name, context);
+          if (result.assetId) {
+            characterIdMap.set(key, result.assetId);
             createdCharacters += 1;
+            upsertProvisionPreview({
+              key: `character:${key}`,
+              kind: "character",
+              name,
+              status: "success",
+              detail: "角色三视图生成完成",
+              thumbs: result.previewPaths
+            });
           }
         } catch (error) {
           appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
+          upsertProvisionPreview({
+            key: `character:${key}`,
+            kind: "character",
+            name,
+            status: "failed",
+            detail: `生成失败：${String(error)}`,
+            thumbs: []
+          });
         }
       }
       if (item.sceneName) {
@@ -2081,25 +2170,63 @@ export function ComfyPipelinePanel() {
         if (!sceneIdMap.has(key)) {
           progressIndex += 1;
           options?.onProgress?.(progressIndex, tasks.length, `场景天空盒：${item.sceneName}`);
+          upsertProvisionPreview({
+            key: `skybox:${key}`,
+            kind: "skybox",
+            name: item.sceneName,
+            status: "running",
+            detail: "正在生成天空盒六面",
+            thumbs: []
+          });
           try {
             const reusedId = findAssetIdByName("skybox", item.sceneName);
             if (reusedId) {
               sceneIdMap.set(key, reusedId);
               reusedSkyboxes += 1;
               appendLog(`复用已有场景天空盒：${item.sceneName}`);
+              const asset = useStoryboardStore.getState().assets.find((assetItem) => assetItem.id === reusedId);
+              upsertProvisionPreview({
+                key: `skybox:${key}`,
+                kind: "skybox",
+                name: item.sceneName,
+                status: "reused",
+                detail: "复用已有场景天空盒",
+                thumbs: [
+                  asset?.skyboxFaces?.front,
+                  asset?.skyboxFaces?.right,
+                  asset?.skyboxFaces?.left,
+                  asset?.skyboxFaces?.back
+                ].filter((value): value is string => Boolean(value))
+              });
               continue;
             }
-            const assetId = await createSkyboxAssetIfMissing(
+            const result = await createSkyboxAssetIfMissing(
               runtimeSettings,
               item.sceneName,
               item.scenePrompt || item.prompt || item.notes
             );
-            if (assetId) {
-              sceneIdMap.set(key, assetId);
+            if (result.assetId) {
+              sceneIdMap.set(key, result.assetId);
               createdSkyboxes += 1;
+              upsertProvisionPreview({
+                key: `skybox:${key}`,
+                kind: "skybox",
+                name: item.sceneName,
+                status: "success",
+                detail: "场景天空盒生成完成",
+                thumbs: result.previewPaths
+              });
             }
           } catch (error) {
             appendLog(`场景天空盒生成失败：${item.sceneName}，${String(error)}`, "error");
+            upsertProvisionPreview({
+              key: `skybox:${key}`,
+              kind: "skybox",
+              name: item.sceneName,
+              status: "failed",
+              detail: `生成失败：${String(error)}`,
+              thumbs: []
+            });
           }
         }
       }
@@ -2153,6 +2280,7 @@ export function ComfyPipelinePanel() {
       setPipelineState(`${sourceLabel}中断：ComfyUI 未连接`);
       return false;
     }
+    setProvisionPreviews([]);
     appendLog(`${sourceLabel}开始`);
     const summary = await provisionAssetsForItems(items, runtimeSettings, {
       bindShots: true,
@@ -3494,6 +3622,33 @@ export function ComfyPipelinePanel() {
               <span>{Math.max(0, Math.min(100, Math.round(runAllProgress)))}%</span>
             </div>
             <progress max={100} value={Math.max(0, Math.min(100, runAllProgress))} />
+            {provisionPreviews.length > 0 && (
+              <div className="comfy-provision-preview-grid">
+                {provisionPreviews.map((item) => (
+                  <article key={item.key} className={`comfy-provision-preview-card is-${item.status}`}>
+                    <div className="comfy-provision-preview-head">
+                      <strong>{item.kind === "character" ? "角色" : "天空盒"} · {item.name}</strong>
+                      <span>{item.status === "running" ? "生成中" : item.status === "success" ? "已生成" : item.status === "reused" ? "已复用" : "失败"}</span>
+                    </div>
+                    <small>{item.detail}</small>
+                    <div className="comfy-provision-thumb-row">
+                      {item.thumbs.length > 0 ? (
+                        item.thumbs.slice(0, 4).map((thumb, index) => (
+                          <img
+                            key={`${item.key}_${index}`}
+                            alt={`${item.name}_${index + 1}`}
+                            loading="lazy"
+                            src={toDesktopMediaSource(thumb)}
+                          />
+                        ))
+                      ) : (
+                        <div className="comfy-provision-thumb-empty">等待图像</div>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div className="comfy-path-grid">
