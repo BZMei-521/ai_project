@@ -305,6 +305,78 @@ const CHARACTER_ROLE_HINTS = [
   "学生"
 ];
 
+const GENERIC_CHARACTER_LABELS = new Set([
+  "主体",
+  "角色",
+  "人物",
+  "主角",
+  "配角",
+  "路人",
+  "群像",
+  "镜头",
+  "动作",
+  "场景",
+  "环境",
+  "美术",
+  "构图",
+  "光线",
+  "光影",
+  "色调",
+  "机位",
+  "景别",
+  "画面",
+  "提示词",
+  "备注"
+]);
+
+const GENERIC_SCENE_LABELS = new Set([
+  "主体",
+  "角色",
+  "人物",
+  "动作",
+  "镜头",
+  "美术",
+  "构图",
+  "光线",
+  "光影",
+  "色调",
+  "机位",
+  "景别",
+  "画面",
+  "场景",
+  "环境",
+  "地点",
+  "提示词",
+  "备注"
+]);
+
+function sanitizeCharacterCandidate(value: string): string {
+  const trimmed = value
+    .trim()
+    .replace(/^[\[【(（]\s*/, "")
+    .replace(/[\]】)）]\s*$/, "")
+    .replace(/^(主体|角色|人物|主角|配角|场景|环境|动作|镜头|美术|构图|光线|光影|色调|机位|景别|画面|提示词|备注)\s*[:：]\s*/g, "")
+    .replace(/\s+/g, "");
+  if (!trimmed) return "";
+  if (GENERIC_CHARACTER_LABELS.has(trimmed)) return "";
+  if (/[，。；、,.!！?？]/.test(trimmed)) return "";
+  if (trimmed.length > 8) return "";
+  return trimmed;
+}
+
+function sanitizeSceneCandidate(value: string): string {
+  const trimmed = value
+    .trim()
+    .replace(/^[\[【(（]\s*/, "")
+    .replace(/[\]】)）]\s*$/, "")
+    .replace(/^(主体|角色|人物|主角|场景|环境|地点|动作|镜头|美术|构图|光线|光影|色调|机位|景别|画面|提示词|备注)\s*[:：]\s*/g, "")
+    .replace(/\s+/g, "");
+  if (!trimmed) return "";
+  if (GENERIC_SCENE_LABELS.has(trimmed)) return "";
+  if (trimmed.length > 24) return "";
+  return trimmed;
+}
+
 function extractCharacterCandidates(text: string): string[] {
   const explicitCandidates: string[] = [];
   const roleCandidates: string[] = [];
@@ -319,9 +391,9 @@ function extractCharacterCandidates(text: string): string[] {
   }
   const nameMatches = text.match(/[\u4e00-\u9fa5]{2,4}(?=说|问|答|看向|转身|走向|站在|坐在)/g) ?? [];
   explicitCandidates.push(...nameMatches);
-  const normalizedExplicit = uniqueEntities(explicitCandidates);
+  const normalizedExplicit = uniqueEntities(explicitCandidates.map(sanitizeCharacterCandidate).filter(Boolean));
   if (normalizedExplicit.length > 0) return normalizedExplicit;
-  return uniqueEntities(roleCandidates);
+  return uniqueEntities(roleCandidates.map(sanitizeCharacterCandidate).filter(Boolean));
 }
 
 function canonicalAssetName(type: "character" | "scene" | "skybox", value: string): string {
@@ -463,7 +535,7 @@ function inferSceneName(text: string): string {
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    const value = match?.[1]?.trim();
+    const value = sanitizeSceneCandidate(match?.[1]?.trim() ?? "");
     if (value) return value;
   }
   if (/河边/.test(text)) return "河边";
@@ -1166,11 +1238,11 @@ function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>>
     notes: typeof item.notes === "string" ? item.notes : "",
     tags: Array.isArray(item.tags) ? (item.tags as string[]) : [],
     characterNames: Array.isArray(item.character_names)
-      ? uniqueEntities((item.character_names as string[]).map((value) => String(value)))
+      ? uniqueEntities((item.character_names as string[]).map((value) => sanitizeCharacterCandidate(String(value))).filter(Boolean))
       : Array.isArray(item.characterNames)
-        ? uniqueEntities((item.characterNames as string[]).map((value) => String(value)))
+        ? uniqueEntities((item.characterNames as string[]).map((value) => sanitizeCharacterCandidate(String(value))).filter(Boolean))
         : [],
-    sceneName: String(item.scene_name ?? item.sceneName ?? "").trim(),
+    sceneName: sanitizeSceneCandidate(String(item.scene_name ?? item.sceneName ?? "").trim()),
     scenePrompt: String(item.scene_prompt ?? item.scenePrompt ?? "").trim()
   }));
 }
@@ -1931,9 +2003,9 @@ export function ComfyPipelinePanel() {
         tags: shot.tags ?? [],
         characterNames:
           shot.sourceCharacterNames && shot.sourceCharacterNames.length > 0
-            ? uniqueEntities(shot.sourceCharacterNames)
+            ? uniqueEntities(shot.sourceCharacterNames.map(sanitizeCharacterCandidate).filter(Boolean))
             : inferredCharacterNames,
-        sceneName,
+        sceneName: sanitizeSceneCandidate(sceneName),
         scenePrompt
       };
     });
