@@ -2753,6 +2753,10 @@ button.export-panel-collapsed:hover {
   border-color: rgba(60, 152, 109, 0.72);
 }
 
+.comfy-provision-preview-card.is-pending {
+  border-color: rgba(84, 118, 181, 0.72);
+}
+
 .comfy-provision-preview-card.is-failed {
   border-color: rgba(165, 67, 89, 0.78);
 }

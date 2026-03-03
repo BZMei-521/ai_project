@@ -44,7 +44,7 @@ type ProvisionPreviewItem = {
   key: string;
   kind: "character" | "skybox";
   name: string;
-  status: "running" | "success" | "reused" | "failed";
+  status: "pending" | "running" | "success" | "reused" | "failed";
   detail: string;
   thumbs: string[];
 };
@@ -2121,6 +2121,16 @@ export function ComfyPipelinePanel() {
         tasks.push({ kind: "skybox", name: item.sceneName });
       }
     }
+    for (const task of tasks) {
+      upsertProvisionPreview({
+        key: `${task.kind}:${normalizeEntityKey(task.name)}`,
+        kind: task.kind,
+        name: task.name,
+        status: "pending",
+        detail: task.kind === "character" ? "已识别，等待生成角色三视图" : "已识别，等待生成场景天空盒",
+        thumbs: []
+      });
+    }
     let progressIndex = 0;
 
     for (const item of items) {
@@ -2292,12 +2302,17 @@ export function ComfyPipelinePanel() {
       appendLog(`${sourceLabel}跳过：当前镜头没有待识别的新角色或新场景元数据`);
       return true;
     }
+    const detectedCharacterNames = uniqueEntities(items.flatMap((item) => item.characterNames));
+    const detectedSceneNames = uniqueEntities(items.map((item) => item.sceneName).filter(Boolean));
     if (!(await ensureComfyReady())) {
       appendLog(`${sourceLabel}中断：ComfyUI 未连接`, "error");
       setPipelineState(`${sourceLabel}中断：ComfyUI 未连接`);
       return false;
     }
     setProvisionPreviews([]);
+    appendLog(
+      `${sourceLabel}识别结果：角色 ${detectedCharacterNames.length > 0 ? detectedCharacterNames.join("、") : "无"}；场景 ${detectedSceneNames.length > 0 ? detectedSceneNames.join("、") : "无"}`
+    );
     appendLog(`${sourceLabel}开始`);
     const summary = await provisionAssetsForItems(items, runtimeSettings, {
       bindShots: true,
@@ -3645,7 +3660,17 @@ export function ComfyPipelinePanel() {
                   <article key={item.key} className={`comfy-provision-preview-card is-${item.status}`}>
                     <div className="comfy-provision-preview-head">
                       <strong>{item.kind === "character" ? "角色" : "天空盒"} · {item.name}</strong>
-                      <span>{item.status === "running" ? "生成中" : item.status === "success" ? "已生成" : item.status === "reused" ? "已复用" : "失败"}</span>
+                      <span>
+                        {item.status === "pending"
+                          ? "待生成"
+                          : item.status === "running"
+                            ? "生成中"
+                            : item.status === "success"
+                              ? "已生成"
+                              : item.status === "reused"
+                                ? "已复用"
+                                : "失败"}
+                      </span>
                     </div>
                     <small>{item.detail}</small>
                     <div className="comfy-provision-thumb-row">
