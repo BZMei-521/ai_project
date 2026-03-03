@@ -3137,6 +3137,7 @@ export function ComfyPipelinePanel() {
       }
       setPhase("running");
       if (!skipProvision) {
+        appendLog("分镜图前置资产阶段已启用：将先检查角色三视图与场景天空盒");
         setPipelineState("分镜图前置：准备生成角色三视图与场景天空盒");
         const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, runtimeSettings, "分镜图前置资产生成");
         if (!provisionOk) {
@@ -3505,6 +3506,7 @@ export function ComfyPipelinePanel() {
       setPipelineState("一键生成整片：步骤 1/6 预生成角色三视图与场景天空盒");
       setRunAllProgress(8);
       setRunAllStage("步骤 1/6 预生成角色三视图与场景天空盒");
+      appendLog("一键生成前置资产阶段已启用：将先检查角色三视图与场景天空盒");
       const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, settings, "一键生成前置资产生成");
       if (!provisionOk) {
         setPipelineState("一键生成中断：前置资产生成未完成");
