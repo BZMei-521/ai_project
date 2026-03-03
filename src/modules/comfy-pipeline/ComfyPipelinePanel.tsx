@@ -81,6 +81,9 @@ type ImportProvisionPreset = {
   name: string;
   note: string;
   scope: "all" | "characters" | "skyboxes";
+  pinned: boolean;
+  updatedAt: number;
+  lastUsedAt: number;
   characterOverrides: Record<string, string>;
   skyboxOverrides: Record<string, string>;
 };
@@ -654,6 +657,9 @@ function loadImportPresets(): ImportProvisionPreset[] {
           item.scope === "characters" || item.scope === "skyboxes" || item.scope === "all"
             ? item.scope
             : "all",
+        pinned: item.pinned === true,
+        updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : 0,
+        lastUsedAt: typeof item.lastUsedAt === "number" ? item.lastUsedAt : 0,
         characterOverrides:
           item.characterOverrides && typeof item.characterOverrides === "object" ? item.characterOverrides : {},
         skyboxOverrides:
@@ -678,6 +684,15 @@ function formatImportPresetScope(scope: ImportProvisionPreset["scope"]): string 
   return "全量";
 }
 
+function sortImportPresets(items: ImportProvisionPreset[]): ImportProvisionPreset[] {
+  return [...items].sort((left, right) => {
+    if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+    if (left.lastUsedAt !== right.lastUsedAt) return right.lastUsedAt - left.lastUsedAt;
+    if (left.updatedAt !== right.updatedAt) return right.updatedAt - left.updatedAt;
+    return left.name.localeCompare(right.name, "zh-Hans-CN");
+  });
+}
+
 function normalizeImportPresetRecords(raw: unknown): ImportProvisionPreset[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -696,6 +711,9 @@ function normalizeImportPresetRecords(raw: unknown): ImportProvisionPreset[] {
           record.scope === "characters" || record.scope === "skyboxes" || record.scope === "all"
             ? record.scope
             : "all",
+        pinned: record.pinned === true,
+        updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
+        lastUsedAt: typeof record.lastUsedAt === "number" ? record.lastUsedAt : 0,
         characterOverrides:
           record.characterOverrides && typeof record.characterOverrides === "object"
             ? (record.characterOverrides as Record<string, string>)
@@ -1394,6 +1412,8 @@ export function ComfyPipelinePanel() {
     [importPresets, scriptSelectedPresetId]
   );
 
+  const sortedImportPresets = useMemo(() => sortImportPresets(importPresets), [importPresets]);
+
   const applyBatchOverrides = (
     keys: string[],
     setter: (updater: (previous: Record<string, string>) => Record<string, string>) => void,
@@ -1494,6 +1514,14 @@ export function ComfyPipelinePanel() {
     const preset = importPresets.find((item) => item.id === presetId);
     if (!preset) return;
     applyImportPresetRecord(preset, choices, setCharacterOverrides, setSkyboxOverrides);
+    setImportPresets((previous) => {
+      const now = Date.now();
+      const next = previous.map((item) =>
+        item.id === presetId ? { ...item, lastUsedAt: now, updatedAt: Math.max(item.updatedAt, now) } : item
+      );
+      persistImportPresets(next);
+      return next;
+    });
   };
 
   const saveImportPreset = (
@@ -1519,6 +1547,9 @@ export function ComfyPipelinePanel() {
       name,
       note: presetNote.trim(),
       scope: presetScope,
+      pinned: false,
+      updatedAt: Date.now(),
+      lastUsedAt: 0,
       characterOverrides: payload.characterOverrides,
       skyboxOverrides: payload.skyboxOverrides
     };
@@ -1552,7 +1583,8 @@ export function ComfyPipelinePanel() {
     const nextName = window.prompt("输入新的预设名称", preset.name)?.trim() ?? "";
     if (!nextName || nextName === preset.name) return;
     setImportPresets((previous) => {
-      const next = previous.map((item) => (item.id === presetId ? { ...item, name: nextName } : item));
+      const now = Date.now();
+      const next = previous.map((item) => (item.id === presetId ? { ...item, name: nextName, updatedAt: now } : item));
       persistImportPresets(next);
       return next;
     });
@@ -1564,7 +1596,8 @@ export function ComfyPipelinePanel() {
     if (!preset) return;
     const nextNote = window.prompt("输入预设备注", preset.note)?.trim() ?? "";
     setImportPresets((previous) => {
-      const next = previous.map((item) => (item.id === presetId ? { ...item, note: nextNote } : item));
+      const now = Date.now();
+      const next = previous.map((item) => (item.id === presetId ? { ...item, note: nextNote, updatedAt: now } : item));
       persistImportPresets(next);
       return next;
     });
@@ -1582,11 +1615,26 @@ export function ComfyPipelinePanel() {
     }
     if (!scope || scope === preset.scope) return;
     setImportPresets((previous) => {
-      const next = previous.map((item) => (item.id === presetId ? { ...item, scope } : item));
+      const now = Date.now();
+      const next = previous.map((item) => (item.id === presetId ? { ...item, scope, updatedAt: now } : item));
       persistImportPresets(next);
       return next;
     });
     pushToast(`已更新预设作用域：${preset.name}`, "success");
+  };
+
+  const toggleImportPresetPinned = (presetId: string) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setImportPresets((previous) => {
+      const now = Date.now();
+      const next = previous.map((item) =>
+        item.id === presetId ? { ...item, pinned: !item.pinned, updatedAt: now } : item
+      );
+      persistImportPresets(next);
+      return next;
+    });
+    pushToast(preset.pinned ? `已取消置顶：${preset.name}` : `已置顶预设：${preset.name}`, "success");
   };
 
   const exportImportPreset = async (presetId: string) => {
@@ -1621,7 +1669,10 @@ export function ComfyPipelinePanel() {
           lastImportedId = `import_preset_${importBatchId}_${index}`;
           lastImportedPreset = {
             ...item,
-            id: `import_preset_${importBatchId}_${index}`
+            id: `import_preset_${importBatchId}_${index}`,
+            updatedAt: importBatchId + index,
+            lastUsedAt: autoApplyImportedPreset ? importBatchId + index : item.lastUsedAt,
+            pinned: item.pinned === true
           };
           return lastImportedPreset;
         });
@@ -3852,9 +3903,9 @@ export function ComfyPipelinePanel() {
                       value={storySelectedPresetId}
                     >
                       <option value="">选择已保存预设…</option>
-                      {importPresets.map((preset) => (
+                      {sortedImportPresets.map((preset) => (
                         <option key={`story_import_preset_${preset.id}`} value={preset.id}>
-                          {preset.name} · {formatImportPresetScope(preset.scope)}
+                          {preset.pinned ? "置顶 · " : ""}{preset.name} · {formatImportPresetScope(preset.scope)}
                         </option>
                       ))}
                     </select>
@@ -3928,6 +3979,14 @@ export function ComfyPipelinePanel() {
                   <button
                     className="btn-ghost"
                     disabled={!storySelectedPresetId}
+                    onClick={() => toggleImportPresetPinned(storySelectedPresetId)}
+                    type="button"
+                  >
+                    {storySelectedPreset?.pinned ? "取消置顶" : "置顶预设"}
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
                     onClick={() => editImportPresetScope(storySelectedPresetId)}
                     type="button"
                   >
@@ -3953,7 +4012,12 @@ export function ComfyPipelinePanel() {
                     导入预设 JSON
                   </button>
                 </div>
-                {storySelectedPreset && <small>当前预设作用域：{formatImportPresetScope(storySelectedPreset.scope)}</small>}
+                {storySelectedPreset && (
+                  <small>
+                    当前预设作用域：{formatImportPresetScope(storySelectedPreset.scope)}；排序：
+                    {storySelectedPreset.pinned ? "置顶" : "普通"} / 最近使用
+                  </small>
+                )}
                 {storySelectedPreset?.note && <small>当前预设备注：{storySelectedPreset.note}</small>}
                 {(storyProvisionChoices.characters.length > 0 || storyProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
@@ -4150,9 +4214,9 @@ export function ComfyPipelinePanel() {
                       value={scriptSelectedPresetId}
                     >
                       <option value="">选择已保存预设…</option>
-                      {importPresets.map((preset) => (
+                      {sortedImportPresets.map((preset) => (
                         <option key={`script_import_preset_${preset.id}`} value={preset.id}>
-                          {preset.name} · {formatImportPresetScope(preset.scope)}
+                          {preset.pinned ? "置顶 · " : ""}{preset.name} · {formatImportPresetScope(preset.scope)}
                         </option>
                       ))}
                     </select>
@@ -4226,6 +4290,14 @@ export function ComfyPipelinePanel() {
                   <button
                     className="btn-ghost"
                     disabled={!scriptSelectedPresetId}
+                    onClick={() => toggleImportPresetPinned(scriptSelectedPresetId)}
+                    type="button"
+                  >
+                    {scriptSelectedPreset?.pinned ? "取消置顶" : "置顶预设"}
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
                     onClick={() => editImportPresetScope(scriptSelectedPresetId)}
                     type="button"
                   >
@@ -4251,7 +4323,12 @@ export function ComfyPipelinePanel() {
                     导入预设 JSON
                   </button>
                 </div>
-                {scriptSelectedPreset && <small>当前预设作用域：{formatImportPresetScope(scriptSelectedPreset.scope)}</small>}
+                {scriptSelectedPreset && (
+                  <small>
+                    当前预设作用域：{formatImportPresetScope(scriptSelectedPreset.scope)}；排序：
+                    {scriptSelectedPreset.pinned ? "置顶" : "普通"} / 最近使用
+                  </small>
+                )}
                 {scriptSelectedPreset?.note && <small>当前预设备注：{scriptSelectedPreset.note}</small>}
                 {(scriptProvisionChoices.characters.length > 0 || scriptProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
