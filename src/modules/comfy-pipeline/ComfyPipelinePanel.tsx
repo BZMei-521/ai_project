@@ -25,10 +25,12 @@ import {
   type WorkflowDependencyHint
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
+import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
+import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
-const DEFAULT_CHARACTER_WORKFLOW_JSON = FISHER_WORKFLOW_JSON;
-const DEFAULT_SKYBOX_WORKFLOW_JSON = FISHER_WORKFLOW_JSON;
+const DEFAULT_CHARACTER_WORKFLOW_JSON = JSON.stringify(CHARACTER_THREEVIEW_WORKFLOW_OBJECT, null, 2);
+const DEFAULT_SKYBOX_WORKFLOW_JSON = JSON.stringify(SKYBOX_WORKFLOW_OBJECT, null, 2);
 const loadExportService = () => import("../export-service/animaticExport");
 
 type GenerationPhase = "idle" | "running";
@@ -4097,6 +4099,12 @@ export function ComfyPipelinePanel() {
         <div className="timeline-meta">
           要求：一张图只能有一个角色、一个角度；不要输出拼图或三联图；不要依赖固定 LoadImage；最终必须稳定产出单张图片。
         </div>
+        <div className="timeline-meta">
+          内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage
+        </div>
+        <div className="timeline-meta">
+          内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）；可选再叠加角色 LoRA。不要再混入参考图编辑链。
+        </div>
         <label className="checkbox-row">
           <input
             checked={settings.requireDedicatedCharacterWorkflow !== false}
@@ -4150,6 +4158,12 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           要求：系统会按六个面逐次调用；每次必须只输出纯环境图；禁止人物、动物、群像、主体表演；不要混入视频/音频节点。
+        </div>
+        <div className="timeline-meta">
+          内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage
+        </div>
+        <div className="timeline-meta">
+          内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）。不要使用 LoadImage、视频节点或人物参考链。
         </div>
         <label className="checkbox-row">
           <input

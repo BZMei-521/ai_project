@@ -1708,6 +1708,26 @@ function applyComfyModelOptionBindings(
   workflow: Record<string, unknown>,
   objectInfo: Record<string, unknown>
 ) {
+  if (isLikelyComfyApiPrompt(workflow)) {
+    for (const value of Object.values(workflow)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const node = value as Record<string, unknown>;
+      const classType = typeof node.class_type === "string" ? node.class_type : "";
+      const inputs = node.inputs;
+      if (!classType || !inputs || typeof inputs !== "object" || Array.isArray(inputs)) continue;
+      for (const [name, currentValue] of Object.entries(inputs as Record<string, unknown>)) {
+        if (typeof currentValue !== "string" || !currentValue.trim()) continue;
+        const options = extractComboOptionsFromObjectInfo(objectInfo, classType, name);
+        if (options.length === 0) continue;
+        const resolved = resolveBestModelOption(currentValue, options);
+        if (resolved !== currentValue) {
+          (inputs as Record<string, unknown>)[name] = resolved;
+        }
+      }
+    }
+    return;
+  }
+
   const nodes = workflowNodes(workflow);
   for (const node of nodes) {
     if (!node || typeof node.type !== "string") continue;
