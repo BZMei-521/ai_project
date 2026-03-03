@@ -14,7 +14,9 @@ export type ComfySettings = {
   requireDedicatedSkyboxWorkflow?: boolean;
   characterTemplatePreset?: "portrait" | "square";
   characterRenderPreset?: "stable_fullbody" | "clean_reference";
+  characterBackgroundPreset?: "white" | "gray" | "studio";
   skyboxTemplatePreset?: "wide" | "square";
+  skyboxPromptPreset?: "day_exterior" | "night_exterior" | "interior";
   skyboxNegativePreset?: "day_exterior" | "night_exterior" | "interior";
   characterAssetNegativePrompt?: string;
   skyboxAssetNegativePrompt?: string;

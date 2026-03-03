@@ -31,6 +31,16 @@ import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
+const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
+  white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
+  gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
+  studio: "中性影棚背景，柔和棚拍补光，干净地面，无环境叙事元素"
+};
+const SKYBOX_PROMPT_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "interior", string> = {
+  day_exterior: "日景外景，空间开阔，自然光明确，远中近层次清晰，适合建立镜头和动作调度",
+  night_exterior: "夜景外景，夜间环境光与主光方向清晰，暗部稳定，适合夜戏镜头复用",
+  interior: "室内空间，墙面/门窗/家具结构明确，光源位置稳定，适合对白和调度镜头复用"
+};
 const SKYBOX_NEGATIVE_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "interior", string> = {
   day_exterior:
     "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, stage performance, poster, signage with faces",
@@ -865,7 +875,9 @@ function loadSettings(): ComfySettings {
       requireDedicatedSkyboxWorkflow: true,
       characterTemplatePreset: "portrait",
       characterRenderPreset: "stable_fullbody",
+      characterBackgroundPreset: "gray",
       skyboxTemplatePreset: "wide",
+      skyboxPromptPreset: "day_exterior",
       skyboxNegativePreset: "day_exterior",
       characterAssetNegativePrompt: DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
@@ -906,10 +918,22 @@ function loadSettings(): ComfySettings {
         parsed.characterRenderPreset === "clean_reference" || parsed.characterRenderPreset === "stable_fullbody"
           ? parsed.characterRenderPreset
           : "stable_fullbody",
+      characterBackgroundPreset:
+        parsed.characterBackgroundPreset === "white" ||
+        parsed.characterBackgroundPreset === "studio" ||
+        parsed.characterBackgroundPreset === "gray"
+          ? parsed.characterBackgroundPreset
+          : "gray",
       skyboxTemplatePreset:
         parsed.skyboxTemplatePreset === "square" || parsed.skyboxTemplatePreset === "wide"
           ? parsed.skyboxTemplatePreset
           : "wide",
+      skyboxPromptPreset:
+        parsed.skyboxPromptPreset === "night_exterior" ||
+        parsed.skyboxPromptPreset === "interior" ||
+        parsed.skyboxPromptPreset === "day_exterior"
+          ? parsed.skyboxPromptPreset
+          : "day_exterior",
       skyboxNegativePreset:
         parsed.skyboxNegativePreset === "night_exterior" ||
         parsed.skyboxNegativePreset === "interior" ||
@@ -946,7 +970,9 @@ function loadSettings(): ComfySettings {
       requireDedicatedSkyboxWorkflow: true,
       characterTemplatePreset: "portrait",
       characterRenderPreset: "stable_fullbody",
+      characterBackgroundPreset: "gray",
       skyboxTemplatePreset: "wide",
+      skyboxPromptPreset: "day_exterior",
       skyboxNegativePreset: "day_exterior",
       characterAssetNegativePrompt: DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
@@ -2195,9 +2221,10 @@ export function ComfyPipelinePanel() {
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "侧视图" : "背视图";
+    const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     return `角色标准三视图，${viewLabel}，单人，全身完整，单张图只允许一个角色，角色：${name}。仅保留角色设定信息，不要叙事场景，不要与他人互动。${normalizeStoryInput(
       context
-    )}。严格要求：纯色或中性背景，无第二人物，无群像，无场景叙事，无武打动作，无道具遮挡，无裁切，服装统一，面部与体型一致，角色设定图风格，写实电影美术。`;
+    )}。严格要求：${backgroundPrompt}，无第二人物，无群像，无场景叙事，无武打动作，无道具遮挡，无裁切，服装统一，面部与体型一致，角色设定图风格，写实电影美术。`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -2207,7 +2234,8 @@ export function ComfyPipelinePanel() {
 
   const buildSkyboxDescription = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
-    return `${prompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
+    const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
+    return `${prompt}。${presetPrompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
   };
 
   const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
@@ -4200,6 +4228,22 @@ export function ComfyPipelinePanel() {
             <option value="clean_reference">干净设定（DPM++ 2M / 32 steps / cfg 6）</option>
           </select>
         </label>
+        <label>
+          角色三视图背景模板
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                characterBackgroundPreset: event.target.value as "white" | "gray" | "studio"
+              }))
+            }
+            value={settings.characterBackgroundPreset ?? "gray"}
+          >
+            <option value="gray">中性灰背景</option>
+            <option value="white">纯白背景</option>
+            <option value="studio">影棚背景</option>
+          </select>
+        </label>
         <label className="comfy-script-block">
           角色三视图默认负面词
           <textarea
@@ -4259,6 +4303,13 @@ export function ComfyPipelinePanel() {
           steps {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].steps} /
           cfg {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].cfg}
         </div>
+        <div className="timeline-meta">
+          当前背景模板：{settings.characterBackgroundPreset === "white"
+            ? "纯白背景"
+            : settings.characterBackgroundPreset === "studio"
+              ? "影棚背景"
+              : "中性灰背景"}
+        </div>
         <label className="checkbox-row">
           <input
             checked={settings.requireDedicatedCharacterWorkflow !== false}
@@ -4296,6 +4347,22 @@ export function ComfyPipelinePanel() {
           >
             <option value="wide">横版环境（1344x768）</option>
             <option value="square">方版环境（1024x1024）</option>
+          </select>
+        </label>
+        <label>
+          天空盒正向场景模板
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxPromptPreset: event.target.value as "day_exterior" | "night_exterior" | "interior"
+              }))
+            }
+            value={settings.skyboxPromptPreset ?? "day_exterior"}
+          >
+            <option value="day_exterior">日景外景</option>
+            <option value="night_exterior">夜景外景</option>
+            <option value="interior">室内空间</option>
           </select>
         </label>
         <label>
@@ -4377,6 +4444,13 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）。不要使用 LoadImage、视频节点或人物参考链。
+        </div>
+        <div className="timeline-meta">
+          当前正向模板：{settings.skyboxPromptPreset === "night_exterior"
+            ? "夜景外景"
+            : settings.skyboxPromptPreset === "interior"
+              ? "室内空间"
+              : "日景外景"}
         </div>
         <div className="timeline-meta">
           当前负面词模板：{settings.skyboxNegativePreset === "night_exterior"
