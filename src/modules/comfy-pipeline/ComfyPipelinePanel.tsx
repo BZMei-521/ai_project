@@ -80,6 +80,7 @@ type ImportProvisionPreset = {
   id: string;
   name: string;
   note: string;
+  scope: "all" | "characters" | "skyboxes";
   characterOverrides: Record<string, string>;
   skyboxOverrides: Record<string, string>;
 };
@@ -649,6 +650,10 @@ function loadImportPresets(): ImportProvisionPreset[] {
         id: item.id,
         name: item.name,
         note: typeof item.note === "string" ? item.note : "",
+        scope:
+          item.scope === "characters" || item.scope === "skyboxes" || item.scope === "all"
+            ? item.scope
+            : "all",
         characterOverrides:
           item.characterOverrides && typeof item.characterOverrides === "object" ? item.characterOverrides : {},
         skyboxOverrides:
@@ -667,6 +672,12 @@ function loadImportPresetAutoApply(): boolean {
   return localStorage.getItem(IMPORT_PRESET_AUTO_APPLY_KEY) === "1";
 }
 
+function formatImportPresetScope(scope: ImportProvisionPreset["scope"]): string {
+  if (scope === "characters") return "仅角色";
+  if (scope === "skyboxes") return "仅天空盒";
+  return "全量";
+}
+
 function normalizeImportPresetRecords(raw: unknown): ImportProvisionPreset[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -681,6 +692,10 @@ function normalizeImportPresetRecords(raw: unknown): ImportProvisionPreset[] {
             : `import_preset_${Date.now()}_${index}`,
         name,
         note: typeof record.note === "string" ? record.note.trim() : "",
+        scope:
+          record.scope === "characters" || record.scope === "skyboxes" || record.scope === "all"
+            ? record.scope
+            : "all",
         characterOverrides:
           record.characterOverrides && typeof record.characterOverrides === "object"
             ? (record.characterOverrides as Record<string, string>)
@@ -1399,6 +1414,7 @@ export function ComfyPipelinePanel() {
   };
 
   const buildPresetPayload = (
+    scope: ImportProvisionPreset["scope"],
     choices: { characters: AssetProvisionChoice[]; skyboxes: AssetProvisionChoice[] } | null,
     characterOverrides: Record<string, string>,
     skyboxOverrides: Record<string, string>
@@ -1411,13 +1427,17 @@ export function ComfyPipelinePanel() {
     }
     const nextCharacterOverrides: Record<string, string> = {};
     const nextSkyboxOverrides: Record<string, string> = {};
-    for (const item of choices.characters) {
-      const value = characterOverrides[item.key];
-      if (value) nextCharacterOverrides[item.key] = value;
+    if (scope !== "skyboxes") {
+      for (const item of choices.characters) {
+        const value = characterOverrides[item.key];
+        if (value) nextCharacterOverrides[item.key] = value;
+      }
     }
-    for (const item of choices.skyboxes) {
-      const value = skyboxOverrides[item.key];
-      if (value) nextSkyboxOverrides[item.key] = value;
+    if (scope !== "characters") {
+      for (const item of choices.skyboxes) {
+        const value = skyboxOverrides[item.key];
+        if (value) nextSkyboxOverrides[item.key] = value;
+      }
     }
     return {
       characterOverrides: nextCharacterOverrides,
@@ -1437,23 +1457,31 @@ export function ComfyPipelinePanel() {
     const nextCharacterOverrides: Record<string, string> = {};
     const nextSkyboxOverrides: Record<string, string> = {};
 
-    for (const item of choices.characters) {
-      const value = preset.characterOverrides[item.key];
-      if (!value) continue;
-      if (value === "__new__" || characterAssetIds.has(value)) {
-        nextCharacterOverrides[item.key] = value;
+    if (preset.scope !== "skyboxes") {
+      for (const item of choices.characters) {
+        const value = preset.characterOverrides[item.key];
+        if (!value) continue;
+        if (value === "__new__" || characterAssetIds.has(value)) {
+          nextCharacterOverrides[item.key] = value;
+        }
       }
     }
-    for (const item of choices.skyboxes) {
-      const value = preset.skyboxOverrides[item.key];
-      if (!value) continue;
-      if (value === "__new__" || skyboxAssetIds.has(value)) {
-        nextSkyboxOverrides[item.key] = value;
+    if (preset.scope !== "characters") {
+      for (const item of choices.skyboxes) {
+        const value = preset.skyboxOverrides[item.key];
+        if (!value) continue;
+        if (value === "__new__" || skyboxAssetIds.has(value)) {
+          nextSkyboxOverrides[item.key] = value;
+        }
       }
     }
 
-    setCharacterOverrides(nextCharacterOverrides);
-    setSkyboxOverrides(nextSkyboxOverrides);
+    if (preset.scope !== "skyboxes") {
+      setCharacterOverrides(nextCharacterOverrides);
+    }
+    if (preset.scope !== "characters") {
+      setSkyboxOverrides(nextSkyboxOverrides);
+    }
     pushToast(`已应用导入预设：${preset.name}`, "success");
   };
 
@@ -1471,11 +1499,12 @@ export function ComfyPipelinePanel() {
   const saveImportPreset = (
     presetName: string,
     presetNote: string,
+    presetScope: ImportProvisionPreset["scope"],
     choices: { characters: AssetProvisionChoice[]; skyboxes: AssetProvisionChoice[] } | null,
     characterOverrides: Record<string, string>,
     skyboxOverrides: Record<string, string>
   ) => {
-    const payload = buildPresetPayload(choices, characterOverrides, skyboxOverrides);
+    const payload = buildPresetPayload(presetScope, choices, characterOverrides, skyboxOverrides);
     if (
       Object.keys(payload.characterOverrides).length === 0 &&
       Object.keys(payload.skyboxOverrides).length === 0
@@ -1489,6 +1518,7 @@ export function ComfyPipelinePanel() {
       id: `import_preset_${Date.now()}`,
       name,
       note: presetNote.trim(),
+      scope: presetScope,
       characterOverrides: payload.characterOverrides,
       skyboxOverrides: payload.skyboxOverrides
     };
@@ -1539,6 +1569,24 @@ export function ComfyPipelinePanel() {
       return next;
     });
     pushToast(nextNote ? `已更新预设备注：${preset.name}` : `已清空预设备注：${preset.name}`, "success");
+  };
+
+  const editImportPresetScope = (presetId: string) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    const scopeInput =
+      window.prompt("输入新的预设作用域：all / characters / skyboxes", preset.scope)?.trim() ?? "";
+    let scope: ImportProvisionPreset["scope"] | "" = "";
+    if (scopeInput === "all" || scopeInput === "characters" || scopeInput === "skyboxes") {
+      scope = scopeInput;
+    }
+    if (!scope || scope === preset.scope) return;
+    setImportPresets((previous) => {
+      const next = previous.map((item) => (item.id === presetId ? { ...item, scope } : item));
+      persistImportPresets(next);
+      return next;
+    });
+    pushToast(`已更新预设作用域：${preset.name}`, "success");
   };
 
   const exportImportPreset = async (presetId: string) => {
@@ -3806,7 +3854,7 @@ export function ComfyPipelinePanel() {
                       <option value="">选择已保存预设…</option>
                       {importPresets.map((preset) => (
                         <option key={`story_import_preset_${preset.id}`} value={preset.id}>
-                          {preset.name}
+                          {preset.name} · {formatImportPresetScope(preset.scope)}
                         </option>
                       ))}
                     </select>
@@ -3840,9 +3888,17 @@ export function ComfyPipelinePanel() {
                       const name = window.prompt("输入导入预设名称", "故事导入预设");
                       if (!name) return;
                       const note = window.prompt("输入预设备注（可选）", storySelectedPreset?.note ?? "") ?? "";
+                      const scopeInput =
+                        window.prompt("输入预设作用域：all / characters / skyboxes", storySelectedPreset?.scope ?? "all") ??
+                        "";
+                      const scope =
+                        scopeInput.trim() === "characters" || scopeInput.trim() === "skyboxes"
+                          ? (scopeInput.trim() as "characters" | "skyboxes")
+                          : "all";
                       const presetId = saveImportPreset(
                         name,
                         note,
+                        scope,
                         storyProvisionChoices,
                         storyCharacterOverrides,
                         storySkyboxOverrides
@@ -3872,6 +3928,14 @@ export function ComfyPipelinePanel() {
                   <button
                     className="btn-ghost"
                     disabled={!storySelectedPresetId}
+                    onClick={() => editImportPresetScope(storySelectedPresetId)}
+                    type="button"
+                  >
+                    编辑作用域
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
                     onClick={() => editImportPresetNote(storySelectedPresetId)}
                     type="button"
                   >
@@ -3889,6 +3953,7 @@ export function ComfyPipelinePanel() {
                     导入预设 JSON
                   </button>
                 </div>
+                {storySelectedPreset && <small>当前预设作用域：{formatImportPresetScope(storySelectedPreset.scope)}</small>}
                 {storySelectedPreset?.note && <small>当前预设备注：{storySelectedPreset.note}</small>}
                 {(storyProvisionChoices.characters.length > 0 || storyProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
@@ -4087,7 +4152,7 @@ export function ComfyPipelinePanel() {
                       <option value="">选择已保存预设…</option>
                       {importPresets.map((preset) => (
                         <option key={`script_import_preset_${preset.id}`} value={preset.id}>
-                          {preset.name}
+                          {preset.name} · {formatImportPresetScope(preset.scope)}
                         </option>
                       ))}
                     </select>
@@ -4121,9 +4186,17 @@ export function ComfyPipelinePanel() {
                       const name = window.prompt("输入导入预设名称", "脚本导入预设");
                       if (!name) return;
                       const note = window.prompt("输入预设备注（可选）", scriptSelectedPreset?.note ?? "") ?? "";
+                      const scopeInput =
+                        window.prompt("输入预设作用域：all / characters / skyboxes", scriptSelectedPreset?.scope ?? "all") ??
+                        "";
+                      const scope =
+                        scopeInput.trim() === "characters" || scopeInput.trim() === "skyboxes"
+                          ? (scopeInput.trim() as "characters" | "skyboxes")
+                          : "all";
                       const presetId = saveImportPreset(
                         name,
                         note,
+                        scope,
                         scriptProvisionChoices,
                         scriptCharacterOverrides,
                         scriptSkyboxOverrides
@@ -4153,6 +4226,14 @@ export function ComfyPipelinePanel() {
                   <button
                     className="btn-ghost"
                     disabled={!scriptSelectedPresetId}
+                    onClick={() => editImportPresetScope(scriptSelectedPresetId)}
+                    type="button"
+                  >
+                    编辑作用域
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
                     onClick={() => editImportPresetNote(scriptSelectedPresetId)}
                     type="button"
                   >
@@ -4170,6 +4251,7 @@ export function ComfyPipelinePanel() {
                     导入预设 JSON
                   </button>
                 </div>
+                {scriptSelectedPreset && <small>当前预设作用域：{formatImportPresetScope(scriptSelectedPreset.scope)}</small>}
                 {scriptSelectedPreset?.note && <small>当前预设备注：{scriptSelectedPreset.note}</small>}
                 {(scriptProvisionChoices.characters.length > 0 || scriptProvisionChoices.skyboxes.length > 0) && (
                   <div className="comfy-import-override-actions">
