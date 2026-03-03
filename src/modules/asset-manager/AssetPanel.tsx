@@ -1,18 +1,47 @@
 import { useMemo, useState } from "react";
 import {
   DEFAULT_TOKEN_MAPPING,
+  generateShotAsset,
   generateSkyboxFaceUpdate,
   generateSkyboxFaces,
   type ComfySettings
 } from "../comfy-pipeline/comfyService";
 import { useStoryboardStore } from "../storyboard-core/store";
-import type { AssetType, SkyboxFace } from "../storyboard-core/types";
+import type { AssetType, Shot, SkyboxFace } from "../storyboard-core/types";
 import { confirmDialog } from "../ui/dialogStore";
 import { pushToast } from "../ui/toastStore";
 
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
 
 const SKYBOX_FACES: SkyboxFace[] = ["front", "right", "back", "left", "up", "down"];
+
+function normalizeStoryInput(raw: string): string {
+  return raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, " ").trim();
+}
+
+function makeAssetGenerationShot(sequenceId: string, id: string, title: string, prompt: string): Shot {
+  return {
+    id,
+    sequenceId,
+    order: 1,
+    title,
+    durationFrames: 24,
+    dialogue: "",
+    notes: "",
+    tags: [],
+    storyPrompt: prompt,
+    negativePrompt: "",
+    videoPrompt: "",
+    videoMode: "single_frame",
+    characterRefs: [],
+    sceneRefId: ""
+  };
+}
+
+function buildCharacterViewPrompt(name: string, context: string, view: "front" | "side" | "back") {
+  const viewLabel = view === "front" ? "正视图" : view === "side" ? "侧视图" : "背视图";
+  return `角色设定三视图，${viewLabel}，单人全身，角色：${name}。${normalizeStoryInput(context)}。中性纯净背景，人物完整无遮挡，服装统一，脸部与身体比例稳定，设定图风格，写实电影美术。`;
+}
 
 function loadComfySettingsFromLocalStorage(): ComfySettings | null {
   const raw = localStorage.getItem(SETTINGS_KEY);
@@ -42,6 +71,7 @@ export function AssetPanel() {
   const addAsset = useStoryboardStore((state) => state.addAsset);
   const updateAsset = useStoryboardStore((state) => state.updateAsset);
   const removeAsset = useStoryboardStore((state) => state.removeAsset);
+  const currentSequenceId = useStoryboardStore((state) => state.currentSequenceId);
   const [tab, setTab] = useState<AssetType>("character");
   const [name, setName] = useState("");
   const [filePath, setFilePath] = useState("");
@@ -49,6 +79,7 @@ export function AssetPanel() {
   const [sidePath, setSidePath] = useState("");
   const [backPath, setBackPath] = useState("");
   const [voiceProfile, setVoiceProfile] = useState("");
+  const [characterDescription, setCharacterDescription] = useState("");
   const [skyboxDescription, setSkyboxDescription] = useState("");
   const [skyboxTagsInput, setSkyboxTagsInput] = useState("");
   const [skyboxFacePaths, setSkyboxFacePaths] = useState<Partial<Record<SkyboxFace, string>>>({});
@@ -86,9 +117,76 @@ export function AssetPanel() {
     setSidePath("");
     setBackPath("");
     setVoiceProfile("");
+    setCharacterDescription("");
     setSkyboxDescription("");
     setSkyboxTagsInput("");
     setSkyboxFacePaths({});
+  };
+
+  const onGenerateCharacterViews = async () => {
+    const comfySettings = loadComfySettingsFromLocalStorage();
+    if (!comfySettings) {
+      pushToast("请先在 AI 流水线配置并保存 Comfy 设置", "error");
+      return;
+    }
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      pushToast("请先填写角色名称", "warning");
+      return;
+    }
+    const context = characterDescription.trim() || `${trimmedName} 的角色设定`;
+    try {
+      setBusy(true);
+      const batchId = Date.now();
+      const front = await generateShotAsset(
+        comfySettings,
+        makeAssetGenerationShot(
+          currentSequenceId,
+          `asset_panel_char_${batchId}_front`,
+          `${trimmedName} 正视图`,
+          buildCharacterViewPrompt(trimmedName, context, "front")
+        ),
+        0,
+        "image",
+        [],
+        []
+      );
+      const side = await generateShotAsset(
+        comfySettings,
+        makeAssetGenerationShot(
+          currentSequenceId,
+          `asset_panel_char_${batchId}_side`,
+          `${trimmedName} 侧视图`,
+          buildCharacterViewPrompt(trimmedName, context, "side")
+        ),
+        0,
+        "image",
+        [],
+        []
+      );
+      const back = await generateShotAsset(
+        comfySettings,
+        makeAssetGenerationShot(
+          currentSequenceId,
+          `asset_panel_char_${batchId}_back`,
+          `${trimmedName} 背视图`,
+          buildCharacterViewPrompt(trimmedName, context, "back")
+        ),
+        0,
+        "image",
+        [],
+        []
+      );
+      setFrontPath(front.localPath || front.previewUrl);
+      setSidePath(side.localPath || side.previewUrl);
+      setBackPath(back.localPath || back.previewUrl);
+      setFilePath(front.localPath || front.previewUrl);
+      pushToast("角色三视图生成完成", "success");
+    } catch (error) {
+      pushToast(`角色三视图生成失败：${String(error)}`, "error");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onGenerateSkybox = async () => {
@@ -223,6 +321,20 @@ export function AssetPanel() {
                 value={backPath}
               />
             </label>
+            <label>
+              角色描述
+              <textarea
+                onChange={(event) => setCharacterDescription(event.target.value)}
+                placeholder="例如：黑色短发，深色风衣，冷静克制，东亚女性，写实电影感"
+                rows={3}
+                value={characterDescription}
+              />
+            </label>
+            <div className="timeline-actions">
+              <button className="btn-ghost" disabled={busy} onClick={() => void onGenerateCharacterViews()} type="button">
+                用 Comfy 生成角色三视图
+              </button>
+            </div>
             <label>
               音色绑定
               <input

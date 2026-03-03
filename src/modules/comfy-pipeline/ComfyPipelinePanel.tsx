@@ -2001,14 +2001,17 @@ export function ComfyPipelinePanel() {
     return created;
   };
 
-  const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
-    if (!autoProvisionAssets || items.length === 0) return;
-    if (!(await ensureComfyReady())) {
-      appendLog("自动资产生成跳过：ComfyUI 未连接", "error");
-      return;
-    }
+  const provisionAssetsForItems = async (
+    items: NormalizedImportedShot[],
+    runtimeSettings: ComfySettings,
+    options?: { bindShots?: boolean }
+  ) => {
     const characterIdMap = new Map<string, string>();
     const sceneIdMap = new Map<string, string>();
+    let reusedCharacters = 0;
+    let createdCharacters = 0;
+    let reusedSkyboxes = 0;
+    let createdSkyboxes = 0;
 
     for (const item of items) {
       for (const name of item.characterNames) {
@@ -2019,11 +2022,15 @@ export function ComfyPipelinePanel() {
           const reusedId = findAssetIdByName("character", name);
           if (reusedId) {
             characterIdMap.set(key, reusedId);
+            reusedCharacters += 1;
             appendLog(`复用已有角色资产：${name}`);
             continue;
           }
           const assetId = await createCharacterAssetIfMissing(runtimeSettings, name, context);
-          if (assetId) characterIdMap.set(key, assetId);
+          if (assetId) {
+            characterIdMap.set(key, assetId);
+            createdCharacters += 1;
+          }
         } catch (error) {
           appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
         }
@@ -2035,6 +2042,7 @@ export function ComfyPipelinePanel() {
             const reusedId = findAssetIdByName("skybox", item.sceneName);
             if (reusedId) {
               sceneIdMap.set(key, reusedId);
+              reusedSkyboxes += 1;
               appendLog(`复用已有场景天空盒：${item.sceneName}`);
               continue;
             }
@@ -2043,7 +2051,10 @@ export function ComfyPipelinePanel() {
               item.sceneName,
               item.scenePrompt || item.prompt || item.notes
             );
-            if (assetId) sceneIdMap.set(key, assetId);
+            if (assetId) {
+              sceneIdMap.set(key, assetId);
+              createdSkyboxes += 1;
+            }
           } catch (error) {
             appendLog(`场景天空盒生成失败：${item.sceneName}，${String(error)}`, "error");
           }
@@ -2051,26 +2062,124 @@ export function ComfyPipelinePanel() {
       }
     }
 
-    for (const item of items) {
-      const characterRefs = uniqueEntities(
-        [
-          ...item.characterRefs,
-          ...item.characterNames
-            .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findAssetIdByName("character", name))
-            .filter((value): value is string => Boolean(value))
-        ].filter(Boolean)
-      );
-      const sceneRefId =
-        item.sceneRefId ||
-        (item.sceneName
-          ? sceneIdMap.get(normalizeEntityKey(item.sceneName)) || findAssetIdByName("skybox", item.sceneName)
-          : "");
-      updateShotFields(item.id, {
-        characterRefs,
-        sceneRefId
-      });
+    if (options?.bindShots) {
+      for (const item of items) {
+        const characterRefs = uniqueEntities(
+          [
+            ...item.characterRefs,
+            ...item.characterNames
+              .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findAssetIdByName("character", name))
+              .filter((value): value is string => Boolean(value))
+          ].filter(Boolean)
+        );
+        const sceneRefId =
+          item.sceneRefId ||
+          (item.sceneName
+            ? sceneIdMap.get(normalizeEntityKey(item.sceneName)) || findAssetIdByName("skybox", item.sceneName)
+            : "");
+        updateShotFields(item.id, {
+          characterRefs,
+          sceneRefId
+        });
+      }
     }
-    appendLog("自动资产生成与镜头绑定完成");
+
+    return {
+      reusedCharacters,
+      createdCharacters,
+      reusedSkyboxes,
+      createdSkyboxes
+    };
+  };
+
+  const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
+    if (!autoProvisionAssets || items.length === 0) return;
+    if (!(await ensureComfyReady())) {
+      appendLog("自动资产生成跳过：ComfyUI 未连接", "error");
+      return;
+    }
+    const summary = await provisionAssetsForItems(items, runtimeSettings, { bindShots: true });
+    appendLog(
+      `自动资产生成与镜头绑定完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
+    );
+  };
+
+  const onPreGenerateProvisionAssets = async (
+    sourceLabel: string,
+    items: NormalizedImportedShot[],
+    characterOverrides: Record<string, string>,
+    skyboxOverrides: Record<string, string>,
+    mode: "all" | "characters" | "skyboxes"
+  ) => {
+    if (phase === "running") {
+      appendLog(`${sourceLabel}预生成被跳过：当前已有任务在运行`, "error");
+      return;
+    }
+    if (items.length === 0) {
+      appendLog(`${sourceLabel}预生成被跳过：当前没有可处理的镜头`, "error");
+      return;
+    }
+    const appliedItems = applyProvisionOverrides(items, characterOverrides, skyboxOverrides)
+      .map((item) => {
+        if (mode === "characters") {
+          return {
+            ...item,
+            sceneName: "",
+            scenePrompt: "",
+            sceneRefId: ""
+          };
+        }
+        if (mode === "skyboxes") {
+          return {
+            ...item,
+            characterNames: [],
+            characterRefs: []
+          };
+        }
+        return item;
+      })
+      .filter((item) => {
+        if (mode === "characters") {
+          return item.characterNames.length > 0;
+        }
+        if (mode === "skyboxes") {
+          return Boolean(item.sceneName);
+        }
+        return item.characterNames.length > 0 || Boolean(item.sceneName);
+      });
+
+    if (appliedItems.length === 0) {
+      appendLog(`${sourceLabel}预生成跳过：当前映射结果没有缺失资产需要创建`);
+      pushToast("当前映射结果没有缺失资产需要生成", "warning");
+      return;
+    }
+    if (!(await ensureComfyReady())) {
+      appendLog(`${sourceLabel}预生成中断：ComfyUI 未连接`, "error");
+      return;
+    }
+
+    const label =
+      mode === "characters"
+        ? `${sourceLabel}预生成角色三视图`
+        : mode === "skyboxes"
+          ? `${sourceLabel}预生成场景天空盒`
+          : `${sourceLabel}预生成缺失资产`;
+    setPhase("running");
+    setPipelineState(label);
+    try {
+      appendLog(`${label}开始，共 ${appliedItems.length} 条镜头上下文`);
+      const summary = await provisionAssetsForItems(appliedItems, settings, { bindShots: false });
+      appendLog(
+        `${label}完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
+      );
+      pushToast(`${label}完成`, "success");
+    } catch (error) {
+      appendLog(`${label}失败：${String(error)}`, "error");
+      pushToast(`${label}失败：${String(error)}`, "error");
+    } finally {
+      setPhase("idle");
+      setPipelineState("空闲");
+    }
   };
 
   const applyImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }) => {
@@ -3926,6 +4035,58 @@ export function ComfyPipelinePanel() {
             </div>
             {storyProvisionChoices && (
               <div className="comfy-import-override-grid">
+                <div className="comfy-import-override-actions">
+                  <button
+                    className="btn-ghost"
+                    disabled={(storyAssetPreview?.newCharacters.length ?? 0) === 0}
+                    onClick={() =>
+                      void onPreGenerateProvisionAssets(
+                        "故事导入",
+                        storyNormalizedItems,
+                        storyCharacterOverrides,
+                        storySkyboxOverrides,
+                        "characters"
+                      )
+                    }
+                    type="button"
+                  >
+                    预生成缺失角色三视图
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={(storyAssetPreview?.newSkyboxes.length ?? 0) === 0}
+                    onClick={() =>
+                      void onPreGenerateProvisionAssets(
+                        "故事导入",
+                        storyNormalizedItems,
+                        storyCharacterOverrides,
+                        storySkyboxOverrides,
+                        "skyboxes"
+                      )
+                    }
+                    type="button"
+                  >
+                    预生成缺失场景天空盒
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={
+                      (storyAssetPreview?.newCharacters.length ?? 0) + (storyAssetPreview?.newSkyboxes.length ?? 0) === 0
+                    }
+                    onClick={() =>
+                      void onPreGenerateProvisionAssets(
+                        "故事导入",
+                        storyNormalizedItems,
+                        storyCharacterOverrides,
+                        storySkyboxOverrides,
+                        "all"
+                      )
+                    }
+                    type="button"
+                  >
+                    预生成全部缺失资产
+                  </button>
+                </div>
                 <div className="comfy-import-preset-actions">
                   <label>
                     导入预设
@@ -4248,6 +4409,58 @@ export function ComfyPipelinePanel() {
             </div>
             {scriptProvisionChoices && (
               <div className="comfy-import-override-grid">
+                <div className="comfy-import-override-actions">
+                  <button
+                    className="btn-ghost"
+                    disabled={(scriptAssetPreview?.newCharacters.length ?? 0) === 0}
+                    onClick={() =>
+                      void onPreGenerateProvisionAssets(
+                        "脚本导入",
+                        scriptNormalizedItems,
+                        scriptCharacterOverrides,
+                        scriptSkyboxOverrides,
+                        "characters"
+                      )
+                    }
+                    type="button"
+                  >
+                    预生成缺失角色三视图
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={(scriptAssetPreview?.newSkyboxes.length ?? 0) === 0}
+                    onClick={() =>
+                      void onPreGenerateProvisionAssets(
+                        "脚本导入",
+                        scriptNormalizedItems,
+                        scriptCharacterOverrides,
+                        scriptSkyboxOverrides,
+                        "skyboxes"
+                      )
+                    }
+                    type="button"
+                  >
+                    预生成缺失场景天空盒
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={
+                      (scriptAssetPreview?.newCharacters.length ?? 0) + (scriptAssetPreview?.newSkyboxes.length ?? 0) === 0
+                    }
+                    onClick={() =>
+                      void onPreGenerateProvisionAssets(
+                        "脚本导入",
+                        scriptNormalizedItems,
+                        scriptCharacterOverrides,
+                        scriptSkyboxOverrides,
+                        "all"
+                      )
+                    }
+                    type="button"
+                  >
+                    预生成全部缺失资产
+                  </button>
+                </div>
                 <div className="comfy-import-preset-actions">
                   <label>
                     导入预设
