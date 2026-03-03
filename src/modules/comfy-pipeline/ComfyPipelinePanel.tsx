@@ -83,6 +83,11 @@ type ParsedScriptShot = {
   scene_prompt?: string;
 };
 
+type AssetWorkflowHeuristicReport = {
+  warnings: string[];
+  notes: string[];
+};
+
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
 const IMPORT_PRESETS_KEY = "storyboard-pro/import-provision-presets/v1";
 const IMPORT_PRESET_AUTO_APPLY_KEY = "storyboard-pro/import-provision-presets/auto-apply";
@@ -700,6 +705,58 @@ function withLocalMotionToken(prompt: string, preset: LocalMotionPreset): string
   const base = stripLocalMotionPresetToken(prompt).trim();
   if (preset === "auto") return base;
   return base ? `${base}\n[motion:${preset}]` : `[motion:${preset}]`;
+}
+
+function collectWorkflowNodeTypesForHeuristics(workflowJson: string): string[] {
+  try {
+    const parsed = JSON.parse(workflowJson) as Record<string, unknown>;
+    if (Array.isArray((parsed as { nodes?: unknown }).nodes)) {
+      return ((parsed as { nodes: Array<{ type?: unknown }> }).nodes ?? [])
+        .map((node) => String(node.type ?? "").trim())
+        .filter(Boolean);
+    }
+    return Object.values(parsed)
+      .map((entry) =>
+        entry && typeof entry === "object" && "class_type" in (entry as Record<string, unknown>)
+          ? String((entry as Record<string, unknown>).class_type ?? "").trim()
+          : ""
+      )
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function inspectAssetWorkflowHeuristics(
+  workflowJson: string,
+  kind: "character" | "skybox"
+): AssetWorkflowHeuristicReport {
+  const nodeTypes = collectWorkflowNodeTypesForHeuristics(workflowJson);
+  const warnings: string[] = [];
+  const notes: string[] = [];
+  const hasFixedLoadImage = nodeTypes.includes("LoadImage");
+  const hasVideoNode = nodeTypes.some((type) => /VideoCombine|VFI|WanImageToVideo|FrameInterpolation|RIFE/i.test(type));
+  const hasAudioNode = nodeTypes.some((type) => /Audio|TTS|Whisper|EdgeTTS/i.test(type));
+  const hasImageOutput = nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type));
+
+  if (hasFixedLoadImage) {
+    warnings.push("检测到固定 LoadImage 节点。资产工作流不应依赖模板内写死的参考图。");
+  }
+  if (hasVideoNode) {
+    warnings.push("检测到视频相关节点。角色三视图/天空盒工作流应该只输出单张图片。");
+  }
+  if (hasAudioNode) {
+    warnings.push("检测到音频相关节点。资产工作流不应包含配音或音效节点。");
+  }
+  if (!hasImageOutput) {
+    notes.push("未检测到明显的 SaveImage/PreviewImage 节点，请确认工作流最终会产出图片。");
+  }
+  if (kind === "character") {
+    notes.push("角色三视图会按 正/侧/背 三次单独调用工作流。每次必须只输出一个角色的一张角度图。");
+  } else {
+    notes.push("天空盒会按六个面分别调用工作流。每次必须只输出纯环境图，不允许出现人物。");
+  }
+  return { warnings, notes };
 }
 
 function loadSettings(): ComfySettings {
@@ -3986,6 +4043,9 @@ export function ComfyPipelinePanel() {
         <div className="timeline-meta">
           角色三视图会强制使用单角色、单角度、纯背景约束。建议使用专门的角色设定工作流，而不是普通分镜图工作流。
         </div>
+        <div className="timeline-meta">
+          要求：一张图只能有一个角色、一个角度；不要输出拼图或三联图；不要依赖固定 LoadImage；最终必须稳定产出单张图片。
+        </div>
         <label className="comfy-script-block">
           场景天空盒工作流（JSON）
           <textarea
@@ -4024,6 +4084,9 @@ export function ComfyPipelinePanel() {
         <div className="timeline-meta">
           天空盒工作流必须只生成环境，不允许出现人物。建议使用去人物、去叙事主体的专用场景工作流。
         </div>
+        <div className="timeline-meta">
+          要求：系统会按六个面逐次调用；每次必须只输出纯环境图；禁止人物、动物、群像、主体表演；不要混入视频/音频节点。
+        </div>
         <label className="comfy-script-block">
           配音工作流（JSON）
           <textarea
@@ -4056,6 +4119,7 @@ export function ComfyPipelinePanel() {
             onClick={() => {
               const workflowText = settings.characterWorkflowJson?.trim() || settings.imageWorkflowJson;
               const check = validateWorkflowTemplate(workflowText, settings.tokenMapping);
+              const heuristic = inspectAssetWorkflowHeuristics(workflowText, "character");
               if (!check.ok) {
                 pushToast(`角色三视图工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
                 appendLog(`角色三视图工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
@@ -4065,6 +4129,8 @@ export function ComfyPipelinePanel() {
                     ? `角色三视图工作流预检通过，检测到 ${check.used.length} 个 token`
                     : `角色三视图工作流未单独配置，已回退使用图片工作流，检测到 ${check.used.length} 个 token`
                 );
+                heuristic.warnings.forEach((item) => appendLog(`角色三视图工作流警告：${item}`, "error"));
+                heuristic.notes.forEach((item) => appendLog(`角色三视图工作流说明：${item}`));
                 pushToast("角色三视图工作流预检通过", "success");
               }
             }}
@@ -4077,6 +4143,7 @@ export function ComfyPipelinePanel() {
             onClick={() => {
               const workflowText = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
               const check = validateWorkflowTemplate(workflowText, settings.tokenMapping);
+              const heuristic = inspectAssetWorkflowHeuristics(workflowText, "skybox");
               if (!check.ok) {
                 pushToast(`天空盒工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
                 appendLog(`天空盒工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
@@ -4086,6 +4153,8 @@ export function ComfyPipelinePanel() {
                     ? `天空盒工作流预检通过，检测到 ${check.used.length} 个 token`
                     : `天空盒工作流未单独配置，已回退使用图片工作流，检测到 ${check.used.length} 个 token`
                 );
+                heuristic.warnings.forEach((item) => appendLog(`天空盒工作流警告：${item}`, "error"));
+                heuristic.notes.forEach((item) => appendLog(`天空盒工作流说明：${item}`));
                 pushToast("天空盒工作流预检通过", "success");
               }
             }}
