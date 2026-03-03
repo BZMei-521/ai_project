@@ -684,6 +684,12 @@ function formatImportPresetScope(scope: ImportProvisionPreset["scope"]): string 
   return "全量";
 }
 
+function summarizeImportPreset(preset: ImportProvisionPreset): string {
+  const characterCount = Object.keys(preset.characterOverrides).length;
+  const skyboxCount = Object.keys(preset.skyboxOverrides).length;
+  return `角色 ${characterCount} / 天空盒 ${skyboxCount}`;
+}
+
 function sortImportPresets(items: ImportProvisionPreset[]): ImportProvisionPreset[] {
   return [...items].sort((left, right) => {
     if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
@@ -3930,7 +3936,7 @@ export function ComfyPipelinePanel() {
                       <option value="">选择已保存预设…</option>
                       {sortedImportPresets.map((preset) => (
                         <option key={`story_import_preset_${preset.id}`} value={preset.id}>
-                          {preset.pinned ? "置顶 · " : ""}{preset.name} · {formatImportPresetScope(preset.scope)}
+                          {preset.pinned ? "置顶 · " : ""}{preset.name} · {formatImportPresetScope(preset.scope)} · {summarizeImportPreset(preset)}
                         </option>
                       ))}
                     </select>
@@ -4050,8 +4056,8 @@ export function ComfyPipelinePanel() {
                 </div>
                 {storySelectedPreset && (
                   <small>
-                    当前预设作用域：{formatImportPresetScope(storySelectedPreset.scope)}；排序：
-                    {storySelectedPreset.pinned ? "置顶" : "普通"} / 最近使用
+                    当前预设作用域：{formatImportPresetScope(storySelectedPreset.scope)}；摘要：
+                    {summarizeImportPreset(storySelectedPreset)}；排序：{storySelectedPreset.pinned ? "置顶" : "普通"} / 最近使用
                   </small>
                 )}
                 {storySelectedPreset?.note && <small>当前预设备注：{storySelectedPreset.note}</small>}
@@ -4252,7 +4258,7 @@ export function ComfyPipelinePanel() {
                       <option value="">选择已保存预设…</option>
                       {sortedImportPresets.map((preset) => (
                         <option key={`script_import_preset_${preset.id}`} value={preset.id}>
-                          {preset.pinned ? "置顶 · " : ""}{preset.name} · {formatImportPresetScope(preset.scope)}
+                          {preset.pinned ? "置顶 · " : ""}{preset.name} · {formatImportPresetScope(preset.scope)} · {summarizeImportPreset(preset)}
                         </option>
                       ))}
                     </select>
@@ -4372,8 +4378,8 @@ export function ComfyPipelinePanel() {
                 </div>
                 {scriptSelectedPreset && (
                   <small>
-                    当前预设作用域：{formatImportPresetScope(scriptSelectedPreset.scope)}；排序：
-                    {scriptSelectedPreset.pinned ? "置顶" : "普通"} / 最近使用
+                    当前预设作用域：{formatImportPresetScope(scriptSelectedPreset.scope)}；摘要：
+                    {summarizeImportPreset(scriptSelectedPreset)}；排序：{scriptSelectedPreset.pinned ? "置顶" : "普通"} / 最近使用
                   </small>
                 )}
                 {scriptSelectedPreset?.note && <small>当前预设备注：{scriptSelectedPreset.note}</small>}
