@@ -24,7 +24,8 @@ import {
   type ComfySettings,
   type LocalMotionPreset,
   type WorkflowDependencyHint,
-  type WorkflowDependencyReport
+  type WorkflowDependencyReport,
+  type SkyboxGenerationResult
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
@@ -2741,6 +2742,25 @@ export function ComfyPipelinePanel() {
     CHARACTER_FRONT_LEFT_VIEW: "false"
   });
 
+  const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
+    const text = String(error ?? "").toLowerCase();
+    if (!text) return false;
+    const isComfyQueueFailure =
+      text.includes("提交 comfy 任务失败") ||
+      text.includes("http 400") ||
+      text.includes("/prompt") ||
+      text.includes("queue prompt") ||
+      text.includes("node_errors");
+    if (!isComfyQueueFailure) return false;
+    return (
+      text.includes("missing_node_type") ||
+      text.includes("custom node may not be installed") ||
+      text.includes("prompt_outputs_failed_validation") ||
+      text.includes("exception when validating node") ||
+      (text.includes("keyerror") && text.includes("validating node"))
+    );
+  };
+
   const resolveCharacterWorkflowJson = (runtimeSettings: ComfySettings): string => {
     const existing = runtimeSettings.characterWorkflowJson?.trim();
     const mode = resolveEffectiveAssetWorkflowMode(
@@ -2875,45 +2895,94 @@ export function ComfyPipelinePanel() {
     );
     const referencePath = referenceFront.localPath || referenceFront.previewUrl;
     const multiviewPrompt = buildCharacterMultiviewPrompt(name, context);
-    const [front, side, back] = await Promise.all([
-      generateShotAsset(
-        runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: workflowOverride,
-          tokenOverrides: buildCharacterViewSelectionTokenOverrides("front", referencePath, negativePrompt)
-        }
-      ),
-      generateShotAsset(
-        runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: workflowOverride,
-          tokenOverrides: buildCharacterViewSelectionTokenOverrides("side", referencePath, negativePrompt)
-        }
-      ),
-      generateShotAsset(
-        runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: workflowOverride,
-          tokenOverrides: buildCharacterViewSelectionTokenOverrides("back", referencePath, negativePrompt)
-        }
-      )
-    ]);
-    return { front, side, back };
+    try {
+      const [front, side, back] = await Promise.all([
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: buildCharacterViewSelectionTokenOverrides("front", referencePath, negativePrompt)
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: buildCharacterViewSelectionTokenOverrides("side", referencePath, negativePrompt)
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: buildCharacterViewSelectionTokenOverrides("back", referencePath, negativePrompt)
+          }
+        )
+      ]);
+      return { front, side, back };
+    } catch (error) {
+      if (!shouldFallbackAssetWorkflow(error)) throw error;
+      appendLog(`角色高级多视角工作流不可用，已自动降级为基础三视图模板：${String(error)}`, "error");
+      const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
+        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+        runtimeSettings.characterTemplatePreset ?? "portrait",
+        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+      );
+      const [front, side, back] = await Promise.all([
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: fallbackWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 1),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: fallbackWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 2),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: fallbackWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+          }
+        )
+      ]);
+      return { front, side, back };
+    }
   };
 
   const characterPromptPreviewContext = "黑色长风衣，短发，身形修长，服装与体型统一，鞋靴完整可见";
@@ -3208,15 +3277,38 @@ export function ComfyPipelinePanel() {
       sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
     );
     const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
+    const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
+      "skybox",
+      runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
+      runtimeSettings.skyboxWorkflowJson?.trim() ?? ""
+    ) as SkyboxAssetWorkflowMode;
     appendLog(`开始生成场景天空盒：${sceneName}`);
     appendLog(`场景天空盒使用专用工作流：${sceneName}`);
-    const result = await generateSkyboxFaces(
-      {
-        ...runtimeSettings,
-        skyboxWorkflowJson: skyboxWorkflow
-      },
-      description
-    );
+    let result: SkyboxGenerationResult;
+    try {
+      result = await generateSkyboxFaces(
+        {
+          ...runtimeSettings,
+          skyboxWorkflowJson: skyboxWorkflow
+        },
+        description
+      );
+    } catch (error) {
+      if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
+      appendLog(`天空盒高级全景工作流不可用，已自动降级为基础六面模板：${String(error)}`, "error");
+      const fallbackWorkflow = buildSkyboxWorkflowTemplateJson(
+        runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+        runtimeSettings.skyboxTemplatePreset ?? "wide"
+      );
+      result = await generateSkyboxFaces(
+        {
+          ...runtimeSettings,
+          skyboxWorkflowJson: fallbackWorkflow,
+          skyboxAssetWorkflowMode: "basic_builtin"
+        },
+        description
+      );
+    }
     const primaryPath =
       result.faces.front ||
       result.faces.right ||
