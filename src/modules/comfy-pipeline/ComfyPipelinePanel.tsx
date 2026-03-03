@@ -1637,6 +1637,31 @@ export function ComfyPipelinePanel() {
     pushToast(preset.pinned ? `已取消置顶：${preset.name}` : `已置顶预设：${preset.name}`, "success");
   };
 
+  const duplicateImportPreset = (presetId: string) => {
+    const preset = importPresets.find((item) => item.id === presetId);
+    if (!preset) return "";
+    const suggestedName = `${preset.name} 副本`;
+    const nextName = window.prompt("输入复制后的预设名称", suggestedName)?.trim() ?? "";
+    if (!nextName) return "";
+    const now = Date.now();
+    const nextPreset: ImportProvisionPreset = {
+      ...preset,
+      id: `import_preset_${now}`,
+      name: nextName,
+      pinned: false,
+      updatedAt: now,
+      lastUsedAt: 0
+    };
+    setImportPresets((previous) => {
+      const filtered = previous.filter((item) => item.name !== nextName);
+      const next = [...filtered, nextPreset];
+      persistImportPresets(next);
+      return next;
+    });
+    pushToast(`已复制预设：${nextName}`, "success");
+    return nextPreset.id;
+  };
+
   const exportImportPreset = async (presetId: string) => {
     const preset = importPresets.find((item) => item.id === presetId);
     if (!preset) return;
@@ -3979,6 +4004,17 @@ export function ComfyPipelinePanel() {
                   <button
                     className="btn-ghost"
                     disabled={!storySelectedPresetId}
+                    onClick={() => {
+                      const nextId = duplicateImportPreset(storySelectedPresetId);
+                      if (nextId) setStorySelectedPresetId(nextId);
+                    }}
+                    type="button"
+                  >
+                    复制一份
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!storySelectedPresetId}
                     onClick={() => toggleImportPresetPinned(storySelectedPresetId)}
                     type="button"
                   >
@@ -4286,6 +4322,17 @@ export function ComfyPipelinePanel() {
                     type="button"
                   >
                     重命名预设
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    disabled={!scriptSelectedPresetId}
+                    onClick={() => {
+                      const nextId = duplicateImportPreset(scriptSelectedPresetId);
+                      if (nextId) setScriptSelectedPresetId(nextId);
+                    }}
+                    type="button"
+                  >
+                    复制一份
                   </button>
                   <button
                     className="btn-ghost"
