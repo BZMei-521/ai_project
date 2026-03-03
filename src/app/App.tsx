@@ -1135,8 +1135,7 @@ export function App() {
             </button>
           ))}
         </aside>
-        {auxPanelOpen && (
-          <aside className="panel aux-drawer open">
+        <aside className={`panel aux-drawer ${auxPanelOpen ? "open" : ""}`} aria-hidden={!auxPanelOpen}>
             <header className="panel-header aux-drawer-header">
               <div className="aux-drawer-title">
                 <h2>{AUX_PANEL_META[auxPanelSection].label}</h2>
@@ -1175,10 +1174,11 @@ export function App() {
               {auxPanelSection === "audio" && <AudioTrackPanel />}
               {auxPanelSection === "assets" && <AssetPanel />}
               {auxPanelSection === "health" && <ProjectHealthPanel />}
-              {auxPanelSection === "pipeline" && <ComfyPipelinePanel />}
+              <div hidden={auxPanelSection !== "pipeline"}>
+                <ComfyPipelinePanel />
+              </div>
             </div>
           </aside>
-        )}
       </main>
       {focusMode && (
         <button
