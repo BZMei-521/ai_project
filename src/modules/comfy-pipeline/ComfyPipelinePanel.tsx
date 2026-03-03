@@ -31,19 +31,58 @@ import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
-const DEFAULT_SKYBOX_NEGATIVE_PROMPT =
-  "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene";
+const SKYBOX_NEGATIVE_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "interior", string> = {
+  day_exterior:
+    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, stage performance, poster, signage with faces",
+  night_exterior:
+    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, car interior, neon character signage, stage light performer",
+  interior:
+    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, mirror reflection of people, television host, poster portrait"
+};
+const DEFAULT_SKYBOX_NEGATIVE_PROMPT = SKYBOX_NEGATIVE_PRESET_TEXT.day_exterior;
+const CHARACTER_RENDER_PRESET_CONFIG: Record<
+  "stable_fullbody" | "clean_reference",
+  { label: string; seed: number; steps: number; cfg: number; sampler_name: string; scheduler: string }
+> = {
+  stable_fullbody: {
+    label: "稳定全身",
+    seed: 101001,
+    steps: 28,
+    cfg: 5.5,
+    sampler_name: "euler",
+    scheduler: "normal"
+  },
+  clean_reference: {
+    label: "干净设定",
+    seed: 202002,
+    steps: 32,
+    cfg: 6,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras"
+  }
+};
 const loadExportService = () => import("../export-service/animaticExport");
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function buildCharacterWorkflowTemplateJson(preset: "portrait" | "square"): string {
+function buildCharacterWorkflowTemplateJson(
+  preset: "portrait" | "square",
+  renderPreset: "stable_fullbody" | "clean_reference"
+): string {
   const template = cloneJson(CHARACTER_THREEVIEW_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["4"]?.inputs) {
     template["4"].inputs.width = preset === "square" ? 1024 : 832;
     template["4"].inputs.height = preset === "square" ? 1024 : 1216;
+  }
+  if (template["5"]?.inputs) {
+    const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+    template["5"].inputs.seed = config.seed;
+    template["5"].inputs.steps = config.steps;
+    template["5"].inputs.cfg = config.cfg;
+    template["5"].inputs.sampler_name = config.sampler_name;
+    template["5"].inputs.scheduler = config.scheduler;
   }
   return JSON.stringify(template, null, 2);
 }
@@ -825,7 +864,9 @@ function loadSettings(): ComfySettings {
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
       characterTemplatePreset: "portrait",
+      characterRenderPreset: "stable_fullbody",
       skyboxTemplatePreset: "wide",
+      skyboxNegativePreset: "day_exterior",
       characterAssetNegativePrompt: DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
@@ -861,10 +902,20 @@ function loadSettings(): ComfySettings {
         parsed.characterTemplatePreset === "square" || parsed.characterTemplatePreset === "portrait"
           ? parsed.characterTemplatePreset
           : "portrait",
+      characterRenderPreset:
+        parsed.characterRenderPreset === "clean_reference" || parsed.characterRenderPreset === "stable_fullbody"
+          ? parsed.characterRenderPreset
+          : "stable_fullbody",
       skyboxTemplatePreset:
         parsed.skyboxTemplatePreset === "square" || parsed.skyboxTemplatePreset === "wide"
           ? parsed.skyboxTemplatePreset
           : "wide",
+      skyboxNegativePreset:
+        parsed.skyboxNegativePreset === "night_exterior" ||
+        parsed.skyboxNegativePreset === "interior" ||
+        parsed.skyboxNegativePreset === "day_exterior"
+          ? parsed.skyboxNegativePreset
+          : "day_exterior",
       characterAssetNegativePrompt:
         typeof parsed.characterAssetNegativePrompt === "string"
           ? parsed.characterAssetNegativePrompt
@@ -894,7 +945,9 @@ function loadSettings(): ComfySettings {
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
       characterTemplatePreset: "portrait",
+      characterRenderPreset: "stable_fullbody",
       skyboxTemplatePreset: "wide",
+      skyboxNegativePreset: "day_exterior",
       characterAssetNegativePrompt: DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
@@ -4132,6 +4185,21 @@ export function ComfyPipelinePanel() {
             <option value="square">方版设定（1024x1024）</option>
           </select>
         </label>
+        <label>
+          角色三视图采样预设
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                characterRenderPreset: event.target.value as "stable_fullbody" | "clean_reference"
+              }))
+            }
+            value={settings.characterRenderPreset ?? "stable_fullbody"}
+          >
+            <option value="stable_fullbody">稳定全身（Euler / 28 steps / cfg 5.5）</option>
+            <option value="clean_reference">干净设定（DPM++ 2M / 32 steps / cfg 6）</option>
+          </select>
+        </label>
         <label className="comfy-script-block">
           角色三视图默认负面词
           <textarea
@@ -4149,7 +4217,10 @@ export function ComfyPipelinePanel() {
             onClick={() => {
               persistSettings((previous) => ({
                 ...previous,
-                characterWorkflowJson: buildCharacterWorkflowTemplateJson(previous.characterTemplatePreset ?? "portrait")
+                characterWorkflowJson: buildCharacterWorkflowTemplateJson(
+                  previous.characterTemplatePreset ?? "portrait",
+                  previous.characterRenderPreset ?? "stable_fullbody"
+                )
               }));
               appendLog("已写入内置角色三视图默认工作流模板");
               pushToast("已写入内置角色三视图默认工作流模板", "success");
@@ -4181,6 +4252,12 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）；可选再叠加角色 LoRA。不要再混入参考图编辑链。
+        </div>
+        <div className="timeline-meta">
+          当前采样预设：{CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].label} /
+          seed {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].seed} /
+          steps {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].steps} /
+          cfg {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].cfg}
         </div>
         <label className="checkbox-row">
           <input
@@ -4221,6 +4298,22 @@ export function ComfyPipelinePanel() {
             <option value="square">方版环境（1024x1024）</option>
           </select>
         </label>
+        <label>
+          天空盒负面词模板
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxNegativePreset: event.target.value as "day_exterior" | "night_exterior" | "interior"
+              }))
+            }
+            value={settings.skyboxNegativePreset ?? "day_exterior"}
+          >
+            <option value="day_exterior">日景外景</option>
+            <option value="night_exterior">夜景外景</option>
+            <option value="interior">室内空间</option>
+          </select>
+        </label>
         <label className="comfy-script-block">
           天空盒默认负面词
           <textarea
@@ -4250,6 +4343,20 @@ export function ComfyPipelinePanel() {
           <button
             className="btn-ghost"
             onClick={() => {
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxAssetNegativePrompt: SKYBOX_NEGATIVE_PRESET_TEXT[previous.skyboxNegativePreset ?? "day_exterior"]
+              }));
+              appendLog("已套用天空盒负面词模板");
+              pushToast("已套用天空盒负面词模板", "success");
+            }}
+            type="button"
+          >
+            套用负面词模板
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => {
               persistSettings((previous) => ({ ...previous, skyboxWorkflowJson: previous.imageWorkflowJson }));
               appendLog("已将当前图片工作流复制为天空盒工作流");
               pushToast("已将当前图片工作流复制为天空盒工作流", "success");
@@ -4270,6 +4377,13 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）。不要使用 LoadImage、视频节点或人物参考链。
+        </div>
+        <div className="timeline-meta">
+          当前负面词模板：{settings.skyboxNegativePreset === "night_exterior"
+            ? "夜景外景"
+            : settings.skyboxNegativePreset === "interior"
+              ? "室内空间"
+              : "日景外景"}
         </div>
         <label className="checkbox-row">
           <input

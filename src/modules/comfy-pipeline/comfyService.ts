@@ -13,7 +13,9 @@ export type ComfySettings = {
   requireDedicatedCharacterWorkflow?: boolean;
   requireDedicatedSkyboxWorkflow?: boolean;
   characterTemplatePreset?: "portrait" | "square";
+  characterRenderPreset?: "stable_fullbody" | "clean_reference";
   skyboxTemplatePreset?: "wide" | "square";
+  skyboxNegativePreset?: "day_exterior" | "night_exterior" | "interior";
   characterAssetNegativePrompt?: string;
   skyboxAssetNegativePrompt?: string;
   audioWorkflowJson?: string;
