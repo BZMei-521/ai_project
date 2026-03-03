@@ -12,6 +12,8 @@ export type ComfySettings = {
   skyboxWorkflowJson?: string;
   requireDedicatedCharacterWorkflow?: boolean;
   requireDedicatedSkyboxWorkflow?: boolean;
+  characterAssetModelName?: string;
+  skyboxAssetModelName?: string;
   characterTemplatePreset?: "portrait" | "square";
   characterRenderPreset?: "stable_fullbody" | "clean_reference";
   characterBackgroundPreset?: "white" | "gray" | "studio";

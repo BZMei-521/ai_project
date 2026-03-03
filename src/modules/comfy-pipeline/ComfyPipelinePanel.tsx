@@ -29,6 +29,20 @@ import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-three
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
+const DEFAULT_CHARACTER_ASSET_MODEL = "juggernautXL_v8Rundiffusion.safetensors";
+const DEFAULT_SKYBOX_ASSET_MODEL = "architecturerealmix_v11.safetensors";
+const CHARACTER_ASSET_MODEL_OPTIONS = [
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "animagine-xl-4.0.safetensors"
+] as const;
+const SKYBOX_ASSET_MODEL_OPTIONS = [
+  "architecturerealmix_v11.safetensors",
+  "interiordesignsuperm_v2.safetensors",
+  "dreamshaper_8.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors"
+] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
@@ -78,10 +92,14 @@ function cloneJson<T>(value: T): T {
 }
 
 function buildCharacterWorkflowTemplateJson(
+  checkpointName: string,
   preset: "portrait" | "square",
   renderPreset: "stable_fullbody" | "clean_reference"
 ): string {
   const template = cloneJson(CHARACTER_THREEVIEW_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
   if (template["4"]?.inputs) {
     template["4"].inputs.width = preset === "square" ? 1024 : 832;
     template["4"].inputs.height = preset === "square" ? 1024 : 1216;
@@ -97,8 +115,11 @@ function buildCharacterWorkflowTemplateJson(
   return JSON.stringify(template, null, 2);
 }
 
-function buildSkyboxWorkflowTemplateJson(preset: "wide" | "square"): string {
+function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
   const template = cloneJson(SKYBOX_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
   if (template["4"]?.inputs) {
     template["4"].inputs.width = preset === "square" ? 1024 : 1344;
     template["4"].inputs.height = preset === "square" ? 1024 : 768;
@@ -873,6 +894,8 @@ function loadSettings(): ComfySettings {
       skyboxWorkflowJson: "",
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
+      characterAssetModelName: DEFAULT_CHARACTER_ASSET_MODEL,
+      skyboxAssetModelName: DEFAULT_SKYBOX_ASSET_MODEL,
       characterTemplatePreset: "portrait",
       characterRenderPreset: "stable_fullbody",
       characterBackgroundPreset: "gray",
@@ -910,6 +933,14 @@ function loadSettings(): ComfySettings {
         typeof parsed.requireDedicatedCharacterWorkflow === "boolean" ? parsed.requireDedicatedCharacterWorkflow : true,
       requireDedicatedSkyboxWorkflow:
         typeof parsed.requireDedicatedSkyboxWorkflow === "boolean" ? parsed.requireDedicatedSkyboxWorkflow : true,
+      characterAssetModelName:
+        typeof parsed.characterAssetModelName === "string" && parsed.characterAssetModelName.trim()
+          ? parsed.characterAssetModelName.trim()
+          : DEFAULT_CHARACTER_ASSET_MODEL,
+      skyboxAssetModelName:
+        typeof parsed.skyboxAssetModelName === "string" && parsed.skyboxAssetModelName.trim()
+          ? parsed.skyboxAssetModelName.trim()
+          : DEFAULT_SKYBOX_ASSET_MODEL,
       characterTemplatePreset:
         parsed.characterTemplatePreset === "square" || parsed.characterTemplatePreset === "portrait"
           ? parsed.characterTemplatePreset
@@ -968,6 +999,8 @@ function loadSettings(): ComfySettings {
       skyboxWorkflowJson: "",
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
+      characterAssetModelName: DEFAULT_CHARACTER_ASSET_MODEL,
+      skyboxAssetModelName: DEFAULT_SKYBOX_ASSET_MODEL,
       characterTemplatePreset: "portrait",
       characterRenderPreset: "stable_fullbody",
       characterBackgroundPreset: "gray",
@@ -4218,6 +4251,24 @@ export function ComfyPipelinePanel() {
           />
         </label>
         <label>
+          角色三视图主模型
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                characterAssetModelName: event.target.value
+              }))
+            }
+            value={settings.characterAssetModelName ?? DEFAULT_CHARACTER_ASSET_MODEL}
+          >
+            {CHARACTER_ASSET_MODEL_OPTIONS.map((modelName) => (
+              <option key={modelName} value={modelName}>
+                {modelName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           角色三视图内置模板比例
           <select
             onChange={(event) =>
@@ -4281,6 +4332,7 @@ export function ComfyPipelinePanel() {
               persistSettings((previous) => ({
                 ...previous,
                 characterWorkflowJson: buildCharacterWorkflowTemplateJson(
+                  previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
                   previous.characterTemplatePreset ?? "portrait",
                   previous.characterRenderPreset ?? "stable_fullbody"
                 )
@@ -4314,7 +4366,7 @@ export function ComfyPipelinePanel() {
           内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage
         </div>
         <div className="timeline-meta">
-          内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）；可选再叠加角色 LoRA。不要再混入参考图编辑链。
+          内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 {DEFAULT_CHARACTER_ASSET_MODEL}；可替换为 realisticVisionV60B1_v51VAE.safetensors 或 animagine-xl-4.0.safetensors。
         </div>
         <div className="timeline-meta">
           当前采样预设：{CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].label} /
@@ -4366,6 +4418,24 @@ export function ComfyPipelinePanel() {
             rows={5}
             value={settings.skyboxWorkflowJson ?? ""}
           />
+        </label>
+        <label>
+          天空盒主模型
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxAssetModelName: event.target.value
+              }))
+            }
+            value={settings.skyboxAssetModelName ?? DEFAULT_SKYBOX_ASSET_MODEL}
+          >
+            {SKYBOX_ASSET_MODEL_OPTIONS.map((modelName) => (
+              <option key={modelName} value={modelName}>
+                {modelName}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           天空盒内置模板比例
@@ -4431,7 +4501,10 @@ export function ComfyPipelinePanel() {
             onClick={() => {
               persistSettings((previous) => ({
                 ...previous,
-                skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(previous.skyboxTemplatePreset ?? "wide")
+                skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
+                  previous.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+                  previous.skyboxTemplatePreset ?? "wide"
+                )
               }));
               appendLog("已写入内置天空盒默认工作流模板");
               pushToast("已写入内置天空盒默认工作流模板", "success");
@@ -4476,7 +4549,7 @@ export function ComfyPipelinePanel() {
           内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage
         </div>
         <div className="timeline-meta">
-          内置模板模型：1 个主模型（默认 Qwen-Rapid-AIO-SFW-v5.safetensors）。不要使用 LoadImage、视频节点或人物参考链。
+          内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 {DEFAULT_SKYBOX_ASSET_MODEL}；室内可切到 interiordesignsuperm_v2.safetensors，通用环境可切到 dreamshaper_8.safetensors。
         </div>
         <div className="timeline-meta">
           当前正向模板：{settings.skyboxPromptPreset === "night_exterior"
