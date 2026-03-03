@@ -23,7 +23,8 @@ import {
   validateWorkflowTemplate,
   type ComfySettings,
   type LocalMotionPreset,
-  type WorkflowDependencyHint
+  type WorkflowDependencyHint,
+  type WorkflowDependencyReport
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
@@ -192,6 +193,19 @@ type ParsedScriptShot = {
 type AssetWorkflowHeuristicReport = {
   warnings: string[];
   notes: string[];
+};
+
+type AssetWorkflowDiagnostic = {
+  kind: "character" | "skybox";
+  workflowConfigured: boolean;
+  strictMode: boolean;
+  selectedModel: string;
+  modelVisible: boolean | null;
+  templateValid: boolean;
+  templateMissing: string[];
+  usedTokens: string[];
+  dependencyReport: WorkflowDependencyReport | null;
+  heuristic: AssetWorkflowHeuristicReport;
 };
 
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
@@ -1597,6 +1611,8 @@ export function ComfyPipelinePanel() {
   const [shotFilter, setShotFilter] = useState<"all" | "failed">("all");
   const [lastDependencyHints, setLastDependencyHints] = useState<WorkflowDependencyHint[]>([]);
   const [lastModelChecklist, setLastModelChecklist] = useState("");
+  const [characterWorkflowDiagnostic, setCharacterWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
+  const [skyboxWorkflowDiagnostic, setSkyboxWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const checkingRef = useRef(false);
   const characterModelVisible = useMemo(() => {
     const selected = settings.characterAssetModelName?.trim();
@@ -2312,6 +2328,60 @@ export function ComfyPipelinePanel() {
     { face: "up", prompt: `场景天空盒 up 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` },
     { face: "down", prompt: `场景天空盒 down 面，超广角，环境一致，材质一致，光照一致。${skyboxPromptPreviewBase}` }
   ];
+
+  const summarizeDependencyReport = (report: WorkflowDependencyReport | null): string => {
+    if (!report) return "未执行节点体检";
+    return `${report.availableNodeTypes}/${report.totalNodeTypes} 节点可用`;
+  };
+
+  const formatMissingNodes = (report: WorkflowDependencyReport | null): string =>
+    report && report.missingNodeTypes.length > 0 ? report.missingNodeTypes.join("、") : "无";
+
+  const formatHintPlugins = (report: WorkflowDependencyReport | null): string =>
+    report && report.hints.length > 0 ? report.hints.map((item) => item.plugin).join("、") : "无";
+
+  const buildAssetDiagnostic = async (kind: "character" | "skybox"): Promise<AssetWorkflowDiagnostic> => {
+    const workflowConfigured = kind === "character" ? Boolean(settings.characterWorkflowJson?.trim()) : Boolean(settings.skyboxWorkflowJson?.trim());
+    const strictMode =
+      kind === "character" ? settings.requireDedicatedCharacterWorkflow !== false : settings.requireDedicatedSkyboxWorkflow !== false;
+    const workflowText =
+      (kind === "character" ? settings.characterWorkflowJson?.trim() : settings.skyboxWorkflowJson?.trim()) ||
+      settings.imageWorkflowJson;
+    const selectedModel =
+      kind === "character"
+        ? settings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+        : settings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL;
+    let options = availableCheckpointOptions;
+    if (options.length === 0) {
+      try {
+        options = await listComfyCheckpointOptions(settings.baseUrl);
+        setAvailableCheckpointOptions(options);
+      } catch {
+        options = [];
+      }
+    }
+    const modelVisible = options.length > 0 ? options.includes(selectedModel) : null;
+    const templateCheck = validateWorkflowTemplate(workflowText, settings.tokenMapping);
+    const heuristic = inspectAssetWorkflowHeuristics(workflowText, kind);
+    let dependencyReport: WorkflowDependencyReport | null = null;
+    try {
+      dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, workflowText);
+    } catch (error) {
+      appendLog(`${kind === "character" ? "角色三视图" : "天空盒"}节点体检失败：${String(error)}`, "error");
+    }
+    return {
+      kind,
+      workflowConfigured,
+      strictMode,
+      selectedModel,
+      modelVisible,
+      templateValid: templateCheck.ok,
+      templateMissing: templateCheck.missing,
+      usedTokens: templateCheck.used,
+      dependencyReport,
+      heuristic
+    };
+  };
 
   const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
     items.map((shot) => {
@@ -3201,6 +3271,216 @@ export function ComfyPipelinePanel() {
     } catch (error) {
       pushToast(`模型体检失败：${String(error)}`, "error");
       appendLog(`模型体检失败：${String(error)}`, "error");
+    } finally {
+      setPipelineState("空闲");
+    }
+  };
+
+  const runAssetWorkflowDiagnostic = async (kind: "character" | "skybox") => {
+    const label = kind === "character" ? "角色三视图" : "天空盒";
+    try {
+      setPipelineState(`${label}体检中`);
+      appendLog(`开始${label}专用工作流体检`);
+      const diagnostic = await buildAssetDiagnostic(kind);
+      if (kind === "character") {
+        setCharacterWorkflowDiagnostic(diagnostic);
+      } else {
+        setSkyboxWorkflowDiagnostic(diagnostic);
+      }
+      appendLog(
+        `${label}体检完成：${diagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}；模型 ${
+          diagnostic.modelVisible == null ? "未读取可见性" : diagnostic.modelVisible ? "已命中 Comfy 下拉" : "未命中 Comfy 下拉"
+        }；节点 ${summarizeDependencyReport(diagnostic.dependencyReport)}`
+      );
+      if (!diagnostic.templateValid) {
+        appendLog(`${label}体检失败：缺少 token ${diagnostic.templateMissing.join(", ")}`, "error");
+        pushToast(`${label}体检失败：缺少 ${diagnostic.templateMissing.join(", ")}`, "error");
+        return;
+      }
+      if (!diagnostic.workflowConfigured && diagnostic.strictMode) {
+        appendLog(`${label}严格资产模式已开启：未配置专用工作流时正式生成会被拦截`, "error");
+      }
+      if (diagnostic.dependencyReport?.missingNodeTypes.length) {
+        appendLog(`${label}缺失节点：${diagnostic.dependencyReport.missingNodeTypes.join(", ")}`, "error");
+      }
+      diagnostic.heuristic.warnings.forEach((item) => appendLog(`${label}工作流警告：${item}`, "error"));
+      diagnostic.heuristic.notes.forEach((item) => appendLog(`${label}工作流说明：${item}`));
+      pushToast(`${label}体检完成`, diagnostic.dependencyReport?.missingNodeTypes.length ? "warning" : "success");
+    } catch (error) {
+      pushToast(`${label}体检失败：${String(error)}`, "error");
+      appendLog(`${label}体检失败：${String(error)}`, "error");
+    } finally {
+      setPipelineState("空闲");
+    }
+  };
+
+  const onTrialCharacterWorkflow = async () => {
+    try {
+      if (!(await ensureComfyReady())) return;
+      const runtimeSettings = {
+        ...settings,
+        renderWidth: project.width,
+        renderHeight: project.height,
+        renderFps: project.fps
+      };
+      const characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
+      if (runtimeSettings.requireDedicatedCharacterWorkflow !== false && !characterWorkflow) {
+        pushToast("未配置专用角色三视图工作流，严格资产模式下禁止试跑", "error");
+        appendLog("角色三视图模板试跑失败：严格资产模式已开启且未配置专用工作流", "error");
+        return;
+      }
+      setPipelineState("试跑角色三视图模板");
+      appendLog("开始单步试跑角色三视图模板");
+      upsertProvisionPreview({
+        key: "character:__trial__",
+        kind: "character",
+        name: "模板试跑角色",
+        status: "running",
+        detail: "正在试跑正/侧/背三张角色设定图",
+        thumbs: []
+      });
+      const sampleName = "模板试跑角色";
+      const sampleContext = stripCharacterMentions(
+        "黑色长风衣，短发，身形修长，鞋靴完整可见，服装统一，标准角色设定",
+        [sampleName]
+      );
+      const workflowOverride = characterWorkflow || runtimeSettings.imageWorkflowJson;
+      const [front, side, back] = await Promise.all([
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot("trial_char_front", `${sampleName} 正视图`, buildCharacterViewPrompt(sampleName, sampleContext, "front")),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: {
+              NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
+            }
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot("trial_char_side", `${sampleName} 侧视图`, buildCharacterViewPrompt(sampleName, sampleContext, "side")),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: {
+              NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
+            }
+          }
+        ),
+        generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot("trial_char_back", `${sampleName} 背视图`, buildCharacterViewPrompt(sampleName, sampleContext, "back")),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: workflowOverride,
+            tokenOverrides: {
+              NEGATIVE_PROMPT: runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
+            }
+          }
+        )
+      ]);
+      upsertProvisionPreview({
+        key: "character:__trial__",
+        kind: "character",
+        name: "模板试跑角色",
+        status: "success",
+        detail: "角色三视图模板试跑完成",
+        thumbs: [
+          front.localPath || front.previewUrl,
+          side.localPath || side.previewUrl,
+          back.localPath || back.previewUrl
+        ].filter((value): value is string => Boolean(value))
+      });
+      appendLog("角色三视图模板试跑成功");
+      pushToast("角色三视图模板试跑成功", "success");
+    } catch (error) {
+      upsertProvisionPreview({
+        key: "character:__trial__",
+        kind: "character",
+        name: "模板试跑角色",
+        status: "failed",
+        detail: `试跑失败：${String(error)}`,
+        thumbs: []
+      });
+      pushToast(`角色三视图模板试跑失败：${String(error)}`, "error");
+      appendLog(`角色三视图模板试跑失败：${String(error)}`, "error");
+    } finally {
+      setPipelineState("空闲");
+    }
+  };
+
+  const onTrialSkyboxWorkflow = async () => {
+    try {
+      if (!(await ensureComfyReady())) return;
+      const runtimeSettings = {
+        ...settings,
+        renderWidth: project.width,
+        renderHeight: project.height,
+        renderFps: project.fps
+      };
+      const skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
+      if (runtimeSettings.requireDedicatedSkyboxWorkflow !== false && !skyboxWorkflow) {
+        pushToast("未配置专用天空盒工作流，严格资产模式下禁止试跑", "error");
+        appendLog("天空盒模板试跑失败：严格资产模式已开启且未配置专用工作流", "error");
+        return;
+      }
+      setPipelineState("试跑天空盒模板");
+      appendLog("开始单步试跑天空盒模板");
+      upsertProvisionPreview({
+        key: "skybox:__trial__",
+        kind: "skybox",
+        name: "模板试跑天空盒",
+        status: "running",
+        detail: "正在试跑天空盒六面环境图",
+        thumbs: []
+      });
+      const description = buildSkyboxDescription(
+        "模板试跑河边",
+        "傍晚河边，桥梁与浅滩清晰，纯环境，无人物，可供镜头调度"
+      );
+      const result = await generateSkyboxFaces(
+        {
+          ...runtimeSettings,
+          skyboxWorkflowJson: skyboxWorkflow || runtimeSettings.imageWorkflowJson
+        },
+        description
+      );
+      upsertProvisionPreview({
+        key: "skybox:__trial__",
+        kind: "skybox",
+        name: "模板试跑天空盒",
+        status: "success",
+        detail: "天空盒模板试跑完成",
+        thumbs: [
+          result.faces.front,
+          result.faces.right,
+          result.faces.back,
+          result.faces.left
+        ].filter((value): value is string => Boolean(value))
+      });
+      appendLog("天空盒模板试跑成功");
+      pushToast("天空盒模板试跑成功", "success");
+    } catch (error) {
+      upsertProvisionPreview({
+        key: "skybox:__trial__",
+        kind: "skybox",
+        name: "模板试跑天空盒",
+        status: "failed",
+        detail: `试跑失败：${String(error)}`,
+        thumbs: []
+      });
+      pushToast(`天空盒模板试跑失败：${String(error)}`, "error");
+      appendLog(`天空盒模板试跑失败：${String(error)}`, "error");
     } finally {
       setPipelineState("空闲");
     }
@@ -4469,6 +4749,12 @@ export function ComfyPipelinePanel() {
           >
             从图片工作流复制
           </button>
+          <button className="btn-ghost" onClick={() => void runAssetWorkflowDiagnostic("character")} type="button">
+            体检当前三视图模板
+          </button>
+          <button className="btn-ghost" onClick={() => void onTrialCharacterWorkflow()} type="button">
+            单步试跑三视图模板
+          </button>
         </div>
         <div className="timeline-meta">
           角色三视图会强制使用单角色、单角度、纯背景约束。建议使用专门的角色设定工作流，而不是普通分镜图工作流。
@@ -4509,6 +4795,52 @@ export function ComfyPipelinePanel() {
             <textarea readOnly rows={5} value={characterPromptPreviews.back} />
           </label>
         </div>
+        {characterWorkflowDiagnostic && (
+          <div className="comfy-asset-diagnostic-card">
+            <div className="comfy-asset-diagnostic-head">
+              <strong>角色三视图模板体检</strong>
+              <span>{characterWorkflowDiagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}</span>
+            </div>
+            <div className="comfy-asset-diagnostic-grid">
+              <div>模型</div>
+              <div>{characterWorkflowDiagnostic.selectedModel}</div>
+              <div>模型可见性</div>
+              <div>
+                {characterWorkflowDiagnostic.modelVisible == null
+                  ? "未读取 Comfy 下拉"
+                  : characterWorkflowDiagnostic.modelVisible
+                    ? "已命中 Comfy 下拉"
+                    : "未命中 Comfy 下拉"}
+              </div>
+              <div>Token 预检</div>
+              <div>
+                {characterWorkflowDiagnostic.templateValid
+                  ? `通过（${characterWorkflowDiagnostic.usedTokens.length} 个 token）`
+                  : `失败：缺少 ${characterWorkflowDiagnostic.templateMissing.join("、")}`}
+              </div>
+              <div>节点体检</div>
+              <div>{summarizeDependencyReport(characterWorkflowDiagnostic.dependencyReport)}</div>
+              <div>缺失节点</div>
+              <div>{formatMissingNodes(characterWorkflowDiagnostic.dependencyReport)}</div>
+              <div>建议插件</div>
+              <div>{formatHintPlugins(characterWorkflowDiagnostic.dependencyReport)}</div>
+            </div>
+            {characterWorkflowDiagnostic.heuristic.warnings.length > 0 && (
+              <div className="comfy-asset-diagnostic-list is-warning">
+                {characterWorkflowDiagnostic.heuristic.warnings.map((item) => (
+                  <div key={item}>警告：{item}</div>
+                ))}
+              </div>
+            )}
+            {characterWorkflowDiagnostic.heuristic.notes.length > 0 && (
+              <div className="comfy-asset-diagnostic-list">
+                {characterWorkflowDiagnostic.heuristic.notes.map((item) => (
+                  <div key={item}>说明：{item}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <label className="checkbox-row">
           <input
             checked={settings.requireDedicatedCharacterWorkflow !== false}
@@ -4684,6 +5016,12 @@ export function ComfyPipelinePanel() {
           >
             从图片工作流复制
           </button>
+          <button className="btn-ghost" onClick={() => void runAssetWorkflowDiagnostic("skybox")} type="button">
+            体检当前天空盒模板
+          </button>
+          <button className="btn-ghost" onClick={() => void onTrialSkyboxWorkflow()} type="button">
+            单步试跑天空盒模板
+          </button>
         </div>
         <div className="timeline-meta">
           天空盒工作流必须只生成环境，不允许出现人物。建议使用去人物、去叙事主体的专用场景工作流。
@@ -4719,6 +5057,52 @@ export function ComfyPipelinePanel() {
             </label>
           ))}
         </div>
+        {skyboxWorkflowDiagnostic && (
+          <div className="comfy-asset-diagnostic-card">
+            <div className="comfy-asset-diagnostic-head">
+              <strong>天空盒模板体检</strong>
+              <span>{skyboxWorkflowDiagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}</span>
+            </div>
+            <div className="comfy-asset-diagnostic-grid">
+              <div>模型</div>
+              <div>{skyboxWorkflowDiagnostic.selectedModel}</div>
+              <div>模型可见性</div>
+              <div>
+                {skyboxWorkflowDiagnostic.modelVisible == null
+                  ? "未读取 Comfy 下拉"
+                  : skyboxWorkflowDiagnostic.modelVisible
+                    ? "已命中 Comfy 下拉"
+                    : "未命中 Comfy 下拉"}
+              </div>
+              <div>Token 预检</div>
+              <div>
+                {skyboxWorkflowDiagnostic.templateValid
+                  ? `通过（${skyboxWorkflowDiagnostic.usedTokens.length} 个 token）`
+                  : `失败：缺少 ${skyboxWorkflowDiagnostic.templateMissing.join("、")}`}
+              </div>
+              <div>节点体检</div>
+              <div>{summarizeDependencyReport(skyboxWorkflowDiagnostic.dependencyReport)}</div>
+              <div>缺失节点</div>
+              <div>{formatMissingNodes(skyboxWorkflowDiagnostic.dependencyReport)}</div>
+              <div>建议插件</div>
+              <div>{formatHintPlugins(skyboxWorkflowDiagnostic.dependencyReport)}</div>
+            </div>
+            {skyboxWorkflowDiagnostic.heuristic.warnings.length > 0 && (
+              <div className="comfy-asset-diagnostic-list is-warning">
+                {skyboxWorkflowDiagnostic.heuristic.warnings.map((item) => (
+                  <div key={item}>警告：{item}</div>
+                ))}
+              </div>
+            )}
+            {skyboxWorkflowDiagnostic.heuristic.notes.length > 0 && (
+              <div className="comfy-asset-diagnostic-list">
+                {skyboxWorkflowDiagnostic.heuristic.notes.map((item) => (
+                  <div key={item}>说明：{item}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <label className="checkbox-row">
           <input
             checked={settings.requireDedicatedSkyboxWorkflow !== false}

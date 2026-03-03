@@ -2808,6 +2808,48 @@ button.export-panel-collapsed:hover {
   font-size: 11px;
 }
 
+.comfy-asset-diagnostic-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(78, 112, 166, 0.62);
+  background: rgba(10, 24, 42, 0.78);
+}
+
+.comfy-asset-diagnostic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #dce8f8;
+  font-size: 12px;
+}
+
+.comfy-asset-diagnostic-grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 6px 10px;
+  font-size: 12px;
+  color: #b8cae2;
+}
+
+.comfy-asset-diagnostic-grid > div:nth-child(odd) {
+  color: #87a4c9;
+}
+
+.comfy-asset-diagnostic-list {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: #9fb6d4;
+}
+
+.comfy-asset-diagnostic-list.is-warning {
+  color: #f2c47f;
+}
+
 .comfy-connection-actions {
   display: grid;
   grid-template-columns: 1fr;
