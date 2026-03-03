@@ -10,6 +10,8 @@ export type ComfySettings = {
   videoWorkflowJson: string;
   characterWorkflowJson?: string;
   skyboxWorkflowJson?: string;
+  characterAssetWorkflowMode?: "basic_builtin" | "advanced_multiview";
+  skyboxAssetWorkflowMode?: "basic_builtin" | "advanced_panorama";
   requireDedicatedCharacterWorkflow?: boolean;
   requireDedicatedSkyboxWorkflow?: boolean;
   characterAssetModelName?: string;

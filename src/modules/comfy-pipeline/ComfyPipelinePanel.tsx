@@ -31,6 +31,18 @@ import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-three
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
+type CharacterAssetWorkflowMode = "basic_builtin" | "advanced_multiview";
+type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
+
+type AssetWorkflowModeSpec = {
+  label: string;
+  summary: string;
+  requiredNodes: string[];
+  requiredModels: string[];
+  recommendedPlugins: string[];
+  notes: string[];
+};
+
 const DEFAULT_CHARACTER_ASSET_MODEL = "juggernautXL_v8Rundiffusion.safetensors";
 const DEFAULT_SKYBOX_ASSET_MODEL = "architecturerealmix_v11.safetensors";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
@@ -47,6 +59,8 @@ const SKYBOX_ASSET_MODEL_OPTIONS = [
 ] as const;
 const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [...CHARACTER_ASSET_MODEL_OPTIONS];
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
+const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "basic_builtin";
+const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
@@ -89,6 +103,96 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
     scheduler: "karras"
   }
 };
+
+function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
+  if (mode === "advanced_multiview") {
+    return {
+      label: "高级多视角角色工作流",
+      summary: "需要单独粘贴多视角角色工作流 JSON。推荐采用 MV-Adapter / MultiView 一类方案，而不是三次普通 txt2img。",
+      requiredNodes: [
+        "主模型加载节点（CheckpointLoaderSimple 或等价节点）",
+        "文本编码节点（CLIPTextEncode 或等价节点）",
+        "多视角角色一致性节点（MV-Adapter / MultiView 对应节点）",
+        "视角或相机控制节点（front / side / back 视角控制）",
+        "单张图片输出节点（SaveImage / PreviewImage）"
+      ],
+      requiredModels: [
+        `主模型：${selectedModel}`,
+        "多视角适配器权重（当前项目内置模板未提供）",
+        "可选：clip_vision_h.safetensors，用于参考图一致性"
+      ],
+      recommendedPlugins: ["对应多视角角色插件（MV-Adapter / MultiView 类）"],
+      notes: [
+        "高级模式下不会自动写入内置基础模板。",
+        "没有专用角色三视图工作流 JSON 时，正式生成和单步试跑都会被拦截。",
+        "目标是标准 front / side / back 视角一致性，而不是三次独立随机出图。"
+      ]
+    };
+  }
+  return {
+    label: "基础正交三视图模板",
+    summary: "内置纯文生图模板，按 front / side / back 三次单独调用。适合先跑通标准设定板，但一致性依赖提示词和固定 seed。",
+    requiredNodes: [
+      "CheckpointLoaderSimple",
+      "CLIPTextEncode",
+      "EmptyLatentImage",
+      "KSampler",
+      "VAEDecode",
+      "SaveImage"
+    ],
+    requiredModels: [`主模型：${selectedModel}`],
+    recommendedPlugins: [],
+    notes: [
+      "不依赖 LoadImage、视频节点或音频节点。",
+      "适合没有多视角插件时先做标准 front / side / back 设定图。"
+    ]
+  };
+}
+
+function buildSkyboxAssetModeSpec(mode: SkyboxAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
+  if (mode === "advanced_panorama") {
+    return {
+      label: "高级全景转六面工作流",
+      summary: "需要单独粘贴全景/等距柱状图生成再转 cubemap 六面的工作流 JSON，不建议继续六次独立 txt2img 假装天空盒。",
+      requiredNodes: [
+        "主模型加载节点（CheckpointLoaderSimple 或等价节点）",
+        "文本编码节点（CLIPTextEncode 或等价节点）",
+        "全景/等距柱状图生成节点",
+        "cubemap 六面拆分节点",
+        "单张图片输出节点（SaveImage / PreviewImage）"
+      ],
+      requiredModels: [
+        `主模型：${selectedModel}`,
+        "可选：全景/360 适配模型或 LoRA",
+        "可选：全景转六面工具节点或脚本"
+      ],
+      recommendedPlugins: ["对应全景/立方体转换插件（3D Pack / py360convert 集成类）"],
+      notes: [
+        "高级模式下不会自动写入内置基础模板。",
+        "没有专用天空盒工作流 JSON 时，正式生成和单步试跑都会被拦截。",
+        "目标是先得到连贯全景，再拆成 front/right/back/left/up/down 六面。"
+      ]
+    };
+  }
+  return {
+    label: "基础六次文生图模板",
+    summary: "内置纯文生图模板，按 front / right / back / left / up / down 六次单独调用。适合先跑通纯环境参考，但不是真正的全景转 cubemap。",
+    requiredNodes: [
+      "CheckpointLoaderSimple",
+      "CLIPTextEncode",
+      "EmptyLatentImage",
+      "KSampler",
+      "VAEDecode",
+      "SaveImage"
+    ],
+    requiredModels: [`主模型：${selectedModel}`],
+    recommendedPlugins: [],
+    notes: [
+      "不依赖人物参考链和视频/音频节点。",
+      "更适合先建立纯环境资产，后续可再升级为全景转六面工作流。"
+    ]
+  };
+}
 const loadExportService = () => import("../export-service/animaticExport");
 
 function cloneJson<T>(value: T): T {
@@ -197,6 +301,8 @@ type AssetWorkflowHeuristicReport = {
 
 type AssetWorkflowDiagnostic = {
   kind: "character" | "skybox";
+  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode;
+  modeSpec: AssetWorkflowModeSpec;
   workflowConfigured: boolean;
   strictMode: boolean;
   selectedModel: string;
@@ -916,6 +1022,8 @@ function loadSettings(): ComfySettings {
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
+      characterAssetWorkflowMode: DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      skyboxAssetWorkflowMode: DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
       characterAssetModelName: DEFAULT_CHARACTER_ASSET_MODEL,
@@ -953,6 +1061,14 @@ function loadSettings(): ComfySettings {
       videoWorkflowJson: resolvedVideoWorkflowJson,
       characterWorkflowJson: typeof parsed.characterWorkflowJson === "string" ? parsed.characterWorkflowJson : "",
       skyboxWorkflowJson: typeof parsed.skyboxWorkflowJson === "string" ? parsed.skyboxWorkflowJson : "",
+      characterAssetWorkflowMode:
+        parsed.characterAssetWorkflowMode === "advanced_multiview" || parsed.characterAssetWorkflowMode === "basic_builtin"
+          ? parsed.characterAssetWorkflowMode
+          : DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      skyboxAssetWorkflowMode:
+        parsed.skyboxAssetWorkflowMode === "advanced_panorama" || parsed.skyboxAssetWorkflowMode === "basic_builtin"
+          ? parsed.skyboxAssetWorkflowMode
+          : DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
       requireDedicatedCharacterWorkflow:
         typeof parsed.requireDedicatedCharacterWorkflow === "boolean" ? parsed.requireDedicatedCharacterWorkflow : true,
       requireDedicatedSkyboxWorkflow:
@@ -1021,6 +1137,8 @@ function loadSettings(): ComfySettings {
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
+      characterAssetWorkflowMode: DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      skyboxAssetWorkflowMode: DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
       requireDedicatedCharacterWorkflow: true,
       requireDedicatedSkyboxWorkflow: true,
       characterAssetModelName: DEFAULT_CHARACTER_ASSET_MODEL,
@@ -1620,12 +1738,30 @@ export function ComfyPipelinePanel() {
     if (availableCheckpointOptions.length === 0) return null;
     return availableCheckpointOptions.includes(selected);
   }, [availableCheckpointOptions, settings.characterAssetModelName]);
+  const characterAssetWorkflowMode = settings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
+  const characterAssetModeSpec = useMemo(
+    () =>
+      buildCharacterAssetModeSpec(
+        characterAssetWorkflowMode,
+        settings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+      ),
+    [characterAssetWorkflowMode, settings.characterAssetModelName]
+  );
   const skyboxModelVisible = useMemo(() => {
     const selected = settings.skyboxAssetModelName?.trim();
     if (!selected) return null;
     if (availableCheckpointOptions.length === 0) return null;
     return availableCheckpointOptions.includes(selected);
   }, [availableCheckpointOptions, settings.skyboxAssetModelName]);
+  const skyboxAssetWorkflowMode = settings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
+  const skyboxAssetModeSpec = useMemo(
+    () =>
+      buildSkyboxAssetModeSpec(
+        skyboxAssetWorkflowMode,
+        settings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL
+      ),
+    [skyboxAssetWorkflowMode, settings.skyboxAssetModelName]
+  );
 
   const storyNormalizedItems = useMemo(() => {
     const text = storyText.trim();
@@ -2356,10 +2492,36 @@ export function ComfyPipelinePanel() {
   const formatHintPlugins = (report: WorkflowDependencyReport | null): string =>
     report && report.hints.length > 0 ? report.hints.map((item) => item.plugin).join("、") : "无";
 
+  const copyAssetModeSummary = async (kind: "character" | "skybox") => {
+    const spec = kind === "character" ? characterAssetModeSpec : skyboxAssetModeSpec;
+    const text = [
+      `${kind === "character" ? "角色三视图" : "天空盒"}模式：${spec.label}`,
+      `说明：${spec.summary}`,
+      `必需节点：${spec.requiredNodes.join("；") || "无"}`,
+      `模型要求：${spec.requiredModels.join("；") || "无"}`,
+      `推荐插件：${spec.recommendedPlugins.join("；") || "无"}`,
+      `备注：${spec.notes.join("；") || "无"}`
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      pushToast(`${kind === "character" ? "角色三视图" : "天空盒"}模式清单已复制`, "success");
+    } catch (error) {
+      pushToast(`复制模式清单失败：${String(error)}`, "error");
+    }
+  };
+
   const buildAssetDiagnostic = async (kind: "character" | "skybox"): Promise<AssetWorkflowDiagnostic> => {
     const workflowConfigured = kind === "character" ? Boolean(settings.characterWorkflowJson?.trim()) : Boolean(settings.skyboxWorkflowJson?.trim());
     const strictMode =
       kind === "character" ? settings.requireDedicatedCharacterWorkflow !== false : settings.requireDedicatedSkyboxWorkflow !== false;
+    const mode =
+      kind === "character"
+        ? settings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE
+        : settings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
+    const modeSpec =
+      kind === "character"
+        ? buildCharacterAssetModeSpec(mode as CharacterAssetWorkflowMode, settings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL)
+        : buildSkyboxAssetModeSpec(mode as SkyboxAssetWorkflowMode, settings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL);
     const workflowText =
       (kind === "character" ? settings.characterWorkflowJson?.trim() : settings.skyboxWorkflowJson?.trim()) ||
       settings.imageWorkflowJson;
@@ -2379,6 +2541,12 @@ export function ComfyPipelinePanel() {
     const modelVisible = options.length > 0 ? options.includes(selectedModel) : null;
     const templateCheck = validateWorkflowTemplate(workflowText, settings.tokenMapping);
     const heuristic = inspectAssetWorkflowHeuristics(workflowText, kind);
+    if (
+      ((kind === "character" && mode === "advanced_multiview") || (kind === "skybox" && mode === "advanced_panorama")) &&
+      !workflowConfigured
+    ) {
+      heuristic.warnings.unshift("当前已选择高级资产模式，但尚未配置专用工作流 JSON。");
+    }
     let dependencyReport: WorkflowDependencyReport | null = null;
     try {
       dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, workflowText);
@@ -2387,6 +2555,8 @@ export function ComfyPipelinePanel() {
     }
     return {
       kind,
+      mode,
+      modeSpec,
       workflowConfigured,
       strictMode,
       selectedModel,
@@ -2507,8 +2677,14 @@ export function ComfyPipelinePanel() {
     }
     const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
     const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
+    const characterMode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
     let characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
     if (!characterWorkflow) {
+      if (characterMode === "advanced_multiview") {
+        throw new Error(
+          "当前角色三视图已切换到高级多视角角色工作流模式，但尚未配置专用工作流 JSON。请先粘贴多视角角色工作流，或切回基础正交三视图模板。"
+        );
+      }
       characterWorkflow = buildCharacterWorkflowTemplateJson(
         runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
         runtimeSettings.characterTemplatePreset ?? "portrait",
@@ -2610,8 +2786,14 @@ export function ComfyPipelinePanel() {
       sceneName,
       sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
     );
+    const skyboxMode = runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
     let skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
     if (!skyboxWorkflow) {
+      if (skyboxMode === "advanced_panorama") {
+        throw new Error(
+          "当前天空盒已切换到高级全景转六面模式，但尚未配置专用工作流 JSON。请先粘贴全景转六面工作流，或切回基础六次文生图模板。"
+        );
+      }
       skyboxWorkflow = buildSkyboxWorkflowTemplateJson(
         runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
         runtimeSettings.skyboxTemplatePreset ?? "wide"
@@ -3308,10 +3490,14 @@ export function ComfyPipelinePanel() {
         setSkyboxWorkflowDiagnostic(diagnostic);
       }
       appendLog(
-        `${label}体检完成：${diagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}；模型 ${
+        `${label}体检完成：模式 ${diagnostic.modeSpec.label}；${diagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}；模型 ${
           diagnostic.modelVisible == null ? "未读取可见性" : diagnostic.modelVisible ? "已命中 Comfy 下拉" : "未命中 Comfy 下拉"
         }；节点 ${summarizeDependencyReport(diagnostic.dependencyReport)}`
       );
+      appendLog(`${label}模式要求：节点 ${diagnostic.modeSpec.requiredNodes.join(" / ")}；模型 ${diagnostic.modeSpec.requiredModels.join(" / ")}`);
+      if (diagnostic.modeSpec.recommendedPlugins.length > 0) {
+        appendLog(`${label}模式推荐插件：${diagnostic.modeSpec.recommendedPlugins.join(" / ")}`);
+      }
       if (!diagnostic.templateValid) {
         appendLog(`${label}体检失败：缺少 token ${diagnostic.templateMissing.join(", ")}`, "error");
         pushToast(`${label}体检失败：缺少 ${diagnostic.templateMissing.join(", ")}`, "error");
@@ -3343,7 +3529,13 @@ export function ComfyPipelinePanel() {
         renderHeight: project.height,
         renderFps: project.fps
       };
+      const characterMode = runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE;
       const characterWorkflow = runtimeSettings.characterWorkflowJson?.trim();
+      if (characterMode === "advanced_multiview" && !characterWorkflow) {
+        pushToast("当前已选择高级多视角角色工作流模式，但尚未配置专用工作流 JSON", "error");
+        appendLog("角色三视图模板试跑失败：高级多视角角色工作流模式尚未配置专用工作流 JSON", "error");
+        return;
+      }
       if (runtimeSettings.requireDedicatedCharacterWorkflow !== false && !characterWorkflow) {
         pushToast("未配置专用角色三视图工作流，严格资产模式下禁止试跑", "error");
         appendLog("角色三视图模板试跑失败：严格资产模式已开启且未配置专用工作流", "error");
@@ -3448,7 +3640,13 @@ export function ComfyPipelinePanel() {
         renderHeight: project.height,
         renderFps: project.fps
       };
+      const skyboxMode = runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE;
       const skyboxWorkflow = runtimeSettings.skyboxWorkflowJson?.trim();
+      if (skyboxMode === "advanced_panorama" && !skyboxWorkflow) {
+        pushToast("当前已选择高级全景转六面模式，但尚未配置专用工作流 JSON", "error");
+        appendLog("天空盒模板试跑失败：高级全景转六面模式尚未配置专用工作流 JSON", "error");
+        return;
+      }
       if (runtimeSettings.requireDedicatedSkyboxWorkflow !== false && !skyboxWorkflow) {
         pushToast("未配置专用天空盒工作流，严格资产模式下禁止试跑", "error");
         appendLog("天空盒模板试跑失败：严格资产模式已开启且未配置专用工作流", "error");
@@ -4616,6 +4814,68 @@ export function ComfyPipelinePanel() {
           />
         </label>
         <label>
+          角色三视图工作流模式
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                characterAssetWorkflowMode: event.target.value as CharacterAssetWorkflowMode
+              }))
+            }
+            value={characterAssetWorkflowMode}
+          >
+            <option value="basic_builtin">基础正交三视图模板</option>
+            <option value="advanced_multiview">高级多视角角色工作流</option>
+          </select>
+        </label>
+        <div className="comfy-asset-mode-card">
+          <div className="comfy-asset-mode-head">
+            <strong>{characterAssetModeSpec.label}</strong>
+            <button className="btn-ghost" onClick={() => void copyAssetModeSummary("character")} type="button">
+              复制模式清单
+            </button>
+          </div>
+          <p>{characterAssetModeSpec.summary}</p>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>必需节点</strong>
+              <ul>
+                {characterAssetModeSpec.requiredNodes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>模型要求</strong>
+              <ul>
+                {characterAssetModeSpec.requiredModels.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>推荐插件</strong>
+              <ul>
+                {(characterAssetModeSpec.recommendedPlugins.length > 0
+                  ? characterAssetModeSpec.recommendedPlugins
+                  : ["无额外插件要求"]).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>备注</strong>
+              <ul>
+                {characterAssetModeSpec.notes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+        <label>
           角色三视图主模型
           <select
             onChange={(event) =>
@@ -4743,6 +5003,20 @@ export function ComfyPipelinePanel() {
           <button
             className="btn-ghost"
             onClick={() => {
+              if (characterAssetWorkflowMode === "advanced_multiview") {
+                persistSettings((previous) => ({
+                  ...previous,
+                  characterAssetWorkflowMode: "basic_builtin",
+                  characterWorkflowJson: buildCharacterWorkflowTemplateJson(
+                    previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+                    previous.characterTemplatePreset ?? "portrait",
+                    previous.characterRenderPreset ?? "stable_fullbody"
+                  )
+                }));
+                appendLog("已切回基础正交三视图模板并写入内置角色三视图工作流");
+                pushToast("已切回基础正交三视图模板并写入内置角色三视图工作流", "success");
+                return;
+              }
               persistSettings((previous) => ({
                 ...previous,
                 characterWorkflowJson: buildCharacterWorkflowTemplateJson(
@@ -4756,7 +5030,7 @@ export function ComfyPipelinePanel() {
             }}
             type="button"
           >
-            写入内置角色三视图模板
+            {characterAssetWorkflowMode === "advanced_multiview" ? "切回基础模式并写入内置三视图模板" : "写入内置角色三视图模板"}
           </button>
           <button
             className="btn-ghost"
@@ -4822,6 +5096,8 @@ export function ComfyPipelinePanel() {
               <span>{characterWorkflowDiagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}</span>
             </div>
             <div className="comfy-asset-diagnostic-grid">
+              <div>当前模式</div>
+              <div>{characterWorkflowDiagnostic.modeSpec.label}</div>
               <div>模型</div>
               <div>{characterWorkflowDiagnostic.selectedModel}</div>
               <div>模型可见性</div>
@@ -4844,6 +5120,17 @@ export function ComfyPipelinePanel() {
               <div>{formatMissingNodes(characterWorkflowDiagnostic.dependencyReport)}</div>
               <div>建议插件</div>
               <div>{formatHintPlugins(characterWorkflowDiagnostic.dependencyReport)}</div>
+            </div>
+            <div className="comfy-asset-diagnostic-list">
+              <div>模式说明：{characterWorkflowDiagnostic.modeSpec.summary}</div>
+              <div>模式必需节点：{characterWorkflowDiagnostic.modeSpec.requiredNodes.join("、")}</div>
+              <div>模式模型要求：{characterWorkflowDiagnostic.modeSpec.requiredModels.join("、")}</div>
+              <div>
+                模式推荐插件：
+                {characterWorkflowDiagnostic.modeSpec.recommendedPlugins.length > 0
+                  ? characterWorkflowDiagnostic.modeSpec.recommendedPlugins.join("、")
+                  : "无"}
+              </div>
             </div>
             {characterWorkflowDiagnostic.heuristic.warnings.length > 0 && (
               <div className="comfy-asset-diagnostic-list is-warning">
@@ -4885,6 +5172,68 @@ export function ComfyPipelinePanel() {
             value={settings.skyboxWorkflowJson ?? ""}
           />
         </label>
+        <label>
+          天空盒工作流模式
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                skyboxAssetWorkflowMode: event.target.value as SkyboxAssetWorkflowMode
+              }))
+            }
+            value={skyboxAssetWorkflowMode}
+          >
+            <option value="basic_builtin">基础六次文生图模板</option>
+            <option value="advanced_panorama">高级全景转六面工作流</option>
+          </select>
+        </label>
+        <div className="comfy-asset-mode-card">
+          <div className="comfy-asset-mode-head">
+            <strong>{skyboxAssetModeSpec.label}</strong>
+            <button className="btn-ghost" onClick={() => void copyAssetModeSummary("skybox")} type="button">
+              复制模式清单
+            </button>
+          </div>
+          <p>{skyboxAssetModeSpec.summary}</p>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>必需节点</strong>
+              <ul>
+                {skyboxAssetModeSpec.requiredNodes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>模型要求</strong>
+              <ul>
+                {skyboxAssetModeSpec.requiredModels.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>推荐插件</strong>
+              <ul>
+                {(skyboxAssetModeSpec.recommendedPlugins.length > 0 ? skyboxAssetModeSpec.recommendedPlugins : ["无额外插件要求"]).map(
+                  (item) => (
+                    <li key={item}>{item}</li>
+                  )
+                )}
+              </ul>
+            </div>
+            <div>
+              <strong>备注</strong>
+              <ul>
+                {skyboxAssetModeSpec.notes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
         <label>
           天空盒主模型
           <select
@@ -4997,6 +5346,19 @@ export function ComfyPipelinePanel() {
           <button
             className="btn-ghost"
             onClick={() => {
+              if (skyboxAssetWorkflowMode === "advanced_panorama") {
+                persistSettings((previous) => ({
+                  ...previous,
+                  skyboxAssetWorkflowMode: "basic_builtin",
+                  skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
+                    previous.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+                    previous.skyboxTemplatePreset ?? "wide"
+                  )
+                }));
+                appendLog("已切回基础六次文生图模板并写入内置天空盒工作流");
+                pushToast("已切回基础六次文生图模板并写入内置天空盒工作流", "success");
+                return;
+              }
               persistSettings((previous) => ({
                 ...previous,
                 skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
@@ -5009,7 +5371,7 @@ export function ComfyPipelinePanel() {
             }}
             type="button"
           >
-            写入内置天空盒模板
+            {skyboxAssetWorkflowMode === "advanced_panorama" ? "切回基础模式并写入内置天空盒模板" : "写入内置天空盒模板"}
           </button>
           <button
             className="btn-ghost"
@@ -5084,6 +5446,8 @@ export function ComfyPipelinePanel() {
               <span>{skyboxWorkflowDiagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}</span>
             </div>
             <div className="comfy-asset-diagnostic-grid">
+              <div>当前模式</div>
+              <div>{skyboxWorkflowDiagnostic.modeSpec.label}</div>
               <div>模型</div>
               <div>{skyboxWorkflowDiagnostic.selectedModel}</div>
               <div>模型可见性</div>
@@ -5106,6 +5470,17 @@ export function ComfyPipelinePanel() {
               <div>{formatMissingNodes(skyboxWorkflowDiagnostic.dependencyReport)}</div>
               <div>建议插件</div>
               <div>{formatHintPlugins(skyboxWorkflowDiagnostic.dependencyReport)}</div>
+            </div>
+            <div className="comfy-asset-diagnostic-list">
+              <div>模式说明：{skyboxWorkflowDiagnostic.modeSpec.summary}</div>
+              <div>模式必需节点：{skyboxWorkflowDiagnostic.modeSpec.requiredNodes.join("、")}</div>
+              <div>模式模型要求：{skyboxWorkflowDiagnostic.modeSpec.requiredModels.join("、")}</div>
+              <div>
+                模式推荐插件：
+                {skyboxWorkflowDiagnostic.modeSpec.recommendedPlugins.length > 0
+                  ? skyboxWorkflowDiagnostic.modeSpec.recommendedPlugins.join("、")
+                  : "无"}
+              </div>
             </div>
             {skyboxWorkflowDiagnostic.heuristic.warnings.length > 0 && (
               <div className="comfy-asset-diagnostic-list is-warning">
@@ -5167,17 +5542,20 @@ export function ComfyPipelinePanel() {
             className="btn-ghost"
             onClick={() => {
               const workflowText = settings.characterWorkflowJson?.trim() || settings.imageWorkflowJson;
+              const advancedMode = (settings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE) === "advanced_multiview";
               const check = validateWorkflowTemplate(workflowText, settings.tokenMapping);
               const heuristic = inspectAssetWorkflowHeuristics(workflowText, "character");
               if (!check.ok) {
                 pushToast(`角色三视图工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
                 appendLog(`角色三视图工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
               } else {
-                appendLog(
-                  settings.characterWorkflowJson?.trim()
-                    ? `角色三视图工作流预检通过，检测到 ${check.used.length} 个 token`
-                    : `角色三视图工作流未单独配置，已回退使用图片工作流，检测到 ${check.used.length} 个 token`
-                );
+                if (settings.characterWorkflowJson?.trim()) {
+                  appendLog(`角色三视图工作流预检通过，检测到 ${check.used.length} 个 token`);
+                } else if (advancedMode) {
+                  appendLog("角色三视图当前处于高级多视角角色工作流模式，但尚未配置专用工作流 JSON。", "error");
+                } else {
+                  appendLog(`角色三视图工作流未单独配置，当前会使用基础内置模板，检测到 ${check.used.length} 个 token`);
+                }
                 if (settings.requireDedicatedCharacterWorkflow !== false && !settings.characterWorkflowJson?.trim()) {
                   appendLog("角色三视图严格资产模式已开启：当前未配置专用工作流时，正式生成会被拦截。", "error");
                 }
@@ -5194,17 +5572,20 @@ export function ComfyPipelinePanel() {
             className="btn-ghost"
             onClick={() => {
               const workflowText = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
+              const advancedMode = (settings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE) === "advanced_panorama";
               const check = validateWorkflowTemplate(workflowText, settings.tokenMapping);
               const heuristic = inspectAssetWorkflowHeuristics(workflowText, "skybox");
               if (!check.ok) {
                 pushToast(`天空盒工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
                 appendLog(`天空盒工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
               } else {
-                appendLog(
-                  settings.skyboxWorkflowJson?.trim()
-                    ? `天空盒工作流预检通过，检测到 ${check.used.length} 个 token`
-                    : `天空盒工作流未单独配置，已回退使用图片工作流，检测到 ${check.used.length} 个 token`
-                );
+                if (settings.skyboxWorkflowJson?.trim()) {
+                  appendLog(`天空盒工作流预检通过，检测到 ${check.used.length} 个 token`);
+                } else if (advancedMode) {
+                  appendLog("天空盒当前处于高级全景转六面模式，但尚未配置专用工作流 JSON。", "error");
+                } else {
+                  appendLog(`天空盒工作流未单独配置，当前会使用基础内置模板，检测到 ${check.used.length} 个 token`);
+                }
                 if (settings.requireDedicatedSkyboxWorkflow !== false && !settings.skyboxWorkflowJson?.trim()) {
                   appendLog("天空盒严格资产模式已开启：当前未配置专用工作流时，正式生成会被拦截。", "error");
                 }

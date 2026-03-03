@@ -2850,6 +2850,61 @@ button.export-panel-collapsed:hover {
   color: #f2c47f;
 }
 
+.comfy-asset-mode-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(78, 112, 166, 0.55);
+  background: rgba(10, 24, 42, 0.65);
+}
+
+.comfy-asset-mode-card p {
+  margin: 0;
+  color: #bfd0e7;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.comfy-asset-mode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.comfy-asset-mode-head strong {
+  color: #e2ecfa;
+  font-size: 13px;
+}
+
+.comfy-asset-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.comfy-asset-mode-grid > div {
+  min-width: 0;
+}
+
+.comfy-asset-mode-grid strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #9db8db;
+  font-size: 12px;
+}
+
+.comfy-asset-mode-grid ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: #d2def0;
+  font-size: 12px;
+}
+
 .comfy-connection-actions {
   display: grid;
   grid-template-columns: 1fr;
