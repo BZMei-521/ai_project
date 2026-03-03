@@ -1764,6 +1764,16 @@ export function ComfyPipelinePanel() {
   }, [autoApplyImportedPreset]);
 
   useEffect(() => {
+    const buildId =
+      typeof window !== "undefined" && "__STORYBOARD_WEB_BUILD_ID__" in window
+        ? String((window as Window & { __STORYBOARD_WEB_BUILD_ID__?: string }).__STORYBOARD_WEB_BUILD_ID__ || "").trim()
+        : "";
+    if (buildId) {
+      appendLog(`AI 流水线已加载，当前构建：${buildId}`);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!isWebBridgeRuntime()) return;
     const timer = window.setTimeout(() => {
       void invokeDesktopCommand("save_pipeline_logs", {

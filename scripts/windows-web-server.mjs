@@ -68,7 +68,7 @@ async function main() {
   });
 
   const bindUrl = `http://${host}:${port}`;
-  const browserUrl = `http://${openHost}:${port}`;
+  const browserUrl = `http://${openHost}:${port}/?build=${encodeURIComponent(runtimeBuildInfo.buildId)}&t=${Date.now()}`;
   console.log(`[INFO] Storyboard Pro Windows Web Bridge running at ${bindUrl}`);
   console.log(`[INFO] Workspace: ${workspaceRoot}`);
   console.log(`[INFO] Build: ${runtimeBuildInfo.buildId}`);
@@ -239,7 +239,7 @@ async function serveDistAsset(rawPathname, res) {
     if (!html.includes("__STORYBOARD_WEB_BRIDGE__")) {
       html = html.replace(
         /<head>/i,
-        '<head><script>window.__STORYBOARD_WEB_BRIDGE__=true;</script>'
+        `<head><script>window.__STORYBOARD_WEB_BRIDGE__=true;window.__STORYBOARD_WEB_BUILD_ID__=${JSON.stringify(runtimeBuildInfo.buildId)};</script>`
       );
     }
     res.writeHead(200, {
