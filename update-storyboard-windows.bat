@@ -43,7 +43,7 @@ if "%SKIP_PULL%"=="1" (
 )
 
 echo [INFO] Installing dependencies...
-npm install
+call npm install
 if errorlevel 1 (
   echo [ERROR] npm install failed.
   if not "%NO_PAUSE%"=="1" pause
@@ -56,7 +56,7 @@ if exist dist (
 )
 
 echo [INFO] Rebuilding frontend bundle...
-npm run build
+call npm run build
 if errorlevel 1 (
   echo [ERROR] npm run build failed.
   if not "%NO_PAUSE%"=="1" pause
