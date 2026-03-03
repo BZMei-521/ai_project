@@ -2761,6 +2761,10 @@ button.export-panel-collapsed:hover {
   border-color: rgba(165, 67, 89, 0.78);
 }
 
+.comfy-provision-preview-card.is-skipped {
+  border-color: rgba(201, 156, 63, 0.78);
+}
+
 .comfy-provision-preview-head {
   display: flex;
   align-items: center;

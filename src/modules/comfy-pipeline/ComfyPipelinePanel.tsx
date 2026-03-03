@@ -44,7 +44,7 @@ type ProvisionPreviewItem = {
   key: string;
   kind: "character" | "skybox";
   name: string;
-  status: "pending" | "running" | "success" | "reused" | "failed";
+  status: "pending" | "running" | "success" | "reused" | "failed" | "skipped";
   detail: string;
   thumbs: string[];
 };
@@ -375,6 +375,27 @@ function sanitizeSceneCandidate(value: string): string {
   if (GENERIC_SCENE_LABELS.has(trimmed)) return "";
   if (trimmed.length > 24) return "";
   return trimmed;
+}
+
+function isSuspiciousCharacterCandidate(value: string): boolean {
+  const name = sanitizeCharacterCandidate(value);
+  if (!name) return true;
+  if (GENERIC_CHARACTER_LABELS.has(name)) return true;
+  if (/(河边|走廊|门厅|房间|卧室|客厅|街道|巷子|庭院|办公室|教室|酒吧|餐厅|咖啡馆|车内|车站|天台|仓库)$/.test(name)) {
+    return true;
+  }
+  if (/(主体|场景|环境|动作|镜头|构图|美术|光线|景别|机位)/.test(name)) return true;
+  if (name.length > 6) return true;
+  if (/(与|和).+(在|于)/.test(name)) return true;
+  return false;
+}
+
+function isSuspiciousSceneCandidate(value: string): boolean {
+  const name = sanitizeSceneCandidate(value);
+  if (!name) return true;
+  if (GENERIC_SCENE_LABELS.has(name)) return true;
+  if (/(主体|角色|人物|动作|镜头|构图|美术|光线|景别|机位)/.test(name)) return true;
+  return false;
 }
 
 function extractCharacterCandidates(text: string): string[] {
@@ -2219,6 +2240,18 @@ export function ComfyPipelinePanel() {
       for (const name of item.characterNames) {
         const key = normalizeEntityKey(name);
         if (!key || characterIdMap.has(key)) continue;
+        if (isSuspiciousCharacterCandidate(name)) {
+          appendLog(`角色三视图跳过：${name}（名称可疑，已拦截）`, "error");
+          upsertProvisionPreview({
+            key: `character:${key}`,
+            kind: "character",
+            name,
+            status: "skipped",
+            detail: "名称可疑，已跳过角色三视图生成",
+            thumbs: []
+          });
+          continue;
+        }
         progressIndex += 1;
         options?.onProgress?.(progressIndex, tasks.length, `角色三视图：${name}`);
         upsertProvisionPreview({
@@ -2277,6 +2310,18 @@ export function ComfyPipelinePanel() {
       if (item.sceneName) {
         const key = normalizeEntityKey(item.sceneName);
         if (!sceneIdMap.has(key)) {
+          if (isSuspiciousSceneCandidate(item.sceneName)) {
+            appendLog(`场景天空盒跳过：${item.sceneName}（名称可疑，已拦截）`, "error");
+            upsertProvisionPreview({
+              key: `skybox:${key}`,
+              kind: "skybox",
+              name: item.sceneName,
+              status: "skipped",
+              detail: "名称可疑，已跳过天空盒生成",
+              thumbs: []
+            });
+            continue;
+          }
           progressIndex += 1;
           options?.onProgress?.(progressIndex, tasks.length, `场景天空盒：${item.sceneName}`);
           upsertProvisionPreview({
