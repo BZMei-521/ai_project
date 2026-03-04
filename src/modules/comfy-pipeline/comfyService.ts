@@ -7,6 +7,7 @@ export type ComfySettings = {
   comfyInputDir: string;
   comfyRootDir: string;
   imageWorkflowJson: string;
+  storyboardImageWorkflowMode?: "builtin_qwen" | "mature_asset_guided";
   videoWorkflowJson: string;
   characterWorkflowJson?: string;
   skyboxWorkflowJson?: string;

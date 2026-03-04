@@ -42,6 +42,7 @@ const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_
 const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
 type CharacterAssetWorkflowMode = "basic_builtin" | "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
+type StoryboardImageWorkflowMode = "builtin_qwen" | "mature_asset_guided";
 
 type AssetWorkflowModeSpec = {
   label: string;
@@ -54,6 +55,7 @@ type AssetWorkflowModeSpec = {
 
 const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
+const DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE: StoryboardImageWorkflowMode = "mature_asset_guided";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
   "sd_xl_base_1.0.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
@@ -239,6 +241,68 @@ function buildSkyboxAssetModeSpec(mode: SkyboxAssetWorkflowMode, selectedModel: 
     notes: [
       "不依赖人物参考链和视频/音频节点。",
       "更适合先建立纯环境资产，后续可再升级为全景转六面工作流。"
+    ]
+  };
+}
+
+function workflowLooksLikeBuiltinStoryboardImageWorkflow(workflowJson: string): boolean {
+  const normalized = workflowJson.replace(/\s+/g, "");
+  if (!normalized) return false;
+  return (
+    normalized.includes("\"id\":\"storyboard-image-fisher-light-v1\"") ||
+    normalized.includes("TextEncodeQwenImageEditPlusAdvance_lrzjason") ||
+    normalized.includes("PowerLoraLoader") ||
+    normalized.includes("easypromptLine")
+  );
+}
+
+function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetWorkflowModeSpec {
+  if (mode === "mature_asset_guided") {
+    return {
+      label: "成熟资产约束分镜工作流",
+      summary:
+        "推荐用 scene-first img2img + IPAdapter 角色一致性 + ControlNet 姿态/空间约束 + 可选 InstantID/PuLID 锁脸。这是当前市面上更成熟、可控、适合连续分镜的一类链路。",
+      requiredNodes: [
+        "基础图生图链：LoadImage / VAEEncode / KSampler / VAEDecode / SaveImage",
+        "IPAdapter 节点组（角色一致性）",
+        "CLIP Vision 加载节点",
+        "ControlNet 节点组（OpenPose / Depth / Lineart 至少一种）",
+        "可选：InstantID 或 PuLID 节点组（正脸/半身镜头锁脸）"
+      ],
+      requiredModels: [
+        "主模型：建议 SDXL 写实底模",
+        "IPAdapter Plus：ip-adapter-plus_sdxl_vit-h.safetensors",
+        "CLIP Vision：clip_vision_h.safetensors",
+        "ControlNet：OpenPose / Depth",
+        "可选：InstantID 或 PuLID 对应权重"
+      ],
+      recommendedPlugins: [
+        "comfyui_ipadapter_plus",
+        "ComfyUI-Advanced-ControlNet",
+        "可选：ComfyUI_InstantID 或 PuLID_ComfyUI"
+      ],
+      notes: [
+        "建议流程：先用天空盒主面做场景底图，再叠角色参考，不要让文本先主导画面。",
+        "双人/全景镜头优先锁场景，再加两位角色一致性；单人近景再提高角色权重。",
+        "当前内置 Fisher/Qwen 模板只保留为兼容模式，不建议继续用于高一致性分镜。"
+      ]
+    };
+  }
+  return {
+    label: "兼容内置 Qwen 分镜模板",
+    summary: "内置 Qwen/Fisher 模板便于快速出图，但对角色三视图和天空盒的绑定能力有限，只适合作为兼容兜底。",
+    requiredNodes: [
+      "TextEncodeQwenImageEditPlusAdvance_lrzjason",
+      "CheckpointLoaderSimple",
+      "KSampler",
+      "VAEDecode",
+      "SaveImage"
+    ],
+    requiredModels: ["Qwen-Rapid-AIO-SFW-v5.safetensors（或同类兼容底模）"],
+    recommendedPlugins: ["qweneditutils", "rgthree-comfy", "ComfyUI-KJNodes（部分模板）"],
+    notes: [
+      "优点是现成可跑，缺点是参考图约束弱。",
+      "高一致性项目不建议继续依赖此模式。"
     ]
   };
 }
@@ -1298,6 +1362,7 @@ function loadSettings(): ComfySettings {
       comfyInputDir: "",
       comfyRootDir: "",
       imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON,
+      storyboardImageWorkflowMode: DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
@@ -1362,6 +1427,10 @@ function loadSettings(): ComfySettings {
       comfyInputDir: parsed.comfyInputDir ?? "",
       comfyRootDir: parsed.comfyRootDir ?? "",
       imageWorkflowJson: resolvedImageWorkflowJson,
+      storyboardImageWorkflowMode:
+        parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
+          ? parsed.storyboardImageWorkflowMode
+          : DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
       videoWorkflowJson: resolvedVideoWorkflowJson,
       characterWorkflowJson: shouldUpgradeCharacterMode ? "" : parsedCharacterWorkflowJson,
       skyboxWorkflowJson: shouldUpgradeSkyboxMode ? "" : parsedSkyboxWorkflowJson,
@@ -1436,6 +1505,7 @@ function loadSettings(): ComfySettings {
       comfyInputDir: "",
       comfyRootDir: "",
       imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON,
+      storyboardImageWorkflowMode: DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
@@ -2133,6 +2203,11 @@ export function ComfyPipelinePanel() {
         settings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL
       ),
     [skyboxAssetWorkflowMode, settings.skyboxAssetModelName]
+  );
+  const storyboardImageWorkflowMode = settings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+  const storyboardImageModeSpec = useMemo(
+    () => buildStoryboardImageModeSpec(storyboardImageWorkflowMode),
+    [storyboardImageWorkflowMode]
   );
   const characterIssueSummary = useMemo(
     () =>
@@ -3260,6 +3335,23 @@ export function ComfyPipelinePanel() {
       pushToast(`${kind === "character" ? "角色三视图" : "天空盒"}模式清单已复制`, "success");
     } catch (error) {
       pushToast(`复制模式清单失败：${String(error)}`, "error");
+    }
+  };
+
+  const copyStoryboardModeSummary = async () => {
+    const text = [
+      `分镜工作流模式：${storyboardImageModeSpec.label}`,
+      `说明：${storyboardImageModeSpec.summary}`,
+      `必需节点：${storyboardImageModeSpec.requiredNodes.join("；") || "无"}`,
+      `模型要求：${storyboardImageModeSpec.requiredModels.join("；") || "无"}`,
+      `推荐插件：${storyboardImageModeSpec.recommendedPlugins.join("；") || "无"}`,
+      `备注：${storyboardImageModeSpec.notes.join("；") || "无"}`
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      pushToast("分镜工作流模式清单已复制", "success");
+    } catch (error) {
+      pushToast(`复制分镜工作流清单失败：${String(error)}`, "error");
     }
   };
 
@@ -4836,6 +4928,18 @@ export function ComfyPipelinePanel() {
       }
       const shotsForRun = getScopedShotsSnapshot();
       let runtimeSettings = settings;
+      if (
+        (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
+        (!runtimeSettings.imageWorkflowJson.trim() || workflowLooksLikeBuiltinStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson))
+      ) {
+        appendLog(
+          "分镜图生成中断：当前已切到“成熟资产约束流程”，但图片工作流仍是内置 Qwen 兼容模板。请改为外部分镜工作流（推荐：scene-first img2img + IPAdapter + ControlNet + 可选 InstantID/PuLID）。",
+          "error"
+        );
+        pushToast("成熟分镜模式需要专用外部分镜工作流 JSON", "error");
+        setPipelineState("分镜图生成中断：需要成熟外部分镜工作流");
+        return false;
+      }
       if (isLegacyMixedStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson)) {
         runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON };
         persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON }));
@@ -5531,6 +5635,90 @@ export function ComfyPipelinePanel() {
             value={settings.globalStyleNegativePrompt ?? ""}
           />
         </label>
+        <label className="comfy-script-block">
+          分镜图工作流（JSON）
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, imageWorkflowJson: event.target.value }))
+            }
+            placeholder='粘贴分镜图 ComfyUI API 工作流 JSON。高一致性项目建议不要继续使用内置 Qwen 兼容模板。'
+            rows={6}
+            value={settings.imageWorkflowJson}
+          />
+        </label>
+        <label>
+          分镜图工作流模式
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                storyboardImageWorkflowMode: event.target.value as StoryboardImageWorkflowMode
+              }))
+            }
+            value={storyboardImageWorkflowMode}
+          >
+            <option value="mature_asset_guided">成熟资产约束流程（推荐）</option>
+            <option value="builtin_qwen">兼容内置 Qwen 模板</option>
+          </select>
+        </label>
+        <div className="comfy-asset-mode-card">
+          <div className="comfy-asset-mode-head">
+            <strong>{storyboardImageModeSpec.label}</strong>
+            <div className="timeline-actions">
+              <button className="btn-ghost" onClick={() => void copyStoryboardModeSummary()} type="button">
+                复制模式清单
+              </button>
+            </div>
+          </div>
+          <p>{storyboardImageModeSpec.summary}</p>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>必需节点</strong>
+              <ul>
+                {storyboardImageModeSpec.requiredNodes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>模型要求</strong>
+              <ul>
+                {storyboardImageModeSpec.requiredModels.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>推荐插件</strong>
+              <ul>
+                {storyboardImageModeSpec.recommendedPlugins.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>备注</strong>
+              <ul>
+                {storyboardImageModeSpec.notes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div className="timeline-meta">
+          当前分镜模式：
+          {storyboardImageWorkflowMode === "mature_asset_guided"
+            ? "建议使用 scene-first img2img + IPAdapter + ControlNet + 可选 InstantID/PuLID 的外部分镜工作流。"
+            : "继续使用内置 Qwen/Fisher 兼容模板，出图速度快，但一致性较弱。"}
+        </div>
+        {storyboardImageWorkflowMode === "mature_asset_guided" && workflowLooksLikeBuiltinStoryboardImageWorkflow(settings.imageWorkflowJson) && (
+          <div className="timeline-meta comfy-inline-warning">
+            当前图片工作流仍是内置 Qwen 兼容模板。成熟资产约束模式下，建议改为外部分镜工作流，否则系统会拦截正式生成。
+          </div>
+        )}
         <label className="comfy-script-block">
           角色三视图工作流（JSON）
           <textarea
@@ -7873,6 +8061,27 @@ export function ComfyPipelinePanel() {
                     )}
                   </div>
                 )}
+                <details className="comfy-shot-details">
+                  <summary>镜头信息</summary>
+                  <div className="comfy-shot-readonly-grid">
+                    <label>
+                      分镜 Prompt
+                      <textarea readOnly rows={4} value={shot.storyPrompt ?? ""} />
+                    </label>
+                    <label>
+                      备注
+                      <textarea readOnly rows={3} value={shot.notes ?? ""} />
+                    </label>
+                    <label>
+                      对白
+                      <textarea readOnly rows={2} value={shot.dialogue ?? ""} />
+                    </label>
+                    <label>
+                      绑定资产摘要
+                      <textarea readOnly rows={3} value={describeShotReferencePreview(referencePreview)} />
+                    </label>
+                  </div>
+                </details>
                 <div>
                   图：{shot.generatedImagePath || "未生成"} · 状态：{formatAssetStatus(imageStatusByShot[shot.id] ?? "idle")}
                 </div>

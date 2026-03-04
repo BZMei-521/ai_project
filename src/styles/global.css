@@ -3180,6 +3180,31 @@ button.export-panel-collapsed:hover {
   grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
 }
 
+.comfy-inline-warning {
+  color: #ffd1bf;
+  border: 1px solid rgba(206, 118, 82, 0.55);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(58, 24, 14, 0.52);
+}
+
+.comfy-shot-readonly-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.comfy-shot-readonly-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.comfy-shot-readonly-grid textarea[readonly] {
+  min-height: 72px;
+  resize: vertical;
+  opacity: 0.96;
+}
+
 .comfy-import-asset-preview {
   display: grid;
   gap: 6px;
