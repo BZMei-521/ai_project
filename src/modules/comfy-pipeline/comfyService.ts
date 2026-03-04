@@ -1850,7 +1850,6 @@ function buildShotReferenceDirective(
   const lines: string[] = [];
   const characterPlan = characterAssets.length > 0 ? inferCharacterReferencePlan(shot) : null;
   const continuityDirective = buildContinuityDirective(continuityPlan);
-  if (continuityDirective) lines.push(continuityDirective);
   if (sceneAsset?.type === "skybox") {
     const faceText = joinNaturalChineseList(skyboxFaces.map((face) => skyboxFaceLabel(face)));
     lines.push(
@@ -1872,6 +1871,9 @@ function buildShotReferenceDirective(
         `人物硬参考：角色“${asset.name}”必须严格匹配三视图，保持脸型、发型、服装、配色、体型和道具一致；当前镜头优先匹配${preferredView}参考，可用视图为 ${viewText}，不得换脸、换装、换配色或混入其他角色特征。`
       );
     }
+  }
+  if (continuityDirective && !sceneAsset && characterAssets.length === 0) {
+    lines.push(continuityDirective);
   }
   if (lines.length > 0) {
     lines.push("执行规则：参考图优先级高于自由发挥，先锁定参考一致性，再生成镜头动作和构图。");
@@ -1947,6 +1949,13 @@ function buildQwenSlotInstruction(
     })
     .filter((item) => item.length > 0);
   return lines.join(" ");
+}
+
+function qwenReferenceChunkSize(stagedRefs: Array<{ role?: WeightedImageRef["role"] }>): number {
+  const hasScene = stagedRefs.some((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const characterCount = stagedRefs.filter((item) => item.role?.startsWith("character_")).length;
+  if (hasScene || characterCount > 1) return 1;
+  return 3;
 }
 
 function extractImageReferenceSources(
@@ -2461,7 +2470,7 @@ function normalizeQwenInstructionBindings(workflow: Record<string, unknown>, ins
 
 function applyDynamicCharacterRefsForImageWorkflow(
   workflow: Record<string, unknown>,
-  weightedImageRefs: Array<{ filename: string; weight: number }>
+  weightedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"] }>
 ) {
   const nodes = workflowNodes(workflow);
   const baseNode = nodes.find((node) => node.type === "TextEncodeQwenImageEditPlusAdvance_lrzjason");
@@ -2474,9 +2483,10 @@ function applyDynamicCharacterRefsForImageWorkflow(
   removeIncomingLinks(workflow, baseNode.id, slotIndexes);
   if (weightedImageRefs.length === 0) return;
 
-  const chunks: Array<Array<{ filename: string; weight: number }>> = [];
-  for (let start = 0; start < weightedImageRefs.length; start += slotIndexes.length) {
-    chunks.push(weightedImageRefs.slice(start, start + slotIndexes.length));
+  const chunkSize = Math.max(1, Math.min(slotIndexes.length, qwenReferenceChunkSize(weightedImageRefs)));
+  const chunks: Array<Array<{ filename: string; weight: number; role?: WeightedImageRef["role"] }>> = [];
+  for (let start = 0; start < weightedImageRefs.length; start += chunkSize) {
+    chunks.push(weightedImageRefs.slice(start, start + chunkSize));
   }
 
   const encoderNodes: WorkflowNode[] = [baseNode];
@@ -2597,7 +2607,7 @@ function applyFisherWorkflowBindings(
   // which causes prompt validation errors in API mode. Always force prompt to widget text,
   // including cloned encoders created for extra reference images.
   const hasBindingRefs = kind === "image" && stagedImageRefs.length > 0;
-  const qwenPromptText = hasBindingRefs ? (tokens.PROMPT || tokens.NEXT_SCENE_PROMPT) : (tokens.NEXT_SCENE_PROMPT || tokens.PROMPT);
+  const qwenPromptText = kind === "image" ? (tokens.PROMPT || tokens.NEXT_SCENE_PROMPT) : (tokens.NEXT_SCENE_PROMPT || tokens.PROMPT);
   const qwenInstructionText = [buildQwenReferenceInstruction(tokens), buildQwenSlotInstruction(stagedImageRefs)]
     .filter((item) => item.length > 0)
     .join(" ");
