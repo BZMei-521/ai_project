@@ -590,6 +590,14 @@ function deepReplaceTokens(value: unknown, tokens: Record<string, string>): unkn
   return value;
 }
 
+function isComfyNodeReferenceTuple(value: unknown): value is [string, unknown] {
+  if (!Array.isArray(value) || value.length !== 2) return false;
+  const [nodeId, outputIndex] = value;
+  if (typeof nodeId !== "string" || !/^\d+$/.test(nodeId.trim())) return false;
+  if (typeof outputIndex === "number") return Number.isFinite(outputIndex);
+  return typeof outputIndex === "string" && /^-?\d+$/.test(outputIndex.trim());
+}
+
 function coerceWorkflowLiteralValues(value: unknown): unknown {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -606,17 +614,8 @@ function coerceWorkflowLiteralValues(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) {
-    // Preserve Comfy node-link tuples like ["6", 0].
-    // If the first item is coerced to number, Comfy prompt validation may fail with KeyError
-    // because node IDs in prompt objects are string keys.
-    if (
-      value.length === 2 &&
-      typeof value[0] === "string" &&
-      /^\d+$/.test(value[0].trim()) &&
-      (typeof value[1] === "number" || (typeof value[1] === "string" && /^-?\d+$/.test(value[1].trim())))
-    ) {
-      const slot = coerceWorkflowLiteralValues(value[1]);
-      return [value[0], slot];
+    if (isComfyNodeReferenceTuple(value)) {
+      return [value[0], coerceWorkflowLiteralValues(value[1])];
     }
     return value.map((item) => coerceWorkflowLiteralValues(item));
   }
