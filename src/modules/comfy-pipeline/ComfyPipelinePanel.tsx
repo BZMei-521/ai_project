@@ -424,6 +424,11 @@ type ProvisionPreviewItem = {
   thumbs: string[];
 };
 
+type ShotReferencePreview = {
+  characters: Array<{ id: string; name: string; thumbs: string[]; views: string[] }>;
+  scene?: { id: string; name: string; thumbs: string[]; faces: string[] };
+};
+
 type SoundCueKind = "ambience" | "character" | "prop";
 type SoundCueSpec = {
   kind: SoundCueKind;
@@ -1557,6 +1562,74 @@ function formatAssetStatus(status: AssetStatus): string {
   return "待生成";
 }
 
+function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReferencePreview {
+  const characters = (shot.characterRefs ?? [])
+    .map((id) => assets.find((item) => item.id === id && item.type === "character"))
+    .filter((item): item is Asset => Boolean(item))
+    .map((asset) => {
+      const thumbs = [asset.characterFrontPath, asset.characterSidePath, asset.characterBackPath].filter(
+        (item): item is string => Boolean(item?.trim())
+      );
+      const views = [
+        asset.characterFrontPath?.trim() ? "front" : "",
+        asset.characterSidePath?.trim() ? "side" : "",
+        asset.characterBackPath?.trim() ? "back" : ""
+      ].filter((item) => item.length > 0);
+      return { id: asset.id, name: asset.name, thumbs, views };
+    });
+  const sceneAsset = assets.find(
+    (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
+  );
+  if (!sceneAsset) return { characters };
+  if (sceneAsset.type === "skybox") {
+    const faceOrder = [
+      ...(shot.skyboxFaces ?? []),
+      "front",
+      "right",
+      "back",
+      "left",
+      "up",
+      "down"
+    ].filter((face, index, list) => list.indexOf(face) === index);
+    const thumbs = faceOrder
+      .map((face) => sceneAsset.skyboxFaces?.[face as keyof NonNullable<Asset["skyboxFaces"]>] ?? "")
+      .filter((item): item is string => Boolean(item.trim()));
+    const faces = faceOrder.filter(
+      (face) => Boolean(sceneAsset.skyboxFaces?.[face as keyof NonNullable<Asset["skyboxFaces"]>]?.trim())
+    );
+    return {
+      characters,
+      scene: { id: sceneAsset.id, name: sceneAsset.name, thumbs, faces }
+    };
+  }
+  return {
+    characters,
+    scene: {
+      id: sceneAsset.id,
+      name: sceneAsset.name,
+      thumbs: sceneAsset.filePath?.trim() ? [sceneAsset.filePath] : [],
+      faces: []
+    }
+  };
+}
+
+function describeShotReferencePreview(preview: ShotReferencePreview): string {
+  const parts: string[] = [];
+  if (preview.characters.length > 0) {
+    parts.push(
+      `角色 ${preview.characters
+        .map((item) => `${item.name}${item.views.length > 0 ? `(${item.views.join("/")})` : ""}`)
+        .join("、")}`
+    );
+  }
+  if (preview.scene) {
+    parts.push(
+      `场景 ${preview.scene.name}${preview.scene.faces.length > 0 ? `(${preview.scene.faces.join("/")})` : ""}`
+    );
+  }
+  return parts.length > 0 ? parts.join("；") : "未绑定角色三视图或天空盒";
+}
+
 function formatPipelineLogText(items: PipelineLogItem[]): string {
   return items.map((item) => `[${item.timestamp}] [${item.level.toUpperCase()}] ${item.message}`).join("\n");
 }
@@ -2144,6 +2217,14 @@ export function ComfyPipelinePanel() {
         audioStatusByShot[shot.id] === "failed"
     );
   }, [audioStatusByShot, imageStatusByShot, scopedShots, shotFilter, videoStatusByShot]);
+
+  const shotReferencePreviewById = useMemo(() => {
+    const next = new Map<string, ShotReferencePreview>();
+    for (const shot of scopedShots) {
+      next.set(shot.id, resolveShotReferencePreview(shot, assets));
+    }
+    return next;
+  }, [assets, scopedShots]);
 
   const getScopedShotsSnapshot = () =>
     useStoryboardStore
@@ -4591,6 +4672,9 @@ export function ComfyPipelinePanel() {
     setAssetStatus(kind, shotId, "running");
     appendLog(`开始生成${kind === "image" ? "分镜图" : kind === "video" ? "视频" : "配音"}：${shot.title}`);
     try {
+      if (kind === "image") {
+        appendLog(`分镜参考预览：${shot.title} -> ${describeShotReferencePreview(resolveShotReferencePreview(shot, latestAssets))}`);
+      }
       if (kind === "audio") {
         const ok = await generateDialogueTracksForShot(shot, shotIndex, runtimeSettings, force);
         if (!ok) throw new Error("未生成任何对白分段");
@@ -7736,7 +7820,59 @@ export function ComfyPipelinePanel() {
             <ul className="export-list comfy-shot-list">
             {visibleShots.map((shot) => (
               <li key={`pipeline_${shot.id}`}>
+                {(() => {
+                  const referencePreview = shotReferencePreviewById.get(shot.id) ?? { characters: [] };
+                  return (
+                    <>
                 <div><strong>{shot.order}. {shot.title}</strong></div>
+                <div className="comfy-shot-reference-summary">
+                  参考：{describeShotReferencePreview(referencePreview)}
+                </div>
+                {(referencePreview.characters.length > 0 || referencePreview.scene) && (
+                  <div className="comfy-shot-reference-block">
+                    {referencePreview.characters.map((item) => (
+                      <div className="comfy-shot-reference-group" key={`${shot.id}_${item.id}`}>
+                        <small>角色参考 · {item.name}{item.views.length > 0 ? ` · ${item.views.join("/")}` : ""}</small>
+                        <div className="comfy-provision-thumb-row is-shot-reference">
+                          {item.thumbs.length > 0 ? (
+                            item.thumbs.slice(0, 3).map((thumb, index) => (
+                              <img
+                                key={`${item.id}_${index}`}
+                                alt={`${item.name}_${index + 1}`}
+                                loading="lazy"
+                                src={toDesktopMediaSource(thumb)}
+                              />
+                            ))
+                          ) : (
+                            <div className="comfy-provision-thumb-empty">未找到三视图</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {referencePreview.scene && (
+                      <div className="comfy-shot-reference-group" key={`${shot.id}_${referencePreview.scene.id}`}>
+                        <small>
+                          场景参考 · {referencePreview.scene.name}
+                          {referencePreview.scene.faces.length > 0 ? ` · ${referencePreview.scene.faces.join("/")}` : ""}
+                        </small>
+                        <div className="comfy-provision-thumb-row is-shot-reference">
+                          {referencePreview.scene.thumbs.length > 0 ? (
+                            referencePreview.scene.thumbs.slice(0, 4).map((thumb, index) => (
+                              <img
+                                key={`${referencePreview.scene?.id}_${index}`}
+                                alt={`${referencePreview.scene?.name}_${index + 1}`}
+                                loading="lazy"
+                                src={toDesktopMediaSource(thumb)}
+                              />
+                            ))
+                          ) : (
+                            <div className="comfy-provision-thumb-empty">未找到场景图</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div>
                   图：{shot.generatedImagePath || "未生成"} · 状态：{formatAssetStatus(imageStatusByShot[shot.id] ?? "idle")}
                 </div>
@@ -7892,6 +8028,9 @@ export function ComfyPipelinePanel() {
                     </button>
                   </div>
                 </details>
+                    </>
+                  );
+                })()}
               </li>
             ))}
             </ul>

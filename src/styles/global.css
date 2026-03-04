@@ -3155,6 +3155,31 @@ button.export-panel-collapsed:hover {
   box-shadow: inset 0 0 0 1px rgba(58, 84, 114, 0.55);
 }
 
+.comfy-shot-reference-summary {
+  color: #9ec1e7;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.comfy-shot-reference-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.comfy-shot-reference-group {
+  display: grid;
+  gap: 6px;
+}
+
+.comfy-shot-reference-group small {
+  color: #bcd4ef;
+}
+
+.comfy-provision-thumb-row.is-shot-reference {
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+}
+
 .comfy-import-asset-preview {
   display: grid;
   gap: 6px;
