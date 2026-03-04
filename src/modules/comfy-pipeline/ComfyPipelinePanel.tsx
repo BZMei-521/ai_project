@@ -373,7 +373,7 @@ function buildCharacterWorkflowTemplateJson(
   }
   if (template["5"]?.inputs) {
     const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
-    template["5"].inputs.seed = config.seed;
+    template["5"].inputs.seed = "{{SEED}}";
     template["5"].inputs.steps = config.steps;
     template["5"].inputs.cfg = config.cfg;
     template["5"].inputs.sampler_name = config.sampler_name;
@@ -443,6 +443,73 @@ function buildSkyboxPanoramaWorkflowTemplateJson(checkpointName: string, preset:
   return JSON.stringify(template, null, 2);
 }
 
+
+function pickCheckpointFromWorkflowJson(workflowJson: string): string {
+  const text = workflowJson.trim();
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (Array.isArray((parsed as { nodes?: unknown }).nodes)) {
+      return "";
+    }
+    for (const entry of Object.values(parsed)) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const node = entry as Record<string, unknown>;
+      if (String(node.class_type ?? "") !== "CheckpointLoaderSimple") continue;
+      const ckpt = (node.inputs as Record<string, unknown> | undefined)?.ckpt_name;
+      if (typeof ckpt === "string" && ckpt.trim()) return ckpt.trim();
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function buildEmergencyStoryboardImageWorkflowTemplateJson(checkpointName: string, width: number, height: number): string {
+  const safeWidth = Math.max(256, Math.round(width / 64) * 64);
+  const safeHeight = Math.max(256, Math.round(height / 64) * 64);
+  const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
+    "1": {
+      inputs: { ckpt_name: checkpointName },
+      class_type: "CheckpointLoaderSimple"
+    },
+    "2": {
+      inputs: { text: "{{PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "3": {
+      inputs: { text: "{{NEGATIVE_PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "4": {
+      inputs: { width: safeWidth, height: safeHeight, batch_size: 1 },
+      class_type: "EmptyLatentImage"
+    },
+    "5": {
+      inputs: {
+        seed: "{{SEED}}",
+        steps: 28,
+        cfg: 5.5,
+        sampler_name: "euler",
+        scheduler: "normal",
+        denoise: 1,
+        model: ["1", 0],
+        positive: ["2", 0],
+        negative: ["3", 0],
+        latent_image: ["4", 0]
+      },
+      class_type: "KSampler"
+    },
+    "6": {
+      inputs: { samples: ["5", 0], vae: ["1", 2] },
+      class_type: "VAEDecode"
+    },
+    "7": {
+      inputs: { filename_prefix: "Storyboard/shot_fallback", images: ["6", 0] },
+      class_type: "SaveImage"
+    }
+  };
+  return JSON.stringify(template, null, 2);
 function mergePromptFragments(parts: Array<string | null | undefined>): string {
   return parts
     .map((item) => item?.trim() ?? "")
@@ -3193,6 +3260,16 @@ export function ComfyPipelinePanel() {
     return `${core}。严格要求：${constraints}。`;
   };
 
+  const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
+    const viewConstraint =
+      view === "front"
+        ? "side profile, back view, rear view"
+        : view === "side"
+          ? "front view, facing camera, back view, rear view"
+          : "front view, facing camera, side profile, looking at camera, face visible";
+    return `${baseNegativePrompt}, ${viewConstraint}`;
+  };
+
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定图`;
     return `${prompt}。无人物，无角色，无动物，无群像，无主体表演，仅保留环境本身。不要出现打斗、对白、姿态、剪影或任何人的痕迹。空间关系清晰，环境一致，材质稳定，光影明确，场景设定图，写实电影美术。`;
@@ -3235,6 +3312,17 @@ export function ComfyPipelinePanel() {
       text.includes("prompt_outputs_failed_validation") ||
       text.includes("exception when validating node") ||
       (text.includes("keyerror") && text.includes("validating node"))
+    );
+  };
+
+  const shouldRetryEmergencyImageWorkflow = (error: unknown): boolean => {
+    const text = String(error ?? "").toLowerCase();
+    if (!text) return false;
+    return (
+      shouldFallbackAssetWorkflow(error) ||
+      text.includes("missing_node_type") ||
+      text.includes("prompt_outputs_failed_validation") ||
+      text.includes("custom node may not be installed")
     );
   };
 
@@ -3345,7 +3433,7 @@ export function ComfyPipelinePanel() {
           [],
           {
             workflowJsonOverride: workflowOverride,
-            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
           }
         ),
         generateShotAsset(
@@ -3357,7 +3445,7 @@ export function ComfyPipelinePanel() {
           [],
           {
             workflowJsonOverride: workflowOverride,
-            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("side", negativePrompt) }
           }
         ),
         generateShotAsset(
@@ -3369,7 +3457,7 @@ export function ComfyPipelinePanel() {
           [],
           {
             workflowJsonOverride: workflowOverride,
-            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("back", negativePrompt) }
           }
         )
       ]);
@@ -3394,10 +3482,12 @@ export function ComfyPipelinePanel() {
       }
     );
     const referencePath = referenceFront.localPath || referenceFront.previewUrl;
+    const multiviewPrompt = buildCharacterMultiviewPrompt(name, context);
     try {
       const [front, side, back] = await Promise.all([
         generateShotAsset(
           runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
           makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed + 11),
           0,
           "image",
@@ -3410,6 +3500,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
           makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 12),
           0,
           "image",
@@ -3422,6 +3513,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
           makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 13),
           0,
           "image",
@@ -3452,6 +3544,7 @@ export function ComfyPipelinePanel() {
           [],
           {
             workflowJsonOverride: fallbackWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
             tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
           }
         ),
@@ -3464,6 +3557,7 @@ export function ComfyPipelinePanel() {
           [],
           {
             workflowJsonOverride: fallbackWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("side", negativePrompt) }
             tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
           }
         ),
@@ -3476,6 +3570,7 @@ export function ComfyPipelinePanel() {
           [],
           {
             workflowJsonOverride: fallbackWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("back", negativePrompt) }
             tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
           }
         )
@@ -3890,6 +3985,18 @@ export function ComfyPipelinePanel() {
       );
     } catch (error) {
       if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
+      appendLog(`天空盒高级全景工作流不可用，已自动降级为基础六面模板：${String(error)}`, "error");
+      const fallbackWorkflow = buildSkyboxWorkflowTemplateJson(
+        runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+        runtimeSettings.skyboxTemplatePreset ?? "wide"
+      );
+      result = await generateSkyboxFaces(
+        {
+          ...runtimeSettings,
+          skyboxWorkflowJson: fallbackWorkflow,
+          skyboxAssetWorkflowMode: "basic_builtin"
+        },
+        description
       throw new Error(
         `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
       );
@@ -5096,6 +5203,39 @@ export function ComfyPipelinePanel() {
       );
       return true;
     } catch (error) {
+      if (kind === "image" && shouldRetryEmergencyImageWorkflow(error)) {
+        appendLog(`分镜图工作流不可用，尝试使用应急基础模板重试：${shot.title}，${String(error)}`, "error");
+        try {
+          const fallbackCheckpoint =
+            pickCheckpointFromWorkflowJson(runtimeSettings.imageWorkflowJson) ||
+            runtimeSettings.characterAssetModelName?.trim() ||
+            DEFAULT_CHARACTER_ASSET_MODEL;
+          const fallbackWorkflow = buildEmergencyStoryboardImageWorkflowTemplateJson(
+            fallbackCheckpoint,
+            assetRuntimeSettings.renderWidth ?? project.width,
+            assetRuntimeSettings.renderHeight ?? project.height
+          );
+          const output = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, "image", latestScopedShots, latestAssets, {
+            workflowJsonOverride: fallbackWorkflow,
+            onProgress: (progress, message) => {
+              const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+              setPipelineState(`分镜图应急重试中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
+            }
+          });
+          updateShotFields(shot.id, { generatedImagePath: output.previewUrl });
+          setAssetStatus(kind, shotId, "success");
+          setLastErrorByShot((previous) => ({ ...previous, [shotId]: "" }));
+          appendLog(`应急模板生成成功：${shot.title} -> ${output.previewUrl}`);
+          return true;
+        } catch (retryError) {
+          const retryMessage = `${String(error)}；应急重试失败：${String(retryError)}`;
+          setAssetStatus(kind, shotId, "failed");
+          setLastErrorByShot((previous) => ({ ...previous, [shotId]: retryMessage }));
+          pushToast(`分镜图生成失败：${shot.title}`, "error");
+          appendLog(`生成失败：${shot.title}，${retryMessage}`, "error");
+          return false;
+        }
+      }
       setAssetStatus(kind, shotId, "failed");
       const message = String(error);
       setLastErrorByShot((previous) => ({ ...previous, [shotId]: message }));

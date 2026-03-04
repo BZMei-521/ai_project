@@ -683,6 +683,17 @@ function coerceWorkflowLiteralValues(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) {
+    // Preserve Comfy node-link tuples like ["6", 0].
+    // If the first item is coerced to number, Comfy prompt validation may fail with KeyError
+    // because node IDs in prompt objects are string keys.
+    if (
+      value.length === 2 &&
+      typeof value[0] === "string" &&
+      /^\d+$/.test(value[0].trim()) &&
+      (typeof value[1] === "number" || (typeof value[1] === "string" && /^-?\d+$/.test(value[1].trim())))
+    ) {
+      const slot = coerceWorkflowLiteralValues(value[1]);
+      return [value[0], slot];
     if (isComfyNodeReferenceTuple(value)) {
       return [value[0], coerceWorkflowLiteralValues(value[1])];
     }
