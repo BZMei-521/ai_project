@@ -12,11 +12,11 @@
 
 更成熟的链路应改为：
 
-`天空盒主面/场景底图 -> img2img 构图底图 -> IPAdapter 角色一致性 -> ControlNet(OpenPose/Depth) 锁姿态/空间 -> 可选 InstantID / PuLID 锁脸`
+`天空盒主面/场景底图 -> scene-first img2img -> IPAdapter 角色一致性 -> 可选 ControlNet(OpenPose/Depth/Canny) -> 可选 InstantID / PuLID`
 
 ## 推荐工作流
 
-### 方案 A：高一致性分镜图（推荐）
+### 方案 A：内置成熟分镜模板（当前项目默认推荐）
 
 适用：
 
@@ -32,45 +32,41 @@
 2. `VAEEncode`
 3. `KSampler`
    低到中等 `denoise`，避免完全重画
-4. `IPAdapter Advanced / IPAdapter Apply`
-   分别喂主角色和次角色参考图
-5. `CLIP Vision Loader`
-6. `Apply Advanced ControlNet`
-   推荐至少接 `OpenPose` 或 `Depth`
-7. `VAEDecode`
-8. `SaveImage`
+4. `IPAdapterUnifiedLoader`
+   推荐 `PLUS (high strength)` 预设
+5. `IPAdapterAdvanced`
+   分别喂主角色主视图、主角色辅视图、次角色主视图
+6. `VAEDecode`
+7. `SaveImage`
+
+说明：
+
+- 这是当前项目内置的新分镜模板，文件在 `src/modules/comfy-pipeline/presets/storyboard-image-asset-guided-v1.json`
+- 它先用天空盒主面锁场景，再用 IPAdapter 锁角色，不再靠 Qwen 图编辑模板“猜”参考关系
+- 它不强绑 ControlNet，这样依赖更少，先把场景和角色一致性基础打稳
+
+### 方案 B：高约束增强版（第二阶段）
+
+适用：
+
+- 动作姿态必须稳定
+- 双人关系和肢体走位必须更准
+- 角色正脸特写要更稳
 
 可选增强：
 
+- `Apply Advanced ControlNet`
+  推荐至少接 `OpenPose` 或 `Depth`
 - `InstantID`
   适合正脸/半身对白镜头
 - `PuLID`
   适合更强的人脸身份锁定
 
-### 方案 B：场景优先分镜图
-
-适用：
-
-- 建立镜头
-- 双人远景
-- 环境占比很大的动作镜头
-
-节点链建议：
-
-1. `LoadImage`
-   使用天空盒主面或场景底图
-2. `VAEEncode`
-3. `KSampler`
-   `denoise` 更低，优先保场景
-4. `IPAdapter`
-   只保留主角色或弱化角色
-5. `SaveImage`
-
 ## 推荐插件
 
 - `comfyui_ipadapter_plus`
-- `ComfyUI-Advanced-ControlNet`
-- `comfyui_controlnet_aux`
+- 可选：`ComfyUI-Advanced-ControlNet`
+- 可选：`comfyui_controlnet_aux`
 - 可选：`ComfyUI-InstantID`
 - 可选：`PuLID_ComfyUI` 或其他 PuLID ComfyUI 封装
 
@@ -78,13 +74,15 @@
 
 ### 必装
 
+- 一个可用的写实底模（建议 SDXL）
 - `clip_vision_h.safetensors`
 - `ip-adapter-plus_sdxl_vit-h.safetensors`
-- `control_v11p_sd15_openpose.pth`
-- `control_v11f1p_sd15_depth.pth`
 
 ### 选装
 
+- `control_v11p_sd15_openpose.pth`
+- `control_v11f1p_sd15_depth.pth`
+- `control_v11p_sd15_canny_fp16.safetensors`
 - InstantID 对应权重
 - InsightFace 模型
 - PuLID v1.1 权重
@@ -103,10 +101,18 @@
 
 - `成熟资产约束流程（推荐）`
 
-然后粘贴一套专用外部分镜工作流 JSON。
+如果你还没导入自己的工作流，可以直接点 UI 里的：
+
+- `写入内置成熟分镜模板`
 
 不建议继续使用：
 
 - 内置 `storyboard-image-fisher-light-v1`
 
 因为它本质上是兼容模板，不是高一致性生产模板。
+
+## 官方参考
+
+- IP-Adapter: <https://github.com/tencent-ailab/IP-Adapter>
+- ComfyUI IPAdapter Plus: <https://github.com/cubiq/ComfyUI_IPAdapter_plus>
+- Advanced ControlNet: <https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet>

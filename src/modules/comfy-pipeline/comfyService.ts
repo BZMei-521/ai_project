@@ -8,6 +8,7 @@ export type ComfySettings = {
   comfyRootDir: string;
   imageWorkflowJson: string;
   storyboardImageWorkflowMode?: "builtin_qwen" | "mature_asset_guided";
+  storyboardImageModelName?: string;
   videoWorkflowJson: string;
   characterWorkflowJson?: string;
   skyboxWorkflowJson?: string;
@@ -1173,6 +1174,54 @@ async function stageImageFrameToken(
   };
 }
 
+const IMAGE_REFERENCE_TOKEN_KEYS = [
+  "SCENE_REF_PATH",
+  "PREV_SCENE_IMAGE_PATH",
+  "PREV_CHARACTER_IMAGE_PATH",
+  "CHAR1_FRONT_PATH",
+  "CHAR1_SIDE_PATH",
+  "CHAR1_BACK_PATH",
+  "CHAR2_FRONT_PATH",
+  "CHAR2_SIDE_PATH",
+  "CHAR2_BACK_PATH",
+  "CHAR3_FRONT_PATH",
+  "CHAR3_SIDE_PATH",
+  "CHAR3_BACK_PATH",
+  "CHAR4_FRONT_PATH",
+  "CHAR4_SIDE_PATH",
+  "CHAR4_BACK_PATH",
+  "CHAR1_PRIMARY_PATH",
+  "CHAR1_SECONDARY_PATH",
+  "CHAR2_PRIMARY_PATH",
+  "CHAR2_SECONDARY_PATH"
+] as const;
+
+async function stageImageReferenceTokens(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>
+): Promise<Record<string, string>> {
+  const stagedEntries = IMAGE_REFERENCE_TOKEN_KEYS
+    .map((key) => ({ key, source: tokens[key]?.trim() ?? "" }))
+    .filter((item) => item.source.length > 0);
+  if (stagedEntries.length === 0) return tokens;
+
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) {
+    throw new Error("图片工作流需要角色/场景参考图输入，但未检测到 ComfyUI input 目录");
+  }
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const nextTokens = { ...tokens };
+  for (const entry of stagedEntries) {
+    const ext = fileExtensionFromSource(entry.source || "png");
+    const targetAbs = `${inputDir}/shot_${safeShotId}_${entry.key.toLowerCase()}.${ext}`;
+    const written = await stageSourceFileToComfyInput(entry.source, targetAbs, settings.baseUrl, settings.outputDir);
+    nextTokens[entry.key] = written.split("/").pop() ?? written;
+  }
+  return nextTokens;
+}
+
 async function mixDialogueAudioTracks(
   fps: number,
   tracks: AudioTrack[]
@@ -1821,6 +1870,56 @@ function characterReferenceWeight(view: CharacterReferenceView, plan: ReturnType
   if (secondaryIndex === 0) return 0.62;
   if (secondaryIndex === 1) return 0.34;
   return 0;
+}
+
+function assetPathForCharacterView(asset: Asset | undefined, view: CharacterReferenceView): string {
+  if (!asset) return "";
+  if (view === "front") return asset.characterFrontPath || asset.filePath || "";
+  if (view === "side") return asset.characterSidePath || asset.characterFrontPath || asset.filePath || "";
+  return asset.characterBackPath || asset.characterSidePath || asset.characterFrontPath || asset.filePath || "";
+}
+
+function inferStoryboardReferenceWeights(
+  shot: Shot,
+  hasSceneRef: boolean,
+  hasSecondCharacter: boolean
+): {
+  char1Primary: number;
+  char1Secondary: number;
+  char2Primary: number;
+  denoise: number;
+  steps: number;
+  cfg: number;
+} {
+  const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
+  if (sceneLed && hasSecondCharacter) {
+    return {
+      char1Primary: 0.4,
+      char1Secondary: 0.16,
+      char2Primary: 0.32,
+      denoise: 0.46,
+      steps: 28,
+      cfg: 6
+    };
+  }
+  if (sceneLed) {
+    return {
+      char1Primary: 0.48,
+      char1Secondary: 0.2,
+      char2Primary: 0.18,
+      denoise: 0.52,
+      steps: 28,
+      cfg: 6.5
+    };
+  }
+  return {
+    char1Primary: 0.62,
+    char1Secondary: 0.26,
+    char2Primary: hasSecondCharacter ? 0.3 : 0.12,
+    denoise: 0.62,
+    steps: 30,
+    cfg: 7
+  };
 }
 
 function shotsShareCharacters(left: Shot, right: Shot): boolean {
@@ -2837,6 +2936,7 @@ function applyComfyModelOptionBindings(
 }
 
 function inferPromptTokens(
+  settings: ComfySettings,
   shot: Shot,
   index: number,
   mapping: ComfySettings["tokenMapping"],
@@ -2875,6 +2975,28 @@ function inferPromptTokens(
   const characterAllViewPaths = [...characterFrontPaths, ...characterSidePaths, ...characterBackPaths].filter(Boolean);
   const charSlots = [0, 1, 2, 3].map((slotIndex) => characterAssets[slotIndex]);
   const characterPlan = inferCharacterReferencePlan(shot);
+  const char1PrimaryPath =
+    assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || sceneRefPath || characterFrontPaths[0] || "";
+  const char1SecondaryPath =
+    assetPathForCharacterView(charSlots[0], characterPlan.secondaryViews[0] ?? "front") ||
+    char1PrimaryPath ||
+    sceneRefPath ||
+    "";
+  const char2PrimaryPath =
+    assetPathForCharacterView(charSlots[1], characterPlan.primaryView) ||
+    assetPathForCharacterView(charSlots[1], "front") ||
+    char1SecondaryPath ||
+    char1PrimaryPath ||
+    sceneRefPath ||
+    "";
+  const char2SecondaryPath =
+    assetPathForCharacterView(charSlots[1], characterPlan.secondaryViews[0] ?? "front") ||
+    char2PrimaryPath ||
+    char1SecondaryPath ||
+    char1PrimaryPath ||
+    sceneRefPath ||
+    "";
+  const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
@@ -2947,6 +3069,17 @@ function inferPromptTokens(
     CHAR4_FRONT_PATH: charSlots[3]?.characterFrontPath || charSlots[3]?.filePath || "",
     CHAR4_SIDE_PATH: charSlots[3]?.characterSidePath || "",
     CHAR4_BACK_PATH: charSlots[3]?.characterBackPath || "",
+    CHAR1_PRIMARY_PATH: char1PrimaryPath,
+    CHAR1_SECONDARY_PATH: char1SecondaryPath,
+    CHAR2_PRIMARY_PATH: char2PrimaryPath,
+    CHAR2_SECONDARY_PATH: char2SecondaryPath,
+    CHAR1_PRIMARY_WEIGHT: String(storyboardWeights.char1Primary),
+    CHAR1_SECONDARY_WEIGHT: String(storyboardWeights.char1Secondary),
+    CHAR2_PRIMARY_WEIGHT: String(storyboardWeights.char2Primary),
+    STORYBOARD_DENOISE: String(storyboardWeights.denoise),
+    STORYBOARD_STEPS: String(storyboardWeights.steps),
+    STORYBOARD_CFG: String(storyboardWeights.cfg),
+    STORYBOARD_IMAGE_MODEL: settings.storyboardImageModelName?.trim() || "sd_xl_base_1.0.safetensors",
     FRAME_IMAGE_PATH: defaultFramePath,
     FIRST_FRAME_PATH: firstFramePath,
     LAST_FRAME_PATH: lastFramePath,
@@ -3754,7 +3887,7 @@ async function generateLocalCompatibleVideo(
   index: number,
   allShots: Shot[]
 ): Promise<{ previewUrl: string; localPath: string }> {
-  const tokens = inferPromptTokens(shot, index, settings.tokenMapping, allShots, []);
+  const tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, []);
   const nextShot = allShots[index + 1];
   const mode = inferVideoMode(shot, nextShot);
   const motionPreset = inferLocalMotionPreset(shot, mode, nextShot);
@@ -3973,7 +4106,7 @@ export async function generateShotAsset(
     }
     const workflow = ensureWorkflowJson(workflowRaw);
     const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
-    let tokens = inferPromptTokens(shot, index, settings.tokenMapping, allShots, assets);
+    let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets);
     if (options?.tokenOverrides) {
       tokens = {
         ...tokens,
@@ -3996,6 +4129,7 @@ export async function generateShotAsset(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
+      tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
