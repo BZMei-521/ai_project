@@ -43,7 +43,7 @@
       "load_mvadapter": true,
       "adapter_path": "huanngzh/mv-adapter",
       "adapter_name": "mvadapter_i2mv_sdxl_beta.safetensors",
-      "num_views": 6,
+      "num_views": 1,
       "enable_vae_slicing": true,
       "enable_vae_tiling": false
     },
@@ -73,13 +73,13 @@
         "4",
         0
       ],
-      "num_views": 6,
+      "num_views": 1,
       "prompt": "{{PROMPT}}",
       "negative_prompt": "{{NEGATIVE_PROMPT}}",
-      "width": 768,
-      "height": 768,
-      "steps": 32,
-      "cfg": 4,
+      "width": 832,
+      "height": 1216,
+      "steps": 28,
+      "cfg": 5.5,
       "seed": "{{SEED}}",
       "reference_image": [
         "5",

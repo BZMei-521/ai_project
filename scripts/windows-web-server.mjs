@@ -600,6 +600,8 @@ async function invokeCommand(cmd, args) {
       return concatVideoSegments(args?.videoPaths);
     case "mux_video_with_audio_tracks":
       return muxVideoWithAudioTracks(args);
+    case "mix_audio_tracks":
+      return mixAudioTracks(args);
     case "generate_local_video_from_images":
       return generateLocalVideoFromImages(args);
     case "comfy_ping":
@@ -1038,6 +1040,57 @@ async function muxVideoWithAudioTracks(args) {
     kind: "video-audio-mux",
     status: "success",
     message: `Attached ${validAudio.length} audio tracks to video`,
+    outputPath
+  });
+  return { outputPath };
+}
+
+async function mixAudioTracks(args) {
+  const fps = Math.max(1, Number(args?.fps || 24));
+  const audioTracks = Array.isArray(args?.audioTracks) ? args.audioTracks : [];
+  const validAudio = [];
+  for (const track of audioTracks) {
+    const filePath = path.resolve(String(track?.filePath || ""));
+    if (!(await fileExists(filePath))) continue;
+    validAudio.push({
+      filePath,
+      startFrame: Math.max(0, Number(track?.startFrame || 0)),
+      gain: Math.max(0, Number(track?.gain ?? 1))
+    });
+  }
+  if (validAudio.length === 0) {
+    throw new Error("No valid audio tracks found");
+  }
+
+  const projectDir = await resolveCurrentProjectDir();
+  const outputPath = await nextExportFilePath(projectDir, ".wav");
+  const ffmpegArgs = ["-y"];
+  validAudio.forEach((track) => ffmpegArgs.push("-i", track.filePath));
+
+  const filterParts = [];
+  const mixInputs = [];
+  validAudio.forEach((track, idx) => {
+    const delayMs = Math.round(track.startFrame / fps * 1000);
+    filterParts.push(`[${idx}:a]adelay=${delayMs}|${delayMs},volume=${track.gain.toFixed(3)}[a${idx}]`);
+    mixInputs.push(`[a${idx}]`);
+  });
+
+  ffmpegArgs.push(
+    "-filter_complex",
+    `${filterParts.join(";")};${mixInputs.join("")}amix=inputs=${validAudio.length}:duration=longest:dropout_transition=0[aout]`,
+    "-map",
+    "[aout]",
+    "-c:a",
+    "pcm_s16le",
+    outputPath
+  );
+
+  await runCommand("ffmpeg", ffmpegArgs);
+  await appendExportLog(projectDir, {
+    timestamp: Date.now(),
+    kind: "audio-mix",
+    status: "success",
+    message: `Mixed ${validAudio.length} audio tracks`,
     outputPath
   });
   return { outputPath };

@@ -1,4 +1,4 @@
-import type { Asset, Shot, SkyboxFace } from "../storyboard-core/types";
+import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
 import { invokeDesktopCommand, isDesktopRuntime } from "../platform/desktopBridge";
 
 export type ComfySettings = {
@@ -76,6 +76,10 @@ export type ComfySettings = {
     frameImagePath: string;
     firstFramePath: string;
     lastFramePath: string;
+    dialogueAudioPath: string;
+    dialogueAudioPaths: string;
+    dialogueAudioCount: string;
+    hasDialogueAudio: string;
   };
 };
 
@@ -122,7 +126,11 @@ export const DEFAULT_TOKEN_MAPPING: ComfySettings["tokenMapping"] = {
   character4BackPath: "CHAR4_BACK_PATH",
   frameImagePath: "FRAME_IMAGE_PATH",
   firstFramePath: "FIRST_FRAME_PATH",
-  lastFramePath: "LAST_FRAME_PATH"
+  lastFramePath: "LAST_FRAME_PATH",
+  dialogueAudioPath: "DIALOGUE_AUDIO_PATH",
+  dialogueAudioPaths: "DIALOGUE_AUDIO_PATHS",
+  dialogueAudioCount: "DIALOGUE_AUDIO_COUNT",
+  hasDialogueAudio: "HAS_DIALOGUE_AUDIO"
 };
 
 type VideoMode = "single_frame" | "first_last_frame";
@@ -185,6 +193,19 @@ type FileWriteResult = {
 
 type LocalVideoRenderResult = {
   outputPath: string;
+};
+
+type AudioMixResult = {
+  outputPath: string;
+};
+
+export type VideoWorkflowLipSyncSupport = {
+  usesTokenPlaceholders: boolean;
+  usesDialogueAudioPathToken: boolean;
+  matchedPathTokens: string[];
+  matchedAuxTokens: string[];
+  candidatePathTokens: string[];
+  candidateAuxTokens: string[];
 };
 
 export type LocalMotionPreset =
@@ -514,7 +535,11 @@ function applyTokenAliases(
     ["character4BackPath", baseTokens.CHAR4_BACK_PATH],
     ["frameImagePath", baseTokens.FRAME_IMAGE_PATH],
     ["firstFramePath", baseTokens.FIRST_FRAME_PATH],
-    ["lastFramePath", baseTokens.LAST_FRAME_PATH]
+    ["lastFramePath", baseTokens.LAST_FRAME_PATH],
+    ["dialogueAudioPath", baseTokens.DIALOGUE_AUDIO_PATH],
+    ["dialogueAudioPaths", baseTokens.DIALOGUE_AUDIO_PATHS],
+    ["dialogueAudioCount", baseTokens.DIALOGUE_AUDIO_COUNT],
+    ["hasDialogueAudio", baseTokens.HAS_DIALOGUE_AUDIO]
   ];
   for (const [key, value] of aliasPairs) {
     const alias = mapping[key]?.trim();
@@ -570,6 +595,45 @@ function collectTemplateTokens(value: unknown, bucket: Set<string>) {
       collectTemplateTokens(item, bucket);
     }
   }
+}
+
+function configuredTokenOrFallback(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim() ?? "";
+  return trimmed || fallback;
+}
+
+function dialogueAudioPathTokens(mapping: ComfySettings["tokenMapping"]): string[] {
+  return [
+    configuredTokenOrFallback(mapping.dialogueAudioPath, "DIALOGUE_AUDIO_PATH"),
+    configuredTokenOrFallback(mapping.dialogueAudioPaths, "DIALOGUE_AUDIO_PATHS")
+  ];
+}
+
+function dialogueAudioAuxTokens(mapping: ComfySettings["tokenMapping"]): string[] {
+  return [
+    configuredTokenOrFallback(mapping.dialogueAudioCount, "DIALOGUE_AUDIO_COUNT"),
+    configuredTokenOrFallback(mapping.hasDialogueAudio, "HAS_DIALOGUE_AUDIO")
+  ];
+}
+
+function inspectWorkflowLipSyncSupportFromObject(
+  workflow: Record<string, unknown>,
+  mapping: ComfySettings["tokenMapping"]
+): VideoWorkflowLipSyncSupport {
+  const usedTokens = new Set<string>();
+  collectTemplateTokens(workflow, usedTokens);
+  const candidatePathTokens = dialogueAudioPathTokens(mapping);
+  const candidateAuxTokens = dialogueAudioAuxTokens(mapping);
+  const matchedPathTokens = candidatePathTokens.filter((token) => usedTokens.has(token));
+  const matchedAuxTokens = candidateAuxTokens.filter((token) => usedTokens.has(token));
+  return {
+    usesTokenPlaceholders: usedTokens.size > 0,
+    usesDialogueAudioPathToken: matchedPathTokens.length > 0,
+    matchedPathTokens,
+    matchedAuxTokens,
+    candidatePathTokens,
+    candidateAuxTokens
+  };
 }
 
 function deepReplaceTokens(value: unknown, tokens: Record<string, string>): unknown {
@@ -995,7 +1059,7 @@ function inferComfyOutputDownloadSource(source: string, outputDir = ""): string 
   return normalizedSource.split("/").pop() ?? "";
 }
 
-async function stageFrameFileToComfyInput(
+async function stageSourceFileToComfyInput(
   source: string,
   targetPath: string,
   baseUrl: string,
@@ -1038,7 +1102,7 @@ async function stageFrameFileToComfyInput(
     return copied.filePath;
   } catch (copyError) {
     if (downloadError) {
-      throw new Error(`准备输入帧失败：下载 Comfy 输出失败(${String(downloadError)})，本地复制也失败(${String(copyError)})`);
+      throw new Error(`准备输入文件失败：下载 Comfy 输出失败(${String(downloadError)})，本地复制也失败(${String(copyError)})`);
     }
     throw copyError;
   }
@@ -1068,9 +1132,9 @@ async function stageVideoFrameTokens(
   const frameTargetAbs = `${inputDir}/shot_${safeShotId}_frame.${frameExt}`;
 
   const [firstWritten, lastWritten, frameWritten] = await Promise.all([
-    stageFrameFileToComfyInput(firstSource, firstTargetAbs, settings.baseUrl, settings.outputDir),
-    stageFrameFileToComfyInput(lastSource, lastTargetAbs, settings.baseUrl, settings.outputDir),
-    stageFrameFileToComfyInput(frameSource, frameTargetAbs, settings.baseUrl, settings.outputDir)
+    stageSourceFileToComfyInput(firstSource, firstTargetAbs, settings.baseUrl, settings.outputDir),
+    stageSourceFileToComfyInput(lastSource, lastTargetAbs, settings.baseUrl, settings.outputDir),
+    stageSourceFileToComfyInput(frameSource, frameTargetAbs, settings.baseUrl, settings.outputDir)
   ]);
 
   const firstName = firstWritten.split("/").pop() ?? `shot_${safeShotId}_first.${firstExt}`;
@@ -1101,10 +1165,87 @@ async function stageImageFrameToken(
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const ext = fileExtensionFromSource(source || "png");
   const targetAbs = `${inputDir}/shot_${safeShotId}_frame.${ext}`;
-  const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+  const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
   return {
     ...tokens,
     FRAME_IMAGE_PATH: written.split("/").pop() ?? written
+  };
+}
+
+async function mixDialogueAudioTracks(
+  fps: number,
+  tracks: AudioTrack[]
+): Promise<string> {
+  const orderedTracks = [...tracks]
+    .filter((track) => track.filePath.trim().length > 0)
+    .sort((left, right) => left.startFrame - right.startFrame || left.id.localeCompare(right.id));
+  if (orderedTracks.length === 0) return "";
+  if (orderedTracks.length === 1) return orderedTracks[0]!.filePath.trim();
+  const result = await invokeDesktop<AudioMixResult>("mix_audio_tracks", {
+    fps: Math.max(1, Math.round(fps || 24)),
+    audioTracks: orderedTracks
+  });
+  return result.outputPath.trim();
+}
+
+async function stageDialogueAudioTokens(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>,
+  dialogueAudioTracks: AudioTrack[],
+  fps: number
+): Promise<Record<string, string>> {
+  const validTracks = [...dialogueAudioTracks]
+    .filter((track) => track.filePath.trim().length > 0)
+    .sort((left, right) => left.startFrame - right.startFrame || left.id.localeCompare(right.id));
+  if (validTracks.length === 0) {
+    return {
+      ...tokens,
+      DIALOGUE_AUDIO_PATH: "",
+      DIALOGUE_AUDIO_PATHS: "",
+      DIALOGUE_AUDIO_COUNT: "0",
+      HAS_DIALOGUE_AUDIO: "0"
+    };
+  }
+
+  const mixedSourcePath = await mixDialogueAudioTracks(fps, validTracks);
+  const segmentSourcePaths = validTracks.map((track) => track.filePath.trim()).filter((value) => value.length > 0);
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) {
+    return {
+      ...tokens,
+      DIALOGUE_AUDIO_PATH: mixedSourcePath,
+      DIALOGUE_AUDIO_PATHS: segmentSourcePaths.join(","),
+      DIALOGUE_AUDIO_COUNT: String(segmentSourcePaths.length),
+      HAS_DIALOGUE_AUDIO: "1"
+    };
+  }
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const mixedExt = fileExtensionFromSource(mixedSourcePath || "wav");
+  const mixedTargetAbs = `${inputDir}/shot_${safeShotId}_dialogue.${mixedExt}`;
+  const mixedWritten = await stageSourceFileToComfyInput(
+    mixedSourcePath,
+    mixedTargetAbs,
+    settings.baseUrl,
+    settings.outputDir
+  );
+
+  const stagedSegments = await Promise.all(
+    segmentSourcePaths.map(async (source, index) => {
+      const ext = fileExtensionFromSource(source || "wav");
+      const targetAbs = `${inputDir}/shot_${safeShotId}_dialogue_${index + 1}.${ext}`;
+      const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+      return written.split("/").pop() ?? written;
+    })
+  );
+
+  return {
+    ...tokens,
+    DIALOGUE_AUDIO_PATH: mixedWritten.split("/").pop() ?? mixedWritten,
+    DIALOGUE_AUDIO_PATHS: stagedSegments.join(","),
+    DIALOGUE_AUDIO_COUNT: String(stagedSegments.length),
+    HAS_DIALOGUE_AUDIO: "1"
   };
 }
 
@@ -1339,10 +1480,17 @@ function skyboxFaceWeight(shot: Shot, face: SkyboxFace): number {
 function toVideoPrompt(shot: Shot, mode: VideoMode): string {
   const raw = shot.videoPrompt?.trim() || shot.storyPrompt?.trim() || shot.notes?.trim() || shot.title;
   const compact = normalizePromptBody(raw);
+  const speakingDirective = shot.dialogue.trim()
+    ? "画面中若出现正在说话的角色，口型开合应与对白节奏一致，避免闭口说话、乱张嘴或延迟口型。"
+    : "";
   if (mode === "first_last_frame") {
-    return `首尾帧运镜，保持角色与场景连续，平滑过渡。${compact}`;
+    return ["首尾帧运镜，保持角色与场景连续，平滑过渡。", speakingDirective, compact]
+      .filter((item) => item.length > 0)
+      .join("");
   }
-  return `单帧图生视频，保持主体稳定并增加自然镜头运动。${compact}`;
+  return ["单帧图生视频，保持主体稳定并增加自然镜头运动。", speakingDirective, compact]
+    .filter((item) => item.length > 0)
+    .join("");
 }
 
 type WorkflowNode = {
@@ -1874,7 +2022,7 @@ async function stageCharacterReferenceImages(
     const { source, weight } = refs[index]!;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
-    const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+    const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
     staged.push({
       filename: written.split("/").pop() ?? `shot_${safeShotId}_charref_${index + 1}.${ext}`,
       weight
@@ -2531,7 +2679,11 @@ function inferPromptTokens(
     CHAR4_BACK_PATH: charSlots[3]?.characterBackPath || "",
     FRAME_IMAGE_PATH: defaultFramePath,
     FIRST_FRAME_PATH: firstFramePath,
-    LAST_FRAME_PATH: lastFramePath
+    LAST_FRAME_PATH: lastFramePath,
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0"
   };
   return applyTokenAliases(mapping, baseTokens);
 }
@@ -2628,6 +2780,14 @@ export function validateWorkflowTemplate(
     missing,
     used: [...usedTokens].sort()
   };
+}
+
+export function inspectVideoWorkflowLipSyncSupport(
+  workflowJson: string,
+  mapping: ComfySettings["tokenMapping"]
+): VideoWorkflowLipSyncSupport {
+  const workflow = ensureWorkflowJson(workflowJson);
+  return inspectWorkflowLipSyncSupportFromObject(workflow, mapping);
 }
 
 const NODE_HINT_MAP: Array<{ pattern: RegExp; plugin: string; repo: string }> = [
@@ -3507,6 +3667,7 @@ export async function generateShotAsset(
     onProgress?: (progress: number, message: string) => void;
     tokenOverrides?: Record<string, string>;
     workflowJsonOverride?: string;
+    dialogueAudioTracks?: AudioTrack[];
   }
 ): Promise<{ previewUrl: string; localPath: string }> {
   try {
@@ -3526,6 +3687,7 @@ export async function generateShotAsset(
       );
     }
     const workflow = ensureWorkflowJson(workflowRaw);
+    const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
     let tokens = inferPromptTokens(shot, index, settings.tokenMapping, allShots, assets);
     if (options?.tokenOverrides) {
       tokens = {
@@ -3537,6 +3699,15 @@ export async function generateShotAsset(
     }
     tokens = applyGlobalStyleToTokens(settings, tokens, kind);
     if (kind === "video") {
+      if (lipSyncSupport?.usesDialogueAudioPathToken) {
+        tokens = await stageDialogueAudioTokens(
+          settings,
+          shot,
+          tokens,
+          options?.dialogueAudioTracks ?? [],
+          Math.max(1, Math.round(settings.renderFps ?? 24))
+        );
+      }
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
@@ -3686,6 +3857,10 @@ function buildSkyboxTokens(
     FRAME_IMAGE_PATH: "",
     FIRST_FRAME_PATH: "",
     LAST_FRAME_PATH: "",
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0",
     SKYBOX_FACE: face.toUpperCase(),
     SKYBOX_DESCRIPTION: description.trim()
   };
@@ -3747,6 +3922,10 @@ function buildSkyboxPanoramaTokens(
     FRAME_IMAGE_PATH: "",
     FIRST_FRAME_PATH: "",
     LAST_FRAME_PATH: "",
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0",
     SKYBOX_FACE: "PANORAMA",
     SKYBOX_DESCRIPTION: description.trim()
   };

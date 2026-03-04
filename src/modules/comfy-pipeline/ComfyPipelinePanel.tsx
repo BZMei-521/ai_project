@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { selectShotStartFrame, useStoryboardStore } from "../storyboard-core/store";
-import type { Asset, Shot } from "../storyboard-core/types";
+import type { Asset, AudioTrack, Shot } from "../storyboard-core/types";
 import { pushToast } from "../ui/toastStore";
 import { invokeDesktopCommand, isWebBridgeRuntime, toDesktopMediaSource } from "../platform/desktopBridge";
 import {
@@ -16,6 +16,7 @@ import {
   generateSkyboxFaces,
   inferComfyRootDir,
   inferStoryboardVideoModeByMatureCase,
+  inspectVideoWorkflowLipSyncSupport,
   installSuggestedPlugins,
   inspectWorkflowDependencies,
   listComfyCheckpointOptions,
@@ -91,7 +92,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, nude, naked, nsfw, underwear, lingerie, bikini, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -305,7 +306,11 @@ function buildCharacterWorkflowTemplateJson(
   return JSON.stringify(template, null, 2);
 }
 
-function buildCharacterAdvancedWorkflowTemplateJson(checkpointName: string): string {
+function buildCharacterAdvancedWorkflowTemplateJson(
+  checkpointName: string,
+  preset: "portrait" | "square",
+  renderPreset: "stable_fullbody" | "clean_reference"
+): string {
   const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
     template["1"].inputs.ckpt_name = checkpointName;
@@ -314,7 +319,16 @@ function buildCharacterAdvancedWorkflowTemplateJson(checkpointName: string): str
     template["3"].inputs.vae_name = DEFAULT_CHARACTER_ADVANCED_VAE;
   }
   if (template["4"]?.inputs) {
+    template["4"].inputs.num_views = 1;
     template["4"].inputs.adapter_name = DEFAULT_CHARACTER_ADVANCED_ADAPTER;
+  }
+  if (template["7"]?.inputs) {
+    const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+    template["7"].inputs.num_views = 1;
+    template["7"].inputs.width = preset === "square" ? 1024 : 832;
+    template["7"].inputs.height = preset === "square" ? 1024 : 1216;
+    template["7"].inputs.steps = config.steps;
+    template["7"].inputs.cfg = config.cfg;
   }
   return JSON.stringify(template, null, 2);
 }
@@ -1209,7 +1223,12 @@ function shouldAutoRewriteAssetWorkflow(
   if (!trimmed) return true;
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
   if (kind === "character" && mode === "advanced_multiview") {
-    return !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES);
+    return (
+      !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES) ||
+      trimmed.includes("\"num_views\": 6") ||
+      trimmed.includes("\"width\": 768") ||
+      trimmed.includes("\"height\": 768")
+    );
   }
   if (kind === "skybox" && mode === "advanced_panorama") {
     return !workflowIncludesAllNodeTypes(trimmed, SKYBOX_ADVANCED_NODE_TYPES);
@@ -2718,6 +2737,18 @@ export function ComfyPipelinePanel() {
     return map;
   }, [audioTracks]);
 
+  const resolveDialogueAudioTracksForShot = (shotId: string): AudioTrack[] =>
+    useStoryboardStore
+      .getState()
+      .audioTracks
+      .filter((track) => {
+        const isShotTrack = track.id === ttsTrackIdForShot(shotId) || track.id.startsWith(`${ttsTrackIdForShot(shotId)}_`);
+        if (!isShotTrack) return false;
+        if (track.kind === "narration") return false;
+        return looksLikeAudioPath(track.filePath);
+      })
+      .sort((left, right) => left.startFrame - right.startFrame || left.id.localeCompare(right.id));
+
   const stableAssetSeed = (key: string) => {
     let hash = 2166136261;
     for (let index = 0; index < key.length; index += 1) {
@@ -2756,13 +2787,16 @@ export function ComfyPipelinePanel() {
           : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。";
     const core = mergePromptFragments([
       "single character",
-      "single-view character reference",
+      "single-view full-body character turnaround reference",
       "orthographic view",
       "full body centered",
+      "fully clothed",
+      "complete outfit",
+      "top, bottom or robe, and shoes clearly visible",
       viewLabel,
       `角色：${name}`,
       angleInstruction,
-      "只保留角色设定信息",
+      "只保留角色设定信息与服装设计",
       "不要叙事场景",
       "不要与他人互动",
       normalizeStoryInput(context)
@@ -2781,7 +2815,11 @@ export function ComfyPipelinePanel() {
       "无武打动作",
       "无道具遮挡",
       "无裁切",
-      "服装统一",
+      "完整穿衣",
+      "完整服装设计",
+      "上衣、下装或长袍、鞋子都要清楚可见",
+      "禁止裸露、内衣态、泳装态、赤膊",
+      "服装统一且前后侧一致",
       "面部与体型一致",
       "写实角色参考图",
       "美术统一"
@@ -2809,9 +2847,9 @@ export function ComfyPipelinePanel() {
     NEGATIVE_PROMPT: negativePrompt,
     CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
     CHARACTER_FRONT_RIGHT_VIEW: "false",
-    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
+    CHARACTER_RIGHT_VIEW: "false",
     CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
-    CHARACTER_LEFT_VIEW: "false",
+    CHARACTER_LEFT_VIEW: view === "side" ? "true" : "false",
     CHARACTER_FRONT_LEFT_VIEW: "false"
   });
 
@@ -2845,7 +2883,11 @@ export function ComfyPipelinePanel() {
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "character")) return existing;
     const builtIn =
       mode === "advanced_multiview"
-        ? buildCharacterAdvancedWorkflowTemplateJson(selectedModel)
+        ? buildCharacterAdvancedWorkflowTemplateJson(
+            selectedModel,
+            runtimeSettings.characterTemplatePreset ?? "portrait",
+            runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+          )
         : buildCharacterWorkflowTemplateJson(
             selectedModel,
             runtimeSettings.characterTemplatePreset ?? "portrait",
@@ -4544,7 +4586,30 @@ export function ComfyPipelinePanel() {
         );
         return true;
       }
+      let dialogueAudioTracksForVideo: AudioTrack[] = [];
+      if (kind === "video" && runtimeSettings.videoGenerationMode !== "local_motion" && runtimeSettings.videoWorkflowJson.trim()) {
+        const lipSync = inspectVideoWorkflowLipSyncSupport(runtimeSettings.videoWorkflowJson, runtimeSettings.tokenMapping);
+        if (shot.dialogue.trim()) {
+          if (lipSync.usesDialogueAudioPathToken) {
+            if (!runtimeSettings.audioWorkflowJson?.trim()) {
+              appendLog(`镜头 ${shot.title} 含对白，但未配置配音工作流，当前无法自动生成口型同步音频`, "error");
+            } else {
+              const audioOk = await generateDialogueTracksForShot(shot, shotIndex, assetRuntimeSettings, force);
+              if (!audioOk) {
+                appendLog(`镜头 ${shot.title} 含对白，但未产出可用于口型同步的对白音频`, "error");
+              }
+            }
+            dialogueAudioTracksForVideo = resolveDialogueAudioTracksForShot(shot.id);
+            if (dialogueAudioTracksForVideo.length === 0) {
+              appendLog(`镜头 ${shot.title} 当前没有可注入视频工作流的角色对白音频，视频会继续生成但无法保证口型同步`, "error");
+            }
+          } else {
+            appendLog(`镜头 ${shot.title} 含对白，但当前视频工作流未引用对白音频 token，无法保证口型同步`, "error");
+          }
+        }
+      }
       const output = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, kind, latestScopedShots, latestAssets, {
+        dialogueAudioTracks: kind === "video" ? dialogueAudioTracksForVideo : undefined,
         onProgress: (progress, message) => {
           const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
           const label = kind === "image" ? "分镜图" : kind === "video" ? "镜头视频" : "镜头配音";
@@ -4791,8 +4856,26 @@ export function ComfyPipelinePanel() {
           setPipelineState("镜头视频生成中断：视频工作流预检失败");
           return false;
         }
+        const lipSync = inspectVideoWorkflowLipSyncSupport(runtimeSettings.videoWorkflowJson, runtimeSettings.tokenMapping);
+        const dialogueShotCount = shotsForRun.filter((shot) => shot.dialogue.trim().length > 0).length;
+        if (dialogueShotCount > 0) {
+          if (lipSync.usesDialogueAudioPathToken) {
+            appendLog(
+              `检测到 ${dialogueShotCount} 条含对白镜头，视频工作流已接入对白音频 token：${lipSync.matchedPathTokens.join(", ")}`
+            );
+          } else {
+            appendLog(
+              `检测到 ${dialogueShotCount} 条含对白镜头，但当前视频工作流未引用对白音频 token，无法保证口型与文字同步`,
+              "error"
+            );
+            pushToast("当前视频工作流未接入口型同步音频 token，对白镜头无法保证口型同步", "warning");
+          }
+        }
       } else {
         appendLog("当前视频生成方式：Mac 兼容本地视频，不依赖 Comfy 视频工作流");
+        if (shotsForRun.some((shot) => shot.dialogue.trim().length > 0)) {
+          appendLog("当前视频生成方式为本地单帧/首尾帧推演，对白镜头无法做真正的逐字口型同步", "error");
+        }
       }
       setPhase("running");
       let successCount = 0;
@@ -5561,7 +5644,9 @@ export function ComfyPipelinePanel() {
                 characterWorkflowJson:
                   characterAssetWorkflowMode === "advanced_multiview"
                     ? buildCharacterAdvancedWorkflowTemplateJson(
-                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+                        previous.characterTemplatePreset ?? "portrait",
+                        previous.characterRenderPreset ?? "stable_fullbody"
                       )
                     : buildCharacterWorkflowTemplateJson(
                         previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
@@ -6209,12 +6294,21 @@ export function ComfyPipelinePanel() {
                 pushToast(`视频工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
                 appendLog(`视频工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
               } else {
+                const lipSync = inspectVideoWorkflowLipSyncSupport(settings.videoWorkflowJson, settings.tokenMapping);
                 if (check.used.length === 0) {
                   pushToast("视频工作流预检通过（未检测到 token，占位由节点绑定处理）", "success");
                   appendLog("视频工作流预检通过：未检测到 token，将使用节点绑定模式");
                 } else {
                   pushToast(`视频工作流预检通过（检测到 ${check.used.length} 个 token）`, "success");
                   appendLog(`视频工作流预检通过，检测到 ${check.used.length} 个 token`);
+                }
+                if (lipSync.usesDialogueAudioPathToken) {
+                  appendLog(`视频工作流口型同步预检通过：已检测到对白音频 token ${lipSync.matchedPathTokens.join(", ")}`);
+                } else {
+                  appendLog(
+                    `视频工作流口型同步提示：未检测到对白音频 token（建议至少使用 {{${lipSync.candidatePathTokens[0]}}}）`,
+                    "error"
+                  );
                 }
               }
             }}
@@ -6351,6 +6445,42 @@ export function ComfyPipelinePanel() {
               placeholder="DIALOGUE"
               type="text"
               value={settings.tokenMapping.dialogue}
+            />
+          </label>
+          <label>
+            DialogueAudioPath Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("dialogueAudioPath", event.target.value)}
+              placeholder="DIALOGUE_AUDIO_PATH"
+              type="text"
+              value={settings.tokenMapping.dialogueAudioPath}
+            />
+          </label>
+          <label>
+            DialogueAudioPaths Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("dialogueAudioPaths", event.target.value)}
+              placeholder="DIALOGUE_AUDIO_PATHS"
+              type="text"
+              value={settings.tokenMapping.dialogueAudioPaths}
+            />
+          </label>
+          <label>
+            DialogueAudioCount Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("dialogueAudioCount", event.target.value)}
+              placeholder="DIALOGUE_AUDIO_COUNT"
+              type="text"
+              value={settings.tokenMapping.dialogueAudioCount}
+            />
+          </label>
+          <label>
+            HasDialogueAudio Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("hasDialogueAudio", event.target.value)}
+              placeholder="HAS_DIALOGUE_AUDIO"
+              type="text"
+              value={settings.tokenMapping.hasDialogueAudio}
             />
           </label>
           <label>
@@ -6670,7 +6800,7 @@ export function ComfyPipelinePanel() {
           </label>
         </div>
         <small>
-          {"工作流里使用 {{TOKEN}} 占位。分镜建议用 {{NEXT_SCENE_PROMPT}}，视频建议用 {{VIDEO_PROMPT}} 与 {{VIDEO_MODE}}，配音建议用 {{DIALOGUE}}，环境/音效建议用 {{PROMPT}}。"}
+          {"工作流里使用 {{TOKEN}} 占位。分镜建议用 {{NEXT_SCENE_PROMPT}}，视频建议用 {{VIDEO_PROMPT}}、{{VIDEO_MODE}} 和 {{DIALOGUE_AUDIO_PATH}}，配音建议用 {{DIALOGUE}}，环境/音效建议用 {{PROMPT}}。"}
         </small>
         </details>
       </section>
