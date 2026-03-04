@@ -10,10 +10,12 @@ import {
   discoverComfyLocalDirs,
   discoverComfyEndpoints,
   DEFAULT_TOKEN_MAPPING,
+  explainStoryboardVideoModeByMatureCase,
   extractLocalMotionPresetFromText,
   generateShotAsset,
   generateSkyboxFaces,
   inferComfyRootDir,
+  inferStoryboardVideoModeByMatureCase,
   installSuggestedPlugins,
   inspectWorkflowDependencies,
   listComfyCheckpointOptions,
@@ -992,14 +994,28 @@ function buildStoryVideoPrompt(text: string): string {
 }
 
 function inferVideoModeForStory(text: string, dialogue: string): "auto" | "single_frame" | "first_last_frame" {
-  const combined = `${text} ${dialogue}`.trim();
-  if (/从.+到|逐渐|慢慢|转身|起身|坐下|走向|走到|靠近|远离|推门|开门|关门|拿起|放下|抬手|落下/.test(combined)) {
-    return "first_last_frame";
+  return inferStoryboardVideoModeByMatureCase(text, dialogue, { preferAutoWhenAmbiguous: true });
+}
+
+function explainShotVideoMode(shot: Shot): string {
+  if (shot.videoMode === "single_frame") {
+    return "当前手动指定为单帧图生视频。适合对白、反应、特写和轻动作镜头。";
   }
-  if (dialogue.trim() || /注视|停顿|沉默|凝视|特写|近景|反应/.test(combined)) {
-    return "single_frame";
+  if (shot.videoMode === "first_last_frame") {
+    return "当前手动指定为首尾帧生成视频。适合有明确起点和终点变化的动作或转场镜头。";
   }
-  return "auto";
+  const explanation = explainStoryboardVideoModeByMatureCase(
+    [shot.storyPrompt ?? "", shot.videoPrompt ?? "", shot.notes ?? "", ...(shot.tags ?? [])].join(" "),
+    shot.dialogue ?? "",
+    { preferAutoWhenAmbiguous: true }
+  );
+  const label =
+    explanation.mode === "first_last_frame"
+      ? "自动建议：首尾帧生成视频。"
+      : explanation.mode === "single_frame"
+        ? "自动建议：单帧图生视频。"
+        : "自动建议：暂未命中强规则。";
+  return `${label}${explanation.reason}`;
 }
 
 function inferDialogueShotTitle(speaker: string, index: number, total: number): string {
@@ -7603,6 +7619,7 @@ export function ComfyPipelinePanel() {
                         <option value="first_last_frame">首尾帧生成视频</option>
                       </select>
                     </label>
+                    <div className="field-help">{explainShotVideoMode(shot)}</div>
                     {settings.videoGenerationMode === "local_motion" && (
                       <label>
                         本地运动样式

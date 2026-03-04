@@ -124,6 +124,7 @@ export const DEFAULT_TOKEN_MAPPING: ComfySettings["tokenMapping"] = {
 };
 
 type VideoMode = "single_frame" | "first_last_frame";
+export type StoryboardVideoModeChoice = VideoMode | "auto";
 
 type ComfyOutputAsset = {
   filename: string;
@@ -656,6 +657,103 @@ function containsAnyKeyword(raw: string, keywords: string[]): boolean {
 }
 
 const LOCAL_MOTION_TOKEN_PATTERN = /\[motion:(auto|still|fade|push_in|push_out|pan_left|pan_right)\]/i;
+const FIRST_LAST_ENDPOINT_PATTERNS = [
+  /从.+到/,
+  /由.+到/,
+  /先.+后/,
+  /逐渐/,
+  /慢慢/,
+  /最终/,
+  /直到/,
+  /一步步/,
+  /镜头.+来到/,
+  /画面.+转到/
+];
+const FIRST_LAST_ACTION_KEYWORDS = [
+  "转场",
+  "衔接",
+  "过渡",
+  "transition",
+  "走向",
+  "走到",
+  "走进",
+  "走出",
+  "跑向",
+  "跑到",
+  "进入",
+  "离开",
+  "穿过",
+  "经过",
+  "越过",
+  "跨过",
+  "靠近",
+  "远离",
+  "起身",
+  "站起",
+  "坐下",
+  "跪下",
+  "转身",
+  "回头",
+  "俯身",
+  "抬头",
+  "低头",
+  "伸手",
+  "抬手",
+  "落手",
+  "拿起",
+  "放下",
+  "放回",
+  "推门",
+  "开门",
+  "关门",
+  "拉开",
+  "推开",
+  "登上",
+  "下楼",
+  "上楼",
+  "绕过",
+  "穿越",
+  "reveals",
+  "reveal",
+  "blocking"
+];
+const SINGLE_FRAME_DIALOGUE_KEYWORDS = [
+  "对白",
+  "说话",
+  "开口",
+  "台词",
+  "反应",
+  "注视",
+  "凝视",
+  "沉默",
+  "停顿",
+  "愣住",
+  "特写",
+  "近景",
+  "中近景",
+  "肖像",
+  "半身"
+];
+const SINGLE_FRAME_AMBIENCE_KEYWORDS = [
+  "轻微",
+  "微微",
+  "呼吸感",
+  "镜头稳定",
+  "镜头固定",
+  "静止",
+  "静帧",
+  "风吹",
+  "水波",
+  "烟雾",
+  "火焰",
+  "树叶",
+  "衣摆轻晃",
+  "环境氛围",
+  "空镜",
+  "插入镜头",
+  "道具特写",
+  "产品特写"
+];
 
 export function extractLocalMotionPresetFromText(raw: string): LocalMotionPreset {
   const matched = LOCAL_MOTION_TOKEN_PATTERN.exec(raw.trim());
@@ -675,6 +773,94 @@ export function extractLocalMotionPresetFromText(raw: string): LocalMotionPreset
 
 export function stripLocalMotionPresetToken(raw: string): string {
   return raw.replace(LOCAL_MOTION_TOKEN_PATTERN, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function inferStoryboardVideoModeByMatureCase(
+  text: string,
+  dialogue = "",
+  options?: { preferAutoWhenAmbiguous?: boolean }
+): StoryboardVideoModeChoice {
+  const corpus = `${text} ${dialogue}`.trim();
+  if (!corpus) return options?.preferAutoWhenAmbiguous ? "auto" : "single_frame";
+
+  if (FIRST_LAST_ENDPOINT_PATTERNS.some((pattern) => pattern.test(corpus))) {
+    return "first_last_frame";
+  }
+  if (containsAnyKeyword(corpus, FIRST_LAST_ACTION_KEYWORDS)) {
+    return "first_last_frame";
+  }
+
+  if (dialogue.trim()) return "single_frame";
+  if (containsAnyKeyword(corpus, SINGLE_FRAME_DIALOGUE_KEYWORDS)) {
+    return "single_frame";
+  }
+  if (containsAnyKeyword(corpus, SINGLE_FRAME_AMBIENCE_KEYWORDS)) {
+    return "single_frame";
+  }
+
+  return options?.preferAutoWhenAmbiguous ? "auto" : "single_frame";
+}
+
+export function explainStoryboardVideoModeByMatureCase(
+  text: string,
+  dialogue = "",
+  options?: { preferAutoWhenAmbiguous?: boolean }
+): { mode: StoryboardVideoModeChoice; reason: string } {
+  const corpus = `${text} ${dialogue}`.trim();
+  if (!corpus) {
+    return {
+      mode: options?.preferAutoWhenAmbiguous ? "auto" : "single_frame",
+      reason: options?.preferAutoWhenAmbiguous
+        ? "文案信息不足，保留自动判断。"
+        : "文案信息不足，默认按稳定单帧镜头处理。"
+    };
+  }
+
+  const matchedEndpoint = FIRST_LAST_ENDPOINT_PATTERNS.find((pattern) => pattern.test(corpus));
+  if (matchedEndpoint) {
+    return {
+      mode: "first_last_frame",
+      reason: "检测到明确的起点到终点变化，这类镜头更适合首尾帧控制。"
+    };
+  }
+
+  const matchedFirstLastKeyword = FIRST_LAST_ACTION_KEYWORDS.find((keyword) => containsAnyKeyword(corpus, [keyword]));
+  if (matchedFirstLastKeyword) {
+    return {
+      mode: "first_last_frame",
+      reason: `检测到动作或位移关键词“${matchedFirstLastKeyword}”，更像有明确终点状态的镜头，适合首尾帧。`
+    };
+  }
+
+  if (dialogue.trim()) {
+    return {
+      mode: "single_frame",
+      reason: "检测到对白镜头，成熟做法通常优先稳定人物和构图，用单帧图生视频更稳。"
+    };
+  }
+
+  const matchedDialogueKeyword = SINGLE_FRAME_DIALOGUE_KEYWORDS.find((keyword) => containsAnyKeyword(corpus, [keyword]));
+  if (matchedDialogueKeyword) {
+    return {
+      mode: "single_frame",
+      reason: `检测到“${matchedDialogueKeyword}”这类反应/特写镜头，通常以稳定表演为主，适合单帧图生视频。`
+    };
+  }
+
+  const matchedAmbienceKeyword = SINGLE_FRAME_AMBIENCE_KEYWORDS.find((keyword) => containsAnyKeyword(corpus, [keyword]));
+  if (matchedAmbienceKeyword) {
+    return {
+      mode: "single_frame",
+      reason: `检测到“${matchedAmbienceKeyword}”这类轻动作或氛围镜头，通常不需要显式终点，适合单帧图生视频。`
+    };
+  }
+
+  return {
+    mode: options?.preferAutoWhenAmbiguous ? "auto" : "single_frame",
+    reason: options?.preferAutoWhenAmbiguous
+      ? "没有命中明确规则，先保留自动判断。"
+      : "没有命中明确规则，默认按稳定单帧镜头处理。"
+  };
 }
 
 function parseComfyViewPath(path: string): string {
@@ -887,6 +1073,7 @@ function inferVideoMode(shot: Shot, nextShot?: Shot): VideoMode {
   const corpus = [
     shot.storyPrompt ?? "",
     shot.videoPrompt ?? "",
+    shot.dialogue ?? "",
     shot.notes ?? "",
     ...(shot.tags ?? [])
   ].join(" ");
@@ -895,6 +1082,12 @@ function inferVideoMode(shot: Shot, nextShot?: Shot): VideoMode {
   }
   if (containsAnyKeyword(corpus, ["单帧", "single frame", "图生视频"])) {
     return "single_frame";
+  }
+  const inferred = inferStoryboardVideoModeByMatureCase(corpus, shot.dialogue ?? "", {
+    preferAutoWhenAmbiguous: false
+  });
+  if (inferred === "first_last_frame" || inferred === "single_frame") {
+    return inferred;
   }
   if (shot.generatedImagePath?.trim() && nextShot?.generatedImagePath?.trim()) {
     if (containsAnyKeyword(corpus, ["转场", "衔接", "过渡", "transition"])) {
