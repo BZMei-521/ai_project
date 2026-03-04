@@ -26,6 +26,8 @@ export type ComfySettings = {
   skyboxAssetNegativePrompt?: string;
   audioWorkflowJson?: string;
   soundWorkflowJson?: string;
+  globalVisualStylePrompt?: string;
+  globalStyleNegativePrompt?: string;
   videoGenerationMode?: "comfy" | "local_motion";
   renderWidth?: number;
   renderHeight?: number;
@@ -640,6 +642,21 @@ function normalizePromptBody(value: string): string {
     .join("\n");
 }
 
+function appendPromptSection(base: string, sectionTitle: string, sectionBody: string): string {
+  const content = normalizePromptBody(base);
+  const addition = normalizePromptBody(sectionBody);
+  if (!addition) return content;
+  return [content, `${sectionTitle}：${addition}`].filter((item) => item.length > 0).join("\n");
+}
+
+function appendNegativePrompt(base: string, extra: string): string {
+  const primary = normalizePromptBody(base);
+  const addition = normalizePromptBody(extra).replace(/\n/g, ", ");
+  if (!addition) return primary;
+  if (!primary) return addition;
+  return `${primary}, ${addition}`;
+}
+
 function toNextScenePrompt(value: string): string {
   const compact = normalizePromptBody(value);
   if (!compact) return "Next Scene: empty shot";
@@ -861,6 +878,33 @@ export function explainStoryboardVideoModeByMatureCase(
       ? "没有命中明确规则，先保留自动判断。"
       : "没有命中明确规则，默认按稳定单帧镜头处理。"
   };
+}
+
+function applyGlobalStyleToTokens(
+  settings: ComfySettings,
+  tokens: Record<string, string>,
+  kind: "image" | "video" | "audio"
+): Record<string, string> {
+  const visualStyle = normalizePromptBody(settings.globalVisualStylePrompt ?? "");
+  const styleNegative = normalizePromptBody(settings.globalStyleNegativePrompt ?? "");
+  if (!visualStyle && !styleNegative) return tokens;
+
+  const next = { ...tokens };
+  if (visualStyle) {
+    if (kind === "image") {
+      next.PROMPT = appendPromptSection(next.PROMPT ?? "", "全局视觉风格锚点", visualStyle);
+      next.NEXT_SCENE_PROMPT = appendPromptSection(next.NEXT_SCENE_PROMPT ?? "", "全局视觉风格锚点", visualStyle);
+    }
+    if (kind === "video") {
+      next.VIDEO_PROMPT = appendPromptSection(next.VIDEO_PROMPT ?? "", "全局视觉风格锚点", visualStyle);
+    }
+    next.GLOBAL_VISUAL_STYLE = visualStyle;
+  }
+  if (styleNegative && kind !== "audio") {
+    next.NEGATIVE_PROMPT = appendNegativePrompt(next.NEGATIVE_PROMPT ?? "", styleNegative);
+    next.GLOBAL_STYLE_NEGATIVE = styleNegative;
+  }
+  return next;
 }
 
 function parseComfyViewPath(path: string): string {
@@ -1698,7 +1742,11 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   const preferredCharacterView = tokens.PREFERRED_CHARACTER_VIEW?.trim().toLowerCase() ?? "";
   const previousSceneTitle = tokens.PREV_SCENE_SHOT_TITLE?.trim() ?? "";
   const previousCharacterTitle = tokens.PREV_CHARACTER_SHOT_TITLE?.trim() ?? "";
+  const globalVisualStyle = tokens.GLOBAL_VISUAL_STYLE?.trim() ?? "";
   const pieces = ["Treat every provided input image as a binding reference, not optional inspiration."];
+  if (globalVisualStyle) {
+    pieces.push(`Keep one unified visual style across every shot: ${globalVisualStyle}.`);
+  }
   if (previousSceneTitle) {
     pieces.push(
       `Maintain visual continuity from the previous same-scene shot ${previousSceneTitle}; keep fixed landmarks and environment layout stable.`
@@ -3487,6 +3535,7 @@ export async function generateShotAsset(
         )
       };
     }
+    tokens = applyGlobalStyleToTokens(settings, tokens, kind);
     if (kind === "video") {
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }

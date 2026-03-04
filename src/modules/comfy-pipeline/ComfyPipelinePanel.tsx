@@ -1280,6 +1280,8 @@ function loadSettings(): ComfySettings {
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
+      globalVisualStylePrompt: "",
+      globalStyleNegativePrompt: "",
       videoGenerationMode: defaultVideoGenerationMode(),
       tokenMapping: { ...DEFAULT_TOKEN_MAPPING }
     };
@@ -1377,6 +1379,10 @@ function loadSettings(): ComfySettings {
           : DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: typeof parsed.audioWorkflowJson === "string" ? parsed.audioWorkflowJson : "",
       soundWorkflowJson: typeof parsed.soundWorkflowJson === "string" ? parsed.soundWorkflowJson : "",
+      globalVisualStylePrompt:
+        typeof parsed.globalVisualStylePrompt === "string" ? parsed.globalVisualStylePrompt : "",
+      globalStyleNegativePrompt:
+        typeof parsed.globalStyleNegativePrompt === "string" ? parsed.globalStyleNegativePrompt : "",
       videoGenerationMode: parsed.videoGenerationMode ?? defaultVideoGenerationMode(),
       tokenMapping: {
         ...DEFAULT_TOKEN_MAPPING,
@@ -1409,6 +1415,8 @@ function loadSettings(): ComfySettings {
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
+      globalVisualStylePrompt: "",
+      globalStyleNegativePrompt: "",
       videoGenerationMode: defaultVideoGenerationMode(),
       tokenMapping: { ...DEFAULT_TOKEN_MAPPING }
     };
@@ -5312,6 +5320,28 @@ export function ComfyPipelinePanel() {
             本模式不依赖 ComfyUI 视频模型。会用当前分镜图或首尾帧在本地生成可拼接的镜头视频，适合 Mac。
           </div>
         )}
+        <label className="comfy-script-block">
+          全局视觉风格锚点
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, globalVisualStylePrompt: event.target.value }))
+            }
+            placeholder="例如：写实电影质感，暖棕低饱和，35mm 胶片颗粒，柔和侧光，真实材质，统一镜头语言。会自动注入角色、天空盒、分镜图和视频。"
+            rows={3}
+            value={settings.globalVisualStylePrompt ?? ""}
+          />
+        </label>
+        <label className="comfy-script-block">
+          全局反风格约束
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, globalStyleNegativePrompt: event.target.value }))
+            }
+            placeholder="例如：二次元，卡通，赛博霓虹，高饱和，夸张磨皮，过曝，廉价 CG，风格漂移。会自动并入负面提示词。"
+            rows={3}
+            value={settings.globalStyleNegativePrompt ?? ""}
+          />
+        </label>
         <label className="comfy-script-block">
           角色三视图工作流（JSON）
           <textarea
