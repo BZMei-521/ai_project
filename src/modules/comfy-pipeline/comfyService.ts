@@ -1124,7 +1124,10 @@ type WorkflowNode = {
 type WeightedImageRef = {
   source: string;
   weight: number;
+  role: "scene_primary" | "scene_secondary" | "character_front" | "character_side" | "character_back";
 };
+
+type CharacterReferenceView = "front" | "side" | "back";
 
 function nodeWidgetList(node: WorkflowNode): unknown[] | null {
   return Array.isArray(node.widgets_values) ? node.widgets_values : null;
@@ -1297,24 +1300,186 @@ function uniquePreserveOrder(values: string[]): string[] {
   return output;
 }
 
+function weightedImageRefPriority(role: WeightedImageRef["role"]): number {
+  switch (role) {
+    case "character_front":
+      return 150;
+    case "scene_primary":
+      return 140;
+    case "character_side":
+      return 130;
+    case "character_back":
+      return 120;
+    case "scene_secondary":
+    default:
+      return 110;
+  }
+}
+
+function joinNaturalChineseList(values: string[]): string {
+  const filtered = values.map((item) => item.trim()).filter((item) => item.length > 0);
+  if (filtered.length === 0) return "";
+  if (filtered.length === 1) return filtered[0]!;
+  if (filtered.length === 2) return `${filtered[0]}和${filtered[1]}`;
+  return `${filtered.slice(0, -1).join("、")}和${filtered[filtered.length - 1]}`;
+}
+
+function skyboxFaceLabel(face: SkyboxFace): string {
+  if (face === "front") return "正前";
+  if (face === "right") return "右侧";
+  if (face === "back") return "背面";
+  if (face === "left") return "左侧";
+  if (face === "up") return "上方";
+  if (face === "down") return "下方";
+  return face;
+}
+
+function characterReferenceViewLabel(view: CharacterReferenceView): string {
+  if (view === "front") return "正面";
+  if (view === "side") return "侧面";
+  if (view === "back") return "背面";
+  return view;
+}
+
+function inferCharacterReferencePlan(shot: Shot): {
+  primaryView: CharacterReferenceView;
+  secondaryViews: CharacterReferenceView[];
+} {
+  const corpus = [
+    shot.title ?? "",
+    shot.storyPrompt ?? "",
+    shot.videoPrompt ?? "",
+    shot.notes ?? "",
+    ...(shot.tags ?? [])
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const prefersBack = containsAnyKeyword(corpus, [
+    "背影",
+    "背面",
+    "背对",
+    "背身",
+    "后方",
+    "后背",
+    "rear",
+    "back view",
+    "back-facing"
+  ]);
+  if (prefersBack) {
+    return { primaryView: "back", secondaryViews: ["side", "front"] };
+  }
+
+  const prefersSide = containsAnyKeyword(corpus, [
+    "侧身",
+    "侧面",
+    "侧脸",
+    "侧视",
+    "侧拍",
+    "斜侧",
+    "profile",
+    "side view",
+    "three-quarter",
+    "3/4"
+  ]);
+  if (prefersSide) {
+    return { primaryView: "side", secondaryViews: ["front", "back"] };
+  }
+
+  return { primaryView: "front", secondaryViews: ["side", "back"] };
+}
+
+function characterReferenceWeight(view: CharacterReferenceView, plan: ReturnType<typeof inferCharacterReferencePlan>): number {
+  if (view === plan.primaryView) return 1;
+  const secondaryIndex = plan.secondaryViews.indexOf(view);
+  if (secondaryIndex === 0) return 0.62;
+  if (secondaryIndex === 1) return 0.34;
+  return 0;
+}
+
+function buildShotReferenceDirective(
+  shot: Shot,
+  sceneAsset: Asset | undefined,
+  skyboxFaces: SkyboxFace[],
+  characterAssets: Asset[]
+): string {
+  const lines: string[] = [];
+  const characterPlan = characterAssets.length > 0 ? inferCharacterReferencePlan(shot) : null;
+  if (sceneAsset?.type === "skybox") {
+    const faceText = joinNaturalChineseList(skyboxFaces.map((face) => skyboxFaceLabel(face)));
+    lines.push(
+      `场景硬参考：必须以天空盒“${sceneAsset.name}”为准，优先参考${faceText || "正前"}视角，保持地平线、空间布局、建筑或地貌朝向、时间氛围与主色调一致，不得改成其他地点。`
+    );
+  } else if (sceneAsset?.type === "scene") {
+    lines.push(`场景硬参考：必须保持场景“${sceneAsset.name}”的环境布局、主体元素、光线和色调一致，不得重设计场景。`);
+  }
+  if (characterAssets.length > 0) {
+    for (const asset of characterAssets) {
+      const availableViews = [
+        asset.characterFrontPath || asset.filePath ? "front" : "",
+        asset.characterSidePath ? "side" : "",
+        asset.characterBackPath ? "back" : ""
+      ].filter((item) => item.length > 0);
+      const viewText = availableViews.length > 0 ? availableViews.join("/") : "front";
+      const preferredView = characterPlan ? characterReferenceViewLabel(characterPlan.primaryView) : "正面";
+      lines.push(
+        `人物硬参考：角色“${asset.name}”必须严格匹配三视图，保持脸型、发型、服装、配色、体型和道具一致；当前镜头优先匹配${preferredView}参考，可用视图为 ${viewText}，不得换脸、换装、换配色或混入其他角色特征。`
+      );
+    }
+  }
+  if (lines.length > 0) {
+    lines.push("执行规则：参考图优先级高于自由发挥，先锁定参考一致性，再生成镜头动作和构图。");
+  }
+  return lines.join("\n");
+}
+
+function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
+  const sceneName = tokens.SCENE_REF_NAME?.trim() ?? "";
+  const characterNames = splitCsv(tokens.CHARACTER_REF_NAMES);
+  const preferredCharacterView = tokens.PREFERRED_CHARACTER_VIEW?.trim().toLowerCase() ?? "";
+  const pieces = ["Treat every provided input image as a binding reference, not optional inspiration."];
+  if (sceneName) {
+    pieces.push(
+      `Lock the environment to the scene reference ${sceneName}; keep layout, horizon, camera direction, lighting mood, and materials consistent.`
+    );
+  }
+  if (characterNames.length > 0) {
+    pieces.push(
+      `Lock character identity for ${characterNames.join(", ")}; keep face, hair, costume, silhouette, proportions, and colors consistent, and choose ${preferredCharacterView || "front/side/back"} appearance according to the shot angle.`
+    );
+  }
+  pieces.push(
+    "Generate one coherent cinematic shot in the same world. Do not redesign the environment, do not change character identity, and do not ignore any provided reference image."
+  );
+  return pieces.join(" ");
+}
+
 function extractImageReferenceSources(shot: Shot, assets: Asset[]): WeightedImageRef[] {
   const sceneAsset = assets.find(
     (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
   );
+  const characterPlan = inferCharacterReferencePlan(shot);
   const sceneRefs: WeightedImageRef[] = [];
   if (sceneAsset?.type === "scene") {
-    if ((sceneAsset.filePath ?? "").trim()) sceneRefs.push({ source: sceneAsset.filePath, weight: 1 });
+    if ((sceneAsset.filePath ?? "").trim()) {
+      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, role: "scene_primary" });
+    }
   } else if (sceneAsset?.type === "skybox") {
+    const plan = inferSkyboxReferencePlan(shot);
     const faces = inferSkyboxFacesFromShot(shot);
     for (const face of faces) {
       const facePath = sceneAsset.skyboxFaces?.[face] ?? "";
       if (!facePath.trim()) continue;
       const weight = skyboxFaceWeight(shot, face);
       if (weight <= 0) continue;
-      sceneRefs.push({ source: facePath, weight });
+      sceneRefs.push({
+        source: facePath,
+        weight,
+        role: face === plan.primaryFace ? "scene_primary" : "scene_secondary"
+      });
     }
     if (sceneRefs.length === 0 && (sceneAsset.filePath ?? "").trim()) {
-      sceneRefs.push({ source: sceneAsset.filePath, weight: 1 });
+      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, role: "scene_primary" });
     }
   }
 
@@ -1326,18 +1491,35 @@ function extractImageReferenceSources(shot: Shot, assets: Asset[]): WeightedImag
     const front = asset.characterFrontPath || asset.filePath || "";
     const side = asset.characterSidePath || "";
     const back = asset.characterBackPath || "";
-    if (front.trim()) refs.push({ source: front, weight: 1 });
-    if (side.trim()) refs.push({ source: side, weight: 0.8 });
-    if (back.trim()) refs.push({ source: back, weight: 0.8 });
+    const frontWeight = characterReferenceWeight("front", characterPlan);
+    const sideWeight = characterReferenceWeight("side", characterPlan);
+    const backWeight = characterReferenceWeight("back", characterPlan);
+    if (front.trim() && frontWeight > 0) refs.push({ source: front, weight: frontWeight, role: "character_front" });
+    if (side.trim() && sideWeight > 0) refs.push({ source: side, weight: sideWeight, role: "character_side" });
+    if (back.trim() && backWeight > 0) refs.push({ source: back, weight: backWeight, role: "character_back" });
     return refs;
   });
   const merged = [...sceneRefs, ...characterRefs].filter((item) => item.source.trim().length > 0);
-  const deduped = new Map<string, number>();
+  const deduped = new Map<string, WeightedImageRef>();
   for (const item of merged) {
-    const prev = deduped.get(item.source) ?? 0;
-    deduped.set(item.source, Math.max(prev, item.weight));
+    const prev = deduped.get(item.source);
+    if (!prev) {
+      deduped.set(item.source, item);
+      continue;
+    }
+    const prevPriority = weightedImageRefPriority(prev.role);
+    const currentPriority = weightedImageRefPriority(item.role);
+    if (currentPriority > prevPriority || (currentPriority === prevPriority && item.weight > prev.weight)) {
+      deduped.set(item.source, { ...item, weight: Math.max(prev.weight, item.weight) });
+      continue;
+    }
+    deduped.set(item.source, { ...prev, weight: Math.max(prev.weight, item.weight) });
   }
-  return [...deduped.entries()].map(([source, weight]) => ({ source, weight }));
+  return [...deduped.values()].sort((left, right) => {
+    const priorityDelta = weightedImageRefPriority(right.role) - weightedImageRefPriority(left.role);
+    if (priorityDelta !== 0) return priorityDelta;
+    return right.weight - left.weight;
+  }).slice(0, 6);
 }
 
 async function stageCharacterReferenceImages(
@@ -1608,6 +1790,14 @@ function normalizeQwenPromptInputBindings(workflow: Record<string, unknown>, pro
   }
 }
 
+function normalizeQwenInstructionBindings(workflow: Record<string, unknown>, instructionText: string) {
+  const nodes = workflowNodes(workflow);
+  for (const node of nodes) {
+    if (node.type !== "TextEncodeQwenImageEditPlusAdvance_lrzjason" || typeof node.id !== "number") continue;
+    setNodeWidgetValue(node, 5, instructionText);
+  }
+}
+
 function applyDynamicCharacterRefsForImageWorkflow(
   workflow: Record<string, unknown>,
   weightedImageRefs: Array<{ filename: string; weight: number }>
@@ -1745,7 +1935,9 @@ function applyFisherWorkflowBindings(
   // which causes prompt validation errors in API mode. Always force prompt to widget text,
   // including cloned encoders created for extra reference images.
   const qwenPromptText = tokens.NEXT_SCENE_PROMPT || tokens.PROMPT;
+  const qwenInstructionText = buildQwenReferenceInstruction(tokens);
   normalizeQwenPromptInputBindings(workflow, qwenPromptText);
+  normalizeQwenInstructionBindings(workflow, qwenInstructionText);
   setNodeWidgetValue(byId.get(123), 0, qwenPromptText);
 
   if (kind === "image") {
@@ -1929,10 +2121,14 @@ function inferPromptTokens(
   const characterVoiceProfiles = characterAssets.map((item) => item.voiceProfile?.trim() || "").filter(Boolean);
   const characterAllViewPaths = [...characterFrontPaths, ...characterSidePaths, ...characterBackPaths].filter(Boolean);
   const charSlots = [0, 1, 2, 3].map((slotIndex) => characterAssets[slotIndex]);
+  const characterPlan = inferCharacterReferencePlan(shot);
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
-  const promptBase = [sceneContext, characterContext, promptBaseRaw].filter((item) => item.length > 0).join("\n");
+  const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets);
+  const promptBase = [referenceDirective, sceneContext, characterContext, promptBaseRaw]
+    .filter((item) => item.length > 0)
+    .join("\n");
   const nextScenePrompt = toNextScenePrompt(promptBase);
   const videoPrompt = toVideoPrompt(shot, mode);
   const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
@@ -1974,6 +2170,7 @@ function inferPromptTokens(
     SKYBOX_FACE_WEIGHTS: skyboxFaceWeightsText,
     CHARACTER_REF_PATHS: characterAllViewPaths.join(","),
     CHARACTER_REF_NAMES: characterAssets.map((item) => item.name).join(","),
+    PREFERRED_CHARACTER_VIEW: characterPlan.primaryView,
     CHARACTER_FRONT_PATHS: characterFrontPaths.join(","),
     CHARACTER_SIDE_PATHS: characterSidePaths.join(","),
     CHARACTER_BACK_PATHS: characterBackPaths.join(","),
