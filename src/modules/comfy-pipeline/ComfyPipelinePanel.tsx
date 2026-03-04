@@ -1682,7 +1682,33 @@ function formatAssetStatus(status: AssetStatus): string {
 }
 
 function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReferencePreview {
-  const characters = (shot.characterRefs ?? [])
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const characterAssets = assets.filter((asset) => asset.type === "character");
+  const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const context = compactTextParts(
+    shot.title,
+    shot.storyPrompt,
+    shot.notes,
+    shot.dialogue,
+    shot.sourceCharacterNames?.join("、"),
+    shot.sourceSceneName
+  );
+  const matchedCharacterIds = uniqueEntities([
+    ...(shot.characterRefs ?? []).filter((id) => assetById.get(id)?.type === "character"),
+    ...(shot.sourceCharacterNames ?? [])
+      .map((name) => findMatchingAssetId(assets, "character", name))
+      .filter(Boolean),
+    ...extractCharacterCandidates(context)
+      .map((name) => findMatchingAssetId(assets, "character", name))
+      .filter(Boolean),
+    ...characterAssets
+      .filter((asset) => context.includes(asset.name))
+      .map((asset) => asset.id)
+  ]);
+  if (matchedCharacterIds.length === 0 && shotLooksCharacterDriven(shot) && characterAssets.length > 0 && characterAssets.length <= 2) {
+    matchedCharacterIds.push(...characterAssets.map((asset) => asset.id));
+  }
+  const characters = matchedCharacterIds
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item))
     .map((asset) => {
@@ -1696,8 +1722,16 @@ function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReference
       ].filter((item) => item.length > 0);
       return { id: asset.id, name: asset.name, thumbs, views };
     });
+  const inferredSceneName = sanitizeSceneCandidate(shot.sourceSceneName?.trim() || inferSceneName(context));
+  const resolvedSceneId =
+    (shot.sceneRefId?.trim() &&
+    assets.some((item) => item.id === shot.sceneRefId && (item.type === "scene" || item.type === "skybox"))
+      ? shot.sceneRefId
+      : "") ||
+    (inferredSceneName ? findMatchingAssetId(assets, "skybox", inferredSceneName) : "") ||
+    (skyboxAssets.length === 1 ? skyboxAssets[0]?.id ?? "" : "");
   const sceneAsset = assets.find(
-    (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
+    (item) => item.id === resolvedSceneId && (item.type === "scene" || item.type === "skybox")
   );
   if (!sceneAsset) return { characters };
   if (sceneAsset.type === "skybox") {
@@ -1747,6 +1781,110 @@ function describeShotReferencePreview(preview: ShotReferencePreview): string {
     );
   }
   return parts.length > 0 ? parts.join("；") : "未绑定角色三视图或天空盒";
+}
+
+function shotLooksCharacterDriven(shot: Shot): boolean {
+  const corpus = compactTextParts(
+    shot.title,
+    shot.storyPrompt,
+    shot.notes,
+    shot.dialogue,
+    shot.tags.join("、"),
+    shot.sourceCharacterNames?.join("、")
+  );
+  return (
+    Boolean(shot.dialogue.trim()) ||
+    (shot.characterRefs?.length ?? 0) > 0 ||
+    (shot.sourceCharacterNames?.length ?? 0) > 0 ||
+    /人物|角色|对白|对峙|挥拳|冲拳|出拳|闪避|反击|回头|看向|转身|走向|逼近|交手|fight|punch|kick|dodge|duel|face[- ]?off/i.test(corpus)
+  );
+}
+
+function deriveShotBindingRepairs(
+  shots: Shot[],
+  assets: Asset[]
+): {
+  patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }>;
+  repairedCharacterShots: number;
+  repairedSceneShots: number;
+} {
+  const characterAssets = assets.filter((asset) => asset.type === "character");
+  const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }> = [];
+  let repairedCharacterShots = 0;
+  let repairedSceneShots = 0;
+
+  for (let index = 0; index < shots.length; index += 1) {
+    const shot = shots[index]!;
+    const previousShot = index > 0 ? shots[index - 1] : undefined;
+    const context = compactTextParts(
+      shot.title,
+      shot.storyPrompt,
+      shot.notes,
+      shot.dialogue,
+      shot.sourceCharacterNames?.join("、"),
+      shot.sourceSceneName
+    );
+
+    const nextCharacterRefs = uniqueEntities([
+      ...(shot.characterRefs ?? []).filter((id) => assets.some((asset) => asset.id === id && asset.type === "character")),
+      ...(shot.sourceCharacterNames ?? [])
+        .map((name) => findMatchingAssetId(assets, "character", name))
+        .filter(Boolean),
+      ...extractCharacterCandidates(context)
+        .map((name) => findMatchingAssetId(assets, "character", name))
+        .filter(Boolean),
+      ...characterAssets
+        .filter((asset) => context.includes(asset.name))
+        .map((asset) => asset.id)
+    ]);
+
+    if (nextCharacterRefs.length === 0 && shotLooksCharacterDriven(shot)) {
+      if ((previousShot?.characterRefs?.length ?? 0) > 0) {
+        nextCharacterRefs.push(...(previousShot?.characterRefs ?? []));
+      } else if (characterAssets.length > 0 && characterAssets.length <= 2) {
+        nextCharacterRefs.push(...characterAssets.map((asset) => asset.id));
+      }
+    }
+
+    const inferredSceneName = sanitizeSceneCandidate(shot.sourceSceneName?.trim() || inferSceneName(context));
+    const nextSceneRefId =
+      (shot.sceneRefId?.trim() &&
+      assets.some((asset) => asset.id === shot.sceneRefId && (asset.type === "scene" || asset.type === "skybox"))
+        ? shot.sceneRefId
+        : "") ||
+      (inferredSceneName ? findMatchingAssetId(assets, "skybox", inferredSceneName) : "") ||
+      (previousShot?.sceneRefId?.trim() &&
+      assets.some((asset) => asset.id === previousShot.sceneRefId && (asset.type === "scene" || asset.type === "skybox"))
+        ? previousShot.sceneRefId
+        : "") ||
+      (skyboxAssets.length === 1 ? skyboxAssets[0]?.id ?? "" : "");
+
+    const fields: { characterRefs: string[]; sceneRefId: string } = {
+      characterRefs: shot.characterRefs ?? [],
+      sceneRefId: shot.sceneRefId ?? ""
+    };
+    const normalizedCharacterRefs = uniqueEntities(nextCharacterRefs);
+    if (
+      normalizedCharacterRefs.length > 0 &&
+      normalizedCharacterRefs.join(",") !== uniqueEntities(shot.characterRefs ?? []).join(",")
+    ) {
+      fields.characterRefs = normalizedCharacterRefs;
+      repairedCharacterShots += 1;
+    }
+    if (nextSceneRefId && nextSceneRefId !== (shot.sceneRefId ?? "")) {
+      fields.sceneRefId = nextSceneRefId;
+      repairedSceneShots += 1;
+    }
+    if (
+      fields.characterRefs.join(",") !== uniqueEntities(shot.characterRefs ?? []).join(",") ||
+      fields.sceneRefId !== (shot.sceneRefId ?? "")
+    ) {
+      patches.push({ shotId: shot.id, fields });
+    }
+  }
+
+  return { patches, repairedCharacterShots, repairedSceneShots };
 }
 
 function formatPipelineLogText(items: PipelineLogItem[]): string {
@@ -5119,6 +5257,31 @@ export function ComfyPipelinePanel() {
         setPipelineState("分镜图生成中断：图片工作流预检失败");
         return false;
       }
+      if ((runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided") {
+        const dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, runtimeSettings.imageWorkflowJson);
+        if (dependencyReport.missingNodeTypes.length > 0) {
+          setLastDependencyHints(dependencyReport.hints);
+          setStoryboardWorkflowDiagnostic((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  dependencyReport
+                }
+              : previous
+          );
+          const hintPlugins =
+            dependencyReport.hints.length > 0
+              ? dependencyReport.hints.map((item) => item.plugin).join("、")
+              : "无";
+          appendLog(
+            `分镜图生成中断：成熟资产约束模板缺少节点 ${dependencyReport.missingNodeTypes.join("、")}；建议先安装 ${hintPlugins}`,
+            "error"
+          );
+          pushToast("成熟分镜模板缺少必需节点，请先体检并安装建议插件", "error");
+          setPipelineState("分镜图生成中断：成熟分镜模板缺少节点");
+          return false;
+        }
+      }
       setPhase("running");
       if (!skipProvision) {
         appendLog("分镜图前置资产阶段已启用：将先检查角色三视图与场景天空盒");
@@ -5128,6 +5291,13 @@ export function ComfyPipelinePanel() {
           appendLog("分镜图生成中断：前置资产生成未完成", "error");
           return false;
         }
+      }
+      const bindingRepair = deriveShotBindingRepairs(getScopedShotsSnapshot(), useStoryboardStore.getState().assets);
+      if (bindingRepair.patches.length > 0) {
+        bindingRepair.patches.forEach((patch) => updateShotFields(patch.shotId, patch.fields));
+        appendLog(
+          `分镜资产绑定修复：补回角色引用 ${bindingRepair.repairedCharacterShots} 条 / 场景引用 ${bindingRepair.repairedSceneShots} 条`
+        );
       }
       const latestShotsForRun = getScopedShotsSnapshot();
       let successCount = 0;
