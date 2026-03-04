@@ -89,7 +89,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -349,6 +349,30 @@ function buildSkyboxPanoramaWorkflowTemplateJson(checkpointName: string, preset:
     }
   }
   return JSON.stringify(template, null, 2);
+}
+
+function mergePromptFragments(parts: Array<string | null | undefined>): string {
+  return parts
+    .map((item) => item?.trim() ?? "")
+    .filter((item) => item.length > 0)
+    .join("，");
+}
+
+function appendNegativePrompt(base: string, extras: string[]): string {
+  const normalized = base
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  const seen = new Set(normalized.map((item) => item.toLowerCase()));
+  for (const extra of extras) {
+    const item = extra.trim();
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(item);
+  }
+  return normalized.join(", ");
 }
 
 type GenerationPhase = "idle" | "running";
@@ -2700,15 +2724,45 @@ export function ComfyPipelinePanel() {
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "左侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
-    const orthographicInstruction =
+    const angleInstruction =
       view === "front"
-        ? "正面 0 度，身体朝向镜头，双脚完整落地，标准角色设定板。"
+        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。"
         : view === "side"
-          ? "左侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面左侧，只展示单人侧面轮廓。"
-          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟。";
-    return `角色正交三视图设定板，${viewLabel}，single character turnaround sheet，orthographic view，full body centered。角色：${name}。${orthographicInstruction} 仅保留角色设定信息，不要叙事场景，不要与他人互动。${normalizeStoryInput(
-      context
-    )}。严格要求：${backgroundPrompt}，A-pose 或自然站姿，站立稳定，单张图只允许一个角色，无第二人物，无群像，无场景叙事，无武打动作，无道具遮挡，无裁切，服装统一，面部与体型一致，写实角色设定板，美术统一。`;
+          ? "左侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面左侧，只允许左侧单角度。"
+          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。";
+    const core = mergePromptFragments([
+      "single character",
+      "single-view character reference",
+      "orthographic view",
+      "full body centered",
+      viewLabel,
+      `角色：${name}`,
+      angleInstruction,
+      "只保留角色设定信息",
+      "不要叙事场景",
+      "不要与他人互动",
+      normalizeStoryInput(context)
+    ]);
+    const constraints = mergePromptFragments([
+      backgroundPrompt,
+      "A-pose 或自然站姿",
+      "站立稳定",
+      "单张图只允许一个角色",
+      "单张图只允许一个角度",
+      "禁止同画面出现第二角度、第二姿态、第二个分身",
+      "禁止多视图拼版、转面设定板、拼图排版、分屏",
+      "无第二人物",
+      "无群像",
+      "无场景叙事",
+      "无武打动作",
+      "无道具遮挡",
+      "无裁切",
+      "服装统一",
+      "面部与体型一致",
+      "写实角色参考图",
+      "美术统一"
+    ]);
+    return `${core}。严格要求：${constraints}。`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -2721,11 +2775,6 @@ export function ComfyPipelinePanel() {
     const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
     return `${prompt}。${presetPrompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
   };
-
-  const buildCharacterMultiviewPrompt = (name: string, context: string) =>
-    `single character turnaround sheet，orthographic multiview character reference，full body centered。角色：${name}。${normalizeStoryInput(
-      context
-    )}。严格要求：服装统一，发型统一，面部与体型一致，单张图只允许一个角色，无第二人物，无群像，无场景叙事，无裁切，无道具遮挡，写实角色设定板，美术统一。`;
 
   const buildCharacterViewSelectionTokenOverrides = (
     view: "front" | "side" | "back",
@@ -2832,7 +2881,26 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
-    const negativePrompt = runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
+    const negativePrompt = appendNegativePrompt(
+      runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+      [
+        "single angle only",
+        "multiple angles",
+        "two angles",
+        "multi view",
+        "multiview",
+        "turnaround sheet",
+        "character sheet",
+        "contact sheet",
+        "split screen",
+        "diptych",
+        "triptych",
+        "collage",
+        "duplicate pose",
+        "duplicate body",
+        "mirrored body"
+      ]
+    );
 
     if (mode !== "advanced_multiview") {
       const [front, side, back] = await Promise.all([
@@ -2894,12 +2962,11 @@ export function ComfyPipelinePanel() {
       }
     );
     const referencePath = referenceFront.localPath || referenceFront.previewUrl;
-    const multiviewPrompt = buildCharacterMultiviewPrompt(name, context);
     try {
       const [front, side, back] = await Promise.all([
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed + 11),
           0,
           "image",
           [],
@@ -2911,7 +2978,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 12),
           0,
           "image",
           [],
@@ -2923,7 +2990,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 13),
           0,
           "image",
           [],
