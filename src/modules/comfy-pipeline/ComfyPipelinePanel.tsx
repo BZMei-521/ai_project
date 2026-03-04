@@ -3295,18 +3295,8 @@ export function ComfyPipelinePanel() {
       );
     } catch (error) {
       if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
-      appendLog(`天空盒高级全景工作流不可用，已自动降级为基础六面模板：${String(error)}`, "error");
-      const fallbackWorkflow = buildSkyboxWorkflowTemplateJson(
-        runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
-        runtimeSettings.skyboxTemplatePreset ?? "wide"
-      );
-      result = await generateSkyboxFaces(
-        {
-          ...runtimeSettings,
-          skyboxWorkflowJson: fallbackWorkflow,
-          skyboxAssetWorkflowMode: "basic_builtin"
-        },
-        description
+      throw new Error(
+        `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
       );
     }
     const primaryPath =
