@@ -1,0 +1,198 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "{{STORYBOARD_IMAGE_MODEL}}"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "image": "{{SCENE_REF_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "3": {
+    "inputs": {
+      "pixels": [
+        "2",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEEncode"
+  },
+  "4": {
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "{{PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "{{NEGATIVE_PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "6": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "preset": "PLUS (high strength)"
+    },
+    "class_type": "IPAdapterUnifiedLoader"
+  },
+  "7": {
+    "inputs": {
+      "image": "{{CHAR1_PRIMARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "8": {
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "7",
+        0
+      ],
+      "weight": "{{CHAR1_PRIMARY_WEIGHT}}",
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 1,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "9": {
+    "inputs": {
+      "image": "{{CHAR1_SECONDARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "10": {
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "9",
+        0
+      ],
+      "weight": "{{CHAR1_SECONDARY_WEIGHT}}",
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 1,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "11": {
+    "inputs": {
+      "image": "{{CHAR2_PRIMARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "12": {
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "11",
+        0
+      ],
+      "weight": "{{CHAR2_PRIMARY_WEIGHT}}",
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 1,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "13": {
+    "inputs": {
+      "model": [
+        "12",
+        0
+      ],
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "5",
+        0
+      ],
+      "latent_image": [
+        "3",
+        0
+      ],
+      "seed": "{{SEED}}",
+      "steps": "{{STORYBOARD_STEPS}}",
+      "cfg": "{{STORYBOARD_CFG}}",
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": "{{STORYBOARD_DENOISE}}"
+    },
+    "class_type": "KSampler"
+  },
+  "14": {
+    "inputs": {
+      "samples": [
+        "13",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "15": {
+    "inputs": {
+      "filename_prefix": "Storyboard/image_asset_guided_{{SHOT_ID}}",
+      "images": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  }
+}

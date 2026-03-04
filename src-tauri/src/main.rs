@@ -1721,6 +1721,96 @@ fn mux_video_with_audio_tracks(
 }
 
 #[tauri::command]
+fn mix_audio_tracks(
+    app: tauri::AppHandle,
+    fps: i64,
+    audio_tracks: Vec<AudioTrackPayload>,
+) -> Result<ExportResult, String> {
+    let safe_fps = fps.max(1);
+    let project_dir = resolve_current_project_dir(&app)?;
+    let output_path = export_file_path(&project_dir, "wav")?;
+
+    let mut valid_audio = Vec::new();
+    for track in &audio_tracks {
+        let audio_path = PathBuf::from(&track.file_path);
+        if !audio_path.exists() || !audio_path.is_file() {
+            continue;
+        }
+        valid_audio.push((track.file_path.clone(), track.start_frame.max(0), track.gain.max(0.0)));
+    }
+
+    if valid_audio.is_empty() {
+        return Err("No valid audio tracks found".to_string());
+    }
+
+    let mut ffmpeg = Command::new("ffmpeg");
+    ffmpeg.arg("-y");
+    for (file_path, _, _) in &valid_audio {
+        ffmpeg.arg("-i").arg(file_path);
+    }
+
+    let mut parts = Vec::new();
+    let mut mix_inputs = String::new();
+    for (idx, (_, start_frame, gain)) in valid_audio.iter().enumerate() {
+        let delay_ms = ((*start_frame as f64) / (safe_fps as f64) * 1000.0).round() as i64;
+        parts.push(format!(
+            "[{}:a]adelay={}|{},volume={:.3}[a{}]",
+            idx, delay_ms, delay_ms, gain, idx
+        ));
+        mix_inputs.push_str(&format!("[a{}]", idx));
+    }
+
+    let filter_complex = format!(
+        "{};{}amix=inputs={}:duration=longest:dropout_transition=0[aout]",
+        parts.join(";"),
+        mix_inputs,
+        valid_audio.len()
+    );
+
+    let status = ffmpeg
+        .arg("-filter_complex")
+        .arg(filter_complex)
+        .arg("-map")
+        .arg("[aout]")
+        .arg("-c:a")
+        .arg("pcm_s16le")
+        .arg(output_path.to_string_lossy().as_ref())
+        .status()
+        .map_err(|err| format!("Unable to execute ffmpeg audio mix: {err}"))?;
+
+    if !status.success() {
+        let _ = append_export_log(
+            &project_dir,
+            &ExportLogEntry {
+                timestamp: now_timestamp().unwrap_or(0),
+                kind: "audio-mix".to_string(),
+                status: "failed".to_string(),
+                message: format!("Audio mix failed with status code {:?}", status.code()),
+                output_path: None,
+            },
+        );
+        return Err(format!(
+            "Audio mix failed with status code {:?}",
+            status.code()
+        ));
+    }
+
+    let output = output_path.to_string_lossy().to_string();
+    let _ = append_export_log(
+        &project_dir,
+        &ExportLogEntry {
+            timestamp: now_timestamp().unwrap_or(0),
+            kind: "audio-mix".to_string(),
+            status: "success".to_string(),
+            message: format!("Mixed {} audio tracks", valid_audio.len()),
+            output_path: Some(output.clone()),
+        },
+    );
+
+    Ok(ExportResult { output_path: output })
+}
+
+#[tauri::command]
 fn generate_local_video_from_images(
     app: tauri::AppHandle,
     primary_image_path: String,
@@ -2474,10 +2564,21 @@ fn comfy_read_server_log_tail(
         .next()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8188);
-    let log_path = root.join("user").join(format!("comfyui_{port}.log"));
-    if !log_path.exists() {
-        return Err(format!("Comfy server log not found: {}", log_path.to_string_lossy()));
-    }
+    let user_dir = root.join("user");
+    let candidate_paths = [
+        user_dir.join(format!("comfyui_{port}.log")),
+        user_dir.join("comfyui.log"),
+    ];
+    let log_path = candidate_paths
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Comfy server log not found: {} or {}",
+                user_dir.join(format!("comfyui_{port}.log")).to_string_lossy(),
+                user_dir.join("comfyui.log").to_string_lossy()
+            )
+        })?;
     let content = fs::read_to_string(&log_path)
         .map_err(|err| format!("Failed to read Comfy server log: {err}"))?;
     let limit = max_lines.unwrap_or(160);
@@ -2504,6 +2605,7 @@ fn main() {
             export_animatic_from_frames,
             concat_video_segments,
             mux_video_with_audio_tracks,
+            mix_audio_tracks,
             generate_local_video_from_images,
             write_base64_file,
             copy_file_to,

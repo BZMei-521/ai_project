@@ -1,4 +1,4 @@
-import type { Asset, Shot, SkyboxFace } from "../storyboard-core/types";
+import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
 import { invokeDesktopCommand, isDesktopRuntime } from "../platform/desktopBridge";
 
 export type ComfySettings = {
@@ -7,6 +7,8 @@ export type ComfySettings = {
   comfyInputDir: string;
   comfyRootDir: string;
   imageWorkflowJson: string;
+  storyboardImageWorkflowMode?: "builtin_qwen" | "mature_asset_guided";
+  storyboardImageModelName?: string;
   videoWorkflowJson: string;
   characterWorkflowJson?: string;
   skyboxWorkflowJson?: string;
@@ -26,6 +28,8 @@ export type ComfySettings = {
   skyboxAssetNegativePrompt?: string;
   audioWorkflowJson?: string;
   soundWorkflowJson?: string;
+  globalVisualStylePrompt?: string;
+  globalStyleNegativePrompt?: string;
   videoGenerationMode?: "comfy" | "local_motion";
   renderWidth?: number;
   renderHeight?: number;
@@ -74,6 +78,10 @@ export type ComfySettings = {
     frameImagePath: string;
     firstFramePath: string;
     lastFramePath: string;
+    dialogueAudioPath: string;
+    dialogueAudioPaths: string;
+    dialogueAudioCount: string;
+    hasDialogueAudio: string;
   };
 };
 
@@ -120,10 +128,15 @@ export const DEFAULT_TOKEN_MAPPING: ComfySettings["tokenMapping"] = {
   character4BackPath: "CHAR4_BACK_PATH",
   frameImagePath: "FRAME_IMAGE_PATH",
   firstFramePath: "FIRST_FRAME_PATH",
-  lastFramePath: "LAST_FRAME_PATH"
+  lastFramePath: "LAST_FRAME_PATH",
+  dialogueAudioPath: "DIALOGUE_AUDIO_PATH",
+  dialogueAudioPaths: "DIALOGUE_AUDIO_PATHS",
+  dialogueAudioCount: "DIALOGUE_AUDIO_COUNT",
+  hasDialogueAudio: "HAS_DIALOGUE_AUDIO"
 };
 
 type VideoMode = "single_frame" | "first_last_frame";
+export type StoryboardVideoModeChoice = VideoMode | "auto";
 
 type ComfyOutputAsset = {
   filename: string;
@@ -182,6 +195,19 @@ type FileWriteResult = {
 
 type LocalVideoRenderResult = {
   outputPath: string;
+};
+
+type AudioMixResult = {
+  outputPath: string;
+};
+
+export type VideoWorkflowLipSyncSupport = {
+  usesTokenPlaceholders: boolean;
+  usesDialogueAudioPathToken: boolean;
+  matchedPathTokens: string[];
+  matchedAuxTokens: string[];
+  candidatePathTokens: string[];
+  candidateAuxTokens: string[];
 };
 
 export type LocalMotionPreset =
@@ -511,7 +537,11 @@ function applyTokenAliases(
     ["character4BackPath", baseTokens.CHAR4_BACK_PATH],
     ["frameImagePath", baseTokens.FRAME_IMAGE_PATH],
     ["firstFramePath", baseTokens.FIRST_FRAME_PATH],
-    ["lastFramePath", baseTokens.LAST_FRAME_PATH]
+    ["lastFramePath", baseTokens.LAST_FRAME_PATH],
+    ["dialogueAudioPath", baseTokens.DIALOGUE_AUDIO_PATH],
+    ["dialogueAudioPaths", baseTokens.DIALOGUE_AUDIO_PATHS],
+    ["dialogueAudioCount", baseTokens.DIALOGUE_AUDIO_COUNT],
+    ["hasDialogueAudio", baseTokens.HAS_DIALOGUE_AUDIO]
   ];
   for (const [key, value] of aliasPairs) {
     const alias = mapping[key]?.trim();
@@ -569,6 +599,45 @@ function collectTemplateTokens(value: unknown, bucket: Set<string>) {
   }
 }
 
+function configuredTokenOrFallback(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim() ?? "";
+  return trimmed || fallback;
+}
+
+function dialogueAudioPathTokens(mapping: ComfySettings["tokenMapping"]): string[] {
+  return [
+    configuredTokenOrFallback(mapping.dialogueAudioPath, "DIALOGUE_AUDIO_PATH"),
+    configuredTokenOrFallback(mapping.dialogueAudioPaths, "DIALOGUE_AUDIO_PATHS")
+  ];
+}
+
+function dialogueAudioAuxTokens(mapping: ComfySettings["tokenMapping"]): string[] {
+  return [
+    configuredTokenOrFallback(mapping.dialogueAudioCount, "DIALOGUE_AUDIO_COUNT"),
+    configuredTokenOrFallback(mapping.hasDialogueAudio, "HAS_DIALOGUE_AUDIO")
+  ];
+}
+
+function inspectWorkflowLipSyncSupportFromObject(
+  workflow: Record<string, unknown>,
+  mapping: ComfySettings["tokenMapping"]
+): VideoWorkflowLipSyncSupport {
+  const usedTokens = new Set<string>();
+  collectTemplateTokens(workflow, usedTokens);
+  const candidatePathTokens = dialogueAudioPathTokens(mapping);
+  const candidateAuxTokens = dialogueAudioAuxTokens(mapping);
+  const matchedPathTokens = candidatePathTokens.filter((token) => usedTokens.has(token));
+  const matchedAuxTokens = candidateAuxTokens.filter((token) => usedTokens.has(token));
+  return {
+    usesTokenPlaceholders: usedTokens.size > 0,
+    usesDialogueAudioPathToken: matchedPathTokens.length > 0,
+    matchedPathTokens,
+    matchedAuxTokens,
+    candidatePathTokens,
+    candidateAuxTokens
+  };
+}
+
 function deepReplaceTokens(value: unknown, tokens: Record<string, string>): unknown {
   if (typeof value === "string") {
     let next = value;
@@ -588,6 +657,14 @@ function deepReplaceTokens(value: unknown, tokens: Record<string, string>): unkn
     return Object.fromEntries(entries);
   }
   return value;
+}
+
+function isComfyNodeReferenceTuple(value: unknown): value is [string, unknown] {
+  if (!Array.isArray(value) || value.length !== 2) return false;
+  const [nodeId, outputIndex] = value;
+  if (typeof nodeId !== "string" || !/^\d+$/.test(nodeId.trim())) return false;
+  if (typeof outputIndex === "number") return Number.isFinite(outputIndex);
+  return typeof outputIndex === "string" && /^-?\d+$/.test(outputIndex.trim());
 }
 
 function coerceWorkflowLiteralValues(value: unknown): unknown {
@@ -617,6 +694,8 @@ function coerceWorkflowLiteralValues(value: unknown): unknown {
     ) {
       const slot = coerceWorkflowLiteralValues(value[1]);
       return [value[0], slot];
+    if (isComfyNodeReferenceTuple(value)) {
+      return [value[0], coerceWorkflowLiteralValues(value[1])];
     }
     return value.map((item) => coerceWorkflowLiteralValues(item));
   }
@@ -640,6 +719,21 @@ function normalizePromptBody(value: string): string {
     .join("\n");
 }
 
+function appendPromptSection(base: string, sectionTitle: string, sectionBody: string): string {
+  const content = normalizePromptBody(base);
+  const addition = normalizePromptBody(sectionBody);
+  if (!addition) return content;
+  return [content, `${sectionTitle}：${addition}`].filter((item) => item.length > 0).join("\n");
+}
+
+function appendNegativePrompt(base: string, extra: string): string {
+  const primary = normalizePromptBody(base);
+  const addition = normalizePromptBody(extra).replace(/\n/g, ", ");
+  if (!addition) return primary;
+  if (!primary) return addition;
+  return `${primary}, ${addition}`;
+}
+
 function toNextScenePrompt(value: string): string {
   const compact = normalizePromptBody(value);
   if (!compact) return "Next Scene: empty shot";
@@ -657,6 +751,103 @@ function containsAnyKeyword(raw: string, keywords: string[]): boolean {
 }
 
 const LOCAL_MOTION_TOKEN_PATTERN = /\[motion:(auto|still|fade|push_in|push_out|pan_left|pan_right)\]/i;
+const FIRST_LAST_ENDPOINT_PATTERNS = [
+  /从.+到/,
+  /由.+到/,
+  /先.+后/,
+  /逐渐/,
+  /慢慢/,
+  /最终/,
+  /直到/,
+  /一步步/,
+  /镜头.+来到/,
+  /画面.+转到/
+];
+const FIRST_LAST_ACTION_KEYWORDS = [
+  "转场",
+  "衔接",
+  "过渡",
+  "transition",
+  "走向",
+  "走到",
+  "走进",
+  "走出",
+  "跑向",
+  "跑到",
+  "进入",
+  "离开",
+  "穿过",
+  "经过",
+  "越过",
+  "跨过",
+  "靠近",
+  "远离",
+  "起身",
+  "站起",
+  "坐下",
+  "跪下",
+  "转身",
+  "回头",
+  "俯身",
+  "抬头",
+  "低头",
+  "伸手",
+  "抬手",
+  "落手",
+  "拿起",
+  "放下",
+  "放回",
+  "推门",
+  "开门",
+  "关门",
+  "拉开",
+  "推开",
+  "登上",
+  "下楼",
+  "上楼",
+  "绕过",
+  "穿越",
+  "reveals",
+  "reveal",
+  "blocking"
+];
+const SINGLE_FRAME_DIALOGUE_KEYWORDS = [
+  "对白",
+  "说话",
+  "开口",
+  "台词",
+  "反应",
+  "注视",
+  "凝视",
+  "沉默",
+  "停顿",
+  "愣住",
+  "特写",
+  "近景",
+  "中近景",
+  "肖像",
+  "半身"
+];
+const SINGLE_FRAME_AMBIENCE_KEYWORDS = [
+  "轻微",
+  "微微",
+  "呼吸感",
+  "镜头稳定",
+  "镜头固定",
+  "静止",
+  "静帧",
+  "风吹",
+  "水波",
+  "烟雾",
+  "火焰",
+  "树叶",
+  "衣摆轻晃",
+  "环境氛围",
+  "空镜",
+  "插入镜头",
+  "道具特写",
+  "产品特写"
+];
 
 export function extractLocalMotionPresetFromText(raw: string): LocalMotionPreset {
   const matched = LOCAL_MOTION_TOKEN_PATTERN.exec(raw.trim());
@@ -676,6 +867,121 @@ export function extractLocalMotionPresetFromText(raw: string): LocalMotionPreset
 
 export function stripLocalMotionPresetToken(raw: string): string {
   return raw.replace(LOCAL_MOTION_TOKEN_PATTERN, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function inferStoryboardVideoModeByMatureCase(
+  text: string,
+  dialogue = "",
+  options?: { preferAutoWhenAmbiguous?: boolean }
+): StoryboardVideoModeChoice {
+  const corpus = `${text} ${dialogue}`.trim();
+  if (!corpus) return options?.preferAutoWhenAmbiguous ? "auto" : "single_frame";
+
+  if (FIRST_LAST_ENDPOINT_PATTERNS.some((pattern) => pattern.test(corpus))) {
+    return "first_last_frame";
+  }
+  if (containsAnyKeyword(corpus, FIRST_LAST_ACTION_KEYWORDS)) {
+    return "first_last_frame";
+  }
+
+  if (dialogue.trim()) return "single_frame";
+  if (containsAnyKeyword(corpus, SINGLE_FRAME_DIALOGUE_KEYWORDS)) {
+    return "single_frame";
+  }
+  if (containsAnyKeyword(corpus, SINGLE_FRAME_AMBIENCE_KEYWORDS)) {
+    return "single_frame";
+  }
+
+  return options?.preferAutoWhenAmbiguous ? "auto" : "single_frame";
+}
+
+export function explainStoryboardVideoModeByMatureCase(
+  text: string,
+  dialogue = "",
+  options?: { preferAutoWhenAmbiguous?: boolean }
+): { mode: StoryboardVideoModeChoice; reason: string } {
+  const corpus = `${text} ${dialogue}`.trim();
+  if (!corpus) {
+    return {
+      mode: options?.preferAutoWhenAmbiguous ? "auto" : "single_frame",
+      reason: options?.preferAutoWhenAmbiguous
+        ? "文案信息不足，保留自动判断。"
+        : "文案信息不足，默认按稳定单帧镜头处理。"
+    };
+  }
+
+  const matchedEndpoint = FIRST_LAST_ENDPOINT_PATTERNS.find((pattern) => pattern.test(corpus));
+  if (matchedEndpoint) {
+    return {
+      mode: "first_last_frame",
+      reason: "检测到明确的起点到终点变化，这类镜头更适合首尾帧控制。"
+    };
+  }
+
+  const matchedFirstLastKeyword = FIRST_LAST_ACTION_KEYWORDS.find((keyword) => containsAnyKeyword(corpus, [keyword]));
+  if (matchedFirstLastKeyword) {
+    return {
+      mode: "first_last_frame",
+      reason: `检测到动作或位移关键词“${matchedFirstLastKeyword}”，更像有明确终点状态的镜头，适合首尾帧。`
+    };
+  }
+
+  if (dialogue.trim()) {
+    return {
+      mode: "single_frame",
+      reason: "检测到对白镜头，成熟做法通常优先稳定人物和构图，用单帧图生视频更稳。"
+    };
+  }
+
+  const matchedDialogueKeyword = SINGLE_FRAME_DIALOGUE_KEYWORDS.find((keyword) => containsAnyKeyword(corpus, [keyword]));
+  if (matchedDialogueKeyword) {
+    return {
+      mode: "single_frame",
+      reason: `检测到“${matchedDialogueKeyword}”这类反应/特写镜头，通常以稳定表演为主，适合单帧图生视频。`
+    };
+  }
+
+  const matchedAmbienceKeyword = SINGLE_FRAME_AMBIENCE_KEYWORDS.find((keyword) => containsAnyKeyword(corpus, [keyword]));
+  if (matchedAmbienceKeyword) {
+    return {
+      mode: "single_frame",
+      reason: `检测到“${matchedAmbienceKeyword}”这类轻动作或氛围镜头，通常不需要显式终点，适合单帧图生视频。`
+    };
+  }
+
+  return {
+    mode: options?.preferAutoWhenAmbiguous ? "auto" : "single_frame",
+    reason: options?.preferAutoWhenAmbiguous
+      ? "没有命中明确规则，先保留自动判断。"
+      : "没有命中明确规则，默认按稳定单帧镜头处理。"
+  };
+}
+
+function applyGlobalStyleToTokens(
+  settings: ComfySettings,
+  tokens: Record<string, string>,
+  kind: "image" | "video" | "audio"
+): Record<string, string> {
+  const visualStyle = normalizePromptBody(settings.globalVisualStylePrompt ?? "");
+  const styleNegative = normalizePromptBody(settings.globalStyleNegativePrompt ?? "");
+  if (!visualStyle && !styleNegative) return tokens;
+
+  const next = { ...tokens };
+  if (visualStyle) {
+    if (kind === "image") {
+      next.PROMPT = appendPromptSection(next.PROMPT ?? "", "全局视觉风格锚点", visualStyle);
+      next.NEXT_SCENE_PROMPT = appendPromptSection(next.NEXT_SCENE_PROMPT ?? "", "全局视觉风格锚点", visualStyle);
+    }
+    if (kind === "video") {
+      next.VIDEO_PROMPT = appendPromptSection(next.VIDEO_PROMPT ?? "", "全局视觉风格锚点", visualStyle);
+    }
+    next.GLOBAL_VISUAL_STYLE = visualStyle;
+  }
+  if (styleNegative && kind !== "audio") {
+    next.NEGATIVE_PROMPT = appendNegativePrompt(next.NEGATIVE_PROMPT ?? "", styleNegative);
+    next.GLOBAL_STYLE_NEGATIVE = styleNegative;
+  }
+  return next;
 }
 
 function parseComfyViewPath(path: string): string {
@@ -766,7 +1072,7 @@ function inferComfyOutputDownloadSource(source: string, outputDir = ""): string 
   return normalizedSource.split("/").pop() ?? "";
 }
 
-async function stageFrameFileToComfyInput(
+async function stageSourceFileToComfyInput(
   source: string,
   targetPath: string,
   baseUrl: string,
@@ -809,7 +1115,7 @@ async function stageFrameFileToComfyInput(
     return copied.filePath;
   } catch (copyError) {
     if (downloadError) {
-      throw new Error(`准备输入帧失败：下载 Comfy 输出失败(${String(downloadError)})，本地复制也失败(${String(copyError)})`);
+      throw new Error(`准备输入文件失败：下载 Comfy 输出失败(${String(downloadError)})，本地复制也失败(${String(copyError)})`);
     }
     throw copyError;
   }
@@ -839,9 +1145,9 @@ async function stageVideoFrameTokens(
   const frameTargetAbs = `${inputDir}/shot_${safeShotId}_frame.${frameExt}`;
 
   const [firstWritten, lastWritten, frameWritten] = await Promise.all([
-    stageFrameFileToComfyInput(firstSource, firstTargetAbs, settings.baseUrl, settings.outputDir),
-    stageFrameFileToComfyInput(lastSource, lastTargetAbs, settings.baseUrl, settings.outputDir),
-    stageFrameFileToComfyInput(frameSource, frameTargetAbs, settings.baseUrl, settings.outputDir)
+    stageSourceFileToComfyInput(firstSource, firstTargetAbs, settings.baseUrl, settings.outputDir),
+    stageSourceFileToComfyInput(lastSource, lastTargetAbs, settings.baseUrl, settings.outputDir),
+    stageSourceFileToComfyInput(frameSource, frameTargetAbs, settings.baseUrl, settings.outputDir)
   ]);
 
   const firstName = firstWritten.split("/").pop() ?? `shot_${safeShotId}_first.${firstExt}`;
@@ -872,10 +1178,135 @@ async function stageImageFrameToken(
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const ext = fileExtensionFromSource(source || "png");
   const targetAbs = `${inputDir}/shot_${safeShotId}_frame.${ext}`;
-  const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+  const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
   return {
     ...tokens,
     FRAME_IMAGE_PATH: written.split("/").pop() ?? written
+  };
+}
+
+const IMAGE_REFERENCE_TOKEN_KEYS = [
+  "SCENE_REF_PATH",
+  "PREV_SCENE_IMAGE_PATH",
+  "PREV_CHARACTER_IMAGE_PATH",
+  "CHAR1_FRONT_PATH",
+  "CHAR1_SIDE_PATH",
+  "CHAR1_BACK_PATH",
+  "CHAR2_FRONT_PATH",
+  "CHAR2_SIDE_PATH",
+  "CHAR2_BACK_PATH",
+  "CHAR3_FRONT_PATH",
+  "CHAR3_SIDE_PATH",
+  "CHAR3_BACK_PATH",
+  "CHAR4_FRONT_PATH",
+  "CHAR4_SIDE_PATH",
+  "CHAR4_BACK_PATH",
+  "CHAR1_PRIMARY_PATH",
+  "CHAR1_SECONDARY_PATH",
+  "CHAR2_PRIMARY_PATH",
+  "CHAR2_SECONDARY_PATH"
+] as const;
+
+async function stageImageReferenceTokens(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>
+): Promise<Record<string, string>> {
+  const stagedEntries = IMAGE_REFERENCE_TOKEN_KEYS
+    .map((key) => ({ key, source: tokens[key]?.trim() ?? "" }))
+    .filter((item) => item.source.length > 0);
+  if (stagedEntries.length === 0) return tokens;
+
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) {
+    throw new Error("图片工作流需要角色/场景参考图输入，但未检测到 ComfyUI input 目录");
+  }
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const nextTokens = { ...tokens };
+  for (const entry of stagedEntries) {
+    const ext = fileExtensionFromSource(entry.source || "png");
+    const targetAbs = `${inputDir}/shot_${safeShotId}_${entry.key.toLowerCase()}.${ext}`;
+    const written = await stageSourceFileToComfyInput(entry.source, targetAbs, settings.baseUrl, settings.outputDir);
+    nextTokens[entry.key] = written.split("/").pop() ?? written;
+  }
+  return nextTokens;
+}
+
+async function mixDialogueAudioTracks(
+  fps: number,
+  tracks: AudioTrack[]
+): Promise<string> {
+  const orderedTracks = [...tracks]
+    .filter((track) => track.filePath.trim().length > 0)
+    .sort((left, right) => left.startFrame - right.startFrame || left.id.localeCompare(right.id));
+  if (orderedTracks.length === 0) return "";
+  if (orderedTracks.length === 1) return orderedTracks[0]!.filePath.trim();
+  const result = await invokeDesktop<AudioMixResult>("mix_audio_tracks", {
+    fps: Math.max(1, Math.round(fps || 24)),
+    audioTracks: orderedTracks
+  });
+  return result.outputPath.trim();
+}
+
+async function stageDialogueAudioTokens(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>,
+  dialogueAudioTracks: AudioTrack[],
+  fps: number
+): Promise<Record<string, string>> {
+  const validTracks = [...dialogueAudioTracks]
+    .filter((track) => track.filePath.trim().length > 0)
+    .sort((left, right) => left.startFrame - right.startFrame || left.id.localeCompare(right.id));
+  if (validTracks.length === 0) {
+    return {
+      ...tokens,
+      DIALOGUE_AUDIO_PATH: "",
+      DIALOGUE_AUDIO_PATHS: "",
+      DIALOGUE_AUDIO_COUNT: "0",
+      HAS_DIALOGUE_AUDIO: "0"
+    };
+  }
+
+  const mixedSourcePath = await mixDialogueAudioTracks(fps, validTracks);
+  const segmentSourcePaths = validTracks.map((track) => track.filePath.trim()).filter((value) => value.length > 0);
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) {
+    return {
+      ...tokens,
+      DIALOGUE_AUDIO_PATH: mixedSourcePath,
+      DIALOGUE_AUDIO_PATHS: segmentSourcePaths.join(","),
+      DIALOGUE_AUDIO_COUNT: String(segmentSourcePaths.length),
+      HAS_DIALOGUE_AUDIO: "1"
+    };
+  }
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const mixedExt = fileExtensionFromSource(mixedSourcePath || "wav");
+  const mixedTargetAbs = `${inputDir}/shot_${safeShotId}_dialogue.${mixedExt}`;
+  const mixedWritten = await stageSourceFileToComfyInput(
+    mixedSourcePath,
+    mixedTargetAbs,
+    settings.baseUrl,
+    settings.outputDir
+  );
+
+  const stagedSegments = await Promise.all(
+    segmentSourcePaths.map(async (source, index) => {
+      const ext = fileExtensionFromSource(source || "wav");
+      const targetAbs = `${inputDir}/shot_${safeShotId}_dialogue_${index + 1}.${ext}`;
+      const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+      return written.split("/").pop() ?? written;
+    })
+  );
+
+  return {
+    ...tokens,
+    DIALOGUE_AUDIO_PATH: mixedWritten.split("/").pop() ?? mixedWritten,
+    DIALOGUE_AUDIO_PATHS: stagedSegments.join(","),
+    DIALOGUE_AUDIO_COUNT: String(stagedSegments.length),
+    HAS_DIALOGUE_AUDIO: "1"
   };
 }
 
@@ -888,6 +1319,7 @@ function inferVideoMode(shot: Shot, nextShot?: Shot): VideoMode {
   const corpus = [
     shot.storyPrompt ?? "",
     shot.videoPrompt ?? "",
+    shot.dialogue ?? "",
     shot.notes ?? "",
     ...(shot.tags ?? [])
   ].join(" ");
@@ -896,6 +1328,12 @@ function inferVideoMode(shot: Shot, nextShot?: Shot): VideoMode {
   }
   if (containsAnyKeyword(corpus, ["单帧", "single frame", "图生视频"])) {
     return "single_frame";
+  }
+  const inferred = inferStoryboardVideoModeByMatureCase(corpus, shot.dialogue ?? "", {
+    preferAutoWhenAmbiguous: false
+  });
+  if (inferred === "first_last_frame" || inferred === "single_frame") {
+    return inferred;
   }
   if (shot.generatedImagePath?.trim() && nextShot?.generatedImagePath?.trim()) {
     if (containsAnyKeyword(corpus, ["转场", "衔接", "过渡", "transition"])) {
@@ -1103,10 +1541,17 @@ function skyboxFaceWeight(shot: Shot, face: SkyboxFace): number {
 function toVideoPrompt(shot: Shot, mode: VideoMode): string {
   const raw = shot.videoPrompt?.trim() || shot.storyPrompt?.trim() || shot.notes?.trim() || shot.title;
   const compact = normalizePromptBody(raw);
+  const speakingDirective = shot.dialogue.trim()
+    ? "画面中若出现正在说话的角色，口型开合应与对白节奏一致，避免闭口说话、乱张嘴或延迟口型。"
+    : "";
   if (mode === "first_last_frame") {
-    return `首尾帧运镜，保持角色与场景连续，平滑过渡。${compact}`;
+    return ["首尾帧运镜，保持角色与场景连续，平滑过渡。", speakingDirective, compact]
+      .filter((item) => item.length > 0)
+      .join("");
   }
-  return `单帧图生视频，保持主体稳定并增加自然镜头运动。${compact}`;
+  return ["单帧图生视频，保持主体稳定并增加自然镜头运动。", speakingDirective, compact]
+    .filter((item) => item.length > 0)
+    .join("");
 }
 
 type WorkflowNode = {
@@ -1125,6 +1570,24 @@ type WorkflowNode = {
 type WeightedImageRef = {
   source: string;
   weight: number;
+  priority: number;
+  bucket: string;
+  label: string;
+  role:
+    | "scene_primary"
+    | "scene_secondary"
+    | "character_front"
+    | "character_side"
+    | "character_back"
+    | "continuity_scene"
+    | "continuity_character";
+};
+
+type CharacterReferenceView = "front" | "side" | "back";
+
+type ShotContinuityPlan = {
+  previousSceneShot?: Shot;
+  previousCharacterShot?: Shot;
 };
 
 function nodeWidgetList(node: WorkflowNode): unknown[] | null {
@@ -1235,6 +1698,35 @@ function bypassFisherRifeNodes(
   deleteWorkflowNode(workflow, 194);
 }
 
+function disableFisherImageStyleLoras(
+  workflow: Record<string, unknown>,
+  byId: Map<number, WorkflowNode>,
+  kind: "image" | "video" | "audio"
+) {
+  if (!looksLikeFisherWorkflow(byId) || kind !== "image") return;
+  const loader = byId.get(216);
+  if (!loader) return;
+
+  if (Array.isArray(loader.widgets_values)) {
+    for (const item of loader.widgets_values) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      if ("on" in item) {
+        (item as Record<string, unknown>).on = false;
+      }
+      if ("strength" in item) {
+        (item as Record<string, unknown>).strength = 0;
+      }
+      if ("strengthTwo" in item) {
+        (item as Record<string, unknown>).strengthTwo = 0;
+      }
+    }
+  }
+
+  removeIncomingLinks(workflow, 10, [0]);
+  ensureWorkflowLink(workflow, 49, 0, 10, 0, "MODEL");
+  deleteWorkflowNode(workflow, 216);
+}
+
 function applyFisherWorkflowModes(
   byId: Map<number, WorkflowNode>,
   kind: "image" | "video" | "audio",
@@ -1298,55 +1790,592 @@ function uniquePreserveOrder(values: string[]): string[] {
   return output;
 }
 
-function extractImageReferenceSources(shot: Shot, assets: Asset[]): WeightedImageRef[] {
+function characterViewRole(view: CharacterReferenceView): WeightedImageRef["role"] {
+  if (view === "front") return "character_front";
+  if (view === "side") return "character_side";
+  return "character_back";
+}
+
+function orderedCharacterViews(
+  plan: ReturnType<typeof inferCharacterReferencePlan>
+): CharacterReferenceView[] {
+  return [plan.primaryView, ...plan.secondaryViews];
+}
+
+function joinNaturalChineseList(values: string[]): string {
+  const filtered = values.map((item) => item.trim()).filter((item) => item.length > 0);
+  if (filtered.length === 0) return "";
+  if (filtered.length === 1) return filtered[0]!;
+  if (filtered.length === 2) return `${filtered[0]}和${filtered[1]}`;
+  return `${filtered.slice(0, -1).join("、")}和${filtered[filtered.length - 1]}`;
+}
+
+function skyboxFaceLabel(face: SkyboxFace): string {
+  if (face === "front") return "正前";
+  if (face === "right") return "右侧";
+  if (face === "back") return "背面";
+  if (face === "left") return "左侧";
+  if (face === "up") return "上方";
+  if (face === "down") return "下方";
+  return face;
+}
+
+function characterReferenceViewLabel(view: CharacterReferenceView): string {
+  if (view === "front") return "正面";
+  if (view === "side") return "侧面";
+  if (view === "back") return "背面";
+  return view;
+}
+
+function inferCharacterReferencePlan(shot: Shot): {
+  primaryView: CharacterReferenceView;
+  secondaryViews: CharacterReferenceView[];
+} {
+  const corpus = [
+    shot.title ?? "",
+    shot.storyPrompt ?? "",
+    shot.videoPrompt ?? "",
+    shot.notes ?? "",
+    ...(shot.tags ?? [])
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const prefersBack = containsAnyKeyword(corpus, [
+    "背影",
+    "背面",
+    "背对",
+    "背身",
+    "后方",
+    "后背",
+    "rear",
+    "back view",
+    "back-facing"
+  ]);
+  if (prefersBack) {
+    return { primaryView: "back", secondaryViews: ["side", "front"] };
+  }
+
+  const prefersSide = containsAnyKeyword(corpus, [
+    "侧身",
+    "侧面",
+    "侧脸",
+    "侧视",
+    "侧拍",
+    "斜侧",
+    "profile",
+    "side view",
+    "three-quarter",
+    "3/4"
+  ]);
+  if (prefersSide) {
+    return { primaryView: "side", secondaryViews: ["front", "back"] };
+  }
+
+  return { primaryView: "front", secondaryViews: ["side", "back"] };
+}
+
+function characterReferenceWeight(view: CharacterReferenceView, plan: ReturnType<typeof inferCharacterReferencePlan>): number {
+  if (view === plan.primaryView) return 1;
+  const secondaryIndex = plan.secondaryViews.indexOf(view);
+  if (secondaryIndex === 0) return 0.62;
+  if (secondaryIndex === 1) return 0.34;
+  return 0;
+}
+
+function assetPathForCharacterView(asset: Asset | undefined, view: CharacterReferenceView): string {
+  if (!asset) return "";
+  if (view === "front") return asset.characterFrontPath || asset.filePath || "";
+  if (view === "side") return asset.characterSidePath || asset.characterFrontPath || asset.filePath || "";
+  return asset.characterBackPath || asset.characterSidePath || asset.characterFrontPath || asset.filePath || "";
+}
+
+function inferStoryboardReferenceWeights(
+  shot: Shot,
+  hasSceneRef: boolean,
+  hasSecondCharacter: boolean
+): {
+  char1Primary: number;
+  char1Secondary: number;
+  char2Primary: number;
+  denoise: number;
+  steps: number;
+  cfg: number;
+} {
+  const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
+  if (sceneLed && hasSecondCharacter) {
+    return {
+      char1Primary: 0.4,
+      char1Secondary: 0.16,
+      char2Primary: 0.32,
+      denoise: 0.46,
+      steps: 28,
+      cfg: 6
+    };
+  }
+  if (sceneLed) {
+    return {
+      char1Primary: 0.48,
+      char1Secondary: 0.2,
+      char2Primary: 0.18,
+      denoise: 0.52,
+      steps: 28,
+      cfg: 6.5
+    };
+  }
+  return {
+    char1Primary: 0.62,
+    char1Secondary: 0.26,
+    char2Primary: hasSecondCharacter ? 0.3 : 0.12,
+    denoise: 0.62,
+    steps: 30,
+    cfg: 7
+  };
+}
+
+function shotsShareCharacters(left: Shot, right: Shot): boolean {
+  const leftSet = new Set((left.characterRefs ?? []).filter((item) => item.trim().length > 0));
+  if (leftSet.size === 0) return false;
+  return (right.characterRefs ?? []).some((item) => leftSet.has(item));
+}
+
+function hasGeneratedStill(shot: Shot | undefined): shot is Shot {
+  return Boolean(shot?.generatedImagePath?.trim());
+}
+
+function inferShotContinuityPlan(shot: Shot, index: number, allShots: Shot[]): ShotContinuityPlan {
+  let previousSceneShot: Shot | undefined;
+  let previousCharacterShot: Shot | undefined;
+
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const candidate = allShots[cursor];
+    if (!hasGeneratedStill(candidate)) continue;
+    if (!previousSceneShot && shot.sceneRefId?.trim() && candidate.sceneRefId === shot.sceneRefId) {
+      previousSceneShot = candidate;
+    }
+    if (!previousCharacterShot && shotsShareCharacters(shot, candidate)) {
+      previousCharacterShot = candidate;
+    }
+    if (previousSceneShot && previousCharacterShot) break;
+  }
+
+  return { previousSceneShot, previousCharacterShot };
+}
+
+function buildContinuityDirective(plan: ShotContinuityPlan): string {
+  const lines: string[] = [];
+  if (plan.previousSceneShot) {
+    lines.push(
+      `跨镜头场景连续：延续上一条同场景分镜“${plan.previousSceneShot.title}”的环境布局与空间锚点，桥梁、建筑、河岸、道路等固定物位置关系不得漂移或改造。`
+    );
+  }
+  if (plan.previousCharacterShot) {
+    lines.push(
+      `跨镜头人物连续：延续上一条同角色分镜“${plan.previousCharacterShot.title}”中的角色外观，发型、服装、配饰、配色、体型和受光状态保持同一人设，不得突然变化。`
+    );
+  }
+  if (lines.length > 0) {
+    lines.push("连续性规则：这是同一段戏内的连续镜头，默认继承上一镜头已经建立的角色和场景，不允许重置设计。");
+  }
+  return lines.join("\n");
+}
+
+function buildShotReferenceDirective(
+  shot: Shot,
+  sceneAsset: Asset | undefined,
+  skyboxFaces: SkyboxFace[],
+  characterAssets: Asset[],
+  continuityPlan: ShotContinuityPlan
+): string {
+  const lines: string[] = [];
+  const characterPlan = characterAssets.length > 0 ? inferCharacterReferencePlan(shot) : null;
+  const continuityDirective = buildContinuityDirective(continuityPlan);
+  if (sceneAsset?.type === "skybox") {
+    const faceText = joinNaturalChineseList(skyboxFaces.map((face) => skyboxFaceLabel(face)));
+    lines.push(
+      `场景硬参考：必须以天空盒“${sceneAsset.name}”为准，优先参考${faceText || "正前"}视角，保持地平线、空间布局、建筑或地貌朝向、时间氛围与主色调一致，不得改成其他地点。`
+    );
+  } else if (sceneAsset?.type === "scene") {
+    lines.push(`场景硬参考：必须保持场景“${sceneAsset.name}”的环境布局、主体元素、光线和色调一致，不得重设计场景。`);
+  }
+  if (characterAssets.length > 0) {
+    for (const asset of characterAssets) {
+      const availableViews = [
+        asset.characterFrontPath || asset.filePath ? "front" : "",
+        asset.characterSidePath ? "side" : "",
+        asset.characterBackPath ? "back" : ""
+      ].filter((item) => item.length > 0);
+      const viewText = availableViews.length > 0 ? availableViews.join("/") : "front";
+      const preferredView = characterPlan ? characterReferenceViewLabel(characterPlan.primaryView) : "正面";
+      lines.push(
+        `人物硬参考：角色“${asset.name}”必须严格匹配三视图，保持脸型、发型、服装、配色、体型和道具一致；当前镜头优先匹配${preferredView}参考，可用视图为 ${viewText}，不得换脸、换装、换配色或混入其他角色特征。`
+      );
+    }
+  }
+  if (continuityDirective && !sceneAsset && characterAssets.length === 0) {
+    lines.push(continuityDirective);
+  }
+  if (lines.length > 0) {
+    lines.push("执行规则：参考图优先级高于自由发挥，先锁定参考一致性，再生成镜头动作和构图。");
+  }
+  return lines.join("\n");
+}
+
+function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
+  const sceneName = tokens.SCENE_REF_NAME?.trim() ?? "";
+  const characterNames = splitCsv(tokens.CHARACTER_REF_NAMES);
+  const preferredCharacterView = tokens.PREFERRED_CHARACTER_VIEW?.trim().toLowerCase() ?? "";
+  const previousSceneTitle = tokens.PREV_SCENE_SHOT_TITLE?.trim() ?? "";
+  const previousCharacterTitle = tokens.PREV_CHARACTER_SHOT_TITLE?.trim() ?? "";
+  const globalVisualStyle = tokens.GLOBAL_VISUAL_STYLE?.trim() ?? "";
+  const pieces = ["Treat every provided input image as a binding reference, not optional inspiration."];
+  if (globalVisualStyle) {
+    pieces.push(`Keep one unified visual style across every shot: ${globalVisualStyle}.`);
+  }
+  if (previousSceneTitle) {
+    pieces.push(
+      `Maintain visual continuity from the previous same-scene shot ${previousSceneTitle}; keep fixed landmarks and environment layout stable.`
+    );
+  }
+  if (previousCharacterTitle) {
+    pieces.push(
+      `Maintain character continuity from the previous same-character shot ${previousCharacterTitle}; do not change hairstyle, costume, props, body shape, or palette.`
+    );
+  }
+  if (sceneName) {
+    pieces.push(
+      `Lock the environment to the scene reference ${sceneName}; keep layout, horizon, camera direction, lighting mood, and materials consistent.`
+    );
+  }
+  if (characterNames.length > 0) {
+    pieces.push(
+      `Lock character identity for ${characterNames.join(", ")}; keep face, hair, costume, silhouette, proportions, and colors consistent, and choose ${preferredCharacterView || "front/side/back"} appearance according to the shot angle.`
+    );
+  }
+  pieces.push(
+    "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
+  );
+  pieces.push(
+    "Prefer the shot-matching character view and the matching skybox face over any weaker or generic reference."
+  );
+  pieces.push(
+    "Generate one coherent cinematic shot in the same world. Do not redesign the environment, do not change character identity, and do not ignore any provided reference image."
+  );
+  return pieces.join(" ");
+}
+
+function buildQwenSlotInstruction(
+  stagedRefs: Array<{ role?: WeightedImageRef["role"]; label?: string }>
+): string {
+  if (stagedRefs.length === 0) return "";
+  const lines = stagedRefs
+    .slice(0, 3)
+    .map((item, index) => {
+      const slot = `Reference slot ${index + 1}`;
+      const label = item.label?.trim() ?? "";
+      if (item.role === "scene_primary" || item.role === "scene_secondary") {
+        return `${slot} is the binding environment reference${label ? ` (${label})` : ""}; keep location layout and camera direction aligned to it.`;
+      }
+      if (item.role === "character_front" || item.role === "character_side" || item.role === "character_back") {
+        return `${slot} is the binding character reference${label ? ` (${label})` : ""}; keep identity, costume, and shot angle aligned to it.`;
+      }
+      if (item.role === "continuity_scene") {
+        return `${slot} is a weak continuity environment hint${label ? ` (${label})` : ""}; only use it if it does not conflict with the skybox asset.`;
+      }
+      if (item.role === "continuity_character") {
+        return `${slot} is a weak continuity character hint${label ? ` (${label})` : ""}; only use it if it does not conflict with the character three-view asset.`;
+      }
+      return `${slot} is a binding reference${label ? ` (${label})` : ""}.`;
+    })
+    .filter((item) => item.length > 0);
+  return lines.join(" ");
+}
+
+function qwenReferenceChunkSize(stagedRefs: Array<{ role?: WeightedImageRef["role"] }>): number {
+  const hasScene = stagedRefs.some((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const characterCount = stagedRefs.filter((item) => item.role?.startsWith("character_")).length;
+  if (hasScene || characterCount > 1) return 1;
+  return 3;
+}
+
+function extractImageReferenceSources(
+  shot: Shot,
+  assets: Asset[],
+  index: number,
+  allShots: Shot[] = []
+): WeightedImageRef[] {
   const sceneAsset = assets.find(
     (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
   );
+  const characterPlan = inferCharacterReferencePlan(shot);
+  const continuityPlan = inferShotContinuityPlan(shot, index, allShots);
   const sceneRefs: WeightedImageRef[] = [];
   if (sceneAsset?.type === "scene") {
-    if ((sceneAsset.filePath ?? "").trim()) sceneRefs.push({ source: sceneAsset.filePath, weight: 1 });
+    if ((sceneAsset.filePath ?? "").trim()) {
+      sceneRefs.push({
+        source: sceneAsset.filePath,
+        weight: 1,
+        priority: 320,
+        bucket: `scene:${sceneAsset.id}`,
+        label: `${sceneAsset.name}:scene_primary`,
+        role: "scene_primary"
+      });
+    }
   } else if (sceneAsset?.type === "skybox") {
-    const faces = inferSkyboxFacesFromShot(shot);
-    for (const face of faces) {
+    const plan = inferSkyboxReferencePlan(shot);
+    for (let faceIndex = 0; faceIndex < plan.faces.length; faceIndex += 1) {
+      const face = plan.faces[faceIndex]!;
       const facePath = sceneAsset.skyboxFaces?.[face] ?? "";
       if (!facePath.trim()) continue;
-      const weight = skyboxFaceWeight(shot, face);
+      const weight = plan.weights[face] ?? skyboxFaceWeight(shot, face);
       if (weight <= 0) continue;
-      sceneRefs.push({ source: facePath, weight });
+      sceneRefs.push({
+        source: facePath,
+        weight,
+        priority: face === plan.primaryFace ? 320 : 250 - faceIndex * 10,
+        bucket: `scene:${sceneAsset.id}`,
+        label: `${sceneAsset.name}:${face}`,
+        role: face === plan.primaryFace ? "scene_primary" : "scene_secondary"
+      });
     }
     if (sceneRefs.length === 0 && (sceneAsset.filePath ?? "").trim()) {
-      sceneRefs.push({ source: sceneAsset.filePath, weight: 1 });
+      sceneRefs.push({
+        source: sceneAsset.filePath,
+        weight: 1,
+        priority: 320,
+        bucket: `scene:${sceneAsset.id}`,
+        label: `${sceneAsset.name}:scene_primary`,
+        role: "scene_primary"
+      });
     }
   }
 
   const selectedCharacters = (shot.characterRefs ?? [])
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item));
-  const characterRefs = selectedCharacters.flatMap((asset) => {
+  const characterRefs = selectedCharacters.flatMap((asset, assetIndex) => {
     const refs: WeightedImageRef[] = [];
     const front = asset.characterFrontPath || asset.filePath || "";
     const side = asset.characterSidePath || "";
     const back = asset.characterBackPath || "";
-    if (front.trim()) refs.push({ source: front, weight: 1 });
-    if (side.trim()) refs.push({ source: side, weight: 0.8 });
-    if (back.trim()) refs.push({ source: back, weight: 0.8 });
+    const byView: Record<CharacterReferenceView, string> = { front, side, back };
+    const viewOrder = orderedCharacterViews(characterPlan);
+    for (let viewIndex = 0; viewIndex < viewOrder.length; viewIndex += 1) {
+      const view = viewOrder[viewIndex]!;
+      const source = byView[view].trim();
+      if (!source) continue;
+      const weight = characterReferenceWeight(view, characterPlan);
+      if (weight <= 0) continue;
+      refs.push({
+        source,
+        weight,
+        priority: 420 - assetIndex * 20 - viewIndex * 15,
+        bucket: `character:${asset.id}`,
+        label: `${asset.name}:${view}`,
+        role: characterViewRole(view)
+      });
+    }
     return refs;
   });
-  const merged = [...sceneRefs, ...characterRefs].filter((item) => item.source.trim().length > 0);
-  const deduped = new Map<string, number>();
-  for (const item of merged) {
-    const prev = deduped.get(item.source) ?? 0;
-    deduped.set(item.source, Math.max(prev, item.weight));
+  const continuityRefs: WeightedImageRef[] = [];
+  const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
+  if (previousSceneImage) {
+    continuityRefs.push({
+      source: previousSceneImage,
+      weight: 0.42,
+      priority: 110,
+      bucket: "continuity:scene",
+      label: continuityPlan.previousSceneShot?.title
+        ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
+        : "continuity_scene",
+      role: "continuity_scene"
+    });
   }
-  return [...deduped.entries()].map(([source, weight]) => ({ source, weight }));
+  const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
+  if (previousCharacterImage) {
+    continuityRefs.push({
+      source: previousCharacterImage,
+      weight: 0.48,
+      priority: 120,
+      bucket: "continuity:character",
+      label: continuityPlan.previousCharacterShot?.title
+        ? `continuity_character:${continuityPlan.previousCharacterShot.title}`
+        : "continuity_character",
+      role: "continuity_character"
+    });
+  }
+  const merged = [...characterRefs, ...sceneRefs, ...continuityRefs].filter((item) => item.source.trim().length > 0);
+  const deduped = new Map<string, WeightedImageRef>();
+  for (const item of merged) {
+    const prev = deduped.get(item.source);
+    if (!prev) {
+      deduped.set(item.source, item);
+      continue;
+    }
+    if (item.priority > prev.priority || (item.priority === prev.priority && item.weight > prev.weight)) {
+      deduped.set(item.source, {
+        ...item,
+        weight: Math.max(prev.weight, item.weight),
+        priority: Math.max(prev.priority, item.priority)
+      });
+      continue;
+    }
+    deduped.set(item.source, {
+      ...prev,
+      weight: Math.max(prev.weight, item.weight),
+      priority: Math.max(prev.priority, item.priority)
+    });
+  }
+  return [...deduped.values()].sort((left, right) => {
+    const priorityDelta = right.priority - left.priority;
+    if (priorityDelta !== 0) return priorityDelta;
+    return right.weight - left.weight;
+  });
+}
+
+function pushUniqueWeightedRef(
+  target: WeightedImageRef[],
+  usedSources: Set<string>,
+  candidate: WeightedImageRef | undefined
+) {
+  if (!candidate) return;
+  const source = candidate.source.trim();
+  if (!source || usedSources.has(source)) return;
+  target.push(candidate);
+  usedSources.add(source);
+}
+
+function firstDistinctBucketRef(
+  refs: WeightedImageRef[],
+  predicate: (item: WeightedImageRef) => boolean,
+  excludedBuckets: Set<string>,
+  usedSources: Set<string>
+): WeightedImageRef | undefined {
+  return refs.find((item) => predicate(item) && !excludedBuckets.has(item.bucket) && !usedSources.has(item.source.trim()));
+}
+
+function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImageRef[] {
+  if (refs.length <= 3) return refs.slice(0, 3);
+  const ordered = [...refs].sort((left, right) => {
+    const priorityDelta = right.priority - left.priority;
+    if (priorityDelta !== 0) return priorityDelta;
+    return right.weight - left.weight;
+  });
+  const selected: WeightedImageRef[] = [];
+  const usedSources = new Set<string>();
+  const usedBuckets = new Set<string>();
+  const hasAssetRefs = ordered.some(
+    (item) =>
+      item.role === "scene_primary" ||
+      item.role === "scene_secondary" ||
+      item.role === "character_front" ||
+      item.role === "character_side" ||
+      item.role === "character_back"
+  );
+
+  const primaryCharacter = ordered.find((item) => item.role.startsWith("character_"));
+  pushUniqueWeightedRef(selected, usedSources, primaryCharacter);
+  if (primaryCharacter) usedBuckets.add(primaryCharacter.bucket);
+
+  const primaryScene = ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  pushUniqueWeightedRef(selected, usedSources, primaryScene);
+  if (primaryScene) usedBuckets.add(primaryScene.bucket);
+
+  const secondaryCharacter = firstDistinctBucketRef(
+    ordered,
+    (item) => item.role.startsWith("character_"),
+    usedBuckets,
+    usedSources
+  );
+  pushUniqueWeightedRef(selected, usedSources, secondaryCharacter);
+  if (secondaryCharacter) usedBuckets.add(secondaryCharacter.bucket);
+
+  const supportCharacter = ordered.find(
+    (item) =>
+      item.role.startsWith("character_") &&
+      primaryCharacter?.bucket === item.bucket &&
+      primaryCharacter?.source !== item.source &&
+      !usedSources.has(item.source.trim())
+  );
+  const secondaryScene = ordered.find(
+    (item) =>
+      item.role === "scene_secondary" &&
+      primaryScene?.source !== item.source &&
+      !usedSources.has(item.source.trim())
+  );
+  const continuityCharacter = ordered.find(
+    (item) => item.role === "continuity_character" && !usedSources.has(item.source.trim())
+  );
+  const continuityScene = ordered.find(
+    (item) => item.role === "continuity_scene" && !usedSources.has(item.source.trim())
+  );
+
+  const fallbackCandidates = [
+    supportCharacter,
+    secondaryScene,
+    ...(hasAssetRefs ? [] : [continuityCharacter, continuityScene]),
+    ...ordered.filter((item) => !usedSources.has(item.source.trim()))
+  ];
+  for (const candidate of fallbackCandidates) {
+    pushUniqueWeightedRef(selected, usedSources, candidate);
+    if (selected.length >= 3) break;
+  }
+
+  return selected.slice(0, 3);
+}
+
+function shouldLeadWithSceneReference(shot: Shot): boolean {
+  if ((shot.characterRefs?.length ?? 0) > 1) return true;
+  const corpus = [
+    shot.title ?? "",
+    shot.storyPrompt ?? "",
+    shot.videoPrompt ?? "",
+    shot.notes ?? "",
+    ...(shot.tags ?? [])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return containsAnyKeyword(corpus, [
+    "对峙",
+    "双人",
+    "两人",
+    "二人",
+    "全景",
+    "大全景",
+    "中景",
+    "远景",
+    "建立镜头",
+    "环境",
+    "河边",
+    "桥上",
+    "室外",
+    "对打",
+    "打斗",
+    "搏斗",
+    "wide shot",
+    "establishing",
+    "environment"
+  ]);
+}
+
+function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
+  if (refs.length <= 1) return refs;
+  const characters = refs.filter((item) => item.role.startsWith("character_"));
+  const scenes = refs.filter((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
+  if (shouldLeadWithSceneReference(shot) && scenes.length > 0) {
+    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...scenes.slice(1), ...continuity].slice(0, 3);
+  }
+  return [...characters.slice(0, 1), ...scenes.slice(0, 1), ...characters.slice(1), ...continuity].slice(0, 3);
 }
 
 async function stageCharacterReferenceImages(
   settings: ComfySettings,
   shot: Shot,
   refs: WeightedImageRef[]
-): Promise<Array<{ filename: string; weight: number }>> {
-  if (refs.length === 0) return [];
+): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
+  const selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(refs));
+  if (selectedRefs.length === 0) return [];
   const inputDir = inferComfyInputDir(settings);
   if (!inputDir) {
     // Degrade gracefully when input directory is unknown.
@@ -1354,15 +2383,17 @@ async function stageCharacterReferenceImages(
     return [];
   }
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const staged: Array<{ filename: string; weight: number }> = [];
-  for (let index = 0; index < refs.length; index += 1) {
-    const { source, weight } = refs[index]!;
+  const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
+  for (let index = 0; index < selectedRefs.length; index += 1) {
+    const { source, weight, role, label } = selectedRefs[index]!;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
-    const written = await stageFrameFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
+    const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
     staged.push({
       filename: written.split("/").pop() ?? `shot_${safeShotId}_charref_${index + 1}.${ext}`,
-      weight
+      weight,
+      role,
+      label
     });
   }
   return staged;
@@ -1576,14 +2607,19 @@ function createConditioningAverageNode(
 
 function qwenImageInputIndexes(node: WorkflowNode): number[] {
   const inputs = Array.isArray(node.inputs) ? node.inputs : [];
-  const slots: number[] = [];
+  const vlResizeSlots: number[] = [];
+  const noResizeSlots: number[] = [];
   for (let index = 0; index < inputs.length; index += 1) {
     const name = inputs[index]?.name ?? "";
-    if (name.startsWith("vl_resize_image") || name.startsWith("not_resize_image")) {
-      slots.push(index);
-    }
+    if (name.startsWith("vl_resize_image")) vlResizeSlots.push(index);
+    if (name.startsWith("not_resize_image")) noResizeSlots.push(index);
   }
-  return slots;
+  // The QwenEdit "Advance" node exposes six image inputs, but they represent
+  // three reference slots with two processing modes, not six fully independent refs.
+  // Feeding all six as separate images can break the node with
+  // "too many values to unpack (expected 3)" on complex shots.
+  if (vlResizeSlots.length > 0) return vlResizeSlots;
+  return noResizeSlots;
 }
 
 function qwenPromptInputIndexes(node: WorkflowNode): number[] {
@@ -1609,9 +2645,17 @@ function normalizeQwenPromptInputBindings(workflow: Record<string, unknown>, pro
   }
 }
 
+function normalizeQwenInstructionBindings(workflow: Record<string, unknown>, instructionText: string) {
+  const nodes = workflowNodes(workflow);
+  for (const node of nodes) {
+    if (node.type !== "TextEncodeQwenImageEditPlusAdvance_lrzjason" || typeof node.id !== "number") continue;
+    setNodeWidgetValue(node, 5, instructionText);
+  }
+}
+
 function applyDynamicCharacterRefsForImageWorkflow(
   workflow: Record<string, unknown>,
-  weightedImageRefs: Array<{ filename: string; weight: number }>
+  weightedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"] }>
 ) {
   const nodes = workflowNodes(workflow);
   const baseNode = nodes.find((node) => node.type === "TextEncodeQwenImageEditPlusAdvance_lrzjason");
@@ -1624,9 +2668,10 @@ function applyDynamicCharacterRefsForImageWorkflow(
   removeIncomingLinks(workflow, baseNode.id, slotIndexes);
   if (weightedImageRefs.length === 0) return;
 
-  const chunks: Array<Array<{ filename: string; weight: number }>> = [];
-  for (let start = 0; start < weightedImageRefs.length; start += slotIndexes.length) {
-    chunks.push(weightedImageRefs.slice(start, start + slotIndexes.length));
+  const chunkSize = Math.max(1, Math.min(slotIndexes.length, qwenReferenceChunkSize(weightedImageRefs)));
+  const chunks: Array<Array<{ filename: string; weight: number; role?: WeightedImageRef["role"] }>> = [];
+  for (let start = 0; start < weightedImageRefs.length; start += chunkSize) {
+    chunks.push(weightedImageRefs.slice(start, start + chunkSize));
   }
 
   const encoderNodes: WorkflowNode[] = [baseNode];
@@ -1716,7 +2761,8 @@ function applyDynamicCharacterRefsForImageWorkflow(
 function applyFisherWorkflowBindings(
   workflow: Record<string, unknown>,
   kind: "image" | "video" | "audio",
-  tokens: Record<string, string>
+  tokens: Record<string, string>,
+  stagedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"]; label?: string }> = []
 ) {
   const nodes = Array.isArray(workflow.nodes) ? (workflow.nodes as WorkflowNode[]) : [];
   if (nodes.length === 0) return;
@@ -1728,6 +2774,7 @@ function applyFisherWorkflowBindings(
   bypassFisherSageAttentionNodes(workflow, byId, kind, tokens);
   bypassFisherSimpleMathNode(workflow, byId, kind, tokens);
   bypassFisherRifeNodes(workflow, byId, kind);
+  disableFisherImageStyleLoras(workflow, byId, kind);
 
   const seed = Number(tokens.SEED);
   const safeSeed = Number.isFinite(seed) ? Math.floor(seed) : undefined;
@@ -1745,8 +2792,13 @@ function applyFisherWorkflowBindings(
   // Fisher/Qwen workflows often connect easy promptLine(COMBO) -> qwen prompt(STRING),
   // which causes prompt validation errors in API mode. Always force prompt to widget text,
   // including cloned encoders created for extra reference images.
-  const qwenPromptText = tokens.NEXT_SCENE_PROMPT || tokens.PROMPT;
+  const hasBindingRefs = kind === "image" && stagedImageRefs.length > 0;
+  const qwenPromptText = kind === "image" ? (tokens.PROMPT || tokens.NEXT_SCENE_PROMPT) : (tokens.NEXT_SCENE_PROMPT || tokens.PROMPT);
+  const qwenInstructionText = [buildQwenReferenceInstruction(tokens), buildQwenSlotInstruction(stagedImageRefs)]
+    .filter((item) => item.length > 0)
+    .join(" ");
   normalizeQwenPromptInputBindings(workflow, qwenPromptText);
+  normalizeQwenInstructionBindings(workflow, qwenInstructionText);
   setNodeWidgetValue(byId.get(123), 0, qwenPromptText);
 
   if (kind === "image") {
@@ -1895,6 +2947,7 @@ function applyComfyModelOptionBindings(
 }
 
 function inferPromptTokens(
+  settings: ComfySettings,
   shot: Shot,
   index: number,
   mapping: ComfySettings["tokenMapping"],
@@ -1907,9 +2960,10 @@ function inferPromptTokens(
   const sceneAsset = assets.find(
     (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
   );
-  const skyboxFaces = sceneAsset?.type === "skybox" ? inferSkyboxFacesFromShot(shot) : [];
+  const skyboxPlan = sceneAsset?.type === "skybox" ? inferSkyboxReferencePlan(shot) : null;
+  const skyboxFaces = skyboxPlan?.faces ?? [];
   const skyboxFaceWeightsText = skyboxFaces
-    .map((face) => `${face}:${skyboxFaceWeight(shot, face).toFixed(2)}`)
+    .map((face) => `${face}:${(skyboxPlan?.weights[face] ?? skyboxFaceWeight(shot, face)).toFixed(2)}`)
     .join(",");
   const skyboxFacePaths =
     sceneAsset?.type === "skybox"
@@ -1924,16 +2978,43 @@ function inferPromptTokens(
   const characterAssets = (shot.characterRefs ?? [])
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item));
+  const continuityPlan = inferShotContinuityPlan(shot, index, allShots);
   const characterFrontPaths = characterAssets.map((item) => item.characterFrontPath || item.filePath).filter(Boolean);
   const characterSidePaths = characterAssets.map((item) => item.characterSidePath || "").filter(Boolean);
   const characterBackPaths = characterAssets.map((item) => item.characterBackPath || "").filter(Boolean);
   const characterVoiceProfiles = characterAssets.map((item) => item.voiceProfile?.trim() || "").filter(Boolean);
   const characterAllViewPaths = [...characterFrontPaths, ...characterSidePaths, ...characterBackPaths].filter(Boolean);
   const charSlots = [0, 1, 2, 3].map((slotIndex) => characterAssets[slotIndex]);
+  const characterPlan = inferCharacterReferencePlan(shot);
+  const char1PrimaryPath =
+    assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || sceneRefPath || characterFrontPaths[0] || "";
+  const char1SecondaryPath =
+    assetPathForCharacterView(charSlots[0], characterPlan.secondaryViews[0] ?? "front") ||
+    char1PrimaryPath ||
+    sceneRefPath ||
+    "";
+  const char2PrimaryPath =
+    assetPathForCharacterView(charSlots[1], characterPlan.primaryView) ||
+    assetPathForCharacterView(charSlots[1], "front") ||
+    char1SecondaryPath ||
+    char1PrimaryPath ||
+    sceneRefPath ||
+    "";
+  const char2SecondaryPath =
+    assetPathForCharacterView(charSlots[1], characterPlan.secondaryViews[0] ?? "front") ||
+    char2PrimaryPath ||
+    char1SecondaryPath ||
+    char1PrimaryPath ||
+    sceneRefPath ||
+    "";
+  const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
-  const promptBase = [sceneContext, characterContext, promptBaseRaw].filter((item) => item.length > 0).join("\n");
+  const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
+  const promptBase = [referenceDirective, sceneContext, characterContext, promptBaseRaw]
+    .filter((item) => item.length > 0)
+    .join("\n");
   const nextScenePrompt = toNextScenePrompt(promptBase);
   const videoPrompt = toVideoPrompt(shot, mode);
   const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
@@ -1963,6 +3044,10 @@ function inferPromptTokens(
     DURATION_FRAMES: String(Math.max(1, shot.durationFrames)),
     DURATION_SEC: String((shot.durationFrames / 24).toFixed(2)),
     CHARACTER_REFS: (shot.characterRefs ?? []).join(","),
+    PREV_SCENE_SHOT_TITLE: continuityPlan.previousSceneShot?.title ?? "",
+    PREV_SCENE_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? ""),
+    PREV_CHARACTER_SHOT_TITLE: continuityPlan.previousCharacterShot?.title ?? "",
+    PREV_CHARACTER_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? ""),
     SCENE_REF_PATH: sceneRefPath,
     SCENE_REF_PATHS: sceneAsset?.type === "skybox" ? skyboxFacePaths.join(",") : sceneRefPath,
     SCENE_REF_NAME:
@@ -1975,6 +3060,7 @@ function inferPromptTokens(
     SKYBOX_FACE_WEIGHTS: skyboxFaceWeightsText,
     CHARACTER_REF_PATHS: characterAllViewPaths.join(","),
     CHARACTER_REF_NAMES: characterAssets.map((item) => item.name).join(","),
+    PREFERRED_CHARACTER_VIEW: characterPlan.primaryView,
     CHARACTER_FRONT_PATHS: characterFrontPaths.join(","),
     CHARACTER_SIDE_PATHS: characterSidePaths.join(","),
     CHARACTER_BACK_PATHS: characterBackPaths.join(","),
@@ -1994,9 +3080,24 @@ function inferPromptTokens(
     CHAR4_FRONT_PATH: charSlots[3]?.characterFrontPath || charSlots[3]?.filePath || "",
     CHAR4_SIDE_PATH: charSlots[3]?.characterSidePath || "",
     CHAR4_BACK_PATH: charSlots[3]?.characterBackPath || "",
+    CHAR1_PRIMARY_PATH: char1PrimaryPath,
+    CHAR1_SECONDARY_PATH: char1SecondaryPath,
+    CHAR2_PRIMARY_PATH: char2PrimaryPath,
+    CHAR2_SECONDARY_PATH: char2SecondaryPath,
+    CHAR1_PRIMARY_WEIGHT: String(storyboardWeights.char1Primary),
+    CHAR1_SECONDARY_WEIGHT: String(storyboardWeights.char1Secondary),
+    CHAR2_PRIMARY_WEIGHT: String(storyboardWeights.char2Primary),
+    STORYBOARD_DENOISE: String(storyboardWeights.denoise),
+    STORYBOARD_STEPS: String(storyboardWeights.steps),
+    STORYBOARD_CFG: String(storyboardWeights.cfg),
+    STORYBOARD_IMAGE_MODEL: settings.storyboardImageModelName?.trim() || "sd_xl_base_1.0.safetensors",
     FRAME_IMAGE_PATH: defaultFramePath,
     FIRST_FRAME_PATH: firstFramePath,
-    LAST_FRAME_PATH: lastFramePath
+    LAST_FRAME_PATH: lastFramePath,
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0"
   };
   return applyTokenAliases(mapping, baseTokens);
 }
@@ -2093,6 +3194,14 @@ export function validateWorkflowTemplate(
     missing,
     used: [...usedTokens].sort()
   };
+}
+
+export function inspectVideoWorkflowLipSyncSupport(
+  workflowJson: string,
+  mapping: ComfySettings["tokenMapping"]
+): VideoWorkflowLipSyncSupport {
+  const workflow = ensureWorkflowJson(workflowJson);
+  return inspectWorkflowLipSyncSupportFromObject(workflow, mapping);
 }
 
 const NODE_HINT_MAP: Array<{ pattern: RegExp; plugin: string; repo: string }> = [
@@ -2789,7 +3898,7 @@ async function generateLocalCompatibleVideo(
   index: number,
   allShots: Shot[]
 ): Promise<{ previewUrl: string; localPath: string }> {
-  const tokens = inferPromptTokens(shot, index, settings.tokenMapping, allShots, []);
+  const tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, []);
   const nextShot = allShots[index + 1];
   const mode = inferVideoMode(shot, nextShot);
   const motionPreset = inferLocalMotionPreset(shot, mode, nextShot);
@@ -2811,10 +3920,10 @@ async function generateLocalCompatibleVideo(
       : "";
 
   if (!primaryImagePath.trim()) {
-    throw new Error("Mac 兼容视频生成失败：当前镜头没有可用分镜图或首帧");
+    throw new Error("本地兼容视频生成失败：当前镜头没有可用分镜图或首帧");
   }
   if (mode === "first_last_frame" && !secondaryImagePath.trim()) {
-    throw new Error("Mac 兼容视频生成失败：首尾帧模式缺少尾帧");
+    throw new Error("本地兼容视频生成失败：首尾帧模式缺少尾帧");
   }
 
   const result = await invokeDesktop<LocalVideoRenderResult>("generate_local_video_from_images", {
@@ -2935,15 +4044,30 @@ function summarizeComfyServerLogFailure(logTail: string): string | null {
   const merged = [headline, explicitError].filter((item, index, array) => item && array.indexOf(item) === index).join(" | ");
   const normalized = merged || scope.slice(0, 6).join(" | ");
   if (!normalized) return null;
+  const normalizedLower = normalized.toLowerCase();
 
   if (
-    normalized.includes("convolution_overrideable not implemented") ||
-    normalized.includes("tensor backend other than CPU/CUDA/MKLDNN")
+    normalizedLower.includes("convolution_overrideable not implemented") ||
+    normalizedLower.includes("tensor backend other than cpu/cuda/mkldnn")
   ) {
     return "服务端诊断：当前 Wan 视频工作流在 MPS/非 CUDA 后端不可用。你这台 Mac 上的 ComfyUI 正在使用 MPS，Wan 视频模型所需 3D 卷积只能在 CUDA/CPU/MKLDNN 路径运行，实际生产建议改到 NVIDIA CUDA 环境。";
   }
-  if (normalized.includes("No module named 'sageattention'")) {
+  if (normalizedLower.includes("no module named 'sageattention'")) {
     return "服务端诊断：ComfyUI 缺少 sageattention 依赖，相关 KJNodes 加速节点无法运行。";
+  }
+  if (
+    normalizedLower.includes("outofmemoryerror") ||
+    normalizedLower.includes("cuda out of memory") ||
+    normalizedLower.includes("allocation on device")
+  ) {
+    const wanRelated =
+      normalizedLower.includes("wan") ||
+      normalizedLower.includes("conv3d") ||
+      normalizedLower.includes("wanmoeksampler");
+    if (wanRelated) {
+      return "服务端诊断：当前工作流在 Wan 采样阶段显存不足。你这台 16GB 显卡已经触发 3D 卷积显存溢出，优先建议把这两条失败分镜改用更轻的图片工作流，或把 Wan 工作流的分辨率、帧数、steps 明显降下来。";
+    }
+    return "服务端诊断：当前工作流执行时显存不足。请降低分辨率、batch size、steps，或改用更轻的模型/工作流。";
   }
   return `服务端诊断：${normalized}`;
 }
@@ -2972,6 +4096,7 @@ export async function generateShotAsset(
     onProgress?: (progress: number, message: string) => void;
     tokenOverrides?: Record<string, string>;
     workflowJsonOverride?: string;
+    dialogueAudioTracks?: AudioTrack[];
   }
 ): Promise<{ previewUrl: string; localPath: string }> {
   try {
@@ -2991,7 +4116,8 @@ export async function generateShotAsset(
       );
     }
     const workflow = ensureWorkflowJson(workflowRaw);
-    let tokens = inferPromptTokens(shot, index, settings.tokenMapping, allShots, assets);
+    const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
+    let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets);
     if (options?.tokenOverrides) {
       tokens = {
         ...tokens,
@@ -3000,22 +4126,33 @@ export async function generateShotAsset(
         )
       };
     }
+    tokens = applyGlobalStyleToTokens(settings, tokens, kind);
     if (kind === "video") {
+      if (lipSyncSupport?.usesDialogueAudioPathToken) {
+        tokens = await stageDialogueAudioTokens(
+          settings,
+          shot,
+          tokens,
+          options?.dialogueAudioTracks ?? [],
+          Math.max(1, Math.round(settings.renderFps ?? 24))
+        );
+      }
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
+      tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
-      const sources = extractImageReferenceSources(shot, assets);
+      const sources = extractImageReferenceSources(shot, assets, index, allShots);
       stagedCharacterImages =
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
     }
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
     applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
-    applyFisherWorkflowBindings(built, kind, tokens);
+    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     try {
       const objectInfo = await fetchObjectInfo(settings.baseUrl);
       applyComfyModelOptionBindings(built, objectInfo);
@@ -3055,7 +4192,6 @@ export async function generateShotAsset(
       options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
       return await generateLocalCompatibleVideo(settings, shot, index, allShots);
     }
-    if (kind !== "video") throw error;
     const logTail = await readComfyServerLogTail(settings);
     const diagnosis = logTail ? summarizeComfyServerLogFailure(logTail) : null;
     if (!diagnosis || baseMessage.includes(diagnosis)) {
@@ -3150,6 +4286,10 @@ function buildSkyboxTokens(
     FRAME_IMAGE_PATH: "",
     FIRST_FRAME_PATH: "",
     LAST_FRAME_PATH: "",
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0",
     SKYBOX_FACE: face.toUpperCase(),
     SKYBOX_DESCRIPTION: description.trim()
   };
@@ -3211,6 +4351,10 @@ function buildSkyboxPanoramaTokens(
     FRAME_IMAGE_PATH: "",
     FIRST_FRAME_PATH: "",
     LAST_FRAME_PATH: "",
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0",
     SKYBOX_FACE: "PANORAMA",
     SKYBOX_DESCRIPTION: description.trim()
   };

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { selectShotStartFrame, useStoryboardStore } from "../storyboard-core/store";
-import type { Asset, Shot } from "../storyboard-core/types";
+import type { Asset, AudioTrack, Shot } from "../storyboard-core/types";
 import { pushToast } from "../ui/toastStore";
 import { invokeDesktopCommand, isWebBridgeRuntime, toDesktopMediaSource } from "../platform/desktopBridge";
 import {
@@ -10,10 +10,13 @@ import {
   discoverComfyLocalDirs,
   discoverComfyEndpoints,
   DEFAULT_TOKEN_MAPPING,
+  explainStoryboardVideoModeByMatureCase,
   extractLocalMotionPresetFromText,
   generateShotAsset,
   generateSkyboxFaces,
   inferComfyRootDir,
+  inferStoryboardVideoModeByMatureCase,
+  inspectVideoWorkflowLipSyncSupport,
   installSuggestedPlugins,
   inspectWorkflowDependencies,
   listComfyCheckpointOptions,
@@ -28,14 +31,20 @@ import {
   type SkyboxGenerationResult
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
+import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
+import STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT from "./presets/storyboard-image-asset-guided-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
 import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "./presets/asset-character-mvadapter-default.json";
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "./presets/asset-skybox-panorama-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
+const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
+const STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT);
+const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
 type CharacterAssetWorkflowMode = "basic_builtin" | "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
+type StoryboardImageWorkflowMode = "builtin_qwen" | "mature_asset_guided";
 
 type AssetWorkflowModeSpec = {
   label: string;
@@ -48,6 +57,8 @@ type AssetWorkflowModeSpec = {
 
 const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
+const DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE: StoryboardImageWorkflowMode = "mature_asset_guided";
+const DEFAULT_STORYBOARD_IMAGE_MODEL = "sd_xl_base_1.0.safetensors";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
   "sd_xl_base_1.0.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
@@ -89,7 +100,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, nude, naked, nsfw, underwear, lingerie, bikini, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -130,6 +141,16 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
     scheduler: "karras"
   }
 };
+
+function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
+  const normalized = workflowJson.replace(/\s+/g, "");
+  if (!normalized) return false;
+  return (
+    normalized.includes(LEGACY_MIXED_STORYBOARD_WORKFLOW_ID) &&
+    normalized.includes("WanMoeKSampler") &&
+    normalized.includes("TextEncodeQwenImageEditPlusAdvance_lrzjason")
+  );
+}
 
 function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
   if (mode === "advanced_multiview") {
@@ -227,6 +248,64 @@ function buildSkyboxAssetModeSpec(mode: SkyboxAssetWorkflowMode, selectedModel: 
   };
 }
 
+function workflowLooksLikeBuiltinStoryboardImageWorkflow(workflowJson: string): boolean {
+  const normalized = workflowJson.replace(/\s+/g, "");
+  if (!normalized) return false;
+  return (
+    normalized.includes("\"id\":\"storyboard-image-fisher-light-v1\"") ||
+    normalized.includes("TextEncodeQwenImageEditPlusAdvance_lrzjason") ||
+    normalized.includes("PowerLoraLoader") ||
+    normalized.includes("easypromptLine")
+  );
+}
+
+function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetWorkflowModeSpec {
+  if (mode === "mature_asset_guided") {
+    return {
+      label: "成熟资产约束分镜工作流",
+      summary:
+        "内置模板改成 scene-first img2img + IPAdapter 多角色一致性。先锁天空盒主面，再叠角色参考，是当前更成熟、更可控的连续分镜基础链路；ControlNet / InstantID / PuLID 作为第二层增强可再加。",
+      requiredNodes: [
+        "基础图生图链：CheckpointLoaderSimple / LoadImage / VAEEncode / KSampler / VAEDecode / SaveImage",
+        "IPAdapterUnifiedLoader",
+        "IPAdapterAdvanced"
+      ],
+      requiredModels: [
+        "主模型：建议 SDXL 写实底模",
+        "IPAdapter Plus：自动走 PLUS 预设，对应 SDXL 需 ip-adapter-plus_sdxl_vit-h.safetensors",
+        "CLIP Vision：clip_vision_h.safetensors"
+      ],
+      recommendedPlugins: [
+        "comfyui_ipadapter_plus",
+        "可选：ComfyUI-Advanced-ControlNet",
+        "可选：ComfyUI_InstantID 或 PuLID_ComfyUI"
+      ],
+      notes: [
+        "内置成熟模板已经是 scene-first：先吃天空盒主面/场景底图，再叠角色参考。",
+        "双人/远景镜头会自动降低角色权重、提高场景保持；单人镜头会提高主角色权重。",
+        "如果还需要更硬的姿态/构图控制，再在这套模板外层加 ControlNet；当前内置 Qwen 模板只保留兼容用途。"
+      ]
+    };
+  }
+  return {
+    label: "兼容内置 Qwen 分镜模板",
+    summary: "内置 Qwen/Fisher 模板便于快速出图，但对角色三视图和天空盒的绑定能力有限，只适合作为兼容兜底。",
+    requiredNodes: [
+      "TextEncodeQwenImageEditPlusAdvance_lrzjason",
+      "CheckpointLoaderSimple",
+      "KSampler",
+      "VAEDecode",
+      "SaveImage"
+    ],
+    requiredModels: ["Qwen-Rapid-AIO-SFW-v5.safetensors（或同类兼容底模）"],
+    recommendedPlugins: ["qweneditutils", "rgthree-comfy", "ComfyUI-KJNodes（部分模板）"],
+    notes: [
+      "优点是现成可跑，缺点是参考图约束弱。",
+      "高一致性项目不建议继续依赖此模式。"
+    ]
+  };
+}
+
 function buildAssetIssueSummary(args: {
   kind: "character" | "skybox";
   mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode;
@@ -303,7 +382,11 @@ function buildCharacterWorkflowTemplateJson(
   return JSON.stringify(template, null, 2);
 }
 
-function buildCharacterAdvancedWorkflowTemplateJson(checkpointName: string): string {
+function buildCharacterAdvancedWorkflowTemplateJson(
+  checkpointName: string,
+  preset: "portrait" | "square",
+  renderPreset: "stable_fullbody" | "clean_reference"
+): string {
   const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
     template["1"].inputs.ckpt_name = checkpointName;
@@ -312,7 +395,16 @@ function buildCharacterAdvancedWorkflowTemplateJson(checkpointName: string): str
     template["3"].inputs.vae_name = DEFAULT_CHARACTER_ADVANCED_VAE;
   }
   if (template["4"]?.inputs) {
+    template["4"].inputs.num_views = 1;
     template["4"].inputs.adapter_name = DEFAULT_CHARACTER_ADVANCED_ADAPTER;
+  }
+  if (template["7"]?.inputs) {
+    const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+    template["7"].inputs.num_views = 1;
+    template["7"].inputs.width = preset === "square" ? 1024 : 832;
+    template["7"].inputs.height = preset === "square" ? 1024 : 1216;
+    template["7"].inputs.steps = config.steps;
+    template["7"].inputs.cfg = config.cfg;
   }
   return JSON.stringify(template, null, 2);
 }
@@ -418,6 +510,28 @@ function buildEmergencyStoryboardImageWorkflowTemplateJson(checkpointName: strin
     }
   };
   return JSON.stringify(template, null, 2);
+function mergePromptFragments(parts: Array<string | null | undefined>): string {
+  return parts
+    .map((item) => item?.trim() ?? "")
+    .filter((item) => item.length > 0)
+    .join("，");
+}
+
+function appendNegativePrompt(base: string, extras: string[]): string {
+  const normalized = base
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  const seen = new Set(normalized.map((item) => item.toLowerCase()));
+  for (const extra of extras) {
+    const item = extra.trim();
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(item);
+  }
+  return normalized.join(", ");
 }
 
 type GenerationPhase = "idle" | "running";
@@ -438,6 +552,11 @@ type ProvisionPreviewItem = {
   status: "pending" | "running" | "success" | "reused" | "failed" | "skipped";
   detail: string;
   thumbs: string[];
+};
+
+type ShotReferencePreview = {
+  characters: Array<{ id: string; name: string; thumbs: string[]; views: string[] }>;
+  scene?: { id: string; name: string; thumbs: string[]; faces: string[] };
 };
 
 type SoundCueKind = "ambience" | "character" | "prop";
@@ -478,8 +597,8 @@ type AssetWorkflowHeuristicReport = {
 };
 
 type AssetWorkflowDiagnostic = {
-  kind: "character" | "skybox";
-  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode;
+  kind: "character" | "skybox" | "storyboard";
+  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode | StoryboardImageWorkflowMode;
   modeSpec: AssetWorkflowModeSpec;
   workflowConfigured: boolean;
   strictMode: boolean;
@@ -1037,14 +1156,28 @@ function buildStoryVideoPrompt(text: string): string {
 }
 
 function inferVideoModeForStory(text: string, dialogue: string): "auto" | "single_frame" | "first_last_frame" {
-  const combined = `${text} ${dialogue}`.trim();
-  if (/从.+到|逐渐|慢慢|转身|起身|坐下|走向|走到|靠近|远离|推门|开门|关门|拿起|放下|抬手|落下/.test(combined)) {
-    return "first_last_frame";
+  return inferStoryboardVideoModeByMatureCase(text, dialogue, { preferAutoWhenAmbiguous: true });
+}
+
+function explainShotVideoMode(shot: Shot): string {
+  if (shot.videoMode === "single_frame") {
+    return "当前手动指定为单帧图生视频。适合对白、反应、特写和轻动作镜头。";
   }
-  if (dialogue.trim() || /注视|停顿|沉默|凝视|特写|近景|反应/.test(combined)) {
-    return "single_frame";
+  if (shot.videoMode === "first_last_frame") {
+    return "当前手动指定为首尾帧生成视频。适合有明确起点和终点变化的动作或转场镜头。";
   }
-  return "auto";
+  const explanation = explainStoryboardVideoModeByMatureCase(
+    [shot.storyPrompt ?? "", shot.videoPrompt ?? "", shot.notes ?? "", ...(shot.tags ?? [])].join(" "),
+    shot.dialogue ?? "",
+    { preferAutoWhenAmbiguous: true }
+  );
+  const label =
+    explanation.mode === "first_last_frame"
+      ? "自动建议：首尾帧生成视频。"
+      : explanation.mode === "single_frame"
+        ? "自动建议：单帧图生视频。"
+        : "自动建议：暂未命中强规则。";
+  return `${label}${explanation.reason}`;
 }
 
 function inferDialogueShotTitle(speaker: string, index: number, total: number): string {
@@ -1238,7 +1371,12 @@ function shouldAutoRewriteAssetWorkflow(
   if (!trimmed) return true;
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
   if (kind === "character" && mode === "advanced_multiview") {
-    return !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES);
+    return (
+      !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES) ||
+      trimmed.includes("\"num_views\": 6") ||
+      trimmed.includes("\"width\": 768") ||
+      trimmed.includes("\"height\": 768")
+    );
   }
   if (kind === "skybox" && mode === "advanced_panorama") {
     return !workflowIncludesAllNodeTypes(trimmed, SKYBOX_ADVANCED_NODE_TYPES);
@@ -1281,6 +1419,42 @@ function inspectAssetWorkflowHeuristics(
   return { warnings, notes };
 }
 
+function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflowHeuristicReport {
+  const nodeTypes = collectWorkflowNodeTypesForHeuristics(workflowJson);
+  const warnings: string[] = [];
+  const notes: string[] = [];
+  const hasLoadImage = nodeTypes.includes("LoadImage");
+  const hasVaeEncode = nodeTypes.includes("VAEEncode");
+  const hasIpAdapter = nodeTypes.some((type) => /IPAdapter/i.test(type));
+  const hasControlNet = nodeTypes.some((type) => /ControlNet/i.test(type));
+  const hasInstantId = nodeTypes.some((type) => /InstantID/i.test(type));
+  const hasPulid = nodeTypes.some((type) => /PuLID/i.test(type));
+  const hasQwenTemplateNode = nodeTypes.some((type) => /Qwen|ImageEditPlus|promptLine/i.test(type));
+  const usesSceneToken = workflowJson.includes("{{SCENE_REF_PATH}}");
+  const usesCharacterToken =
+    workflowJson.includes("{{CHAR1_PRIMARY_PATH}}") || workflowJson.includes("{{CHARACTER_FRONT_PATHS}}");
+
+  if (hasQwenTemplateNode) {
+    warnings.push("检测到 Qwen/Fisher 图编辑节点。高一致性分镜不建议继续把它作为主链路。");
+  }
+  if (!hasLoadImage || !usesSceneToken) {
+    warnings.push("未检测到场景底图注入（LoadImage + {{SCENE_REF_PATH}}）。场景一致性会明显变弱。");
+  }
+  if (!hasVaeEncode) {
+    warnings.push("未检测到 VAEEncode。scene-first img2img 链路通常应先把天空盒主面编码为 latent 再低 denoise 重绘。");
+  }
+  if (!hasIpAdapter || !usesCharacterToken) {
+    warnings.push("未检测到角色 IPAdapter 参考注入。人物一致性会明显变弱。");
+  }
+  if (!nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type))) {
+    warnings.push("未检测到明显图片输出节点，请确认工作流最终会产出分镜图。");
+  }
+  notes.push("成熟分镜模板的核心顺序应是：场景底图优先，角色参考其次，文本只补镜头动作和构图。");
+  if (hasControlNet) notes.push("检测到 ControlNet，可用于第二阶段增强姿态或空间稳定性。");
+  if (hasInstantId || hasPulid) notes.push("检测到 InstantID / PuLID，可用于正脸镜头进一步锁脸。");
+  return { warnings, notes };
+}
+
 function loadSettings(): ComfySettings {
   const raw = localStorage.getItem(SETTINGS_KEY);
   if (!raw) {
@@ -1289,7 +1463,9 @@ function loadSettings(): ComfySettings {
       outputDir: "",
       comfyInputDir: "",
       comfyRootDir: "",
-      imageWorkflowJson: FISHER_WORKFLOW_JSON,
+      imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
+      storyboardImageWorkflowMode: DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
+      storyboardImageModelName: DEFAULT_STORYBOARD_IMAGE_MODEL,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
@@ -1309,6 +1485,8 @@ function loadSettings(): ComfySettings {
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
+      globalVisualStylePrompt: "",
+      globalStyleNegativePrompt: "",
       videoGenerationMode: defaultVideoGenerationMode(),
       tokenMapping: { ...DEFAULT_TOKEN_MAPPING }
     };
@@ -1335,10 +1513,24 @@ function loadSettings(): ComfySettings {
     ) as SkyboxAssetWorkflowMode;
     const shouldUpgradeCharacterMode = resolvedCharacterMode === "advanced_multiview" && parsed.characterAssetWorkflowMode !== "advanced_multiview";
     const shouldUpgradeSkyboxMode = resolvedSkyboxMode === "advanced_panorama" && parsed.skyboxAssetWorkflowMode !== "advanced_panorama";
+    const resolvedStoryboardMode =
+      parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
+        ? parsed.storyboardImageWorkflowMode
+        : DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+    const parsedImageWorkflowJson = typeof parsed.imageWorkflowJson === "string" ? parsed.imageWorkflowJson : "";
+    const shouldUpgradeStoryboardWorkflow =
+      resolvedStoryboardMode === "mature_asset_guided" &&
+      (!parsedImageWorkflowJson.trim() ||
+        isLegacyMixedStoryboardImageWorkflow(parsedImageWorkflowJson) ||
+        workflowLooksLikeBuiltinStoryboardImageWorkflow(parsedImageWorkflowJson));
     const resolvedImageWorkflowJson =
-      typeof parsed.imageWorkflowJson === "string" && parsed.imageWorkflowJson.trim().length > 0
-        ? parsed.imageWorkflowJson
-        : FISHER_WORKFLOW_JSON;
+      shouldUpgradeStoryboardWorkflow
+        ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        : parsedImageWorkflowJson.trim().length > 0
+          ? parsedImageWorkflowJson
+          : resolvedStoryboardMode === "mature_asset_guided"
+            ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+            : STORYBOARD_IMAGE_WORKFLOW_JSON;
     const resolvedVideoWorkflowJson =
       typeof parsed.videoWorkflowJson === "string" && parsed.videoWorkflowJson.trim().length > 0
         ? parsed.videoWorkflowJson
@@ -1349,6 +1541,11 @@ function loadSettings(): ComfySettings {
       comfyInputDir: parsed.comfyInputDir ?? "",
       comfyRootDir: parsed.comfyRootDir ?? "",
       imageWorkflowJson: resolvedImageWorkflowJson,
+      storyboardImageWorkflowMode: resolvedStoryboardMode,
+      storyboardImageModelName:
+        typeof parsed.storyboardImageModelName === "string" && parsed.storyboardImageModelName.trim()
+          ? parsed.storyboardImageModelName.trim()
+          : DEFAULT_STORYBOARD_IMAGE_MODEL,
       videoWorkflowJson: resolvedVideoWorkflowJson,
       characterWorkflowJson: shouldUpgradeCharacterMode ? "" : parsedCharacterWorkflowJson,
       skyboxWorkflowJson: shouldUpgradeSkyboxMode ? "" : parsedSkyboxWorkflowJson,
@@ -1406,6 +1603,10 @@ function loadSettings(): ComfySettings {
           : DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: typeof parsed.audioWorkflowJson === "string" ? parsed.audioWorkflowJson : "",
       soundWorkflowJson: typeof parsed.soundWorkflowJson === "string" ? parsed.soundWorkflowJson : "",
+      globalVisualStylePrompt:
+        typeof parsed.globalVisualStylePrompt === "string" ? parsed.globalVisualStylePrompt : "",
+      globalStyleNegativePrompt:
+        typeof parsed.globalStyleNegativePrompt === "string" ? parsed.globalStyleNegativePrompt : "",
       videoGenerationMode: parsed.videoGenerationMode ?? defaultVideoGenerationMode(),
       tokenMapping: {
         ...DEFAULT_TOKEN_MAPPING,
@@ -1418,7 +1619,9 @@ function loadSettings(): ComfySettings {
       outputDir: "",
       comfyInputDir: "",
       comfyRootDir: "",
-      imageWorkflowJson: FISHER_WORKFLOW_JSON,
+      imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
+      storyboardImageWorkflowMode: DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
+      storyboardImageModelName: DEFAULT_STORYBOARD_IMAGE_MODEL,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
@@ -1438,6 +1641,8 @@ function loadSettings(): ComfySettings {
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
+      globalVisualStylePrompt: "",
+      globalStyleNegativePrompt: "",
       videoGenerationMode: defaultVideoGenerationMode(),
       tokenMapping: { ...DEFAULT_TOKEN_MAPPING }
     };
@@ -1541,6 +1746,212 @@ function formatAssetStatus(status: AssetStatus): string {
   if (status === "success") return "成功";
   if (status === "failed") return "失败";
   return "待生成";
+}
+
+function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReferencePreview {
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const characterAssets = assets.filter((asset) => asset.type === "character");
+  const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const context = compactTextParts(
+    shot.title,
+    shot.storyPrompt,
+    shot.notes,
+    shot.dialogue,
+    shot.sourceCharacterNames?.join("、"),
+    shot.sourceSceneName
+  );
+  const matchedCharacterIds = uniqueEntities([
+    ...(shot.characterRefs ?? []).filter((id) => assetById.get(id)?.type === "character"),
+    ...(shot.sourceCharacterNames ?? [])
+      .map((name) => findMatchingAssetId(assets, "character", name))
+      .filter(Boolean),
+    ...extractCharacterCandidates(context)
+      .map((name) => findMatchingAssetId(assets, "character", name))
+      .filter(Boolean),
+    ...characterAssets
+      .filter((asset) => context.includes(asset.name))
+      .map((asset) => asset.id)
+  ]);
+  if (matchedCharacterIds.length === 0 && shotLooksCharacterDriven(shot) && characterAssets.length > 0 && characterAssets.length <= 2) {
+    matchedCharacterIds.push(...characterAssets.map((asset) => asset.id));
+  }
+  const characters = matchedCharacterIds
+    .map((id) => assets.find((item) => item.id === id && item.type === "character"))
+    .filter((item): item is Asset => Boolean(item))
+    .map((asset) => {
+      const thumbs = [asset.characterFrontPath, asset.characterSidePath, asset.characterBackPath].filter(
+        (item): item is string => Boolean(item?.trim())
+      );
+      const views = [
+        asset.characterFrontPath?.trim() ? "front" : "",
+        asset.characterSidePath?.trim() ? "side" : "",
+        asset.characterBackPath?.trim() ? "back" : ""
+      ].filter((item) => item.length > 0);
+      return { id: asset.id, name: asset.name, thumbs, views };
+    });
+  const inferredSceneName = sanitizeSceneCandidate(shot.sourceSceneName?.trim() || inferSceneName(context));
+  const resolvedSceneId =
+    (shot.sceneRefId?.trim() &&
+    assets.some((item) => item.id === shot.sceneRefId && (item.type === "scene" || item.type === "skybox"))
+      ? shot.sceneRefId
+      : "") ||
+    (inferredSceneName ? findMatchingAssetId(assets, "skybox", inferredSceneName) : "") ||
+    (skyboxAssets.length === 1 ? skyboxAssets[0]?.id ?? "" : "");
+  const sceneAsset = assets.find(
+    (item) => item.id === resolvedSceneId && (item.type === "scene" || item.type === "skybox")
+  );
+  if (!sceneAsset) return { characters };
+  if (sceneAsset.type === "skybox") {
+    const faceOrder = [
+      ...(shot.skyboxFaces ?? []),
+      "front",
+      "right",
+      "back",
+      "left",
+      "up",
+      "down"
+    ].filter((face, index, list) => list.indexOf(face) === index);
+    const thumbs = faceOrder
+      .map((face) => sceneAsset.skyboxFaces?.[face as keyof NonNullable<Asset["skyboxFaces"]>] ?? "")
+      .filter((item): item is string => Boolean(item.trim()));
+    const faces = faceOrder.filter(
+      (face) => Boolean(sceneAsset.skyboxFaces?.[face as keyof NonNullable<Asset["skyboxFaces"]>]?.trim())
+    );
+    return {
+      characters,
+      scene: { id: sceneAsset.id, name: sceneAsset.name, thumbs, faces }
+    };
+  }
+  return {
+    characters,
+    scene: {
+      id: sceneAsset.id,
+      name: sceneAsset.name,
+      thumbs: sceneAsset.filePath?.trim() ? [sceneAsset.filePath] : [],
+      faces: []
+    }
+  };
+}
+
+function describeShotReferencePreview(preview: ShotReferencePreview): string {
+  const parts: string[] = [];
+  if (preview.characters.length > 0) {
+    parts.push(
+      `角色 ${preview.characters
+        .map((item) => `${item.name}${item.views.length > 0 ? `(${item.views.join("/")})` : ""}`)
+        .join("、")}`
+    );
+  }
+  if (preview.scene) {
+    parts.push(
+      `场景 ${preview.scene.name}${preview.scene.faces.length > 0 ? `(${preview.scene.faces.join("/")})` : ""}`
+    );
+  }
+  return parts.length > 0 ? parts.join("；") : "未绑定角色三视图或天空盒";
+}
+
+function shotLooksCharacterDriven(shot: Shot): boolean {
+  const corpus = compactTextParts(
+    shot.title,
+    shot.storyPrompt,
+    shot.notes,
+    shot.dialogue,
+    shot.tags.join("、"),
+    shot.sourceCharacterNames?.join("、")
+  );
+  return (
+    Boolean(shot.dialogue.trim()) ||
+    (shot.characterRefs?.length ?? 0) > 0 ||
+    (shot.sourceCharacterNames?.length ?? 0) > 0 ||
+    /人物|角色|对白|对峙|挥拳|冲拳|出拳|闪避|反击|回头|看向|转身|走向|逼近|交手|fight|punch|kick|dodge|duel|face[- ]?off/i.test(corpus)
+  );
+}
+
+function deriveShotBindingRepairs(
+  shots: Shot[],
+  assets: Asset[]
+): {
+  patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }>;
+  repairedCharacterShots: number;
+  repairedSceneShots: number;
+} {
+  const characterAssets = assets.filter((asset) => asset.type === "character");
+  const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }> = [];
+  let repairedCharacterShots = 0;
+  let repairedSceneShots = 0;
+
+  for (let index = 0; index < shots.length; index += 1) {
+    const shot = shots[index]!;
+    const previousShot = index > 0 ? shots[index - 1] : undefined;
+    const context = compactTextParts(
+      shot.title,
+      shot.storyPrompt,
+      shot.notes,
+      shot.dialogue,
+      shot.sourceCharacterNames?.join("、"),
+      shot.sourceSceneName
+    );
+
+    const nextCharacterRefs = uniqueEntities([
+      ...(shot.characterRefs ?? []).filter((id) => assets.some((asset) => asset.id === id && asset.type === "character")),
+      ...(shot.sourceCharacterNames ?? [])
+        .map((name) => findMatchingAssetId(assets, "character", name))
+        .filter(Boolean),
+      ...extractCharacterCandidates(context)
+        .map((name) => findMatchingAssetId(assets, "character", name))
+        .filter(Boolean),
+      ...characterAssets
+        .filter((asset) => context.includes(asset.name))
+        .map((asset) => asset.id)
+    ]);
+
+    if (nextCharacterRefs.length === 0 && shotLooksCharacterDriven(shot)) {
+      if ((previousShot?.characterRefs?.length ?? 0) > 0) {
+        nextCharacterRefs.push(...(previousShot?.characterRefs ?? []));
+      } else if (characterAssets.length > 0 && characterAssets.length <= 2) {
+        nextCharacterRefs.push(...characterAssets.map((asset) => asset.id));
+      }
+    }
+
+    const inferredSceneName = sanitizeSceneCandidate(shot.sourceSceneName?.trim() || inferSceneName(context));
+    const nextSceneRefId =
+      (shot.sceneRefId?.trim() &&
+      assets.some((asset) => asset.id === shot.sceneRefId && (asset.type === "scene" || asset.type === "skybox"))
+        ? shot.sceneRefId
+        : "") ||
+      (inferredSceneName ? findMatchingAssetId(assets, "skybox", inferredSceneName) : "") ||
+      (previousShot?.sceneRefId?.trim() &&
+      assets.some((asset) => asset.id === previousShot.sceneRefId && (asset.type === "scene" || asset.type === "skybox"))
+        ? previousShot.sceneRefId
+        : "") ||
+      (skyboxAssets.length === 1 ? skyboxAssets[0]?.id ?? "" : "");
+
+    const fields: { characterRefs: string[]; sceneRefId: string } = {
+      characterRefs: shot.characterRefs ?? [],
+      sceneRefId: shot.sceneRefId ?? ""
+    };
+    const normalizedCharacterRefs = uniqueEntities(nextCharacterRefs);
+    if (
+      normalizedCharacterRefs.length > 0 &&
+      normalizedCharacterRefs.join(",") !== uniqueEntities(shot.characterRefs ?? []).join(",")
+    ) {
+      fields.characterRefs = normalizedCharacterRefs;
+      repairedCharacterShots += 1;
+    }
+    if (nextSceneRefId && nextSceneRefId !== (shot.sceneRefId ?? "")) {
+      fields.sceneRefId = nextSceneRefId;
+      repairedSceneShots += 1;
+    }
+    if (
+      fields.characterRefs.join(",") !== uniqueEntities(shot.characterRefs ?? []).join(",") ||
+      fields.sceneRefId !== (shot.sceneRefId ?? "")
+    ) {
+      patches.push({ shotId: shot.id, fields });
+    }
+  }
+
+  return { patches, repairedCharacterShots, repairedSceneShots };
 }
 
 function formatPipelineLogText(items: PipelineLogItem[]): string {
@@ -2016,6 +2427,7 @@ export function ComfyPipelinePanel() {
   const [lastModelChecklist, setLastModelChecklist] = useState("");
   const [characterWorkflowDiagnostic, setCharacterWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const [skyboxWorkflowDiagnostic, setSkyboxWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
+  const [storyboardWorkflowDiagnostic, setStoryboardWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const checkingRef = useRef(false);
   const characterModelVisible = useMemo(() => {
     const selected = settings.characterAssetModelName?.trim();
@@ -2046,6 +2458,17 @@ export function ComfyPipelinePanel() {
         settings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL
       ),
     [skyboxAssetWorkflowMode, settings.skyboxAssetModelName]
+  );
+  const storyboardImageWorkflowMode = settings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+  const storyboardModelVisible = useMemo(() => {
+    const selected = settings.storyboardImageModelName?.trim();
+    if (!selected) return null;
+    if (availableCheckpointOptions.length === 0) return null;
+    return availableCheckpointOptions.includes(selected);
+  }, [availableCheckpointOptions, settings.storyboardImageModelName]);
+  const storyboardImageModeSpec = useMemo(
+    () => buildStoryboardImageModeSpec(storyboardImageWorkflowMode),
+    [storyboardImageWorkflowMode]
   );
   const characterIssueSummary = useMemo(
     () =>
@@ -2130,6 +2553,14 @@ export function ComfyPipelinePanel() {
         audioStatusByShot[shot.id] === "failed"
     );
   }, [audioStatusByShot, imageStatusByShot, scopedShots, shotFilter, videoStatusByShot]);
+
+  const shotReferencePreviewById = useMemo(() => {
+    const next = new Map<string, ShotReferencePreview>();
+    for (const shot of scopedShots) {
+      next.set(shot.id, resolveShotReferencePreview(shot, assets));
+    }
+    return next;
+  }, [assets, scopedShots]);
 
   const getScopedShotsSnapshot = () =>
     useStoryboardStore
@@ -2739,6 +3170,18 @@ export function ComfyPipelinePanel() {
     return map;
   }, [audioTracks]);
 
+  const resolveDialogueAudioTracksForShot = (shotId: string): AudioTrack[] =>
+    useStoryboardStore
+      .getState()
+      .audioTracks
+      .filter((track) => {
+        const isShotTrack = track.id === ttsTrackIdForShot(shotId) || track.id.startsWith(`${ttsTrackIdForShot(shotId)}_`);
+        if (!isShotTrack) return false;
+        if (track.kind === "narration") return false;
+        return looksLikeAudioPath(track.filePath);
+      })
+      .sort((left, right) => left.startFrame - right.startFrame || left.id.localeCompare(right.id));
+
   const stableAssetSeed = (key: string) => {
     let hash = 2166136261;
     for (let index = 0; index < key.length; index += 1) {
@@ -2769,15 +3212,52 @@ export function ComfyPipelinePanel() {
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "左侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
-    const orthographicInstruction =
+    const angleInstruction =
       view === "front"
-        ? "正面 0 度，身体朝向镜头，双脚完整落地，标准角色设定板。"
+        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。"
         : view === "side"
-          ? "左侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面左侧，只展示单人侧面轮廓。"
-          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟。";
-    return `角色正交三视图设定板，${viewLabel}，single character turnaround sheet，orthographic view，full body centered。角色：${name}。${orthographicInstruction} 仅保留角色设定信息，不要叙事场景，不要与他人互动。${normalizeStoryInput(
-      context
-    )}。严格要求：${backgroundPrompt}，A-pose 或自然站姿，站立稳定，单张图只允许一个角色，无第二人物，无群像，无场景叙事，无武打动作，无道具遮挡，无裁切，服装统一，面部与体型一致，写实角色设定板，美术统一。`;
+          ? "左侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面左侧，只允许左侧单角度。"
+          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。";
+    const core = mergePromptFragments([
+      "single character",
+      "single-view full-body character turnaround reference",
+      "orthographic view",
+      "full body centered",
+      "fully clothed",
+      "complete outfit",
+      "top, bottom or robe, and shoes clearly visible",
+      viewLabel,
+      `角色：${name}`,
+      angleInstruction,
+      "只保留角色设定信息与服装设计",
+      "不要叙事场景",
+      "不要与他人互动",
+      normalizeStoryInput(context)
+    ]);
+    const constraints = mergePromptFragments([
+      backgroundPrompt,
+      "A-pose 或自然站姿",
+      "站立稳定",
+      "单张图只允许一个角色",
+      "单张图只允许一个角度",
+      "禁止同画面出现第二角度、第二姿态、第二个分身",
+      "禁止多视图拼版、转面设定板、拼图排版、分屏",
+      "无第二人物",
+      "无群像",
+      "无场景叙事",
+      "无武打动作",
+      "无道具遮挡",
+      "无裁切",
+      "完整穿衣",
+      "完整服装设计",
+      "上衣、下装或长袍、鞋子都要清楚可见",
+      "禁止裸露、内衣态、泳装态、赤膊",
+      "服装统一且前后侧一致",
+      "面部与体型一致",
+      "写实角色参考图",
+      "美术统一"
+    ]);
+    return `${core}。严格要求：${constraints}。`;
   };
 
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
@@ -2801,11 +3281,6 @@ export function ComfyPipelinePanel() {
     return `${prompt}。${presetPrompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
   };
 
-  const buildCharacterMultiviewPrompt = (name: string, context: string) =>
-    `single character turnaround sheet，orthographic multiview character reference，full body centered。角色：${name}。${normalizeStoryInput(
-      context
-    )}。严格要求：服装统一，发型统一，面部与体型一致，单张图只允许一个角色，无第二人物，无群像，无场景叙事，无裁切，无道具遮挡，写实角色设定板，美术统一。`;
-
   const buildCharacterViewSelectionTokenOverrides = (
     view: "front" | "side" | "back",
     frameImagePath: string,
@@ -2815,9 +3290,9 @@ export function ComfyPipelinePanel() {
     NEGATIVE_PROMPT: negativePrompt,
     CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
     CHARACTER_FRONT_RIGHT_VIEW: "false",
-    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
+    CHARACTER_RIGHT_VIEW: "false",
     CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
-    CHARACTER_LEFT_VIEW: "false",
+    CHARACTER_LEFT_VIEW: view === "side" ? "true" : "false",
     CHARACTER_FRONT_LEFT_VIEW: "false"
   });
 
@@ -2862,7 +3337,11 @@ export function ComfyPipelinePanel() {
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "character")) return existing;
     const builtIn =
       mode === "advanced_multiview"
-        ? buildCharacterAdvancedWorkflowTemplateJson(selectedModel)
+        ? buildCharacterAdvancedWorkflowTemplateJson(
+            selectedModel,
+            runtimeSettings.characterTemplatePreset ?? "portrait",
+            runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+          )
         : buildCharacterWorkflowTemplateJson(
             selectedModel,
             runtimeSettings.characterTemplatePreset ?? "portrait",
@@ -2922,7 +3401,26 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
-    const negativePrompt = runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
+    const negativePrompt = appendNegativePrompt(
+      runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+      [
+        "single angle only",
+        "multiple angles",
+        "two angles",
+        "multi view",
+        "multiview",
+        "turnaround sheet",
+        "character sheet",
+        "contact sheet",
+        "split screen",
+        "diptych",
+        "triptych",
+        "collage",
+        "duplicate pose",
+        "duplicate body",
+        "mirrored body"
+      ]
+    );
 
     if (mode !== "advanced_multiview") {
       const [front, side, back] = await Promise.all([
@@ -2990,6 +3488,7 @@ export function ComfyPipelinePanel() {
         generateShotAsset(
           runtimeSettings,
           makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed + 11),
           0,
           "image",
           [],
@@ -3002,6 +3501,7 @@ export function ComfyPipelinePanel() {
         generateShotAsset(
           runtimeSettings,
           makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 12),
           0,
           "image",
           [],
@@ -3014,6 +3514,7 @@ export function ComfyPipelinePanel() {
         generateShotAsset(
           runtimeSettings,
           makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 13),
           0,
           "image",
           [],
@@ -3044,6 +3545,7 @@ export function ComfyPipelinePanel() {
           {
             workflowJsonOverride: fallbackWorkflow,
             tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
           }
         ),
         generateShotAsset(
@@ -3056,6 +3558,7 @@ export function ComfyPipelinePanel() {
           {
             workflowJsonOverride: fallbackWorkflow,
             tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("side", negativePrompt) }
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
           }
         ),
         generateShotAsset(
@@ -3068,6 +3571,7 @@ export function ComfyPipelinePanel() {
           {
             workflowJsonOverride: fallbackWorkflow,
             tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("back", negativePrompt) }
+            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
           }
         )
       ]);
@@ -3123,6 +3627,45 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const copyStoryboardModeSummary = async () => {
+    const text = [
+      `分镜工作流模式：${storyboardImageModeSpec.label}`,
+      `当前基模：${settings.storyboardImageModelName?.trim() || DEFAULT_STORYBOARD_IMAGE_MODEL}`,
+      `说明：${storyboardImageModeSpec.summary}`,
+      `必需节点：${storyboardImageModeSpec.requiredNodes.join("；") || "无"}`,
+      `模型要求：${storyboardImageModeSpec.requiredModels.join("；") || "无"}`,
+      `推荐插件：${storyboardImageModeSpec.recommendedPlugins.join("；") || "无"}`,
+      `备注：${storyboardImageModeSpec.notes.join("；") || "无"}`
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      pushToast("分镜工作流模式清单已复制", "success");
+    } catch (error) {
+      pushToast(`复制分镜工作流清单失败：${String(error)}`, "error");
+    }
+  };
+
+  const writeBuiltinStoryboardWorkflow = (mode: StoryboardImageWorkflowMode) => {
+    persistSettings((previous) => ({
+      ...previous,
+      storyboardImageWorkflowMode: mode,
+      imageWorkflowJson:
+        mode === "mature_asset_guided"
+          ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          : STORYBOARD_IMAGE_WORKFLOW_JSON
+    }));
+    pushToast(
+      mode === "mature_asset_guided" ? "已写入内置成熟分镜模板" : "已写入内置 Qwen 兼容分镜模板",
+      "success"
+    );
+    appendLog(
+      mode === "mature_asset_guided"
+        ? "已写入内置成熟分镜模板：scene-first img2img + IPAdapter"
+        : "已写入内置 Qwen 兼容分镜模板",
+      "info"
+    );
+  };
+
   const copyAssetDiagnosticSummary = async (kind: "character" | "skybox") => {
     const diagnostic = kind === "character" ? characterWorkflowDiagnostic : skyboxWorkflowDiagnostic;
     const spec = kind === "character" ? characterAssetModeSpec : skyboxAssetModeSpec;
@@ -3144,6 +3687,27 @@ export function ComfyPipelinePanel() {
       pushToast(`${label}体检结论已复制`, "success");
     } catch (error) {
       pushToast(`复制体检结论失败：${String(error)}`, "error");
+    }
+  };
+
+  const copyStoryboardDiagnosticSummary = async () => {
+    const diagnostic = storyboardWorkflowDiagnostic;
+    const lines = [
+      `分镜图当前模式：${storyboardImageModeSpec.label}`,
+      `工作流配置：${settings.imageWorkflowJson.trim() ? "已配置" : "未配置"}`,
+      `基础模型：${settings.storyboardImageModelName?.trim() || DEFAULT_STORYBOARD_IMAGE_MODEL}`
+    ];
+    if (diagnostic) {
+      lines.push(`Token 预检：${diagnostic.templateValid ? "通过" : `缺少 ${diagnostic.templateMissing.join("、")}`}`);
+      lines.push(`节点体检：${summarizeDependencyReport(diagnostic.dependencyReport)}`);
+      lines.push(`缺失节点：${formatMissingNodes(diagnostic.dependencyReport)}`);
+      lines.push(`建议插件：${formatHintPlugins(diagnostic.dependencyReport)}`);
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      pushToast("分镜模板体检结论已复制", "success");
+    } catch (error) {
+      pushToast(`复制分镜体检结论失败：${String(error)}`, "error");
     }
   };
 
@@ -3196,6 +3760,42 @@ export function ComfyPipelinePanel() {
       modeSpec,
       workflowConfigured,
       strictMode,
+      selectedModel,
+      modelVisible,
+      templateValid: templateCheck.ok,
+      templateMissing: templateCheck.missing,
+      usedTokens: templateCheck.used,
+      dependencyReport,
+      heuristic
+    };
+  };
+
+  const buildStoryboardDiagnostic = async (): Promise<AssetWorkflowDiagnostic> => {
+    let options = availableCheckpointOptions;
+    if (options.length === 0) {
+      try {
+        options = await listComfyCheckpointOptions(settings.baseUrl);
+        setAvailableCheckpointOptions(options);
+      } catch {
+        options = [];
+      }
+    }
+    const selectedModel = settings.storyboardImageModelName?.trim() || DEFAULT_STORYBOARD_IMAGE_MODEL;
+    const modelVisible = options.length > 0 ? options.includes(selectedModel) : null;
+    const templateCheck = validateWorkflowTemplate(settings.imageWorkflowJson, settings.tokenMapping);
+    const heuristic = inspectStoryboardWorkflowHeuristics(settings.imageWorkflowJson);
+    let dependencyReport: WorkflowDependencyReport | null = null;
+    try {
+      dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, settings.imageWorkflowJson);
+    } catch (error) {
+      appendLog(`分镜节点体检失败：${String(error)}`, "error");
+    }
+    return {
+      kind: "storyboard",
+      mode: storyboardImageWorkflowMode,
+      modeSpec: storyboardImageModeSpec,
+      workflowConfigured: Boolean(settings.imageWorkflowJson.trim()),
+      strictMode: storyboardImageWorkflowMode === "mature_asset_guided",
       selectedModel,
       modelVisible,
       templateValid: templateCheck.ok,
@@ -3397,6 +3997,8 @@ export function ComfyPipelinePanel() {
           skyboxAssetWorkflowMode: "basic_builtin"
         },
         description
+      throw new Error(
+        `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
       );
     }
     const primaryPath =
@@ -4067,16 +4669,19 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const runAssetWorkflowDiagnostic = async (kind: "character" | "skybox") => {
-    const label = kind === "character" ? "角色三视图" : "天空盒";
+  const runAssetWorkflowDiagnostic = async (kind: "character" | "skybox" | "storyboard") => {
+    const label = kind === "character" ? "角色三视图" : kind === "skybox" ? "天空盒" : "分镜图";
     try {
       setPipelineState(`${label}体检中`);
       appendLog(`开始${label}专用工作流体检`);
-      const diagnostic = await buildAssetDiagnostic(kind);
+      const diagnostic =
+        kind === "storyboard" ? await buildStoryboardDiagnostic() : await buildAssetDiagnostic(kind);
       if (kind === "character") {
         setCharacterWorkflowDiagnostic(diagnostic);
-      } else {
+      } else if (kind === "skybox") {
         setSkyboxWorkflowDiagnostic(diagnostic);
+      } else {
+        setStoryboardWorkflowDiagnostic(diagnostic);
       }
       appendLog(
         `${label}体检完成：模式 ${diagnostic.modeSpec.label}；${diagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}；模型 ${
@@ -4542,6 +5147,9 @@ export function ComfyPipelinePanel() {
     setAssetStatus(kind, shotId, "running");
     appendLog(`开始生成${kind === "image" ? "分镜图" : kind === "video" ? "视频" : "配音"}：${shot.title}`);
     try {
+      if (kind === "image") {
+        appendLog(`分镜参考预览：${shot.title} -> ${describeShotReferencePreview(resolveShotReferencePreview(shot, latestAssets))}`);
+      }
       if (kind === "audio") {
         const ok = await generateDialogueTracksForShot(shot, shotIndex, runtimeSettings, force);
         if (!ok) throw new Error("未生成任何对白分段");
@@ -4553,7 +5161,30 @@ export function ComfyPipelinePanel() {
         );
         return true;
       }
+      let dialogueAudioTracksForVideo: AudioTrack[] = [];
+      if (kind === "video" && runtimeSettings.videoGenerationMode !== "local_motion" && runtimeSettings.videoWorkflowJson.trim()) {
+        const lipSync = inspectVideoWorkflowLipSyncSupport(runtimeSettings.videoWorkflowJson, runtimeSettings.tokenMapping);
+        if (shot.dialogue.trim()) {
+          if (lipSync.usesDialogueAudioPathToken) {
+            if (!runtimeSettings.audioWorkflowJson?.trim()) {
+              appendLog(`镜头 ${shot.title} 含对白，但未配置配音工作流，当前无法自动生成口型同步音频`, "error");
+            } else {
+              const audioOk = await generateDialogueTracksForShot(shot, shotIndex, assetRuntimeSettings, force);
+              if (!audioOk) {
+                appendLog(`镜头 ${shot.title} 含对白，但未产出可用于口型同步的对白音频`, "error");
+              }
+            }
+            dialogueAudioTracksForVideo = resolveDialogueAudioTracksForShot(shot.id);
+            if (dialogueAudioTracksForVideo.length === 0) {
+              appendLog(`镜头 ${shot.title} 当前没有可注入视频工作流的角色对白音频，视频会继续生成但无法保证口型同步`, "error");
+            }
+          } else {
+            appendLog(`镜头 ${shot.title} 含对白，但当前视频工作流未引用对白音频 token，无法保证口型同步`, "error");
+          }
+        }
+      }
       const output = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, kind, latestScopedShots, latestAssets, {
+        dialogueAudioTracks: kind === "video" ? dialogueAudioTracksForVideo : undefined,
         onProgress: (progress, message) => {
           const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
           const label = kind === "image" ? "分镜图" : kind === "video" ? "镜头视频" : "镜头配音";
@@ -4713,15 +5344,43 @@ export function ComfyPipelinePanel() {
       }
       const shotsForRun = getScopedShotsSnapshot();
       let runtimeSettings = settings;
+      if (
+        (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
+        (!runtimeSettings.imageWorkflowJson.trim() || workflowLooksLikeBuiltinStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson))
+      ) {
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
+        persistSettings((previous) => ({
+          ...previous,
+          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        }));
+        appendLog("成熟分镜模式检测到旧 Qwen 模板，已自动写入内置 scene-first + IPAdapter 分镜模板", "info");
+        pushToast("已自动切换为内置成熟分镜模板", "success");
+      }
+      if (isLegacyMixedStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson)) {
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
+        persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON }));
+        appendLog("检测到旧版混合 Wan 分镜图工作流，已自动切换为内置成熟分镜模板", "info");
+        pushToast("已将旧版重型分镜图工作流切换为内置成熟分镜模板", "warning");
+      }
       if (!runtimeSettings.imageWorkflowJson.trim()) {
-        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: FISHER_WORKFLOW_JSON };
-        persistSettings((previous) => ({ ...previous, imageWorkflowJson: FISHER_WORKFLOW_JSON }));
-        appendLog("图片工作流为空，已自动恢复为内置默认工作流", "error");
-        pushToast("图片工作流为空，已自动恢复默认工作流", "warning");
+        const fallbackWorkflow =
+          (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"
+            ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+            : STORYBOARD_IMAGE_WORKFLOW_JSON;
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: fallbackWorkflow };
+        persistSettings((previous) => ({ ...previous, imageWorkflowJson: fallbackWorkflow }));
+        appendLog("图片工作流为空，已自动恢复为当前模式对应的内置分镜工作流", "info");
+        pushToast("图片工作流为空，已自动恢复当前模式默认模板", "warning");
       }
       const inferredInput = inferInputDirFromSettings(runtimeSettings);
       const hasReferenceNeed = shotsForRun.some((shot) => (shot.characterRefs?.length ?? 0) > 0 || Boolean(shot.sceneRefId?.trim()));
       if (!inferredInput && hasReferenceNeed) {
+        if ((runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided") {
+          appendLog("分镜图生成中断：内置成熟分镜模板需要 ComfyUI input 目录来注入角色三视图和天空盒参考图", "error");
+          pushToast("成熟分镜模板需要 ComfyUI input 目录", "error");
+          setPipelineState("分镜图生成中断：缺少 ComfyUI input 目录");
+          return false;
+        }
         appendLog("未配置 ComfyUI input 目录：将跳过角色/场景参考图注入，仅使用文本提示生成", "error");
         pushToast("未配置 ComfyUI input 目录：本轮将忽略参考图注入", "warning");
       }
@@ -4738,6 +5397,31 @@ export function ComfyPipelinePanel() {
         setPipelineState("分镜图生成中断：图片工作流预检失败");
         return false;
       }
+      if ((runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided") {
+        const dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, runtimeSettings.imageWorkflowJson);
+        if (dependencyReport.missingNodeTypes.length > 0) {
+          setLastDependencyHints(dependencyReport.hints);
+          setStoryboardWorkflowDiagnostic((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  dependencyReport
+                }
+              : previous
+          );
+          const hintPlugins =
+            dependencyReport.hints.length > 0
+              ? dependencyReport.hints.map((item) => item.plugin).join("、")
+              : "无";
+          appendLog(
+            `分镜图生成中断：成熟资产约束模板缺少节点 ${dependencyReport.missingNodeTypes.join("、")}；建议先安装 ${hintPlugins}`,
+            "error"
+          );
+          pushToast("成熟分镜模板缺少必需节点，请先体检并安装建议插件", "error");
+          setPipelineState("分镜图生成中断：成熟分镜模板缺少节点");
+          return false;
+        }
+      }
       setPhase("running");
       if (!skipProvision) {
         appendLog("分镜图前置资产阶段已启用：将先检查角色三视图与场景天空盒");
@@ -4747,6 +5431,13 @@ export function ComfyPipelinePanel() {
           appendLog("分镜图生成中断：前置资产生成未完成", "error");
           return false;
         }
+      }
+      const bindingRepair = deriveShotBindingRepairs(getScopedShotsSnapshot(), useStoryboardStore.getState().assets);
+      if (bindingRepair.patches.length > 0) {
+        bindingRepair.patches.forEach((patch) => updateShotFields(patch.shotId, patch.fields));
+        appendLog(
+          `分镜资产绑定修复：补回角色引用 ${bindingRepair.repairedCharacterShots} 条 / 场景引用 ${bindingRepair.repairedSceneShots} 条`
+        );
       }
       const latestShotsForRun = getScopedShotsSnapshot();
       let successCount = 0;
@@ -4833,8 +5524,26 @@ export function ComfyPipelinePanel() {
           setPipelineState("镜头视频生成中断：视频工作流预检失败");
           return false;
         }
+        const lipSync = inspectVideoWorkflowLipSyncSupport(runtimeSettings.videoWorkflowJson, runtimeSettings.tokenMapping);
+        const dialogueShotCount = shotsForRun.filter((shot) => shot.dialogue.trim().length > 0).length;
+        if (dialogueShotCount > 0) {
+          if (lipSync.usesDialogueAudioPathToken) {
+            appendLog(
+              `检测到 ${dialogueShotCount} 条含对白镜头，视频工作流已接入对白音频 token：${lipSync.matchedPathTokens.join(", ")}`
+            );
+          } else {
+            appendLog(
+              `检测到 ${dialogueShotCount} 条含对白镜头，但当前视频工作流未引用对白音频 token，无法保证口型与文字同步`,
+              "error"
+            );
+            pushToast("当前视频工作流未接入口型同步音频 token，对白镜头无法保证口型同步", "warning");
+          }
+        }
       } else {
         appendLog("当前视频生成方式：Mac 兼容本地视频，不依赖 Comfy 视频工作流");
+        if (shotsForRun.some((shot) => shot.dialogue.trim().length > 0)) {
+          appendLog("当前视频生成方式为本地单帧/首尾帧推演，对白镜头无法做真正的逐字口型同步", "error");
+        }
       }
       setPhase("running");
       let successCount = 0;
@@ -5363,6 +6072,210 @@ export function ComfyPipelinePanel() {
           </div>
         )}
         <label className="comfy-script-block">
+          全局视觉风格锚点
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, globalVisualStylePrompt: event.target.value }))
+            }
+            placeholder="例如：写实电影质感，暖棕低饱和，35mm 胶片颗粒，柔和侧光，真实材质，统一镜头语言。会自动注入角色、天空盒、分镜图和视频。"
+            rows={3}
+            value={settings.globalVisualStylePrompt ?? ""}
+          />
+        </label>
+        <label className="comfy-script-block">
+          全局反风格约束
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, globalStyleNegativePrompt: event.target.value }))
+            }
+            placeholder="例如：二次元，卡通，赛博霓虹，高饱和，夸张磨皮，过曝，廉价 CG，风格漂移。会自动并入负面提示词。"
+            rows={3}
+            value={settings.globalStyleNegativePrompt ?? ""}
+          />
+        </label>
+        <label className="comfy-script-block">
+          分镜图工作流（JSON）
+          <textarea
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, imageWorkflowJson: event.target.value }))
+            }
+            placeholder='粘贴分镜图 ComfyUI API 工作流 JSON。高一致性项目建议不要继续使用内置 Qwen 兼容模板。'
+            rows={6}
+            value={settings.imageWorkflowJson}
+          />
+        </label>
+        <label>
+          分镜图基础模型（checkpoint）
+          <input
+            list="comfy-checkpoint-options"
+            onChange={(event) =>
+              persistSettings((previous) => ({ ...previous, storyboardImageModelName: event.target.value }))
+            }
+            placeholder={DEFAULT_STORYBOARD_IMAGE_MODEL}
+            type="text"
+            value={settings.storyboardImageModelName ?? DEFAULT_STORYBOARD_IMAGE_MODEL}
+          />
+        </label>
+        {storyboardModelVisible === false && (
+          <div className="timeline-meta comfy-inline-warning">
+            当前分镜基模未出现在 Comfy checkpoint 下拉里：{settings.storyboardImageModelName}
+          </div>
+        )}
+        <label>
+          分镜图工作流模式
+          <select
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                storyboardImageWorkflowMode: event.target.value as StoryboardImageWorkflowMode
+              }))
+            }
+            value={storyboardImageWorkflowMode}
+          >
+            <option value="mature_asset_guided">成熟资产约束流程（推荐）</option>
+            <option value="builtin_qwen">兼容内置 Qwen 模板</option>
+          </select>
+        </label>
+        <div className="comfy-asset-mode-card">
+          <div className="comfy-asset-mode-head">
+            <strong>{storyboardImageModeSpec.label}</strong>
+            <div className="timeline-actions">
+              <button
+                className="btn-secondary"
+                onClick={() => writeBuiltinStoryboardWorkflow(storyboardImageWorkflowMode)}
+                type="button"
+              >
+                {storyboardImageWorkflowMode === "mature_asset_guided" ? "写入内置成熟分镜模板" : "写入内置兼容模板"}
+              </button>
+              <button className="btn-ghost" onClick={() => void copyStoryboardModeSummary()} type="button">
+                复制模式清单
+              </button>
+              <button className="btn-ghost" onClick={() => void copyStoryboardDiagnosticSummary()} type="button">
+                复制当前体检结论
+              </button>
+            </div>
+          </div>
+          <p>{storyboardImageModeSpec.summary}</p>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>必需节点</strong>
+              <ul>
+                {storyboardImageModeSpec.requiredNodes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>模型要求</strong>
+              <ul>
+                {storyboardImageModeSpec.requiredModels.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="comfy-asset-mode-grid">
+            <div>
+              <strong>推荐插件</strong>
+              <ul>
+                {storyboardImageModeSpec.recommendedPlugins.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>备注</strong>
+              <ul>
+                {storyboardImageModeSpec.notes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div className="timeline-meta">
+          当前分镜模式：
+          {storyboardImageWorkflowMode === "mature_asset_guided"
+            ? "当前内置成熟模板会先吃天空盒主面/场景底图，再叠 IPAdapter 角色参考；如果还不够，再在这套模板外层加 ControlNet / InstantID。"
+            : "继续使用内置 Qwen/Fisher 兼容模板，出图速度快，但一致性较弱。"}
+        </div>
+        {storyboardImageWorkflowMode === "mature_asset_guided" && workflowLooksLikeBuiltinStoryboardImageWorkflow(settings.imageWorkflowJson) && (
+          <div className="timeline-meta comfy-inline-warning">
+            当前图片工作流仍是内置 Qwen 兼容模板。建议点上面的“写入内置成熟分镜模板”，或导入你自己的成熟资产约束工作流。
+          </div>
+        )}
+        <div className="timeline-actions">
+          <button className="btn-ghost" onClick={() => void runAssetWorkflowDiagnostic("storyboard")} type="button">
+            体检当前分镜模板
+          </button>
+        </div>
+        {storyboardWorkflowDiagnostic && (
+          <div className="comfy-asset-diagnostic-card">
+            <div className="comfy-asset-diagnostic-head">
+              <strong>分镜模板体检</strong>
+              <span>{storyboardWorkflowDiagnostic.workflowConfigured ? "已配置工作流" : "未配置工作流"}</span>
+            </div>
+            <div className="comfy-asset-diagnostic-grid">
+              <div>当前模式</div>
+              <div>{storyboardWorkflowDiagnostic.modeSpec.label}</div>
+              <div>基础模型</div>
+              <div>{storyboardWorkflowDiagnostic.selectedModel}</div>
+              <div>模型可见性</div>
+              <div>
+                {storyboardWorkflowDiagnostic.modelVisible == null
+                  ? "未读取 Comfy 下拉"
+                  : storyboardWorkflowDiagnostic.modelVisible
+                    ? "已命中 Comfy 下拉"
+                    : "未命中 Comfy 下拉"}
+              </div>
+              <div>Token 预检</div>
+              <div>
+                {storyboardWorkflowDiagnostic.templateValid
+                  ? `通过（${storyboardWorkflowDiagnostic.usedTokens.length} 个 token）`
+                  : `失败：缺少 ${storyboardWorkflowDiagnostic.templateMissing.join("、")}`}
+              </div>
+              <div>节点体检</div>
+              <div>{summarizeDependencyReport(storyboardWorkflowDiagnostic.dependencyReport)}</div>
+              <div>缺失节点</div>
+              <div>{formatMissingNodes(storyboardWorkflowDiagnostic.dependencyReport)}</div>
+              <div>建议插件</div>
+              <div>{formatHintPlugins(storyboardWorkflowDiagnostic.dependencyReport)}</div>
+            </div>
+            <div className="comfy-asset-diagnostic-list">
+              <div>模式说明：{storyboardWorkflowDiagnostic.modeSpec.summary}</div>
+              <div>模式必需节点：{storyboardWorkflowDiagnostic.modeSpec.requiredNodes.join("、")}</div>
+              <div>模式模型要求：{storyboardWorkflowDiagnostic.modeSpec.requiredModels.join("、")}</div>
+              <div>
+                模式推荐插件：
+                {storyboardWorkflowDiagnostic.modeSpec.recommendedPlugins.length > 0
+                  ? storyboardWorkflowDiagnostic.modeSpec.recommendedPlugins.join("、")
+                  : "无"}
+              </div>
+            </div>
+            {storyboardWorkflowDiagnostic.heuristic.warnings.length > 0 && (
+              <div className="comfy-asset-diagnostic-list is-warning">
+                {storyboardWorkflowDiagnostic.heuristic.warnings.map((item) => (
+                  <div key={item}>警告：{item}</div>
+                ))}
+              </div>
+            )}
+            {storyboardWorkflowDiagnostic.heuristic.notes.length > 0 && (
+              <div className="comfy-asset-diagnostic-list">
+                {storyboardWorkflowDiagnostic.heuristic.notes.map((item) => (
+                  <div key={item}>说明：{item}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {availableCheckpointOptions.length > 0 && (
+          <datalist id="comfy-checkpoint-options">
+            {availableCheckpointOptions.map((item) => (
+              <option key={item} value={item} />
+            ))}
+          </datalist>
+        )}
+        <label className="comfy-script-block">
           角色三视图工作流（JSON）
           <textarea
             onChange={(event) =>
@@ -5581,7 +6494,9 @@ export function ComfyPipelinePanel() {
                 characterWorkflowJson:
                   characterAssetWorkflowMode === "advanced_multiview"
                     ? buildCharacterAdvancedWorkflowTemplateJson(
-                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+                        previous.characterTemplatePreset ?? "portrait",
+                        previous.characterRenderPreset ?? "stable_fullbody"
                       )
                     : buildCharacterWorkflowTemplateJson(
                         previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
@@ -6229,12 +7144,21 @@ export function ComfyPipelinePanel() {
                 pushToast(`视频工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
                 appendLog(`视频工作流预检失败：缺少 ${check.missing.join(", ")}`, "error");
               } else {
+                const lipSync = inspectVideoWorkflowLipSyncSupport(settings.videoWorkflowJson, settings.tokenMapping);
                 if (check.used.length === 0) {
                   pushToast("视频工作流预检通过（未检测到 token，占位由节点绑定处理）", "success");
                   appendLog("视频工作流预检通过：未检测到 token，将使用节点绑定模式");
                 } else {
                   pushToast(`视频工作流预检通过（检测到 ${check.used.length} 个 token）`, "success");
                   appendLog(`视频工作流预检通过，检测到 ${check.used.length} 个 token`);
+                }
+                if (lipSync.usesDialogueAudioPathToken) {
+                  appendLog(`视频工作流口型同步预检通过：已检测到对白音频 token ${lipSync.matchedPathTokens.join(", ")}`);
+                } else {
+                  appendLog(
+                    `视频工作流口型同步提示：未检测到对白音频 token（建议至少使用 {{${lipSync.candidatePathTokens[0]}}}）`,
+                    "error"
+                  );
                 }
               }
             }}
@@ -6371,6 +7295,42 @@ export function ComfyPipelinePanel() {
               placeholder="DIALOGUE"
               type="text"
               value={settings.tokenMapping.dialogue}
+            />
+          </label>
+          <label>
+            DialogueAudioPath Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("dialogueAudioPath", event.target.value)}
+              placeholder="DIALOGUE_AUDIO_PATH"
+              type="text"
+              value={settings.tokenMapping.dialogueAudioPath}
+            />
+          </label>
+          <label>
+            DialogueAudioPaths Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("dialogueAudioPaths", event.target.value)}
+              placeholder="DIALOGUE_AUDIO_PATHS"
+              type="text"
+              value={settings.tokenMapping.dialogueAudioPaths}
+            />
+          </label>
+          <label>
+            DialogueAudioCount Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("dialogueAudioCount", event.target.value)}
+              placeholder="DIALOGUE_AUDIO_COUNT"
+              type="text"
+              value={settings.tokenMapping.dialogueAudioCount}
+            />
+          </label>
+          <label>
+            HasDialogueAudio Token
+            <input
+              onChange={(event) => onUpdateTokenMapping("hasDialogueAudio", event.target.value)}
+              placeholder="HAS_DIALOGUE_AUDIO"
+              type="text"
+              value={settings.tokenMapping.hasDialogueAudio}
             />
           </label>
           <label>
@@ -6690,7 +7650,7 @@ export function ComfyPipelinePanel() {
           </label>
         </div>
         <small>
-          {"工作流里使用 {{TOKEN}} 占位。分镜建议用 {{NEXT_SCENE_PROMPT}}，视频建议用 {{VIDEO_PROMPT}} 与 {{VIDEO_MODE}}，配音建议用 {{DIALOGUE}}，环境/音效建议用 {{PROMPT}}。"}
+          {"工作流里使用 {{TOKEN}} 占位。分镜建议用 {{NEXT_SCENE_PROMPT}}，视频建议用 {{VIDEO_PROMPT}}、{{VIDEO_MODE}} 和 {{DIALOGUE_AUDIO_PATH}}，配音建议用 {{DIALOGUE}}，环境/音效建议用 {{PROMPT}}。"}
         </small>
         </details>
       </section>
@@ -7604,7 +8564,80 @@ export function ComfyPipelinePanel() {
             <ul className="export-list comfy-shot-list">
             {visibleShots.map((shot) => (
               <li key={`pipeline_${shot.id}`}>
+                {(() => {
+                  const referencePreview = shotReferencePreviewById.get(shot.id) ?? { characters: [] };
+                  return (
+                    <>
                 <div><strong>{shot.order}. {shot.title}</strong></div>
+                <div className="comfy-shot-reference-summary">
+                  参考：{describeShotReferencePreview(referencePreview)}
+                </div>
+                {(referencePreview.characters.length > 0 || referencePreview.scene) && (
+                  <div className="comfy-shot-reference-block">
+                    {referencePreview.characters.map((item) => (
+                      <div className="comfy-shot-reference-group" key={`${shot.id}_${item.id}`}>
+                        <small>角色参考 · {item.name}{item.views.length > 0 ? ` · ${item.views.join("/")}` : ""}</small>
+                        <div className="comfy-provision-thumb-row is-shot-reference">
+                          {item.thumbs.length > 0 ? (
+                            item.thumbs.slice(0, 3).map((thumb, index) => (
+                              <img
+                                key={`${item.id}_${index}`}
+                                alt={`${item.name}_${index + 1}`}
+                                loading="lazy"
+                                src={toDesktopMediaSource(thumb)}
+                              />
+                            ))
+                          ) : (
+                            <div className="comfy-provision-thumb-empty">未找到三视图</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {referencePreview.scene && (
+                      <div className="comfy-shot-reference-group" key={`${shot.id}_${referencePreview.scene.id}`}>
+                        <small>
+                          场景参考 · {referencePreview.scene.name}
+                          {referencePreview.scene.faces.length > 0 ? ` · ${referencePreview.scene.faces.join("/")}` : ""}
+                        </small>
+                        <div className="comfy-provision-thumb-row is-shot-reference">
+                          {referencePreview.scene.thumbs.length > 0 ? (
+                            referencePreview.scene.thumbs.slice(0, 4).map((thumb, index) => (
+                              <img
+                                key={`${referencePreview.scene?.id}_${index}`}
+                                alt={`${referencePreview.scene?.name}_${index + 1}`}
+                                loading="lazy"
+                                src={toDesktopMediaSource(thumb)}
+                              />
+                            ))
+                          ) : (
+                            <div className="comfy-provision-thumb-empty">未找到场景图</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <details className="comfy-shot-details">
+                  <summary>镜头信息</summary>
+                  <div className="comfy-shot-readonly-grid">
+                    <label>
+                      分镜 Prompt
+                      <textarea readOnly rows={4} value={shot.storyPrompt ?? ""} />
+                    </label>
+                    <label>
+                      备注
+                      <textarea readOnly rows={3} value={shot.notes ?? ""} />
+                    </label>
+                    <label>
+                      对白
+                      <textarea readOnly rows={2} value={shot.dialogue ?? ""} />
+                    </label>
+                    <label>
+                      绑定资产摘要
+                      <textarea readOnly rows={3} value={describeShotReferencePreview(referencePreview)} />
+                    </label>
+                  </div>
+                </details>
                 <div>
                   图：{shot.generatedImagePath || "未生成"} · 状态：{formatAssetStatus(imageStatusByShot[shot.id] ?? "idle")}
                 </div>
@@ -7669,6 +8702,7 @@ export function ComfyPipelinePanel() {
                         <option value="first_last_frame">首尾帧生成视频</option>
                       </select>
                     </label>
+                    <div className="field-help">{explainShotVideoMode(shot)}</div>
                     {settings.videoGenerationMode === "local_motion" && (
                       <label>
                         本地运动样式
@@ -7759,6 +8793,9 @@ export function ComfyPipelinePanel() {
                     </button>
                   </div>
                 </details>
+                    </>
+                  );
+                })()}
               </li>
             ))}
             </ul>
