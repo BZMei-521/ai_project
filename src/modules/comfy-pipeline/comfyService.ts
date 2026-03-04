@@ -1509,6 +1509,7 @@ type WorkflowNode = {
 type WeightedImageRef = {
   source: string;
   weight: number;
+  priority: number;
   role:
     | "scene_primary"
     | "scene_secondary"
@@ -1697,24 +1698,16 @@ function uniquePreserveOrder(values: string[]): string[] {
   return output;
 }
 
-function weightedImageRefPriority(role: WeightedImageRef["role"]): number {
-  switch (role) {
-    case "character_front":
-      return 150;
-    case "continuity_character":
-      return 145;
-    case "scene_primary":
-      return 140;
-    case "continuity_scene":
-      return 135;
-    case "character_side":
-      return 130;
-    case "character_back":
-      return 120;
-    case "scene_secondary":
-    default:
-      return 110;
-  }
+function characterViewRole(view: CharacterReferenceView): WeightedImageRef["role"] {
+  if (view === "front") return "character_front";
+  if (view === "side") return "character_side";
+  return "character_back";
+}
+
+function orderedCharacterViews(
+  plan: ReturnType<typeof inferCharacterReferencePlan>
+): CharacterReferenceView[] {
+  return [plan.primaryView, ...plan.secondaryViews];
 }
 
 function joinNaturalChineseList(values: string[]): string {
@@ -1916,6 +1909,12 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     );
   }
   pieces.push(
+    "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
+  );
+  pieces.push(
+    "Prefer the shot-matching character view and the matching skybox face over any weaker or generic reference."
+  );
+  pieces.push(
     "Generate one coherent cinematic shot in the same world. Do not redesign the environment, do not change character identity, and do not ignore any provided reference image."
   );
   return pieces.join(" ");
@@ -1935,53 +1934,63 @@ function extractImageReferenceSources(
   const sceneRefs: WeightedImageRef[] = [];
   if (sceneAsset?.type === "scene") {
     if ((sceneAsset.filePath ?? "").trim()) {
-      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, role: "scene_primary" });
+      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, priority: 320, role: "scene_primary" });
     }
   } else if (sceneAsset?.type === "skybox") {
     const plan = inferSkyboxReferencePlan(shot);
-    const faces = inferSkyboxFacesFromShot(shot);
-    for (const face of faces) {
+    for (let faceIndex = 0; faceIndex < plan.faces.length; faceIndex += 1) {
+      const face = plan.faces[faceIndex]!;
       const facePath = sceneAsset.skyboxFaces?.[face] ?? "";
       if (!facePath.trim()) continue;
-      const weight = skyboxFaceWeight(shot, face);
+      const weight = plan.weights[face] ?? skyboxFaceWeight(shot, face);
       if (weight <= 0) continue;
       sceneRefs.push({
         source: facePath,
         weight,
+        priority: face === plan.primaryFace ? 320 : 250 - faceIndex * 10,
         role: face === plan.primaryFace ? "scene_primary" : "scene_secondary"
       });
     }
     if (sceneRefs.length === 0 && (sceneAsset.filePath ?? "").trim()) {
-      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, role: "scene_primary" });
+      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, priority: 320, role: "scene_primary" });
     }
   }
 
   const selectedCharacters = (shot.characterRefs ?? [])
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item));
-  const characterRefs = selectedCharacters.flatMap((asset) => {
+  const characterRefs = selectedCharacters.flatMap((asset, assetIndex) => {
     const refs: WeightedImageRef[] = [];
     const front = asset.characterFrontPath || asset.filePath || "";
     const side = asset.characterSidePath || "";
     const back = asset.characterBackPath || "";
-    const frontWeight = characterReferenceWeight("front", characterPlan);
-    const sideWeight = characterReferenceWeight("side", characterPlan);
-    const backWeight = characterReferenceWeight("back", characterPlan);
-    if (front.trim() && frontWeight > 0) refs.push({ source: front, weight: frontWeight, role: "character_front" });
-    if (side.trim() && sideWeight > 0) refs.push({ source: side, weight: sideWeight, role: "character_side" });
-    if (back.trim() && backWeight > 0) refs.push({ source: back, weight: backWeight, role: "character_back" });
+    const byView: Record<CharacterReferenceView, string> = { front, side, back };
+    const viewOrder = orderedCharacterViews(characterPlan);
+    for (let viewIndex = 0; viewIndex < viewOrder.length; viewIndex += 1) {
+      const view = viewOrder[viewIndex]!;
+      const source = byView[view].trim();
+      if (!source) continue;
+      const weight = characterReferenceWeight(view, characterPlan);
+      if (weight <= 0) continue;
+      refs.push({
+        source,
+        weight,
+        priority: 420 - assetIndex * 20 - viewIndex * 15,
+        role: characterViewRole(view)
+      });
+    }
     return refs;
   });
   const continuityRefs: WeightedImageRef[] = [];
   const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
   if (previousSceneImage) {
-    continuityRefs.push({ source: previousSceneImage, weight: 0.92, role: "continuity_scene" });
+    continuityRefs.push({ source: previousSceneImage, weight: 0.42, priority: 110, role: "continuity_scene" });
   }
   const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
   if (previousCharacterImage) {
-    continuityRefs.push({ source: previousCharacterImage, weight: 0.98, role: "continuity_character" });
+    continuityRefs.push({ source: previousCharacterImage, weight: 0.48, priority: 120, role: "continuity_character" });
   }
-  const merged = [...continuityRefs, ...sceneRefs, ...characterRefs].filter((item) => item.source.trim().length > 0);
+  const merged = [...characterRefs, ...sceneRefs, ...continuityRefs].filter((item) => item.source.trim().length > 0);
   const deduped = new Map<string, WeightedImageRef>();
   for (const item of merged) {
     const prev = deduped.get(item.source);
@@ -1989,16 +1998,22 @@ function extractImageReferenceSources(
       deduped.set(item.source, item);
       continue;
     }
-    const prevPriority = weightedImageRefPriority(prev.role);
-    const currentPriority = weightedImageRefPriority(item.role);
-    if (currentPriority > prevPriority || (currentPriority === prevPriority && item.weight > prev.weight)) {
-      deduped.set(item.source, { ...item, weight: Math.max(prev.weight, item.weight) });
+    if (item.priority > prev.priority || (item.priority === prev.priority && item.weight > prev.weight)) {
+      deduped.set(item.source, {
+        ...item,
+        weight: Math.max(prev.weight, item.weight),
+        priority: Math.max(prev.priority, item.priority)
+      });
       continue;
     }
-    deduped.set(item.source, { ...prev, weight: Math.max(prev.weight, item.weight) });
+    deduped.set(item.source, {
+      ...prev,
+      weight: Math.max(prev.weight, item.weight),
+      priority: Math.max(prev.priority, item.priority)
+    });
   }
   return [...deduped.values()].sort((left, right) => {
-    const priorityDelta = weightedImageRefPriority(right.role) - weightedImageRefPriority(left.role);
+    const priorityDelta = right.priority - left.priority;
     if (priorityDelta !== 0) return priorityDelta;
     return right.weight - left.weight;
   }).slice(0, 6);
@@ -2585,9 +2600,10 @@ function inferPromptTokens(
   const sceneAsset = assets.find(
     (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
   );
-  const skyboxFaces = sceneAsset?.type === "skybox" ? inferSkyboxFacesFromShot(shot) : [];
+  const skyboxPlan = sceneAsset?.type === "skybox" ? inferSkyboxReferencePlan(shot) : null;
+  const skyboxFaces = skyboxPlan?.faces ?? [];
   const skyboxFaceWeightsText = skyboxFaces
-    .map((face) => `${face}:${skyboxFaceWeight(shot, face).toFixed(2)}`)
+    .map((face) => `${face}:${(skyboxPlan?.weights[face] ?? skyboxFaceWeight(shot, face)).toFixed(2)}`)
     .join(",");
   const skyboxFacePaths =
     sceneAsset?.type === "skybox"
