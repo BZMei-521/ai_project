@@ -2184,12 +2184,57 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   return selected.slice(0, 3);
 }
 
+function shouldLeadWithSceneReference(shot: Shot): boolean {
+  if ((shot.characterRefs?.length ?? 0) > 1) return true;
+  const corpus = [
+    shot.title ?? "",
+    shot.storyPrompt ?? "",
+    shot.videoPrompt ?? "",
+    shot.notes ?? "",
+    ...(shot.tags ?? [])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return containsAnyKeyword(corpus, [
+    "对峙",
+    "双人",
+    "两人",
+    "二人",
+    "全景",
+    "大全景",
+    "中景",
+    "远景",
+    "建立镜头",
+    "环境",
+    "河边",
+    "桥上",
+    "室外",
+    "对打",
+    "打斗",
+    "搏斗",
+    "wide shot",
+    "establishing",
+    "environment"
+  ]);
+}
+
+function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
+  if (refs.length <= 1) return refs;
+  const characters = refs.filter((item) => item.role.startsWith("character_"));
+  const scenes = refs.filter((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
+  if (shouldLeadWithSceneReference(shot) && scenes.length > 0) {
+    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...scenes.slice(1), ...continuity].slice(0, 3);
+  }
+  return [...characters.slice(0, 1), ...scenes.slice(0, 1), ...characters.slice(1), ...continuity].slice(0, 3);
+}
+
 async function stageCharacterReferenceImages(
   settings: ComfySettings,
   shot: Shot,
   refs: WeightedImageRef[]
 ): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
-  const selectedRefs = selectStoryboardReferenceSlots(refs);
+  const selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(refs));
   if (selectedRefs.length === 0) return [];
   const inputDir = inferComfyInputDir(settings);
   if (!inputDir) {
