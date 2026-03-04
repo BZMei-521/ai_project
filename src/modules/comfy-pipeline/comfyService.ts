@@ -3506,10 +3506,10 @@ async function generateLocalCompatibleVideo(
       : "";
 
   if (!primaryImagePath.trim()) {
-    throw new Error("Mac 兼容视频生成失败：当前镜头没有可用分镜图或首帧");
+    throw new Error("本地兼容视频生成失败：当前镜头没有可用分镜图或首帧");
   }
   if (mode === "first_last_frame" && !secondaryImagePath.trim()) {
-    throw new Error("Mac 兼容视频生成失败：首尾帧模式缺少尾帧");
+    throw new Error("本地兼容视频生成失败：首尾帧模式缺少尾帧");
   }
 
   const result = await invokeDesktop<LocalVideoRenderResult>("generate_local_video_from_images", {
@@ -3762,7 +3762,6 @@ export async function generateShotAsset(
       options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
       return await generateLocalCompatibleVideo(settings, shot, index, allShots);
     }
-    if (kind !== "video") throw error;
     const logTail = await readComfyServerLogTail(settings);
     const diagnosis = logTail ? summarizeComfyServerLogFailure(logTail) : null;
     if (!diagnosis || baseMessage.includes(diagnosis)) {
