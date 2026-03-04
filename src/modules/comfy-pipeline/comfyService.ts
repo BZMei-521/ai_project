@@ -1124,10 +1124,22 @@ type WorkflowNode = {
 type WeightedImageRef = {
   source: string;
   weight: number;
-  role: "scene_primary" | "scene_secondary" | "character_front" | "character_side" | "character_back";
+  role:
+    | "scene_primary"
+    | "scene_secondary"
+    | "character_front"
+    | "character_side"
+    | "character_back"
+    | "continuity_scene"
+    | "continuity_character";
 };
 
 type CharacterReferenceView = "front" | "side" | "back";
+
+type ShotContinuityPlan = {
+  previousSceneShot?: Shot;
+  previousCharacterShot?: Shot;
+};
 
 function nodeWidgetList(node: WorkflowNode): unknown[] | null {
   return Array.isArray(node.widgets_values) ? node.widgets_values : null;
@@ -1304,8 +1316,12 @@ function weightedImageRefPriority(role: WeightedImageRef["role"]): number {
   switch (role) {
     case "character_front":
       return 150;
+    case "continuity_character":
+      return 145;
     case "scene_primary":
       return 140;
+    case "continuity_scene":
+      return 135;
     case "character_side":
       return 130;
     case "character_back":
@@ -1397,14 +1413,64 @@ function characterReferenceWeight(view: CharacterReferenceView, plan: ReturnType
   return 0;
 }
 
+function shotsShareCharacters(left: Shot, right: Shot): boolean {
+  const leftSet = new Set((left.characterRefs ?? []).filter((item) => item.trim().length > 0));
+  if (leftSet.size === 0) return false;
+  return (right.characterRefs ?? []).some((item) => leftSet.has(item));
+}
+
+function hasGeneratedStill(shot: Shot | undefined): shot is Shot {
+  return Boolean(shot?.generatedImagePath?.trim());
+}
+
+function inferShotContinuityPlan(shot: Shot, index: number, allShots: Shot[]): ShotContinuityPlan {
+  let previousSceneShot: Shot | undefined;
+  let previousCharacterShot: Shot | undefined;
+
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const candidate = allShots[cursor];
+    if (!hasGeneratedStill(candidate)) continue;
+    if (!previousSceneShot && shot.sceneRefId?.trim() && candidate.sceneRefId === shot.sceneRefId) {
+      previousSceneShot = candidate;
+    }
+    if (!previousCharacterShot && shotsShareCharacters(shot, candidate)) {
+      previousCharacterShot = candidate;
+    }
+    if (previousSceneShot && previousCharacterShot) break;
+  }
+
+  return { previousSceneShot, previousCharacterShot };
+}
+
+function buildContinuityDirective(plan: ShotContinuityPlan): string {
+  const lines: string[] = [];
+  if (plan.previousSceneShot) {
+    lines.push(
+      `跨镜头场景连续：延续上一条同场景分镜“${plan.previousSceneShot.title}”的环境布局与空间锚点，桥梁、建筑、河岸、道路等固定物位置关系不得漂移或改造。`
+    );
+  }
+  if (plan.previousCharacterShot) {
+    lines.push(
+      `跨镜头人物连续：延续上一条同角色分镜“${plan.previousCharacterShot.title}”中的角色外观，发型、服装、配饰、配色、体型和受光状态保持同一人设，不得突然变化。`
+    );
+  }
+  if (lines.length > 0) {
+    lines.push("连续性规则：这是同一段戏内的连续镜头，默认继承上一镜头已经建立的角色和场景，不允许重置设计。");
+  }
+  return lines.join("\n");
+}
+
 function buildShotReferenceDirective(
   shot: Shot,
   sceneAsset: Asset | undefined,
   skyboxFaces: SkyboxFace[],
-  characterAssets: Asset[]
+  characterAssets: Asset[],
+  continuityPlan: ShotContinuityPlan
 ): string {
   const lines: string[] = [];
   const characterPlan = characterAssets.length > 0 ? inferCharacterReferencePlan(shot) : null;
+  const continuityDirective = buildContinuityDirective(continuityPlan);
+  if (continuityDirective) lines.push(continuityDirective);
   if (sceneAsset?.type === "skybox") {
     const faceText = joinNaturalChineseList(skyboxFaces.map((face) => skyboxFaceLabel(face)));
     lines.push(
@@ -1437,7 +1503,19 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   const sceneName = tokens.SCENE_REF_NAME?.trim() ?? "";
   const characterNames = splitCsv(tokens.CHARACTER_REF_NAMES);
   const preferredCharacterView = tokens.PREFERRED_CHARACTER_VIEW?.trim().toLowerCase() ?? "";
+  const previousSceneTitle = tokens.PREV_SCENE_SHOT_TITLE?.trim() ?? "";
+  const previousCharacterTitle = tokens.PREV_CHARACTER_SHOT_TITLE?.trim() ?? "";
   const pieces = ["Treat every provided input image as a binding reference, not optional inspiration."];
+  if (previousSceneTitle) {
+    pieces.push(
+      `Maintain visual continuity from the previous same-scene shot ${previousSceneTitle}; keep fixed landmarks and environment layout stable.`
+    );
+  }
+  if (previousCharacterTitle) {
+    pieces.push(
+      `Maintain character continuity from the previous same-character shot ${previousCharacterTitle}; do not change hairstyle, costume, props, body shape, or palette.`
+    );
+  }
   if (sceneName) {
     pieces.push(
       `Lock the environment to the scene reference ${sceneName}; keep layout, horizon, camera direction, lighting mood, and materials consistent.`
@@ -1454,11 +1532,17 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   return pieces.join(" ");
 }
 
-function extractImageReferenceSources(shot: Shot, assets: Asset[]): WeightedImageRef[] {
+function extractImageReferenceSources(
+  shot: Shot,
+  assets: Asset[],
+  index: number,
+  allShots: Shot[] = []
+): WeightedImageRef[] {
   const sceneAsset = assets.find(
     (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
   );
   const characterPlan = inferCharacterReferencePlan(shot);
+  const continuityPlan = inferShotContinuityPlan(shot, index, allShots);
   const sceneRefs: WeightedImageRef[] = [];
   if (sceneAsset?.type === "scene") {
     if ((sceneAsset.filePath ?? "").trim()) {
@@ -1499,7 +1583,16 @@ function extractImageReferenceSources(shot: Shot, assets: Asset[]): WeightedImag
     if (back.trim() && backWeight > 0) refs.push({ source: back, weight: backWeight, role: "character_back" });
     return refs;
   });
-  const merged = [...sceneRefs, ...characterRefs].filter((item) => item.source.trim().length > 0);
+  const continuityRefs: WeightedImageRef[] = [];
+  const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
+  if (previousSceneImage) {
+    continuityRefs.push({ source: previousSceneImage, weight: 0.92, role: "continuity_scene" });
+  }
+  const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
+  if (previousCharacterImage) {
+    continuityRefs.push({ source: previousCharacterImage, weight: 0.98, role: "continuity_character" });
+  }
+  const merged = [...continuityRefs, ...sceneRefs, ...characterRefs].filter((item) => item.source.trim().length > 0);
   const deduped = new Map<string, WeightedImageRef>();
   for (const item of merged) {
     const prev = deduped.get(item.source);
@@ -2115,6 +2208,7 @@ function inferPromptTokens(
   const characterAssets = (shot.characterRefs ?? [])
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item));
+  const continuityPlan = inferShotContinuityPlan(shot, index, allShots);
   const characterFrontPaths = characterAssets.map((item) => item.characterFrontPath || item.filePath).filter(Boolean);
   const characterSidePaths = characterAssets.map((item) => item.characterSidePath || "").filter(Boolean);
   const characterBackPaths = characterAssets.map((item) => item.characterBackPath || "").filter(Boolean);
@@ -2125,7 +2219,7 @@ function inferPromptTokens(
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
-  const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets);
+  const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
   const promptBase = [referenceDirective, sceneContext, characterContext, promptBaseRaw]
     .filter((item) => item.length > 0)
     .join("\n");
@@ -2158,6 +2252,10 @@ function inferPromptTokens(
     DURATION_FRAMES: String(Math.max(1, shot.durationFrames)),
     DURATION_SEC: String((shot.durationFrames / 24).toFixed(2)),
     CHARACTER_REFS: (shot.characterRefs ?? []).join(","),
+    PREV_SCENE_SHOT_TITLE: continuityPlan.previousSceneShot?.title ?? "",
+    PREV_SCENE_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? ""),
+    PREV_CHARACTER_SHOT_TITLE: continuityPlan.previousCharacterShot?.title ?? "",
+    PREV_CHARACTER_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? ""),
     SCENE_REF_PATH: sceneRefPath,
     SCENE_REF_PATHS: sceneAsset?.type === "skybox" ? skyboxFacePaths.join(",") : sceneRefPath,
     SCENE_REF_NAME:
@@ -3204,7 +3302,7 @@ export async function generateShotAsset(
     }
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
-      const sources = extractImageReferenceSources(shot, assets);
+      const sources = extractImageReferenceSources(shot, assets, index, allShots);
       stagedCharacterImages =
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
     }
