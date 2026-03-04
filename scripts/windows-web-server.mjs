@@ -1513,8 +1513,14 @@ async function resolveComfyServerLogPath(comfyRootDir, baseUrl) {
   if (roots.length === 0) return "";
   const port = Number(normalizeBaseUrl(baseUrl).split(":").pop()) || 8188;
   for (const root of roots) {
-    const candidate = path.join(root, "user", `comfyui_${port}.log`);
-    if (await fileExists(candidate)) return candidate;
+    const userDir = path.join(root, "user");
+    const candidates = [
+      path.join(userDir, `comfyui_${port}.log`),
+      path.join(userDir, "comfyui.log")
+    ];
+    for (const candidate of candidates) {
+      if (await fileExists(candidate)) return candidate;
+    }
   }
   const discovered = await discoverComfyLogBySearch(port);
   if (discovered) return discovered;
@@ -1559,15 +1565,17 @@ async function discoverComfyLogBySearch(port) {
   ];
   for (const root of uniquePreserveOrder(searchRoots)) {
     try {
-      const { stdout } = await runCommand("powershell", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        `Get-ChildItem -Path '${root.replace(/'/g, "''")}' -Filter 'comfyui_${port}.log' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`
-      ]);
-      const resolved = String(stdout || "").trim().split(/\r?\n/).find(Boolean) || "";
-      if (resolved && (await fileExists(resolved))) return resolved;
+      for (const pattern of [`comfyui_${port}.log`, "comfyui.log"]) {
+        const { stdout } = await runCommand("powershell", [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          `Get-ChildItem -Path '${root.replace(/'/g, "''")}' -Filter '${pattern}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`
+        ]);
+        const resolved = String(stdout || "").trim().split(/\r?\n/).find(Boolean) || "";
+        if (resolved && (await fileExists(resolved))) return resolved;
+      }
     } catch {
       // ignore
     }

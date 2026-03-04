@@ -2564,10 +2564,21 @@ fn comfy_read_server_log_tail(
         .next()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8188);
-    let log_path = root.join("user").join(format!("comfyui_{port}.log"));
-    if !log_path.exists() {
-        return Err(format!("Comfy server log not found: {}", log_path.to_string_lossy()));
-    }
+    let user_dir = root.join("user");
+    let candidate_paths = [
+        user_dir.join(format!("comfyui_{port}.log")),
+        user_dir.join("comfyui.log"),
+    ];
+    let log_path = candidate_paths
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "Comfy server log not found: {} or {}",
+                user_dir.join(format!("comfyui_{port}.log")).to_string_lossy(),
+                user_dir.join("comfyui.log").to_string_lossy()
+            )
+        })?;
     let content = fs::read_to_string(&log_path)
         .map_err(|err| format!("Failed to read Comfy server log: {err}"))?;
     let limit = max_lines.unwrap_or(160);
