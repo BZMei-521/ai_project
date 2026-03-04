@@ -530,8 +530,8 @@ type AssetWorkflowHeuristicReport = {
 };
 
 type AssetWorkflowDiagnostic = {
-  kind: "character" | "skybox";
-  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode;
+  kind: "character" | "skybox" | "storyboard";
+  mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode | StoryboardImageWorkflowMode;
   modeSpec: AssetWorkflowModeSpec;
   workflowConfigured: boolean;
   strictMode: boolean;
@@ -1349,6 +1349,42 @@ function inspectAssetWorkflowHeuristics(
   } else {
     notes.push("天空盒会按六个面分别调用工作流。每次必须只输出纯环境图，不允许出现人物。");
   }
+  return { warnings, notes };
+}
+
+function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflowHeuristicReport {
+  const nodeTypes = collectWorkflowNodeTypesForHeuristics(workflowJson);
+  const warnings: string[] = [];
+  const notes: string[] = [];
+  const hasLoadImage = nodeTypes.includes("LoadImage");
+  const hasVaeEncode = nodeTypes.includes("VAEEncode");
+  const hasIpAdapter = nodeTypes.some((type) => /IPAdapter/i.test(type));
+  const hasControlNet = nodeTypes.some((type) => /ControlNet/i.test(type));
+  const hasInstantId = nodeTypes.some((type) => /InstantID/i.test(type));
+  const hasPulid = nodeTypes.some((type) => /PuLID/i.test(type));
+  const hasQwenTemplateNode = nodeTypes.some((type) => /Qwen|ImageEditPlus|promptLine/i.test(type));
+  const usesSceneToken = workflowJson.includes("{{SCENE_REF_PATH}}");
+  const usesCharacterToken =
+    workflowJson.includes("{{CHAR1_PRIMARY_PATH}}") || workflowJson.includes("{{CHARACTER_FRONT_PATHS}}");
+
+  if (hasQwenTemplateNode) {
+    warnings.push("检测到 Qwen/Fisher 图编辑节点。高一致性分镜不建议继续把它作为主链路。");
+  }
+  if (!hasLoadImage || !usesSceneToken) {
+    warnings.push("未检测到场景底图注入（LoadImage + {{SCENE_REF_PATH}}）。场景一致性会明显变弱。");
+  }
+  if (!hasVaeEncode) {
+    warnings.push("未检测到 VAEEncode。scene-first img2img 链路通常应先把天空盒主面编码为 latent 再低 denoise 重绘。");
+  }
+  if (!hasIpAdapter || !usesCharacterToken) {
+    warnings.push("未检测到角色 IPAdapter 参考注入。人物一致性会明显变弱。");
+  }
+  if (!nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type))) {
+    warnings.push("未检测到明显图片输出节点，请确认工作流最终会产出分镜图。");
+  }
+  notes.push("成熟分镜模板的核心顺序应是：场景底图优先，角色参考其次，文本只补镜头动作和构图。");
+  if (hasControlNet) notes.push("检测到 ControlNet，可用于第二阶段增强姿态或空间稳定性。");
+  if (hasInstantId || hasPulid) notes.push("检测到 InstantID / PuLID，可用于正脸镜头进一步锁脸。");
   return { warnings, notes };
 }
 
@@ -2186,6 +2222,7 @@ export function ComfyPipelinePanel() {
   const [lastModelChecklist, setLastModelChecklist] = useState("");
   const [characterWorkflowDiagnostic, setCharacterWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const [skyboxWorkflowDiagnostic, setSkyboxWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
+  const [storyboardWorkflowDiagnostic, setStoryboardWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const checkingRef = useRef(false);
   const characterModelVisible = useMemo(() => {
     const selected = settings.characterAssetModelName?.trim();
@@ -3420,6 +3457,27 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const copyStoryboardDiagnosticSummary = async () => {
+    const diagnostic = storyboardWorkflowDiagnostic;
+    const lines = [
+      `分镜图当前模式：${storyboardImageModeSpec.label}`,
+      `工作流配置：${settings.imageWorkflowJson.trim() ? "已配置" : "未配置"}`,
+      `基础模型：${settings.storyboardImageModelName?.trim() || DEFAULT_STORYBOARD_IMAGE_MODEL}`
+    ];
+    if (diagnostic) {
+      lines.push(`Token 预检：${diagnostic.templateValid ? "通过" : `缺少 ${diagnostic.templateMissing.join("、")}`}`);
+      lines.push(`节点体检：${summarizeDependencyReport(diagnostic.dependencyReport)}`);
+      lines.push(`缺失节点：${formatMissingNodes(diagnostic.dependencyReport)}`);
+      lines.push(`建议插件：${formatHintPlugins(diagnostic.dependencyReport)}`);
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      pushToast("分镜模板体检结论已复制", "success");
+    } catch (error) {
+      pushToast(`复制分镜体检结论失败：${String(error)}`, "error");
+    }
+  };
+
   const buildAssetDiagnostic = async (kind: "character" | "skybox"): Promise<AssetWorkflowDiagnostic> => {
     const workflowConfigured = kind === "character" ? Boolean(settings.characterWorkflowJson?.trim()) : Boolean(settings.skyboxWorkflowJson?.trim());
     const strictMode =
@@ -3469,6 +3527,42 @@ export function ComfyPipelinePanel() {
       modeSpec,
       workflowConfigured,
       strictMode,
+      selectedModel,
+      modelVisible,
+      templateValid: templateCheck.ok,
+      templateMissing: templateCheck.missing,
+      usedTokens: templateCheck.used,
+      dependencyReport,
+      heuristic
+    };
+  };
+
+  const buildStoryboardDiagnostic = async (): Promise<AssetWorkflowDiagnostic> => {
+    let options = availableCheckpointOptions;
+    if (options.length === 0) {
+      try {
+        options = await listComfyCheckpointOptions(settings.baseUrl);
+        setAvailableCheckpointOptions(options);
+      } catch {
+        options = [];
+      }
+    }
+    const selectedModel = settings.storyboardImageModelName?.trim() || DEFAULT_STORYBOARD_IMAGE_MODEL;
+    const modelVisible = options.length > 0 ? options.includes(selectedModel) : null;
+    const templateCheck = validateWorkflowTemplate(settings.imageWorkflowJson, settings.tokenMapping);
+    const heuristic = inspectStoryboardWorkflowHeuristics(settings.imageWorkflowJson);
+    let dependencyReport: WorkflowDependencyReport | null = null;
+    try {
+      dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, settings.imageWorkflowJson);
+    } catch (error) {
+      appendLog(`分镜节点体检失败：${String(error)}`, "error");
+    }
+    return {
+      kind: "storyboard",
+      mode: storyboardImageWorkflowMode,
+      modeSpec: storyboardImageModeSpec,
+      workflowConfigured: Boolean(settings.imageWorkflowJson.trim()),
+      strictMode: storyboardImageWorkflowMode === "mature_asset_guided",
       selectedModel,
       modelVisible,
       templateValid: templateCheck.ok,
@@ -4330,16 +4424,19 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const runAssetWorkflowDiagnostic = async (kind: "character" | "skybox") => {
-    const label = kind === "character" ? "角色三视图" : "天空盒";
+  const runAssetWorkflowDiagnostic = async (kind: "character" | "skybox" | "storyboard") => {
+    const label = kind === "character" ? "角色三视图" : kind === "skybox" ? "天空盒" : "分镜图";
     try {
       setPipelineState(`${label}体检中`);
       appendLog(`开始${label}专用工作流体检`);
-      const diagnostic = await buildAssetDiagnostic(kind);
+      const diagnostic =
+        kind === "storyboard" ? await buildStoryboardDiagnostic() : await buildAssetDiagnostic(kind);
       if (kind === "character") {
         setCharacterWorkflowDiagnostic(diagnostic);
-      } else {
+      } else if (kind === "skybox") {
         setSkyboxWorkflowDiagnostic(diagnostic);
+      } else {
+        setStoryboardWorkflowDiagnostic(diagnostic);
       }
       appendLog(
         `${label}体检完成：模式 ${diagnostic.modeSpec.label}；${diagnostic.workflowConfigured ? "已配置专用工作流" : "未配置专用工作流"}；模型 ${
@@ -5743,6 +5840,9 @@ export function ComfyPipelinePanel() {
               <button className="btn-ghost" onClick={() => void copyStoryboardModeSummary()} type="button">
                 复制模式清单
               </button>
+              <button className="btn-ghost" onClick={() => void copyStoryboardDiagnosticSummary()} type="button">
+                复制当前体检结论
+              </button>
             </div>
           </div>
           <p>{storyboardImageModeSpec.summary}</p>
@@ -5792,6 +5892,70 @@ export function ComfyPipelinePanel() {
         {storyboardImageWorkflowMode === "mature_asset_guided" && workflowLooksLikeBuiltinStoryboardImageWorkflow(settings.imageWorkflowJson) && (
           <div className="timeline-meta comfy-inline-warning">
             当前图片工作流仍是内置 Qwen 兼容模板。建议点上面的“写入内置成熟分镜模板”，或导入你自己的成熟资产约束工作流。
+          </div>
+        )}
+        <div className="timeline-actions">
+          <button className="btn-ghost" onClick={() => void runAssetWorkflowDiagnostic("storyboard")} type="button">
+            体检当前分镜模板
+          </button>
+        </div>
+        {storyboardWorkflowDiagnostic && (
+          <div className="comfy-asset-diagnostic-card">
+            <div className="comfy-asset-diagnostic-head">
+              <strong>分镜模板体检</strong>
+              <span>{storyboardWorkflowDiagnostic.workflowConfigured ? "已配置工作流" : "未配置工作流"}</span>
+            </div>
+            <div className="comfy-asset-diagnostic-grid">
+              <div>当前模式</div>
+              <div>{storyboardWorkflowDiagnostic.modeSpec.label}</div>
+              <div>基础模型</div>
+              <div>{storyboardWorkflowDiagnostic.selectedModel}</div>
+              <div>模型可见性</div>
+              <div>
+                {storyboardWorkflowDiagnostic.modelVisible == null
+                  ? "未读取 Comfy 下拉"
+                  : storyboardWorkflowDiagnostic.modelVisible
+                    ? "已命中 Comfy 下拉"
+                    : "未命中 Comfy 下拉"}
+              </div>
+              <div>Token 预检</div>
+              <div>
+                {storyboardWorkflowDiagnostic.templateValid
+                  ? `通过（${storyboardWorkflowDiagnostic.usedTokens.length} 个 token）`
+                  : `失败：缺少 ${storyboardWorkflowDiagnostic.templateMissing.join("、")}`}
+              </div>
+              <div>节点体检</div>
+              <div>{summarizeDependencyReport(storyboardWorkflowDiagnostic.dependencyReport)}</div>
+              <div>缺失节点</div>
+              <div>{formatMissingNodes(storyboardWorkflowDiagnostic.dependencyReport)}</div>
+              <div>建议插件</div>
+              <div>{formatHintPlugins(storyboardWorkflowDiagnostic.dependencyReport)}</div>
+            </div>
+            <div className="comfy-asset-diagnostic-list">
+              <div>模式说明：{storyboardWorkflowDiagnostic.modeSpec.summary}</div>
+              <div>模式必需节点：{storyboardWorkflowDiagnostic.modeSpec.requiredNodes.join("、")}</div>
+              <div>模式模型要求：{storyboardWorkflowDiagnostic.modeSpec.requiredModels.join("、")}</div>
+              <div>
+                模式推荐插件：
+                {storyboardWorkflowDiagnostic.modeSpec.recommendedPlugins.length > 0
+                  ? storyboardWorkflowDiagnostic.modeSpec.recommendedPlugins.join("、")
+                  : "无"}
+              </div>
+            </div>
+            {storyboardWorkflowDiagnostic.heuristic.warnings.length > 0 && (
+              <div className="comfy-asset-diagnostic-list is-warning">
+                {storyboardWorkflowDiagnostic.heuristic.warnings.map((item) => (
+                  <div key={item}>警告：{item}</div>
+                ))}
+              </div>
+            )}
+            {storyboardWorkflowDiagnostic.heuristic.notes.length > 0 && (
+              <div className="comfy-asset-diagnostic-list">
+                {storyboardWorkflowDiagnostic.heuristic.notes.map((item) => (
+                  <div key={item}>说明：{item}</div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {availableCheckpointOptions.length > 0 && (

@@ -87,6 +87,21 @@
 - InsightFace 模型
 - PuLID v1.1 权重
 
+## 精确下载表
+
+| 类别 | 文件/插件 | 放置位置 | 说明 |
+| --- | --- | --- | --- |
+| 节点 | `comfyui_ipadapter_plus` | `ComfyUI/custom_nodes/ComfyUI_IPAdapter_plus` | 内置成熟分镜模板必需 |
+| 模型 | 写实底模（SDXL） | `ComfyUI/models/checkpoints/` | 例如 `sd_xl_base_1.0.safetensors` |
+| 模型 | `clip_vision_h.safetensors` | `ComfyUI/models/clip_vision/` | IPAdapter 必需 |
+| 模型 | `ip-adapter-plus_sdxl_vit-h.safetensors` | `ComfyUI/models/ipadapter/` | 角色一致性必需 |
+| 可选节点 | `ComfyUI-Advanced-ControlNet` | `ComfyUI/custom_nodes/ComfyUI-Advanced-ControlNet` | 第二阶段增强 |
+| 可选模型 | `control_v11p_sd15_openpose.pth` | `ComfyUI/models/controlnet/` | 动作姿态增强 |
+| 可选模型 | `control_v11f1p_sd15_depth.pth` | `ComfyUI/models/controlnet/` | 空间体块增强 |
+| 可选模型 | `control_v11p_sd15_canny_fp16.safetensors` | `ComfyUI/models/controlnet/` | 边缘结构增强 |
+| 可选节点 | `ComfyUI-InstantID` | `ComfyUI/custom_nodes/ComfyUI-InstantID` | 正脸镜头锁脸 |
+| 可选节点 | `PuLID_ComfyUI` | `ComfyUI/custom_nodes/PuLID_ComfyUI` | 强身份一致性 |
+
 ## 工程建议
 
 - 双人/全景镜头：场景图必须做第一参考
