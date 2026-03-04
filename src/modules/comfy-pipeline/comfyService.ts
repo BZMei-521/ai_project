@@ -2239,14 +2239,19 @@ function createConditioningAverageNode(
 
 function qwenImageInputIndexes(node: WorkflowNode): number[] {
   const inputs = Array.isArray(node.inputs) ? node.inputs : [];
-  const slots: number[] = [];
+  const vlResizeSlots: number[] = [];
+  const noResizeSlots: number[] = [];
   for (let index = 0; index < inputs.length; index += 1) {
     const name = inputs[index]?.name ?? "";
-    if (name.startsWith("vl_resize_image") || name.startsWith("not_resize_image")) {
-      slots.push(index);
-    }
+    if (name.startsWith("vl_resize_image")) vlResizeSlots.push(index);
+    if (name.startsWith("not_resize_image")) noResizeSlots.push(index);
   }
-  return slots;
+  // The QwenEdit "Advance" node exposes six image inputs, but they represent
+  // three reference slots with two processing modes, not six fully independent refs.
+  // Feeding all six as separate images can break the node with
+  // "too many values to unpack (expected 3)" on complex shots.
+  if (vlResizeSlots.length > 0) return vlResizeSlots;
+  return noResizeSlots;
 }
 
 function qwenPromptInputIndexes(node: WorkflowNode): number[] {
