@@ -3630,15 +3630,30 @@ function summarizeComfyServerLogFailure(logTail: string): string | null {
   const merged = [headline, explicitError].filter((item, index, array) => item && array.indexOf(item) === index).join(" | ");
   const normalized = merged || scope.slice(0, 6).join(" | ");
   if (!normalized) return null;
+  const normalizedLower = normalized.toLowerCase();
 
   if (
-    normalized.includes("convolution_overrideable not implemented") ||
-    normalized.includes("tensor backend other than CPU/CUDA/MKLDNN")
+    normalizedLower.includes("convolution_overrideable not implemented") ||
+    normalizedLower.includes("tensor backend other than cpu/cuda/mkldnn")
   ) {
     return "服务端诊断：当前 Wan 视频工作流在 MPS/非 CUDA 后端不可用。你这台 Mac 上的 ComfyUI 正在使用 MPS，Wan 视频模型所需 3D 卷积只能在 CUDA/CPU/MKLDNN 路径运行，实际生产建议改到 NVIDIA CUDA 环境。";
   }
-  if (normalized.includes("No module named 'sageattention'")) {
+  if (normalizedLower.includes("no module named 'sageattention'")) {
     return "服务端诊断：ComfyUI 缺少 sageattention 依赖，相关 KJNodes 加速节点无法运行。";
+  }
+  if (
+    normalizedLower.includes("outofmemoryerror") ||
+    normalizedLower.includes("cuda out of memory") ||
+    normalizedLower.includes("allocation on device")
+  ) {
+    const wanRelated =
+      normalizedLower.includes("wan") ||
+      normalizedLower.includes("conv3d") ||
+      normalizedLower.includes("wanmoeksampler");
+    if (wanRelated) {
+      return "服务端诊断：当前工作流在 Wan 采样阶段显存不足。你这台 16GB 显卡已经触发 3D 卷积显存溢出，优先建议把这两条失败分镜改用更轻的图片工作流，或把 Wan 工作流的分辨率、帧数、steps 明显降下来。";
+    }
+    return "服务端诊断：当前工作流执行时显存不足。请降低分辨率、batch size、steps，或改用更轻的模型/工作流。";
   }
   return `服务端诊断：${normalized}`;
 }

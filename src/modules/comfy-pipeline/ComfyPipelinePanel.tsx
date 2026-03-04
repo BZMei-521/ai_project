@@ -31,12 +31,15 @@ import {
   type SkyboxGenerationResult
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
+import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
 import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "./presets/asset-character-mvadapter-default.json";
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "./presets/asset-skybox-panorama-default.json";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
+const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
+const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
 type CharacterAssetWorkflowMode = "basic_builtin" | "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
 
@@ -133,6 +136,16 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
     scheduler: "karras"
   }
 };
+
+function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
+  const normalized = workflowJson.replace(/\s+/g, "");
+  if (!normalized) return false;
+  return (
+    normalized.includes(LEGACY_MIXED_STORYBOARD_WORKFLOW_ID) &&
+    normalized.includes("WanMoeKSampler") &&
+    normalized.includes("TextEncodeQwenImageEditPlusAdvance_lrzjason")
+  );
+}
 
 function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
   if (mode === "advanced_multiview") {
@@ -1279,7 +1292,7 @@ function loadSettings(): ComfySettings {
       outputDir: "",
       comfyInputDir: "",
       comfyRootDir: "",
-      imageWorkflowJson: FISHER_WORKFLOW_JSON,
+      imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
@@ -1327,10 +1340,13 @@ function loadSettings(): ComfySettings {
     ) as SkyboxAssetWorkflowMode;
     const shouldUpgradeCharacterMode = resolvedCharacterMode === "advanced_multiview" && parsed.characterAssetWorkflowMode !== "advanced_multiview";
     const shouldUpgradeSkyboxMode = resolvedSkyboxMode === "advanced_panorama" && parsed.skyboxAssetWorkflowMode !== "advanced_panorama";
+    const parsedImageWorkflowJson = typeof parsed.imageWorkflowJson === "string" ? parsed.imageWorkflowJson : "";
     const resolvedImageWorkflowJson =
-      typeof parsed.imageWorkflowJson === "string" && parsed.imageWorkflowJson.trim().length > 0
-        ? parsed.imageWorkflowJson
-        : FISHER_WORKFLOW_JSON;
+      parsedImageWorkflowJson.trim().length > 0
+        ? isLegacyMixedStoryboardImageWorkflow(parsedImageWorkflowJson)
+          ? STORYBOARD_IMAGE_WORKFLOW_JSON
+          : parsedImageWorkflowJson
+        : STORYBOARD_IMAGE_WORKFLOW_JSON;
     const resolvedVideoWorkflowJson =
       typeof parsed.videoWorkflowJson === "string" && parsed.videoWorkflowJson.trim().length > 0
         ? parsed.videoWorkflowJson
@@ -1414,7 +1430,7 @@ function loadSettings(): ComfySettings {
       outputDir: "",
       comfyInputDir: "",
       comfyRootDir: "",
-      imageWorkflowJson: FISHER_WORKFLOW_JSON,
+      imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
       characterWorkflowJson: "",
       skyboxWorkflowJson: "",
@@ -4736,9 +4752,15 @@ export function ComfyPipelinePanel() {
       }
       const shotsForRun = getScopedShotsSnapshot();
       let runtimeSettings = settings;
+      if (isLegacyMixedStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson)) {
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON };
+        persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON }));
+        appendLog("检测到旧版混合 Wan 分镜图工作流，已自动切换为内置轻量静态图模板", "error");
+        pushToast("已将旧版重型分镜图工作流切换为轻量静态图模板", "warning");
+      }
       if (!runtimeSettings.imageWorkflowJson.trim()) {
-        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: FISHER_WORKFLOW_JSON };
-        persistSettings((previous) => ({ ...previous, imageWorkflowJson: FISHER_WORKFLOW_JSON }));
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON };
+        persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_WORKFLOW_JSON }));
         appendLog("图片工作流为空，已自动恢复为内置默认工作流", "error");
         pushToast("图片工作流为空，已自动恢复默认工作流", "warning");
       }
