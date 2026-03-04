@@ -1637,6 +1637,35 @@ function bypassFisherRifeNodes(
   deleteWorkflowNode(workflow, 194);
 }
 
+function disableFisherImageStyleLoras(
+  workflow: Record<string, unknown>,
+  byId: Map<number, WorkflowNode>,
+  kind: "image" | "video" | "audio"
+) {
+  if (!looksLikeFisherWorkflow(byId) || kind !== "image") return;
+  const loader = byId.get(216);
+  if (!loader) return;
+
+  if (Array.isArray(loader.widgets_values)) {
+    for (const item of loader.widgets_values) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      if ("on" in item) {
+        (item as Record<string, unknown>).on = false;
+      }
+      if ("strength" in item) {
+        (item as Record<string, unknown>).strength = 0;
+      }
+      if ("strengthTwo" in item) {
+        (item as Record<string, unknown>).strengthTwo = 0;
+      }
+    }
+  }
+
+  removeIncomingLinks(workflow, 10, [0]);
+  ensureWorkflowLink(workflow, 49, 0, 10, 0, "MODEL");
+  deleteWorkflowNode(workflow, 216);
+}
+
 function applyFisherWorkflowModes(
   byId: Map<number, WorkflowNode>,
   kind: "image" | "video" | "audio",
@@ -2634,6 +2663,7 @@ function applyFisherWorkflowBindings(
   bypassFisherSageAttentionNodes(workflow, byId, kind, tokens);
   bypassFisherSimpleMathNode(workflow, byId, kind, tokens);
   bypassFisherRifeNodes(workflow, byId, kind);
+  disableFisherImageStyleLoras(workflow, byId, kind);
 
   const seed = Number(tokens.SEED);
   const safeSeed = Number.isFinite(seed) ? Math.floor(seed) : undefined;
