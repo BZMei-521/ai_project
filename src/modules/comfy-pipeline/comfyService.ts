@@ -1510,6 +1510,8 @@ type WeightedImageRef = {
   source: string;
   weight: number;
   priority: number;
+  bucket: string;
+  label: string;
   role:
     | "scene_primary"
     | "scene_secondary"
@@ -1934,7 +1936,14 @@ function extractImageReferenceSources(
   const sceneRefs: WeightedImageRef[] = [];
   if (sceneAsset?.type === "scene") {
     if ((sceneAsset.filePath ?? "").trim()) {
-      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, priority: 320, role: "scene_primary" });
+      sceneRefs.push({
+        source: sceneAsset.filePath,
+        weight: 1,
+        priority: 320,
+        bucket: `scene:${sceneAsset.id}`,
+        label: `${sceneAsset.name}:scene_primary`,
+        role: "scene_primary"
+      });
     }
   } else if (sceneAsset?.type === "skybox") {
     const plan = inferSkyboxReferencePlan(shot);
@@ -1948,11 +1957,20 @@ function extractImageReferenceSources(
         source: facePath,
         weight,
         priority: face === plan.primaryFace ? 320 : 250 - faceIndex * 10,
+        bucket: `scene:${sceneAsset.id}`,
+        label: `${sceneAsset.name}:${face}`,
         role: face === plan.primaryFace ? "scene_primary" : "scene_secondary"
       });
     }
     if (sceneRefs.length === 0 && (sceneAsset.filePath ?? "").trim()) {
-      sceneRefs.push({ source: sceneAsset.filePath, weight: 1, priority: 320, role: "scene_primary" });
+      sceneRefs.push({
+        source: sceneAsset.filePath,
+        weight: 1,
+        priority: 320,
+        bucket: `scene:${sceneAsset.id}`,
+        label: `${sceneAsset.name}:scene_primary`,
+        role: "scene_primary"
+      });
     }
   }
 
@@ -1976,6 +1994,8 @@ function extractImageReferenceSources(
         source,
         weight,
         priority: 420 - assetIndex * 20 - viewIndex * 15,
+        bucket: `character:${asset.id}`,
+        label: `${asset.name}:${view}`,
         role: characterViewRole(view)
       });
     }
@@ -1984,11 +2004,29 @@ function extractImageReferenceSources(
   const continuityRefs: WeightedImageRef[] = [];
   const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
   if (previousSceneImage) {
-    continuityRefs.push({ source: previousSceneImage, weight: 0.42, priority: 110, role: "continuity_scene" });
+    continuityRefs.push({
+      source: previousSceneImage,
+      weight: 0.42,
+      priority: 110,
+      bucket: "continuity:scene",
+      label: continuityPlan.previousSceneShot?.title
+        ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
+        : "continuity_scene",
+      role: "continuity_scene"
+    });
   }
   const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
   if (previousCharacterImage) {
-    continuityRefs.push({ source: previousCharacterImage, weight: 0.48, priority: 120, role: "continuity_character" });
+    continuityRefs.push({
+      source: previousCharacterImage,
+      weight: 0.48,
+      priority: 120,
+      bucket: "continuity:character",
+      label: continuityPlan.previousCharacterShot?.title
+        ? `continuity_character:${continuityPlan.previousCharacterShot.title}`
+        : "continuity_character",
+      role: "continuity_character"
+    });
   }
   const merged = [...characterRefs, ...sceneRefs, ...continuityRefs].filter((item) => item.source.trim().length > 0);
   const deduped = new Map<string, WeightedImageRef>();
@@ -2016,7 +2054,91 @@ function extractImageReferenceSources(
     const priorityDelta = right.priority - left.priority;
     if (priorityDelta !== 0) return priorityDelta;
     return right.weight - left.weight;
-  }).slice(0, 6);
+  });
+}
+
+function pushUniqueWeightedRef(
+  target: WeightedImageRef[],
+  usedSources: Set<string>,
+  candidate: WeightedImageRef | undefined
+) {
+  if (!candidate) return;
+  const source = candidate.source.trim();
+  if (!source || usedSources.has(source)) return;
+  target.push(candidate);
+  usedSources.add(source);
+}
+
+function firstDistinctBucketRef(
+  refs: WeightedImageRef[],
+  predicate: (item: WeightedImageRef) => boolean,
+  excludedBuckets: Set<string>,
+  usedSources: Set<string>
+): WeightedImageRef | undefined {
+  return refs.find((item) => predicate(item) && !excludedBuckets.has(item.bucket) && !usedSources.has(item.source.trim()));
+}
+
+function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImageRef[] {
+  if (refs.length <= 3) return refs.slice(0, 3);
+  const ordered = [...refs].sort((left, right) => {
+    const priorityDelta = right.priority - left.priority;
+    if (priorityDelta !== 0) return priorityDelta;
+    return right.weight - left.weight;
+  });
+  const selected: WeightedImageRef[] = [];
+  const usedSources = new Set<string>();
+  const usedBuckets = new Set<string>();
+
+  const primaryCharacter = ordered.find((item) => item.role.startsWith("character_"));
+  pushUniqueWeightedRef(selected, usedSources, primaryCharacter);
+  if (primaryCharacter) usedBuckets.add(primaryCharacter.bucket);
+
+  const primaryScene = ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  pushUniqueWeightedRef(selected, usedSources, primaryScene);
+  if (primaryScene) usedBuckets.add(primaryScene.bucket);
+
+  const secondaryCharacter = firstDistinctBucketRef(
+    ordered,
+    (item) => item.role.startsWith("character_"),
+    usedBuckets,
+    usedSources
+  );
+  pushUniqueWeightedRef(selected, usedSources, secondaryCharacter);
+  if (secondaryCharacter) usedBuckets.add(secondaryCharacter.bucket);
+
+  const supportCharacter = ordered.find(
+    (item) =>
+      item.role.startsWith("character_") &&
+      primaryCharacter?.bucket === item.bucket &&
+      primaryCharacter?.source !== item.source &&
+      !usedSources.has(item.source.trim())
+  );
+  const secondaryScene = ordered.find(
+    (item) =>
+      item.role === "scene_secondary" &&
+      primaryScene?.source !== item.source &&
+      !usedSources.has(item.source.trim())
+  );
+  const continuityCharacter = ordered.find(
+    (item) => item.role === "continuity_character" && !usedSources.has(item.source.trim())
+  );
+  const continuityScene = ordered.find(
+    (item) => item.role === "continuity_scene" && !usedSources.has(item.source.trim())
+  );
+
+  const fallbackCandidates = [
+    supportCharacter,
+    secondaryScene,
+    continuityCharacter,
+    continuityScene,
+    ...ordered.filter((item) => !usedSources.has(item.source.trim()))
+  ];
+  for (const candidate of fallbackCandidates) {
+    pushUniqueWeightedRef(selected, usedSources, candidate);
+    if (selected.length >= 3) break;
+  }
+
+  return selected.slice(0, 3);
 }
 
 async function stageCharacterReferenceImages(
@@ -2024,7 +2146,8 @@ async function stageCharacterReferenceImages(
   shot: Shot,
   refs: WeightedImageRef[]
 ): Promise<Array<{ filename: string; weight: number }>> {
-  if (refs.length === 0) return [];
+  const selectedRefs = selectStoryboardReferenceSlots(refs);
+  if (selectedRefs.length === 0) return [];
   const inputDir = inferComfyInputDir(settings);
   if (!inputDir) {
     // Degrade gracefully when input directory is unknown.
@@ -2033,8 +2156,8 @@ async function stageCharacterReferenceImages(
   }
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const staged: Array<{ filename: string; weight: number }> = [];
-  for (let index = 0; index < refs.length; index += 1) {
-    const { source, weight } = refs[index]!;
+  for (let index = 0; index < selectedRefs.length; index += 1) {
+    const { source, weight } = selectedRefs[index]!;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
     const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
