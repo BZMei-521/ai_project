@@ -1922,6 +1922,33 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   return pieces.join(" ");
 }
 
+function buildQwenSlotInstruction(
+  stagedRefs: Array<{ role?: WeightedImageRef["role"]; label?: string }>
+): string {
+  if (stagedRefs.length === 0) return "";
+  const lines = stagedRefs
+    .slice(0, 3)
+    .map((item, index) => {
+      const slot = `Reference slot ${index + 1}`;
+      const label = item.label?.trim() ?? "";
+      if (item.role === "scene_primary" || item.role === "scene_secondary") {
+        return `${slot} is the binding environment reference${label ? ` (${label})` : ""}; keep location layout and camera direction aligned to it.`;
+      }
+      if (item.role === "character_front" || item.role === "character_side" || item.role === "character_back") {
+        return `${slot} is the binding character reference${label ? ` (${label})` : ""}; keep identity, costume, and shot angle aligned to it.`;
+      }
+      if (item.role === "continuity_scene") {
+        return `${slot} is a weak continuity environment hint${label ? ` (${label})` : ""}; only use it if it does not conflict with the skybox asset.`;
+      }
+      if (item.role === "continuity_character") {
+        return `${slot} is a weak continuity character hint${label ? ` (${label})` : ""}; only use it if it does not conflict with the character three-view asset.`;
+      }
+      return `${slot} is a binding reference${label ? ` (${label})` : ""}.`;
+    })
+    .filter((item) => item.length > 0);
+  return lines.join(" ");
+}
+
 function extractImageReferenceSources(
   shot: Shot,
   assets: Asset[],
@@ -2088,6 +2115,14 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
   const usedBuckets = new Set<string>();
+  const hasAssetRefs = ordered.some(
+    (item) =>
+      item.role === "scene_primary" ||
+      item.role === "scene_secondary" ||
+      item.role === "character_front" ||
+      item.role === "character_side" ||
+      item.role === "character_back"
+  );
 
   const primaryCharacter = ordered.find((item) => item.role.startsWith("character_"));
   pushUniqueWeightedRef(selected, usedSources, primaryCharacter);
@@ -2129,8 +2164,7 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   const fallbackCandidates = [
     supportCharacter,
     secondaryScene,
-    continuityCharacter,
-    continuityScene,
+    ...(hasAssetRefs ? [] : [continuityCharacter, continuityScene]),
     ...ordered.filter((item) => !usedSources.has(item.source.trim()))
   ];
   for (const candidate of fallbackCandidates) {
@@ -2145,7 +2179,7 @@ async function stageCharacterReferenceImages(
   settings: ComfySettings,
   shot: Shot,
   refs: WeightedImageRef[]
-): Promise<Array<{ filename: string; weight: number }>> {
+): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
   const selectedRefs = selectStoryboardReferenceSlots(refs);
   if (selectedRefs.length === 0) return [];
   const inputDir = inferComfyInputDir(settings);
@@ -2155,15 +2189,17 @@ async function stageCharacterReferenceImages(
     return [];
   }
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const staged: Array<{ filename: string; weight: number }> = [];
+  const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
   for (let index = 0; index < selectedRefs.length; index += 1) {
-    const { source, weight } = selectedRefs[index]!;
+    const { source, weight, role, label } = selectedRefs[index]!;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
     const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
     staged.push({
       filename: written.split("/").pop() ?? `shot_${safeShotId}_charref_${index + 1}.${ext}`,
-      weight
+      weight,
+      role,
+      label
     });
   }
   return staged;
@@ -2530,7 +2566,8 @@ function applyDynamicCharacterRefsForImageWorkflow(
 function applyFisherWorkflowBindings(
   workflow: Record<string, unknown>,
   kind: "image" | "video" | "audio",
-  tokens: Record<string, string>
+  tokens: Record<string, string>,
+  stagedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"]; label?: string }> = []
 ) {
   const nodes = Array.isArray(workflow.nodes) ? (workflow.nodes as WorkflowNode[]) : [];
   if (nodes.length === 0) return;
@@ -2559,8 +2596,11 @@ function applyFisherWorkflowBindings(
   // Fisher/Qwen workflows often connect easy promptLine(COMBO) -> qwen prompt(STRING),
   // which causes prompt validation errors in API mode. Always force prompt to widget text,
   // including cloned encoders created for extra reference images.
-  const qwenPromptText = tokens.NEXT_SCENE_PROMPT || tokens.PROMPT;
-  const qwenInstructionText = buildQwenReferenceInstruction(tokens);
+  const hasBindingRefs = kind === "image" && stagedImageRefs.length > 0;
+  const qwenPromptText = hasBindingRefs ? (tokens.PROMPT || tokens.NEXT_SCENE_PROMPT) : (tokens.NEXT_SCENE_PROMPT || tokens.PROMPT);
+  const qwenInstructionText = [buildQwenReferenceInstruction(tokens), buildQwenSlotInstruction(stagedImageRefs)]
+    .filter((item) => item.length > 0)
+    .join(" ");
   normalizeQwenPromptInputBindings(workflow, qwenPromptText);
   normalizeQwenInstructionBindings(workflow, qwenInstructionText);
   setNodeWidgetValue(byId.get(123), 0, qwenPromptText);
@@ -3881,7 +3921,7 @@ export async function generateShotAsset(
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
     applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
-    applyFisherWorkflowBindings(built, kind, tokens);
+    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     try {
       const objectInfo = await fetchObjectInfo(settings.baseUrl);
       applyComfyModelOptionBindings(built, objectInfo);
