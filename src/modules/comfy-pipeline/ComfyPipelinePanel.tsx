@@ -266,7 +266,7 @@ function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetW
       summary:
         "内置模板改成 scene-first img2img + IPAdapter 多角色一致性。先锁天空盒主面，再叠角色参考，是当前更成熟、更可控的连续分镜基础链路；ControlNet / InstantID / PuLID 作为第二层增强可再加。",
       requiredNodes: [
-        "基础图生图链：CheckpointLoaderSimple / LoadImage / VAEEncode / KSampler / VAEDecode / SaveImage",
+        "基础图生图链：CheckpointLoaderSimple / LoadImage / ImageScale / VAEEncode / KSampler / VAEDecode / SaveImage",
         "IPAdapterUnifiedLoader",
         "IPAdapterAdvanced"
       ],
@@ -1983,6 +1983,7 @@ function deriveShotBindingRepairs(
       sceneRefId: shot.sceneRefId ?? ""
     };
     const normalizedCharacterRefs = (() => {
+      const characterOrder = new Map(characterAssets.map((asset, order) => [asset.id, order] as const));
       const seenNameKeys = new Set<string>();
       const output: string[] = [];
       for (const refId of uniqueEntities(nextCharacterRefs)) {
@@ -1993,6 +1994,7 @@ function deriveShotBindingRepairs(
         if (key) seenNameKeys.add(key);
         output.push(refId);
       }
+      output.sort((left, right) => (characterOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (characterOrder.get(right) ?? Number.MAX_SAFE_INTEGER));
       return output;
     })();
     if (
@@ -2337,6 +2339,9 @@ type NormalizedImportedShot = {
   skyboxFace: "auto" | "front" | "right" | "back" | "left" | "up" | "down";
   skyboxFaces: Array<"front" | "right" | "back" | "left" | "up" | "down">;
   skyboxFaceWeights: Record<string, number>;
+  cameraYaw?: number;
+  cameraPitch?: number;
+  cameraFov?: number;
   durationSec?: number;
   durationFrames?: number;
   seed?: number;
@@ -2352,6 +2357,14 @@ type NormalizedImportedShot = {
 
 function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] {
   const list = Array.isArray(parsed.shots) ? parsed.shots : [];
+  const parseNumber = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : undefined;
+    }
+    return undefined;
+  };
   return list.map((item, index) => ({
     id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
     title: String(item.title ?? `镜头 ${index + 1}`),
@@ -2411,6 +2424,9 @@ function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>>
         : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
           ? (item.skyboxFaceWeights as Record<string, number>)
           : {},
+    cameraYaw: parseNumber(item.camera_yaw ?? item.cameraYaw),
+    cameraPitch: parseNumber(item.camera_pitch ?? item.cameraPitch),
+    cameraFov: parseNumber(item.camera_fov ?? item.cameraFov),
     durationSec:
       typeof item.duration_sec === "number"
         ? item.duration_sec
@@ -4477,6 +4493,9 @@ export function ComfyPipelinePanel() {
         skyboxFace: item.skyboxFace,
         skyboxFaces: item.skyboxFaces,
         skyboxFaceWeights: item.skyboxFaceWeights,
+        cameraYaw: item.cameraYaw,
+        cameraPitch: item.cameraPitch,
+        cameraFov: item.cameraFov,
         durationSec: item.durationSec,
         durationFrames: item.durationFrames,
         seed: item.seed,

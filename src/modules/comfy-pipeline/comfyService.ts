@@ -1383,6 +1383,21 @@ function inferSkyboxFaceFromShot(shot: Shot): SkyboxFace {
   ) {
     return shot.skyboxFace;
   }
+  const cameraPitch = typeof shot.cameraPitch === "number" && Number.isFinite(shot.cameraPitch) ? shot.cameraPitch : undefined;
+  if (cameraPitch !== undefined) {
+    if (cameraPitch >= 55) return "up";
+    if (cameraPitch <= -55) return "down";
+  }
+  const cameraYawRaw = typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw) ? shot.cameraYaw : undefined;
+  if (cameraYawRaw !== undefined) {
+    let yaw = cameraYawRaw % 360;
+    if (yaw > 180) yaw -= 360;
+    if (yaw <= -180) yaw += 360;
+    if (yaw >= -45 && yaw < 45) return "front";
+    if (yaw >= 45 && yaw < 135) return "right";
+    if (yaw >= 135 || yaw < -135) return "back";
+    return "left";
+  }
   const corpus = [
     shot.title ?? "",
     shot.storyPrompt ?? "",
@@ -1411,6 +1426,10 @@ function autoSkyboxAdjacentFaces(face: SkyboxFace): SkyboxFace[] {
 
 function inferAutoSkyboxProfile(shot: Shot): { faces: SkyboxFace[]; weights: Partial<Record<SkyboxFace, number>> } {
   const primary = inferSkyboxFaceFromShot(shot);
+  const cameraYaw = typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw) ? shot.cameraYaw : undefined;
+  const cameraPitch = typeof shot.cameraPitch === "number" && Number.isFinite(shot.cameraPitch) ? shot.cameraPitch : undefined;
+  const cameraFov = typeof shot.cameraFov === "number" && Number.isFinite(shot.cameraFov) ? shot.cameraFov : undefined;
+  const hasCameraPose = cameraYaw !== undefined || cameraPitch !== undefined || cameraFov !== undefined;
   const corpus = [
     shot.title ?? "",
     shot.storyPrompt ?? "",
@@ -1450,6 +1469,10 @@ function inferAutoSkyboxProfile(shot: Shot): { faces: SkyboxFace[]; weights: Par
 
   const faces: SkyboxFace[] = [primary];
   const weights: Partial<Record<SkyboxFace, number>> = { [primary]: 1 };
+
+  if (hasCameraPose) {
+    return { faces, weights };
+  }
 
   if (isCloseShot) {
     return { faces, weights };
@@ -1828,6 +1851,17 @@ function characterReferenceViewLabel(view: CharacterReferenceView): string {
   return view;
 }
 
+function shotCameraDescriptor(shot: Shot): string {
+  const yaw = typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw) ? shot.cameraYaw : undefined;
+  const pitch = typeof shot.cameraPitch === "number" && Number.isFinite(shot.cameraPitch) ? shot.cameraPitch : undefined;
+  const fov = typeof shot.cameraFov === "number" && Number.isFinite(shot.cameraFov) ? shot.cameraFov : undefined;
+  const parts: string[] = [];
+  if (yaw !== undefined) parts.push(`yaw ${yaw.toFixed(0)}°`);
+  if (pitch !== undefined) parts.push(`pitch ${pitch.toFixed(0)}°`);
+  if (fov !== undefined) parts.push(`fov ${fov.toFixed(0)}°`);
+  return parts.join(" / ");
+}
+
 function inferCharacterReferencePlan(shot: Shot): {
   primaryView: CharacterReferenceView;
   secondaryViews: CharacterReferenceView[];
@@ -1906,32 +1940,33 @@ function inferStoryboardReferenceWeights(
   const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
   if (sceneLed && hasSecondCharacter) {
     return {
-      // Scene-first still needs visible characters; keep character anchors high enough.
-      char1Primary: 0.78,
-      char1Secondary: 0.42,
-      char2Primary: 0.68,
-      denoise: 0.44,
-      steps: 34,
-      cfg: 6.8
+      // Scene-first img2img should keep environment stable, while character refs
+      // only lock identity cues. Too-strong IPAdapter weights tend to warp geometry.
+      char1Primary: 0.32,
+      char1Secondary: 0.08,
+      char2Primary: 0.28,
+      denoise: 0.5,
+      steps: 30,
+      cfg: 6.2
     };
   }
   if (sceneLed) {
     return {
-      char1Primary: 0.86,
-      char1Secondary: 0.46,
-      char2Primary: 0.3,
-      denoise: 0.46,
-      steps: 34,
-      cfg: 6.9
+      char1Primary: 0.36,
+      char1Secondary: 0.1,
+      char2Primary: 0,
+      denoise: 0.52,
+      steps: 30,
+      cfg: 6.3
     };
   }
   return {
-    char1Primary: 0.9,
-    char1Secondary: 0.5,
-    char2Primary: hasSecondCharacter ? 0.72 : 0.24,
-    denoise: 0.48,
-    steps: 36,
-    cfg: 7
+    char1Primary: 0.44,
+    char1Secondary: 0.16,
+    char2Primary: hasSecondCharacter ? 0.34 : 0,
+    denoise: 0.56,
+    steps: 32,
+    cfg: 6.4
   };
 }
 
@@ -1992,11 +2027,15 @@ function buildShotReferenceDirective(
   const lines: string[] = [];
   const characterPlan = characterAssets.length > 0 ? inferCharacterReferencePlan(shot) : null;
   const continuityDirective = buildContinuityDirective(continuityPlan);
+  const cameraDescriptor = shotCameraDescriptor(shot);
   if (sceneAsset?.type === "skybox") {
     const faceText = joinNaturalChineseList(skyboxFaces.map((face) => skyboxFaceLabel(face)));
     lines.push(
       `场景硬参考：必须以天空盒“${sceneAsset.name}”为准，优先参考${faceText || "正前"}视角，保持地平线、空间布局、建筑或地貌朝向、时间氛围与主色调一致，不得改成其他地点。`
     );
+    if (cameraDescriptor) {
+      lines.push(`机位硬约束：当前镜头机位 ${cameraDescriptor}，必须与天空盒方向保持一致。`);
+    }
   } else if (sceneAsset?.type === "scene") {
     lines.push(`场景硬参考：必须保持场景“${sceneAsset.name}”的环境布局、主体元素、光线和色调一致，不得重设计场景。`);
   }
@@ -2026,16 +2065,19 @@ function buildShotReferenceDirective(
 function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜。`;
+    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；人物需完整入镜，避免头部、手臂、腿部被裁切出画。`;
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
-  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜。`;
+  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需完整可辨识，不允许严重遮挡或裁切出画。`;
 }
 
 function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   const sceneName = tokens.SCENE_REF_NAME?.trim() ?? "";
   const characterNames = splitCsv(tokens.CHARACTER_REF_NAMES);
   const preferredCharacterView = tokens.PREFERRED_CHARACTER_VIEW?.trim().toLowerCase() ?? "";
+  const cameraYaw = tokens.CAMERA_YAW?.trim() ?? "";
+  const cameraPitch = tokens.CAMERA_PITCH?.trim() ?? "";
+  const cameraFov = tokens.CAMERA_FOV?.trim() ?? "";
   const previousSceneTitle = tokens.PREV_SCENE_SHOT_TITLE?.trim() ?? "";
   const previousCharacterTitle = tokens.PREV_CHARACTER_SHOT_TITLE?.trim() ?? "";
   const globalVisualStyle = tokens.GLOBAL_VISUAL_STYLE?.trim() ?? "";
@@ -2056,6 +2098,11 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   if (sceneName) {
     pieces.push(
       `Lock the environment to the scene reference ${sceneName}; keep layout, horizon, camera direction, lighting mood, and materials consistent.`
+    );
+  }
+  if (cameraYaw || cameraPitch || cameraFov) {
+    pieces.push(
+      `Respect camera pose constraints (yaw=${cameraYaw || "auto"}, pitch=${cameraPitch || "auto"}, fov=${cameraFov || "auto"}); keep framing and perspective consistent with this shot setup.`
     );
   }
   if (characterNames.length > 0) {
@@ -2104,9 +2151,9 @@ function buildQwenSlotInstruction(
 }
 
 function qwenReferenceChunkSize(stagedRefs: Array<{ role?: WeightedImageRef["role"] }>): number {
-  const hasScene = stagedRefs.some((item) => item.role === "scene_primary" || item.role === "scene_secondary");
-  const characterCount = stagedRefs.filter((item) => item.role?.startsWith("character_")).length;
-  if (hasScene || characterCount > 1) return 1;
+  if (stagedRefs.length <= 0) return 1;
+  // Keep refs in one encoder when possible; multi-encoder averaging tends to
+  // introduce geometry tearing and identity drift on storyboard stills.
   return 3;
 }
 
@@ -2126,7 +2173,7 @@ function extractImageReferenceSources(
     if ((sceneAsset.filePath ?? "").trim()) {
       sceneRefs.push({
         source: sceneAsset.filePath,
-        weight: 1,
+        weight: 0.86,
         priority: 320,
         bucket: `scene:${sceneAsset.id}`,
         label: `${sceneAsset.name}:scene_primary`,
@@ -2135,25 +2182,36 @@ function extractImageReferenceSources(
     }
   } else if (sceneAsset?.type === "skybox") {
     const plan = inferSkyboxReferencePlan(shot);
-    for (let faceIndex = 0; faceIndex < plan.faces.length; faceIndex += 1) {
-      const face = plan.faces[faceIndex]!;
-      const facePath = sceneAsset.skyboxFaces?.[face] ?? "";
-      if (!facePath.trim()) continue;
-      const weight = plan.weights[face] ?? skyboxFaceWeight(shot, face);
-      if (weight <= 0) continue;
+    // Use only one skybox face as the scene anchor. Mixing multiple cube faces
+    // in one 2D frame often creates perspective tearing and warped geometry.
+    const faceCandidates = uniquePreserveOrder([
+      plan.primaryFace,
+      ...plan.faces,
+      "front",
+      "right",
+      "left",
+      "back",
+      "up",
+      "down"
+    ]) as SkyboxFace[];
+    const selectedFace = faceCandidates.find((face) => Boolean(sceneAsset.skyboxFaces?.[face]?.trim()));
+    if (selectedFace) {
+      const facePath = sceneAsset.skyboxFaces?.[selectedFace] ?? "";
+      const rawWeight = plan.weights[selectedFace] ?? skyboxFaceWeight(shot, selectedFace);
+      const weight = Math.max(0.7, Math.min(0.9, rawWeight));
       sceneRefs.push({
         source: facePath,
         weight,
-        priority: face === plan.primaryFace ? 320 : 250 - faceIndex * 10,
+        priority: 320,
         bucket: `scene:${sceneAsset.id}`,
-        label: `${sceneAsset.name}:${face}`,
-        role: face === plan.primaryFace ? "scene_primary" : "scene_secondary"
+        label: `${sceneAsset.name}:${selectedFace}`,
+        role: "scene_primary"
       });
     }
     if (sceneRefs.length === 0 && (sceneAsset.filePath ?? "").trim()) {
       sceneRefs.push({
         source: sceneAsset.filePath,
-        weight: 1,
+        weight: 0.86,
         priority: 320,
         bucket: `scene:${sceneAsset.id}`,
         label: `${sceneAsset.name}:scene_primary`,
@@ -2171,50 +2229,67 @@ function extractImageReferenceSources(
     const side = asset.characterSidePath || "";
     const back = asset.characterBackPath || "";
     const byView: Record<CharacterReferenceView, string> = { front, side, back };
-    const viewOrder = orderedCharacterViews(characterPlan);
-    for (let viewIndex = 0; viewIndex < viewOrder.length; viewIndex += 1) {
-      const view = viewOrder[viewIndex]!;
-      const source = byView[view].trim();
-      if (!source) continue;
-      const weight = characterReferenceWeight(view, characterPlan);
-      if (weight <= 0) continue;
+    const primaryView = characterPlan.primaryView;
+    const primarySource = byView[primaryView].trim() || byView.front.trim() || byView.side.trim() || byView.back.trim();
+    if (primarySource) {
       refs.push({
-        source,
-        weight,
-        priority: 420 - assetIndex * 20 - viewIndex * 15,
+        source: primarySource,
+        weight: 1,
+        priority: 420 - assetIndex * 20,
         bucket: `character:${asset.id}`,
-        label: `${asset.name}:${view}`,
-        role: characterViewRole(view)
+        label: `${asset.name}:${primaryView}`,
+        role: characterViewRole(primaryView)
       });
+    }
+    // Only use a secondary character view as fallback when scene anchor is missing
+    // and there is a single character in shot.
+    if (selectedCharacters.length === 1 && sceneRefs.length === 0) {
+      const secondaryView = characterPlan.secondaryViews[0];
+      if (secondaryView) {
+        const secondarySource = byView[secondaryView].trim();
+        if (secondarySource && secondarySource !== primarySource) {
+          refs.push({
+            source: secondarySource,
+            weight: 0.28,
+            priority: 360,
+            bucket: `character:${asset.id}`,
+            label: `${asset.name}:${secondaryView}`,
+            role: characterViewRole(secondaryView)
+          });
+        }
+      }
     }
     return refs;
   });
   const continuityRefs: WeightedImageRef[] = [];
-  const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
-  if (previousSceneImage) {
-    continuityRefs.push({
-      source: previousSceneImage,
-      weight: 0.42,
-      priority: 110,
-      bucket: "continuity:scene",
-      label: continuityPlan.previousSceneShot?.title
-        ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
-        : "continuity_scene",
-      role: "continuity_scene"
-    });
-  }
-  const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
-  if (previousCharacterImage) {
-    continuityRefs.push({
-      source: previousCharacterImage,
-      weight: 0.48,
-      priority: 120,
-      bucket: "continuity:character",
-      label: continuityPlan.previousCharacterShot?.title
-        ? `continuity_character:${continuityPlan.previousCharacterShot.title}`
-        : "continuity_character",
-      role: "continuity_character"
-    });
+  // Continuity image hints are useful only when hard asset refs are missing.
+  if (sceneRefs.length === 0 && characterRefs.length === 0) {
+    const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
+    if (previousSceneImage) {
+      continuityRefs.push({
+        source: previousSceneImage,
+        weight: 0.26,
+        priority: 110,
+        bucket: "continuity:scene",
+        label: continuityPlan.previousSceneShot?.title
+          ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
+          : "continuity_scene",
+        role: "continuity_scene"
+      });
+    }
+    const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
+    if (previousCharacterImage) {
+      continuityRefs.push({
+        source: previousCharacterImage,
+        weight: 0.3,
+        priority: 120,
+        bucket: "continuity:character",
+        label: continuityPlan.previousCharacterShot?.title
+          ? `continuity_character:${continuityPlan.previousCharacterShot.title}`
+          : "continuity_character",
+        role: "continuity_character"
+      });
+    }
   }
   const merged = [...characterRefs, ...sceneRefs, ...continuityRefs].filter((item) => item.source.trim().length > 0);
   const deduped = new Map<string, WeightedImageRef>();
@@ -2275,46 +2350,16 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   });
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
-  const usedBuckets = new Set<string>();
-  const hasAssetRefs = ordered.some(
-    (item) =>
-      item.role === "scene_primary" ||
-      item.role === "scene_secondary" ||
-      item.role === "character_front" ||
-      item.role === "character_side" ||
-      item.role === "character_back"
-  );
-
-  const primaryCharacter = ordered.find((item) => item.role.startsWith("character_"));
-  pushUniqueWeightedRef(selected, usedSources, primaryCharacter);
-  if (primaryCharacter) usedBuckets.add(primaryCharacter.bucket);
-
   const primaryScene = ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
   pushUniqueWeightedRef(selected, usedSources, primaryScene);
-  if (primaryScene) usedBuckets.add(primaryScene.bucket);
-
-  const secondaryCharacter = firstDistinctBucketRef(
-    ordered,
-    (item) => item.role.startsWith("character_"),
-    usedBuckets,
-    usedSources
-  );
-  pushUniqueWeightedRef(selected, usedSources, secondaryCharacter);
-  if (secondaryCharacter) usedBuckets.add(secondaryCharacter.bucket);
-
-  const supportCharacter = ordered.find(
-    (item) =>
-      item.role.startsWith("character_") &&
-      primaryCharacter?.bucket === item.bucket &&
-      primaryCharacter?.source !== item.source &&
-      !usedSources.has(item.source.trim())
-  );
-  const secondaryScene = ordered.find(
-    (item) =>
-      item.role === "scene_secondary" &&
-      primaryScene?.source !== item.source &&
-      !usedSources.has(item.source.trim())
-  );
+  const usedCharacterBuckets = new Set<string>();
+  const characters = ordered.filter((item) => item.role.startsWith("character_"));
+  for (const characterRef of characters) {
+    if (selected.length >= 3) break;
+    if (usedCharacterBuckets.has(characterRef.bucket)) continue;
+    pushUniqueWeightedRef(selected, usedSources, characterRef);
+    usedCharacterBuckets.add(characterRef.bucket);
+  }
   const continuityCharacter = ordered.find(
     (item) => item.role === "continuity_character" && !usedSources.has(item.source.trim())
   );
@@ -2323,9 +2368,8 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   );
 
   const fallbackCandidates = [
-    supportCharacter,
-    secondaryScene,
-    ...(hasAssetRefs ? [] : [continuityCharacter, continuityScene]),
+    continuityCharacter,
+    continuityScene,
     ...ordered.filter((item) => !usedSources.has(item.source.trim()))
   ];
   for (const candidate of fallbackCandidates) {
@@ -3018,12 +3062,27 @@ function inferPromptTokens(
     char1PrimaryPath ||
     "";
   const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
+  const hasSecondCharacter = Boolean(charSlots[1]);
+  const normalizedChar1PrimaryPath = char1PrimaryPath.trim();
+  const normalizedChar1SecondaryPath = char1SecondaryPath.trim();
+  const normalizedChar2PrimaryPath = char2PrimaryPath.trim();
+  const effectiveChar1PrimaryWeight = normalizedChar1PrimaryPath ? storyboardWeights.char1Primary : 0;
+  const effectiveChar1SecondaryWeight =
+    normalizedChar1SecondaryPath && normalizedChar1SecondaryPath !== normalizedChar1PrimaryPath
+      ? storyboardWeights.char1Secondary
+      : 0;
+  const effectiveChar2PrimaryWeight = hasSecondCharacter && normalizedChar2PrimaryPath ? storyboardWeights.char2Primary : 0;
+  const targetRenderWidth =
+    typeof settings.renderWidth === "number" && Number.isFinite(settings.renderWidth) ? Math.max(64, Math.round(settings.renderWidth)) : 1920;
+  const targetRenderHeight =
+    typeof settings.renderHeight === "number" && Number.isFinite(settings.renderHeight) ? Math.max(64, Math.round(settings.renderHeight)) : 1080;
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
+  const cameraContext = shotCameraDescriptor(shot) ? `镜头机位：${shotCameraDescriptor(shot)}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
   const characterPresenceDirective = buildCharacterPresenceDirective(characterAssets);
   const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
-  const promptBase = [referenceDirective, characterPresenceDirective, sceneContext, characterContext, promptBaseRaw]
+  const promptBase = [referenceDirective, characterPresenceDirective, sceneContext, cameraContext, characterContext, promptBaseRaw]
     .filter((item) => item.length > 0)
     .join("\n");
   const nextScenePrompt = toNextScenePrompt(promptBase);
@@ -3039,7 +3098,11 @@ function inferPromptTokens(
     characterAssets.length > 0
       ? "empty scene, no people, no person, no human, scenery only, landscape only, character missing, no protagonist"
       : "";
-  const effectiveNegativePrompt = [shot.negativePrompt?.trim() || "", characterAbsenceNegativePrompt]
+  const characterCropNegativePrompt =
+    characterAssets.length > 0
+      ? "cropped body, cut off head, cut off face, cut off feet, out of frame, body out of frame, close-up crop, partial body, incomplete body"
+      : "";
+  const effectiveNegativePrompt = [shot.negativePrompt?.trim() || "", characterAbsenceNegativePrompt, characterCropNegativePrompt]
     .filter((item) => item.length > 0)
     .join(", ");
   const baseTokens: Record<string, string> = {
@@ -3061,13 +3124,18 @@ function inferPromptTokens(
     SEED: String(shot.seed ?? Math.floor(Math.random() * 1_000_000_000)),
     DURATION_FRAMES: String(Math.max(1, shot.durationFrames)),
     DURATION_SEC: String((shot.durationFrames / 24).toFixed(2)),
+    CAMERA_YAW: typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw) ? String(shot.cameraYaw) : "",
+    CAMERA_PITCH: typeof shot.cameraPitch === "number" && Number.isFinite(shot.cameraPitch) ? String(shot.cameraPitch) : "",
+    CAMERA_FOV: typeof shot.cameraFov === "number" && Number.isFinite(shot.cameraFov) ? String(shot.cameraFov) : "",
+    RENDER_WIDTH: String(targetRenderWidth),
+    RENDER_HEIGHT: String(targetRenderHeight),
     CHARACTER_REFS: (shot.characterRefs ?? []).join(","),
     PREV_SCENE_SHOT_TITLE: continuityPlan.previousSceneShot?.title ?? "",
     PREV_SCENE_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? ""),
     PREV_CHARACTER_SHOT_TITLE: continuityPlan.previousCharacterShot?.title ?? "",
     PREV_CHARACTER_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? ""),
     SCENE_REF_PATH: sceneRefPath,
-    SCENE_REF_PATHS: sceneAsset?.type === "skybox" ? skyboxFacePaths.join(",") : sceneRefPath,
+    SCENE_REF_PATHS: sceneRefPath,
     SCENE_REF_NAME:
       sceneAsset?.type === "skybox"
         ? `${sceneAsset.name} (${(skyboxFaces.length > 0 ? skyboxFaces : ["front"]).join("+")})`
@@ -3102,9 +3170,9 @@ function inferPromptTokens(
     CHAR1_SECONDARY_PATH: char1SecondaryPath,
     CHAR2_PRIMARY_PATH: char2PrimaryPath,
     CHAR2_SECONDARY_PATH: char2SecondaryPath,
-    CHAR1_PRIMARY_WEIGHT: String(storyboardWeights.char1Primary),
-    CHAR1_SECONDARY_WEIGHT: String(storyboardWeights.char1Secondary),
-    CHAR2_PRIMARY_WEIGHT: String(storyboardWeights.char2Primary),
+    CHAR1_PRIMARY_WEIGHT: String(effectiveChar1PrimaryWeight),
+    CHAR1_SECONDARY_WEIGHT: String(effectiveChar1SecondaryWeight),
+    CHAR2_PRIMARY_WEIGHT: String(effectiveChar2PrimaryWeight),
     STORYBOARD_DENOISE: String(storyboardWeights.denoise),
     STORYBOARD_STEPS: String(storyboardWeights.steps),
     STORYBOARD_CFG: String(storyboardWeights.cfg),

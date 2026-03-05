@@ -15,7 +15,7 @@
   "3": {
     "inputs": {
       "pixels": [
-        "2",
+        "16",
         0
       ],
       "vae": [
@@ -80,7 +80,7 @@
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 1,
+      "end_at": 0.85,
       "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
@@ -110,7 +110,7 @@
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 1,
+      "end_at": 0.85,
       "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
@@ -140,7 +140,7 @@
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 1,
+      "end_at": 0.85,
       "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
@@ -194,5 +194,18 @@
       ]
     },
     "class_type": "SaveImage"
+  },
+  "16": {
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": "{{RENDER_WIDTH}}",
+      "height": "{{RENDER_HEIGHT}}",
+      "crop": "center"
+    },
+    "class_type": "ImageScale"
   }
 }

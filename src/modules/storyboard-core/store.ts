@@ -14,6 +14,9 @@ export type ImportedShotScriptItem = {
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
   skyboxFaceWeights?: Partial<Record<SkyboxFace, number>>;
+  cameraYaw?: number;
+  cameraPitch?: number;
+  cameraFov?: number;
   durationSec?: number;
   durationFrames?: number;
   seed?: number;
@@ -155,6 +158,9 @@ type StoryboardState = {
         | "skyboxFace"
         | "skyboxFaces"
         | "skyboxFaceWeights"
+        | "cameraYaw"
+        | "cameraPitch"
+        | "cameraFov"
         | "seed"
         | "characterRefs"
         | "sceneRefId"
@@ -766,6 +772,9 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
               skyboxFace: patch.skyboxFace ?? shot.skyboxFace,
               skyboxFaces: patch.skyboxFaces ?? shot.skyboxFaces,
               skyboxFaceWeights: patch.skyboxFaceWeights ?? shot.skyboxFaceWeights,
+              cameraYaw: patch.cameraYaw ?? shot.cameraYaw,
+              cameraPitch: patch.cameraPitch ?? shot.cameraPitch,
+              cameraFov: patch.cameraFov ?? shot.cameraFov,
               seed: patch.seed ?? shot.seed,
               characterRefs: patch.characterRefs ?? shot.characterRefs,
               sceneRefId: patch.sceneRefId ?? shot.sceneRefId,
@@ -841,6 +850,10 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
             face === "down"
           ),
           skyboxFaceWeights: item.skyboxFaceWeights ?? {},
+          cameraYaw: typeof item.cameraYaw === "number" && Number.isFinite(item.cameraYaw) ? item.cameraYaw : undefined,
+          cameraPitch:
+            typeof item.cameraPitch === "number" && Number.isFinite(item.cameraPitch) ? item.cameraPitch : undefined,
+          cameraFov: typeof item.cameraFov === "number" && Number.isFinite(item.cameraFov) ? item.cameraFov : undefined,
           seed: item.seed,
           characterRefs: item.characterRefs ?? [],
           sceneRefId: item.sceneRefId ?? "",

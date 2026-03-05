@@ -39,6 +39,9 @@ export type Shot = {
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
   skyboxFaceWeights?: Partial<Record<SkyboxFace, number>>;
+  cameraYaw?: number;
+  cameraPitch?: number;
+  cameraFov?: number;
   generatedImagePath?: string;
   generatedVideoPath?: string;
 };

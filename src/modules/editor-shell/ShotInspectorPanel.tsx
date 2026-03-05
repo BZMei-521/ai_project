@@ -27,6 +27,32 @@ export function ShotInspectorPanel() {
   const previewSource = toDesktopMediaSource(selectedShot.generatedImagePath);
   const inferredSkyboxPlan =
     selectedSceneAsset?.type === "skybox" ? inferSkyboxReferencePlan(selectedShot) : null;
+  const updateOptionalNumberField = (field: "cameraYaw" | "cameraPitch" | "cameraFov", value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      if (field === "cameraYaw") {
+        updateShotFields(selectedShot.id, { cameraYaw: undefined });
+        return;
+      }
+      if (field === "cameraPitch") {
+        updateShotFields(selectedShot.id, { cameraPitch: undefined });
+        return;
+      }
+      updateShotFields(selectedShot.id, { cameraFov: undefined });
+      return;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) return;
+    if (field === "cameraYaw") {
+      updateShotFields(selectedShot.id, { cameraYaw: numeric });
+      return;
+    }
+    if (field === "cameraPitch") {
+      updateShotFields(selectedShot.id, { cameraPitch: numeric });
+      return;
+    }
+    updateShotFields(selectedShot.id, { cameraFov: numeric });
+  };
 
   return (
     <section className="panel inspector-panel">
@@ -107,6 +133,47 @@ export function ShotInspectorPanel() {
         </label>
         {selectedSceneAsset?.type === "skybox" && (
           <>
+            <div className="shot-inspector-skybox-plan">
+              <small>机位控制（用于天空盒选面）：yaw 水平角 / pitch 俯仰角 / fov 视角宽度。</small>
+            </div>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+              <label>
+                yaw
+                <input
+                  max={180}
+                  min={-180}
+                  onChange={(event) => updateOptionalNumberField("cameraYaw", event.target.value)}
+                  placeholder="自动"
+                  step={1}
+                  type="number"
+                  value={Number.isFinite(selectedShot.cameraYaw ?? NaN) ? String(selectedShot.cameraYaw) : ""}
+                />
+              </label>
+              <label>
+                pitch
+                <input
+                  max={89}
+                  min={-89}
+                  onChange={(event) => updateOptionalNumberField("cameraPitch", event.target.value)}
+                  placeholder="自动"
+                  step={1}
+                  type="number"
+                  value={Number.isFinite(selectedShot.cameraPitch ?? NaN) ? String(selectedShot.cameraPitch) : ""}
+                />
+              </label>
+              <label>
+                fov
+                <input
+                  max={120}
+                  min={20}
+                  onChange={(event) => updateOptionalNumberField("cameraFov", event.target.value)}
+                  placeholder="自动"
+                  step={1}
+                  type="number"
+                  value={Number.isFinite(selectedShot.cameraFov ?? NaN) ? String(selectedShot.cameraFov) : ""}
+                />
+              </label>
+            </div>
             {inferredSkyboxPlan && (
               <div className="shot-inspector-skybox-plan">
                 <small>
