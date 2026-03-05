@@ -415,15 +415,15 @@ function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" 
     template["1"].inputs.ckpt_name = checkpointName;
   }
   if (template["4"]?.inputs) {
-    template["4"].inputs.width = preset === "square" ? 1024 : 1344;
-    template["4"].inputs.height = preset === "square" ? 1024 : 768;
+    template["4"].inputs.width = preset === "square" ? 1024 : 1600;
+    template["4"].inputs.height = preset === "square" ? 1024 : 900;
   }
   return JSON.stringify(template, null, 2);
 }
 
 function buildSkyboxPanoramaWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
   const template = cloneJson(SKYBOX_PANORAMA_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
-  const width = preset === "square" ? 1280 : 1536;
+  const width = preset === "square" ? 1536 : 1920;
   const height = Math.max(512, Math.round(width / 2));
   if (template["1"]?.inputs) {
     template["1"].inputs.ckpt_name = checkpointName;

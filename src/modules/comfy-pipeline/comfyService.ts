@@ -735,6 +735,35 @@ function appendNegativePrompt(base: string, extra: string): string {
   return `${primary}, ${addition}`;
 }
 
+function sanitizeStoryboardNegativePrompt(base: string, hasCharacters: boolean): string {
+  const normalized = normalizePromptBody(base);
+  if (!normalized || !hasCharacters) return normalized;
+  const blocked = [
+    /empty\s*scene/i,
+    /scenery\s*only/i,
+    /landscape\s*only/i,
+    /character\s*missing/i,
+    /\bno\s+people\b/i,
+    /\bno\s+person\b/i,
+    /\bno\s+human\b/i,
+    /\bwithout\s+people\b/i,
+    /\bwithout\s+person\b/i,
+    /空镜/,
+    /无人/,
+    /无人物/,
+    /无角色/,
+    /纯场景/,
+    /仅场景/,
+    /只有场景/
+  ];
+  const parts = normalized
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  const filtered = parts.filter((item) => !blocked.some((pattern) => pattern.test(item)));
+  return filtered.join(", ");
+}
+
 function toNextScenePrompt(value: string): string {
   const compact = normalizePromptBody(value);
   if (!compact) return "Next Scene: empty shot";
@@ -1937,22 +1966,75 @@ function inferStoryboardReferenceWeights(
   steps: number;
   cfg: number;
 } {
+  const characterDriven = (() => {
+    if ((shot.characterRefs?.length ?? 0) > 0) return true;
+    if (shot.dialogue?.trim()) return true;
+    const corpus = [
+      shot.title ?? "",
+      shot.storyPrompt ?? "",
+      shot.videoPrompt ?? "",
+      shot.notes ?? "",
+      ...(shot.tags ?? [])
+    ]
+      .join(" ")
+      .toLowerCase();
+    return containsAnyKeyword(corpus, [
+      "人物",
+      "角色",
+      "对峙",
+      "对白",
+      "打斗",
+      "交手",
+      "冲拳",
+      "出拳",
+      "闪避",
+      "反击",
+      "对话",
+      "face off",
+      "duel",
+      "fight",
+      "punch",
+      "kick",
+      "dodge"
+    ]);
+  })();
   const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
   if (sceneLed && hasSecondCharacter) {
+    if (characterDriven) {
+      return {
+        // Two-character action/dialogue shots need stronger identity constraints.
+        char1Primary: 0.48,
+        char1Secondary: 0.12,
+        char2Primary: 0.44,
+        denoise: 0.56,
+        steps: 32,
+        cfg: 6.4
+      };
+    }
     return {
       // Scene-first img2img should keep environment stable, while character refs
       // only lock identity cues. Too-strong IPAdapter weights tend to warp geometry.
-      char1Primary: 0.32,
+      char1Primary: 0.34,
       char1Secondary: 0.08,
-      char2Primary: 0.28,
+      char2Primary: 0.3,
       denoise: 0.5,
       steps: 30,
       cfg: 6.2
     };
   }
   if (sceneLed) {
+    if (characterDriven) {
+      return {
+        char1Primary: 0.56,
+        char1Secondary: 0.18,
+        char2Primary: 0,
+        denoise: 0.58,
+        steps: 32,
+        cfg: 6.5
+      };
+    }
     return {
-      char1Primary: 0.36,
+      char1Primary: 0.38,
       char1Secondary: 0.1,
       char2Primary: 0,
       denoise: 0.52,
@@ -1960,13 +2042,23 @@ function inferStoryboardReferenceWeights(
       cfg: 6.3
     };
   }
+  if (hasSecondCharacter) {
+    return {
+      char1Primary: 0.6,
+      char1Secondary: 0.2,
+      char2Primary: 0.52,
+      denoise: 0.6,
+      steps: 34,
+      cfg: 6.6
+    };
+  }
   return {
-    char1Primary: 0.44,
-    char1Secondary: 0.16,
-    char2Primary: hasSecondCharacter ? 0.34 : 0,
-    denoise: 0.56,
-    steps: 32,
-    cfg: 6.4
+    char1Primary: 0.62,
+    char1Secondary: 0.22,
+    char2Primary: 0,
+    denoise: 0.6,
+    steps: 34,
+    cfg: 6.6
   };
 }
 
@@ -2065,10 +2157,10 @@ function buildShotReferenceDirective(
 function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；人物需完整入镜，避免头部、手臂、腿部被裁切出画。`;
+    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；角色主体需清晰可辨识，建议占画面高度至少约 25%，并保证头部与躯干完整，不得只剩远处小人影。`;
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
-  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需完整可辨识，不允许严重遮挡或裁切出画。`;
+  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需清晰可辨识，建议各自占画面高度至少约 18%，不允许只出现剪影、极远小人或严重裁切。`;
 }
 
 function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
@@ -3102,7 +3194,11 @@ function inferPromptTokens(
     characterAssets.length > 0
       ? "cropped body, cut off head, cut off face, cut off feet, out of frame, body out of frame, close-up crop, partial body, incomplete body"
       : "";
-  const effectiveNegativePrompt = [shot.negativePrompt?.trim() || "", characterAbsenceNegativePrompt, characterCropNegativePrompt]
+  const sanitizedShotNegativePrompt = sanitizeStoryboardNegativePrompt(
+    shot.negativePrompt?.trim() || "",
+    characterAssets.length > 0
+  );
+  const effectiveNegativePrompt = [sanitizedShotNegativePrompt, characterAbsenceNegativePrompt, characterCropNegativePrompt]
     .filter((item) => item.length > 0)
     .join(", ");
   const baseTokens: Record<string, string> = {
@@ -4303,14 +4399,18 @@ function makeSkyboxPrompt(description: string, face: SkyboxFace, eventPrompt?: s
     up: "up 面，抬头仰视顶部空间，只展示上方结构与天花/天空。",
     down: "down 面，俯视下方面，只展示地面、地表、地砖、浅滩或底部结构。"
   };
-  const base = `场景天空盒 ${faceInstruction[face]} cubemap face reference, wide environment plate, no characters, no action. ${description.trim()}`;
+  const workflowConstraint =
+    "用于 scene-first 分镜底板：保持地平线稳定、垂直线条笔直、透视自然、避免鱼眼和几何扭曲；画面下方中部保留可站位空地，便于后续人物出镜。";
+  const base = `场景天空盒 ${faceInstruction[face]} cubemap face reference, wide environment plate, no characters, no action. ${workflowConstraint} ${description.trim()}`;
   const event = eventPrompt?.trim();
   if (!event) return base;
   return `${base}\n局部事件更新：${event}`;
 }
 
 function makeSkyboxPanoramaPrompt(description: string, eventPrompt?: string): string {
-  const base = `场景天空盒全景，360 equirectangular panorama，seamless environment plate，pure environment，no characters，no action。${description.trim()}`;
+  const workflowConstraint =
+    "用于 scene-first 分镜底板：地平线稳定，尽量避免极端透视与弯曲结构；中下区域保留可站位空间，便于后续叠加角色。";
+  const base = `场景天空盒全景，360 equirectangular panorama，seamless environment plate，pure environment，no characters，no action。${workflowConstraint} ${description.trim()}`;
   const event = eventPrompt?.trim();
   if (!event) return base;
   return `${base}\n局部事件更新：${event}`;

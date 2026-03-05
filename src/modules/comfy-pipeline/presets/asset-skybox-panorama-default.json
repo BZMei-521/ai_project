@@ -65,8 +65,8 @@
   },
   "7": {
     "inputs": {
-      "width": 1536,
-      "height": 768,
+      "width": 1920,
+      "height": 960,
       "batch_size": 1
     },
     "class_type": "EmptyLatentImage"
@@ -127,7 +127,7 @@
         "9",
         0
       ],
-      "face_width": 768,
+      "face_width": 960,
       "padding_mode": "bicubic",
       "cube_face": "Front"
     },
@@ -149,7 +149,7 @@
         "9",
         0
       ],
-      "face_width": 768,
+      "face_width": 960,
       "padding_mode": "bicubic",
       "cube_face": "Right"
     },
@@ -171,7 +171,7 @@
         "9",
         0
       ],
-      "face_width": 768,
+      "face_width": 960,
       "padding_mode": "bicubic",
       "cube_face": "Back"
     },
@@ -193,7 +193,7 @@
         "9",
         0
       ],
-      "face_width": 768,
+      "face_width": 960,
       "padding_mode": "bicubic",
       "cube_face": "Left"
     },
@@ -215,7 +215,7 @@
         "9",
         0
       ],
-      "face_width": 768,
+      "face_width": 960,
       "padding_mode": "bicubic",
       "cube_face": "Up"
     },
@@ -237,7 +237,7 @@
         "9",
         0
       ],
-      "face_width": 768,
+      "face_width": 960,
       "padding_mode": "bicubic",
       "cube_face": "Down"
     },
