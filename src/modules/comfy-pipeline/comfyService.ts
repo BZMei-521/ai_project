@@ -2002,61 +2002,61 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Keep scene structure stable first, then lock identities.
-        char1Primary: 0.36,
-        char1Secondary: 0.1,
-        char2Primary: 0.34,
-        denoise: 0.44,
-        steps: 30,
-        cfg: 6
+        // Keep scene structure stable first, but strongly enforce both characters.
+        char1Primary: 0.62,
+        char1Secondary: 0.22,
+        char2Primary: 0.58,
+        denoise: 0.56,
+        steps: 32,
+        cfg: 6.3
       };
     }
     return {
-      char1Primary: 0.24,
-      char1Secondary: 0.06,
-      char2Primary: 0.22,
-      denoise: 0.38,
-      steps: 28,
-      cfg: 5.8
+      char1Primary: 0.44,
+      char1Secondary: 0.14,
+      char2Primary: 0.4,
+      denoise: 0.5,
+      steps: 30,
+      cfg: 6.1
     };
   }
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.4,
-        char1Secondary: 0.12,
+        char1Primary: 0.66,
+        char1Secondary: 0.24,
         char2Primary: 0,
-        denoise: 0.44,
-        steps: 30,
-        cfg: 6.1
+        denoise: 0.56,
+        steps: 32,
+        cfg: 6.3
       };
     }
     return {
-      char1Primary: 0.26,
-      char1Secondary: 0.08,
+      char1Primary: 0.46,
+      char1Secondary: 0.16,
       char2Primary: 0,
-      denoise: 0.38,
-      steps: 28,
-      cfg: 5.8
+      denoise: 0.5,
+      steps: 30,
+      cfg: 6.1
     };
   }
   if (hasSecondCharacter) {
     return {
-      char1Primary: 0.52,
-      char1Secondary: 0.16,
-      char2Primary: 0.46,
-      denoise: 0.56,
-      steps: 32,
-      cfg: 6.4
+      char1Primary: 0.7,
+      char1Secondary: 0.24,
+      char2Primary: 0.66,
+      denoise: 0.62,
+      steps: 34,
+      cfg: 6.6
     };
   }
   return {
-    char1Primary: 0.54,
-    char1Secondary: 0.18,
+    char1Primary: 0.72,
+    char1Secondary: 0.26,
     char2Primary: 0,
-    denoise: 0.56,
-    steps: 32,
-    cfg: 6.4
+    denoise: 0.62,
+    steps: 34,
+    cfg: 6.6
   };
 }
 

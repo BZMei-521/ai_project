@@ -3343,6 +3343,7 @@ export function ComfyPipelinePanel() {
       "全身完整入镜，头顶到鞋底必须全部在画面内，保留上下边距",
       "镜头距离为中远景，禁止半身、胸像、特写构图",
       "同一角色三视图必须保持同一张脸、同一发型、同一体型比例、同一服装款式与配色",
+      "必须与参考正视图为同一角色身份，不允许变成另一个人",
       "不允许在 front/side/back 之间换装、换脸、换发型、换年龄、换体型",
       "禁止裸露、内衣态、泳装态、赤膊",
       "服装统一且前后侧一致",
@@ -3620,6 +3621,7 @@ export function ComfyPipelinePanel() {
           )
         }
       );
+      const frontAnchorPath = front.localPath || referencePath;
       const side = await generateShotAsset(
         runtimeSettings,
         makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed),
@@ -3631,7 +3633,7 @@ export function ComfyPipelinePanel() {
           workflowJsonOverride: workflowOverride,
           tokenOverrides: buildCharacterViewSelectionTokenOverrides(
             "side",
-            referencePath,
+            frontAnchorPath,
             buildCharacterViewNegativePrompt("side", negativePrompt)
           )
         }
@@ -3647,7 +3649,7 @@ export function ComfyPipelinePanel() {
           workflowJsonOverride: workflowOverride,
           tokenOverrides: buildCharacterViewSelectionTokenOverrides(
             "back",
-            referencePath,
+            frontAnchorPath,
             buildCharacterViewNegativePrompt("back", negativePrompt)
           )
         }
