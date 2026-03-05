@@ -3522,47 +3522,62 @@ export function ComfyPipelinePanel() {
         "mirrored body"
       ]
     );
-
-    if (mode !== "advanced_multiview") {
+    const runBasicThreeViews = async (workflowJsonOverride: string, seedBase: number) => {
       const [front, side, back] = await Promise.all([
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed),
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", seedBase),
           0,
           "image",
           [],
           [],
           {
-            workflowJsonOverride: workflowOverride,
+            workflowJsonOverride,
             tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
           }
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed),
+          makeAssetGenerationShot(
+            `asset_char_${name}_side`,
+            `${name} 侧视图`,
+            buildCharacterViewPrompt(name, context, "side"),
+            "",
+            seedBase + 101
+          ),
           0,
           "image",
           [],
           [],
           {
-            workflowJsonOverride: workflowOverride,
+            workflowJsonOverride,
             tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("side", negativePrompt) }
           }
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed),
+          makeAssetGenerationShot(
+            `asset_char_${name}_back`,
+            `${name} 背视图`,
+            buildCharacterViewPrompt(name, context, "back"),
+            "",
+            seedBase + 202
+          ),
           0,
           "image",
           [],
           [],
           {
-            workflowJsonOverride: workflowOverride,
+            workflowJsonOverride,
             tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("back", negativePrompt) }
           }
         )
       ]);
       return { front, side, back };
+    };
+
+    if (mode !== "advanced_multiview") {
+      return runBasicThreeViews(workflowOverride, baseSeed);
     }
 
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
@@ -3635,10 +3650,20 @@ export function ComfyPipelinePanel() {
       );
       return { front, side, back };
     } catch (error) {
-      if (!shouldFallbackAssetWorkflow(error)) throw error;
-      throw new Error(
-        `角色高级多视角工作流不可用，已停止自动降级基础三视图模板：${String(error)}。当前基础三视图模板是三次独立文生图，无法稳定保证同一人物的视角与服装面容一致。请先修复 ComfyUI-MVAdapter 节点加载。`
+      const text = String(error ?? "");
+      const lower = text.toLowerCase();
+      const mvadapterRuntimeIncompatible =
+        lower.includes("rearrange-reduction pattern") ||
+        lower.includes("object of type 'int' has no len") ||
+        lower.includes("einops");
+      if (!shouldFallbackAssetWorkflow(error) && !mvadapterRuntimeIncompatible) throw error;
+      appendLog(`角色高级多视角工作流失败，已自动降级基础三视图模板：${text}`, "error");
+      const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
+        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+        runtimeSettings.characterTemplatePreset ?? "portrait",
+        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
       );
+      return runBasicThreeViews(fallbackWorkflow, baseSeed + 997);
     }
   };
 
