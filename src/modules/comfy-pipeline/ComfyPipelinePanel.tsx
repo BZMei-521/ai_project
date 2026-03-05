@@ -85,6 +85,7 @@ const CHARACTER_ADVANCED_NODE_TYPES = [
   "LdmVaeLoader",
   "DiffusersMVSchedulerLoader",
   "DiffusersMVModelMakeup",
+  "ViewSelector",
   "DiffusersMVSampler",
   "SaveImage"
 ] as const;
@@ -158,10 +159,10 @@ function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedM
       summary:
         "推荐用 ComfyUI-MVAdapter 做 image-to-multi-view，一次从单张参考图稳定产出 front/right/back，而不是三次独立 txt2img。",
       requiredNodes: [
-        "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter Sampler 等）",
+        "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter / View Selector 等）",
         "主模型加载节点（CheckpointLoaderSimple 或 Diffusers 模型加载节点）",
         "文本编码节点（CLIPTextEncode 或等价节点）",
-        "方位角输入（azimuth_degrees：front=0 / side=90 / back=180）",
+        "视角选择节点（front / right / back 或 front / left / back）",
         "单张图片输出节点（SaveImage / PreviewImage）"
       ],
       requiredModels: [
@@ -1394,7 +1395,9 @@ function shouldAutoRewriteAssetWorkflow(
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
   const hasAllAdvancedCharacterViewTokens = [
     "{{FRAME_IMAGE_PATH}}",
-    "{{AZIMUTH_DEGREES}}"
+    "{{CHARACTER_FRONT_VIEW}}",
+    "{{CHARACTER_RIGHT_VIEW}}",
+    "{{CHARACTER_BACK_VIEW}}"
   ].every((token) => trimmed.includes(token));
   if (kind === "character" && mode === "advanced_multiview") {
     return (
@@ -3378,7 +3381,12 @@ export function ComfyPipelinePanel() {
   ) => ({
     FRAME_IMAGE_PATH: frameImagePath,
     NEGATIVE_PROMPT: negativePrompt,
-    AZIMUTH_DEGREES: view === "front" ? "0" : view === "side" ? "90" : "180"
+    CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
+    CHARACTER_FRONT_RIGHT_VIEW: "false",
+    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
+    CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
+    CHARACTER_LEFT_VIEW: "false",
+    CHARACTER_FRONT_LEFT_VIEW: "false"
   });
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
@@ -6691,7 +6699,7 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           {characterAssetWorkflowMode === "advanced_multiview"
-            ? "内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup / DiffusersMVSampler(azimuth_degrees=0/90/180) / SaveImage"
+            ? "内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup / ViewSelector / DiffusersMVSampler / SaveImage"
             : "内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage"}
         </div>
         <div className="timeline-meta">
