@@ -175,6 +175,7 @@ function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedM
       notes: [
         "当前项目已内置一套基于 MVAdapter i2mv 的高级模板，可直接写入。",
         "高级模式会先生成一张正面参考图，再用 MVAdapter 生成 front / side / back。",
+        "高级模板已强制使用方形分辨率（square token grid），避免 MVAdapter 在非方形尺寸下触发 einops rearrange 报错。",
         "MV-Adapter 官方仓库明确支持 text/image-to-multi-view，并支持视角选择与 ControlNet 集成。",
         "目标是标准 front / side / back 视角一致性，而不是三次独立随机出图。"
       ]
@@ -400,9 +401,12 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   }
   if (template["7"]?.inputs) {
     const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+    // MVAdapter self-attention assumes square token grids (ih == iw).
+    // Non-square sizes like 832x1216 can trigger einops rearrange failures.
+    const side = preset === "square" ? 1024 : 896;
     template["7"].inputs.num_views = 1;
-    template["7"].inputs.width = preset === "square" ? 1024 : 832;
-    template["7"].inputs.height = preset === "square" ? 1024 : 1216;
+    template["7"].inputs.width = side;
+    template["7"].inputs.height = side;
     template["7"].inputs.steps = config.steps;
     template["7"].inputs.cfg = config.cfg;
   }
@@ -1404,8 +1408,8 @@ function shouldAutoRewriteAssetWorkflow(
       !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES) ||
       !hasAllAdvancedCharacterViewTokens ||
       trimmed.includes("\"num_views\": 6") ||
-      trimmed.includes("\"width\": 768") ||
-      trimmed.includes("\"height\": 768")
+      trimmed.includes("\"width\": 832") ||
+      trimmed.includes("\"height\": 1216")
     );
   }
   if (kind === "skybox" && mode === "advanced_panorama") {
@@ -2495,7 +2499,6 @@ export function ComfyPipelinePanel() {
   const [previewVideoPath, setPreviewVideoPath] = useState("");
   const characterProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const skyboxProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
-  const mvAdapterRuntimeBrokenRef = useRef(false);
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
   const [imageStatusByShot, setImageStatusByShot] = useState<Record<string, AssetStatus>>({});
@@ -3576,26 +3579,9 @@ export function ComfyPipelinePanel() {
       ]);
       return { front, side, back };
     };
-    const isMVAdapterRuntimeIncompatibleError = (error: unknown): boolean => {
-      const lower = String(error ?? "").toLowerCase();
-      return (
-        lower.includes("rearrange-reduction pattern") ||
-        lower.includes("object of type 'int' has no len") ||
-        lower.includes("einops")
-      );
-    };
 
     if (mode !== "advanced_multiview") {
       return runBasicThreeViews(workflowOverride, baseSeed);
-    }
-    if (mvAdapterRuntimeBrokenRef.current) {
-      appendLog("检测到 MVAdapter 运行期不兼容，本次会话角色三视图已自动改走基础模板", "error");
-      const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
-        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-        runtimeSettings.characterTemplatePreset ?? "portrait",
-        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
-      );
-      return runBasicThreeViews(fallbackWorkflow, baseSeed + 997);
     }
 
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
@@ -3668,20 +3654,12 @@ export function ComfyPipelinePanel() {
       );
       return { front, side, back };
     } catch (error) {
-      const text = String(error ?? "");
-      const mvadapterRuntimeIncompatible = isMVAdapterRuntimeIncompatibleError(error);
-      if (!shouldFallbackAssetWorkflow(error) && !mvadapterRuntimeIncompatible) throw error;
-      if (mvadapterRuntimeIncompatible && !mvAdapterRuntimeBrokenRef.current) {
-        mvAdapterRuntimeBrokenRef.current = true;
-        appendLog("检测到 MVAdapter 与当前运行环境不兼容，已对后续角色三视图启用会话级降级保护", "error");
-      }
-      appendLog(`角色高级多视角工作流失败，已自动降级基础三视图模板：${text}`, "error");
-      const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
-        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-        runtimeSettings.characterTemplatePreset ?? "portrait",
-        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+      if (!shouldFallbackAssetWorkflow(error)) throw error;
+      throw new Error(
+        `角色高级多视角工作流不可用，已禁止自动降级基础三视图模板：${String(error)}。` +
+          `当前已强制 MVAdapter 使用方形分辨率（避免非方形触发 einops rearrange 失败）。` +
+          `请确认 ComfyUI-MVAdapter 版本与模型权重匹配后重试。`
       );
-      return runBasicThreeViews(fallbackWorkflow, baseSeed + 997);
     }
   };
 
