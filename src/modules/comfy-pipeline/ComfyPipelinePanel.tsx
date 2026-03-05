@@ -85,7 +85,6 @@ const CHARACTER_ADVANCED_NODE_TYPES = [
   "LdmVaeLoader",
   "DiffusersMVSchedulerLoader",
   "DiffusersMVModelMakeup",
-  "ViewSelector",
   "DiffusersMVSampler",
   "SaveImage"
 ] as const;
@@ -159,10 +158,10 @@ function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedM
       summary:
         "推荐用 ComfyUI-MVAdapter 做 image-to-multi-view，一次从单张参考图稳定产出 front/right/back，而不是三次独立 txt2img。",
       requiredNodes: [
-        "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter / View Selector 等）",
+        "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter Sampler 等）",
         "主模型加载节点（CheckpointLoaderSimple 或 Diffusers 模型加载节点）",
         "文本编码节点（CLIPTextEncode 或等价节点）",
-        "视角选择节点（front / right / back 或 front / left / back）",
+        "方位角输入（azimuth_degrees：front=0 / side=90 / back=180）",
         "单张图片输出节点（SaveImage / PreviewImage）"
       ],
       requiredModels: [
@@ -1395,9 +1394,7 @@ function shouldAutoRewriteAssetWorkflow(
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
   const hasAllAdvancedCharacterViewTokens = [
     "{{FRAME_IMAGE_PATH}}",
-    "{{CHARACTER_FRONT_VIEW}}",
-    "{{CHARACTER_RIGHT_VIEW}}",
-    "{{CHARACTER_BACK_VIEW}}"
+    "{{AZIMUTH_DEGREES}}"
   ].every((token) => trimmed.includes(token));
   if (kind === "character" && mode === "advanced_multiview") {
     return (
@@ -3332,6 +3329,8 @@ export function ComfyPipelinePanel() {
       "完整穿衣",
       "完整服装设计",
       "上衣、下装或长袍、鞋子都要清楚可见",
+      "全身完整入镜，头顶到鞋底必须全部在画面内，保留上下边距",
+      "镜头距离为中远景，禁止半身、胸像、特写构图",
       "同一角色三视图必须保持同一张脸、同一发型、同一体型比例、同一服装款式与配色",
       "不允许在 front/side/back 之间换装、换脸、换发型、换年龄、换体型",
       "禁止裸露、内衣态、泳装态、赤膊",
@@ -3352,7 +3351,9 @@ export function ComfyPipelinePanel() {
           : "front view, facing camera, side profile, looking at camera, face visible";
     const identityDriftConstraint =
       "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${identityDriftConstraint}`;
+    const cropConstraint =
+      "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body";
+    return `${baseNegativePrompt}, ${viewConstraint}, ${identityDriftConstraint}, ${cropConstraint}`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -3373,12 +3374,7 @@ export function ComfyPipelinePanel() {
   ) => ({
     FRAME_IMAGE_PATH: frameImagePath,
     NEGATIVE_PROMPT: negativePrompt,
-    CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
-    CHARACTER_FRONT_RIGHT_VIEW: "false",
-    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
-    CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
-    CHARACTER_LEFT_VIEW: "false",
-    CHARACTER_FRONT_LEFT_VIEW: "false"
+    AZIMUTH_DEGREES: view === "front" ? "0" : view === "side" ? "90" : "180"
   });
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
@@ -3523,7 +3519,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 1),
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed),
           0,
           "image",
           [],
@@ -3535,7 +3531,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 2),
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed),
           0,
           "image",
           [],
@@ -3621,7 +3617,7 @@ export function ComfyPipelinePanel() {
     } catch (error) {
       if (!shouldFallbackAssetWorkflow(error)) throw error;
       throw new Error(
-        `角色高级多视角工作流不可用，已停止自动降级基础三视图模板：${String(error)}。当前基础三视图模板是三次独立文生图，无法稳定保证同一人物的视角与服装面容一致。请先修复 ComfyUI-MVAdapter / ViewSelector 节点加载。`
+        `角色高级多视角工作流不可用，已停止自动降级基础三视图模板：${String(error)}。当前基础三视图模板是三次独立文生图，无法稳定保证同一人物的视角与服装面容一致。请先修复 ComfyUI-MVAdapter 节点加载。`
       );
     }
   };
@@ -6650,7 +6646,7 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           {characterAssetWorkflowMode === "advanced_multiview"
-            ? "内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup / ViewSelector / DiffusersMVSampler / SaveImage"
+            ? "内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup / DiffusersMVSampler(azimuth_degrees=0/90/180) / SaveImage"
             : "内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage"}
         </div>
         <div className="timeline-meta">

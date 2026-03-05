@@ -56,17 +56,6 @@
     },
     "class_type": "LoadImage"
   },
-  "6": {
-    "inputs": {
-      "front_view": "{{CHARACTER_FRONT_VIEW}}",
-      "front_right_view": "{{CHARACTER_FRONT_RIGHT_VIEW}}",
-      "right_view": "{{CHARACTER_RIGHT_VIEW}}",
-      "back_view": "{{CHARACTER_BACK_VIEW}}",
-      "left_view": "{{CHARACTER_LEFT_VIEW}}",
-      "front_left_view": "{{CHARACTER_FRONT_LEFT_VIEW}}"
-    },
-    "class_type": "ViewSelector"
-  },
   "7": {
     "inputs": {
       "pipeline": [
@@ -85,10 +74,7 @@
         "5",
         0
       ],
-      "azimuth_degrees": [
-        "6",
-        0
-      ]
+      "azimuth_degrees": "{{AZIMUTH_DEGREES}}"
     },
     "class_type": "DiffusersMVSampler"
   },

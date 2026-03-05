@@ -2002,63 +2002,61 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Two-character action/dialogue shots need stronger identity constraints.
-        char1Primary: 0.48,
-        char1Secondary: 0.12,
-        char2Primary: 0.44,
-        denoise: 0.56,
-        steps: 32,
-        cfg: 6.4
+        // Keep scene structure stable first, then lock identities.
+        char1Primary: 0.36,
+        char1Secondary: 0.1,
+        char2Primary: 0.34,
+        denoise: 0.44,
+        steps: 30,
+        cfg: 6
       };
     }
     return {
-      // Scene-first img2img should keep environment stable, while character refs
-      // only lock identity cues. Too-strong IPAdapter weights tend to warp geometry.
-      char1Primary: 0.34,
-      char1Secondary: 0.08,
-      char2Primary: 0.3,
-      denoise: 0.5,
-      steps: 30,
-      cfg: 6.2
+      char1Primary: 0.24,
+      char1Secondary: 0.06,
+      char2Primary: 0.22,
+      denoise: 0.38,
+      steps: 28,
+      cfg: 5.8
     };
   }
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.56,
-        char1Secondary: 0.18,
+        char1Primary: 0.4,
+        char1Secondary: 0.12,
         char2Primary: 0,
-        denoise: 0.58,
-        steps: 32,
-        cfg: 6.5
+        denoise: 0.44,
+        steps: 30,
+        cfg: 6.1
       };
     }
     return {
-      char1Primary: 0.38,
-      char1Secondary: 0.1,
+      char1Primary: 0.26,
+      char1Secondary: 0.08,
       char2Primary: 0,
-      denoise: 0.52,
-      steps: 30,
-      cfg: 6.3
+      denoise: 0.38,
+      steps: 28,
+      cfg: 5.8
     };
   }
   if (hasSecondCharacter) {
     return {
-      char1Primary: 0.6,
-      char1Secondary: 0.2,
-      char2Primary: 0.52,
-      denoise: 0.6,
-      steps: 34,
-      cfg: 6.6
+      char1Primary: 0.52,
+      char1Secondary: 0.16,
+      char2Primary: 0.46,
+      denoise: 0.56,
+      steps: 32,
+      cfg: 6.4
     };
   }
   return {
-    char1Primary: 0.62,
-    char1Secondary: 0.22,
+    char1Primary: 0.54,
+    char1Secondary: 0.18,
     char2Primary: 0,
-    denoise: 0.6,
-    steps: 34,
-    cfg: 6.6
+    denoise: 0.56,
+    steps: 32,
+    cfg: 6.4
   };
 }
 
@@ -2511,10 +2509,16 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   const characters = refs.filter((item) => item.role.startsWith("character_"));
   const scenes = refs.filter((item) => item.role === "scene_primary" || item.role === "scene_secondary");
   const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
-  if (shouldLeadWithSceneReference(shot) && scenes.length > 0) {
-    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...scenes.slice(1), ...continuity].slice(0, 3);
+  // Always keep environment anchor first when a scene/skybox reference exists.
+  if (scenes.length > 0) {
+    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1)].slice(0, 3);
   }
-  return [...characters.slice(0, 1), ...scenes.slice(0, 1), ...characters.slice(1), ...continuity].slice(0, 3);
+  if (shouldLeadWithSceneReference(shot)) {
+    const continuityScene = continuity.filter((item) => item.role === "continuity_scene");
+    const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
+    return [...continuityScene, ...characters.slice(0, 2), ...continuityCharacter].slice(0, 3);
+  }
+  return [...characters.slice(0, 2), ...continuity].slice(0, 3);
 }
 
 async function stageCharacterReferenceImages(
