@@ -2495,6 +2495,7 @@ export function ComfyPipelinePanel() {
   const [previewVideoPath, setPreviewVideoPath] = useState("");
   const characterProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const skyboxProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
+  const mvAdapterRuntimeBrokenRef = useRef(false);
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
   const [imageStatusByShot, setImageStatusByShot] = useState<Record<string, AssetStatus>>({});
@@ -3575,9 +3576,26 @@ export function ComfyPipelinePanel() {
       ]);
       return { front, side, back };
     };
+    const isMVAdapterRuntimeIncompatibleError = (error: unknown): boolean => {
+      const lower = String(error ?? "").toLowerCase();
+      return (
+        lower.includes("rearrange-reduction pattern") ||
+        lower.includes("object of type 'int' has no len") ||
+        lower.includes("einops")
+      );
+    };
 
     if (mode !== "advanced_multiview") {
       return runBasicThreeViews(workflowOverride, baseSeed);
+    }
+    if (mvAdapterRuntimeBrokenRef.current) {
+      appendLog("检测到 MVAdapter 运行期不兼容，本次会话角色三视图已自动改走基础模板", "error");
+      const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
+        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+        runtimeSettings.characterTemplatePreset ?? "portrait",
+        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+      );
+      return runBasicThreeViews(fallbackWorkflow, baseSeed + 997);
     }
 
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
@@ -3651,12 +3669,12 @@ export function ComfyPipelinePanel() {
       return { front, side, back };
     } catch (error) {
       const text = String(error ?? "");
-      const lower = text.toLowerCase();
-      const mvadapterRuntimeIncompatible =
-        lower.includes("rearrange-reduction pattern") ||
-        lower.includes("object of type 'int' has no len") ||
-        lower.includes("einops");
+      const mvadapterRuntimeIncompatible = isMVAdapterRuntimeIncompatibleError(error);
       if (!shouldFallbackAssetWorkflow(error) && !mvadapterRuntimeIncompatible) throw error;
+      if (mvadapterRuntimeIncompatible && !mvAdapterRuntimeBrokenRef.current) {
+        mvAdapterRuntimeBrokenRef.current = true;
+        appendLog("检测到 MVAdapter 与当前运行环境不兼容，已对后续角色三视图启用会话级降级保护", "error");
+      }
       appendLog(`角色高级多视角工作流失败，已自动降级基础三视图模板：${text}`, "error");
       const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
         runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
