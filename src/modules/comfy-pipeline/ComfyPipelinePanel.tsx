@@ -556,6 +556,11 @@ type ProvisionPreviewItem = {
   thumbs: string[];
 };
 
+type ProvisionCreateResult = {
+  assetId: string;
+  previewPaths: string[];
+};
+
 type ShotReferencePreview = {
   characters: Array<{ id: string; name: string; thumbs: string[]; views: string[] }>;
   scene?: { id: string; name: string; thumbs: string[]; faces: string[] };
@@ -973,6 +978,21 @@ function extractCharacterCandidates(text: string): string[] {
   return uniqueEntities(roleCandidates.map(sanitizeCharacterCandidate).filter(Boolean));
 }
 
+const SCENE_TIME_QUALIFIER_PATTERN =
+  "(清晨|凌晨|黎明|早晨|早上|上午|中午|午后|下午|傍晚|黄昏|暮色|夜晚|夜里|夜间|深夜|午夜|白天|日间|雨夜|雪夜)";
+
+function stripSceneTemporalQualifier(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "";
+  let normalized = raw;
+  const prefixPattern = new RegExp(`^(?:${SCENE_TIME_QUALIFIER_PATTERN})(?:时分|时候|阶段)?(?:的)?`, "g");
+  const suffixPattern = new RegExp(`(?:的)?(?:${SCENE_TIME_QUALIFIER_PATTERN})(?:时分|时候|阶段|氛围|版本|版|景)?$`, "g");
+  normalized = normalized.replace(prefixPattern, "");
+  normalized = normalized.replace(suffixPattern, "");
+  normalized = normalized.replace(/^[-_，,。·\s]+|[-_，,。·\s]+$/g, "");
+  return normalized || raw;
+}
+
 function canonicalAssetName(type: "character" | "scene" | "skybox", value: string): string {
   let normalized = normalizeEntityKey(value);
   if (type === "character") {
@@ -983,6 +1003,7 @@ function canonicalAssetName(type: "character" | "scene" | "skybox", value: strin
     normalized = normalized
       .replace(/^(场景|环境|地点)/, "")
       .replace(/(场景|场景图|环境图|设定图)$/g, "");
+    normalized = stripSceneTemporalQualifier(normalized);
   }
   return normalized.trim();
 }
@@ -1372,9 +1393,16 @@ function shouldAutoRewriteAssetWorkflow(
   const trimmed = workflowJson.trim();
   if (!trimmed) return true;
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
+  const hasAllAdvancedCharacterViewTokens = [
+    "{{FRAME_IMAGE_PATH}}",
+    "{{CHARACTER_FRONT_VIEW}}",
+    "{{CHARACTER_RIGHT_VIEW}}",
+    "{{CHARACTER_BACK_VIEW}}"
+  ].every((token) => trimmed.includes(token));
   if (kind === "character" && mode === "advanced_multiview") {
     return (
       !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES) ||
+      !hasAllAdvancedCharacterViewTokens ||
       trimmed.includes("\"num_views\": 6") ||
       trimmed.includes("\"width\": 768") ||
       trimmed.includes("\"height\": 768")
@@ -1777,20 +1805,27 @@ function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReference
   if (matchedCharacterIds.length === 0 && shotLooksCharacterDriven(shot) && characterAssets.length > 0 && characterAssets.length <= 2) {
     matchedCharacterIds.push(...characterAssets.map((asset) => asset.id));
   }
-  const characters = matchedCharacterIds
-    .map((id) => assets.find((item) => item.id === id && item.type === "character"))
-    .filter((item): item is Asset => Boolean(item))
-    .map((asset) => {
-      const thumbs = [asset.characterFrontPath, asset.characterSidePath, asset.characterBackPath].filter(
-        (item): item is string => Boolean(item?.trim())
-      );
-      const views = [
-        asset.characterFrontPath?.trim() ? "front" : "",
-        asset.characterSidePath?.trim() ? "side" : "",
-        asset.characterBackPath?.trim() ? "back" : ""
-      ].filter((item) => item.length > 0);
-      return { id: asset.id, name: asset.name, thumbs, views };
-    });
+  const dedupCharacterAssets: Asset[] = [];
+  const seenCharacterNameKeys = new Set<string>();
+  for (const id of matchedCharacterIds) {
+    const asset = assets.find((item) => item.id === id && item.type === "character");
+    if (!asset) continue;
+    const nameKey = normalizeEntityKey(asset.name || asset.id);
+    if (nameKey && seenCharacterNameKeys.has(nameKey)) continue;
+    if (nameKey) seenCharacterNameKeys.add(nameKey);
+    dedupCharacterAssets.push(asset);
+  }
+  const characters = dedupCharacterAssets.map((asset) => {
+    const thumbs = [asset.characterFrontPath, asset.characterSidePath, asset.characterBackPath].filter(
+      (item): item is string => Boolean(item?.trim())
+    );
+    const views = [
+      asset.characterFrontPath?.trim() ? "front" : "",
+      asset.characterSidePath?.trim() ? "side" : "",
+      asset.characterBackPath?.trim() ? "back" : ""
+    ].filter((item) => item.length > 0);
+    return { id: asset.id, name: asset.name, thumbs, views };
+  });
   const inferredSceneName = sanitizeSceneCandidate(shot.sourceSceneName?.trim() || inferSceneName(context));
   const resolvedSceneId =
     (shot.sceneRefId?.trim() &&
@@ -1879,6 +1914,22 @@ function deriveShotBindingRepairs(
 } {
   const characterAssets = assets.filter((asset) => asset.type === "character");
   const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const skyboxCanonicalPrimaryMap = new Map<string, string>();
+  for (const asset of skyboxAssets) {
+    const canonicalKey = canonicalAssetName("skybox", asset.name);
+    if (!canonicalKey || skyboxCanonicalPrimaryMap.has(canonicalKey)) continue;
+    skyboxCanonicalPrimaryMap.set(canonicalKey, asset.id);
+  }
+  const normalizeSceneRefId = (sceneRefId?: string): string => {
+    const raw = sceneRefId?.trim() ?? "";
+    if (!raw) return "";
+    const asset = assets.find((item) => item.id === raw && (item.type === "scene" || item.type === "skybox"));
+    if (!asset) return "";
+    if (asset.type !== "skybox") return raw;
+    const canonicalKey = canonicalAssetName("skybox", asset.name);
+    if (!canonicalKey) return raw;
+    return skyboxCanonicalPrimaryMap.get(canonicalKey) ?? raw;
+  };
   const patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }> = [];
   let repairedCharacterShots = 0;
   let repairedSceneShots = 0;
@@ -1917,23 +1968,33 @@ function deriveShotBindingRepairs(
     }
 
     const inferredSceneName = sanitizeSceneCandidate(shot.sourceSceneName?.trim() || inferSceneName(context));
+    const inferredSceneCanonicalKey = inferredSceneName ? canonicalAssetName("skybox", inferredSceneName) : "";
+    const inferredSceneCanonicalRefId =
+      inferredSceneCanonicalKey ? skyboxCanonicalPrimaryMap.get(inferredSceneCanonicalKey) ?? "" : "";
     const nextSceneRefId =
-      (shot.sceneRefId?.trim() &&
-      assets.some((asset) => asset.id === shot.sceneRefId && (asset.type === "scene" || asset.type === "skybox"))
-        ? shot.sceneRefId
-        : "") ||
+      inferredSceneCanonicalRefId ||
+      normalizeSceneRefId(shot.sceneRefId) ||
       (inferredSceneName ? findMatchingAssetId(assets, "skybox", inferredSceneName) : "") ||
-      (previousShot?.sceneRefId?.trim() &&
-      assets.some((asset) => asset.id === previousShot.sceneRefId && (asset.type === "scene" || asset.type === "skybox"))
-        ? previousShot.sceneRefId
-        : "") ||
+      normalizeSceneRefId(previousShot?.sceneRefId) ||
       (skyboxAssets.length === 1 ? skyboxAssets[0]?.id ?? "" : "");
 
     const fields: { characterRefs: string[]; sceneRefId: string } = {
       characterRefs: shot.characterRefs ?? [],
       sceneRefId: shot.sceneRefId ?? ""
     };
-    const normalizedCharacterRefs = uniqueEntities(nextCharacterRefs);
+    const normalizedCharacterRefs = (() => {
+      const seenNameKeys = new Set<string>();
+      const output: string[] = [];
+      for (const refId of uniqueEntities(nextCharacterRefs)) {
+        const asset = assets.find((item) => item.id === refId && item.type === "character");
+        if (!asset) continue;
+        const key = normalizeEntityKey(asset.name || asset.id);
+        if (key && seenNameKeys.has(key)) continue;
+        if (key) seenNameKeys.add(key);
+        output.push(refId);
+      }
+      return output;
+    })();
     if (
       normalizedCharacterRefs.length > 0 &&
       normalizedCharacterRefs.join(",") !== uniqueEntities(shot.characterRefs ?? []).join(",")
@@ -2412,6 +2473,8 @@ export function ComfyPipelinePanel() {
   const [runAllProgress, setRunAllProgress] = useState(0);
   const [runAllStage, setRunAllStage] = useState("");
   const [previewVideoPath, setPreviewVideoPath] = useState("");
+  const characterProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
+  const skyboxProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
   const [imageStatusByShot, setImageStatusByShot] = useState<Record<string, AssetStatus>>({});
@@ -3486,44 +3549,54 @@ export function ComfyPipelinePanel() {
     const referencePath = referenceFront.localPath || referenceFront.previewUrl;
     try {
       const mvSeed = baseSeed + 11;
-      const [front, side, back] = await Promise.all([
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", mvSeed),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: workflowOverride,
-            tokenOverrides: buildCharacterViewSelectionTokenOverrides("front", referencePath, negativePrompt)
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: workflowOverride,
-            tokenOverrides: buildCharacterViewSelectionTokenOverrides("side", referencePath, negativePrompt)
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", mvSeed),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: workflowOverride,
-            tokenOverrides: buildCharacterViewSelectionTokenOverrides("back", referencePath, negativePrompt)
-          }
-        )
-      ]);
+      const front = await generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", mvSeed),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: workflowOverride,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
+            "front",
+            referencePath,
+            buildCharacterViewNegativePrompt("front", negativePrompt)
+          )
+        }
+      );
+      const side = await generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed + 1),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: workflowOverride,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
+            "side",
+            referencePath,
+            buildCharacterViewNegativePrompt("side", negativePrompt)
+          )
+        }
+      );
+      const back = await generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", mvSeed + 2),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: workflowOverride,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
+            "back",
+            referencePath,
+            buildCharacterViewNegativePrompt("back", negativePrompt)
+          )
+        }
+      );
       return { front, side, back };
     } catch (error) {
       if (!shouldFallbackAssetWorkflow(error)) throw error;
@@ -3855,45 +3928,67 @@ export function ComfyPipelinePanel() {
       };
     });
 
-  const createCharacterAssetIfMissing = async (runtimeSettings: ComfySettings, name: string, context: string) => {
-    const existingId = findAssetIdByName("character", name);
-    if (existingId) {
-      const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+  const createCharacterAssetIfMissing = async (
+    runtimeSettings: ComfySettings,
+    name: string,
+    context: string
+  ): Promise<ProvisionCreateResult> => {
+    const nameKey = normalizeEntityKey(name);
+    const inFlight = nameKey ? characterProvisionInFlightRef.current.get(nameKey) : undefined;
+    if (inFlight) return inFlight;
+
+    const task: Promise<ProvisionCreateResult> = (async () => {
+      const existingId = findAssetIdByName("character", name);
+      if (existingId) {
+        const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+        return {
+          assetId: existingId,
+          previewPaths: [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath].filter(
+            (value): value is string => Boolean(value)
+          )
+        };
+      }
+      const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
+      const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
+      appendLog(`开始生成角色三视图：${name}`);
+      appendLog(`角色三视图使用专用工作流：${name}`);
+      const { front, side, back } = await generateCharacterThreeViews(runtimeSettings, name, safeContext, baseSeed);
+
+      const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
+      addAsset({
+        type: "character",
+        name,
+        filePath: front.localPath || front.previewUrl,
+        characterFrontPath: front.localPath || front.previewUrl,
+        characterSidePath: side.localPath || side.previewUrl,
+        characterBackPath: back.localPath || back.previewUrl
+      });
+      const created =
+        useStoryboardStore
+          .getState()
+          .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "character" && normalizeEntityKey(asset.name) === normalizeEntityKey(name))
+          ?.id ?? findAssetIdByName("character", name);
+      appendLog(`角色三视图生成成功：${name}`);
       return {
-        assetId: existingId,
-        previewPaths: [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath].filter(
-          (value): value is string => Boolean(value)
-        )
+        assetId: created,
+        previewPaths: [
+          front.localPath || front.previewUrl,
+          side.localPath || side.previewUrl,
+          back.localPath || back.previewUrl
+        ].filter((value): value is string => Boolean(value))
       };
+    })();
+
+    if (nameKey) {
+      characterProvisionInFlightRef.current.set(nameKey, task);
     }
-    const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
-    const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
-    appendLog(`开始生成角色三视图：${name}`);
-    appendLog(`角色三视图使用专用工作流：${name}`);
-    const { front, side, back } = await generateCharacterThreeViews(runtimeSettings, name, safeContext, baseSeed);
-    const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
-    addAsset({
-      type: "character",
-      name,
-      filePath: front.localPath || front.previewUrl,
-      characterFrontPath: front.localPath || front.previewUrl,
-      characterSidePath: side.localPath || side.previewUrl,
-      characterBackPath: back.localPath || back.previewUrl
-    });
-    const created =
-      useStoryboardStore
-        .getState()
-        .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "character" && normalizeEntityKey(asset.name) === normalizeEntityKey(name))
-        ?.id ?? findAssetIdByName("character", name);
-    appendLog(`角色三视图生成成功：${name}`);
-    return {
-      assetId: created,
-      previewPaths: [
-        front.localPath || front.previewUrl,
-        side.localPath || side.previewUrl,
-        back.localPath || back.previewUrl
-      ].filter((value): value is string => Boolean(value))
-    };
+    try {
+      return await task;
+    } finally {
+      if (nameKey && characterProvisionInFlightRef.current.get(nameKey) === task) {
+        characterProvisionInFlightRef.current.delete(nameKey);
+      }
+    }
   };
 
   const createSkyboxAssetIfMissing = async (
@@ -3901,83 +3996,100 @@ export function ComfyPipelinePanel() {
     sceneName: string,
     scenePrompt: string,
     characterNames: string[] = []
-  ) => {
-    const existingId = findAssetIdByName("skybox", sceneName);
-    if (existingId) {
-      const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+  ): Promise<ProvisionCreateResult> => {
+    const sceneKey = normalizeEntityKey(sceneName);
+    const inFlight = sceneKey ? skyboxProvisionInFlightRef.current.get(sceneKey) : undefined;
+    if (inFlight) return inFlight;
+
+    const task: Promise<ProvisionCreateResult> = (async () => {
+      const existingId = findAssetIdByName("skybox", sceneName);
+      if (existingId) {
+        const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+        return {
+          assetId: existingId,
+          previewPaths: [
+            asset?.skyboxFaces?.front,
+            asset?.skyboxFaces?.right,
+            asset?.skyboxFaces?.left,
+            asset?.skyboxFaces?.back
+          ].filter((value): value is string => Boolean(value))
+        };
+      }
+      const sanitizedScenePrompt = stripCharacterMentions(scenePrompt, characterNames);
+      const description = buildSkyboxDescription(
+        sceneName,
+        sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
+      );
+      const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
+      const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
+        "skybox",
+        runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
+        runtimeSettings.skyboxWorkflowJson?.trim() ?? ""
+      ) as SkyboxAssetWorkflowMode;
+      appendLog(`开始生成场景天空盒：${sceneName}`);
+      appendLog(`场景天空盒使用专用工作流：${sceneName}`);
+      let result: SkyboxGenerationResult;
+      try {
+        result = await generateSkyboxFaces(
+          {
+            ...runtimeSettings,
+            skyboxWorkflowJson: skyboxWorkflow
+          },
+          description
+        );
+      } catch (error) {
+        if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
+        throw new Error(
+          `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
+        );
+      }
+      const primaryPath =
+        result.faces.front ||
+        result.faces.right ||
+        result.faces.back ||
+        result.faces.left ||
+        result.faces.up ||
+        result.faces.down ||
+        "";
+      if (!primaryPath) {
+        throw new Error("天空盒生成完成但未拿到任何可用面");
+      }
+      const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
+      addAsset({
+        type: "skybox",
+        name: sceneName,
+        filePath: primaryPath,
+        skyboxDescription: description,
+        skyboxFaces: result.faces,
+        skyboxUpdateEvents: []
+      });
+      const created =
+        useStoryboardStore
+          .getState()
+          .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "skybox" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName))
+          ?.id ?? findAssetIdByName("skybox", sceneName);
+      appendLog(`场景天空盒生成成功：${sceneName}`);
       return {
-        assetId: existingId,
+        assetId: created,
         previewPaths: [
-          asset?.skyboxFaces?.front,
-          asset?.skyboxFaces?.right,
-          asset?.skyboxFaces?.left,
-          asset?.skyboxFaces?.back
+          result.faces.front,
+          result.faces.right,
+          result.faces.left,
+          result.faces.back
         ].filter((value): value is string => Boolean(value))
       };
+    })();
+
+    if (sceneKey) {
+      skyboxProvisionInFlightRef.current.set(sceneKey, task);
     }
-    const sanitizedScenePrompt = stripCharacterMentions(scenePrompt, characterNames);
-    const description = buildSkyboxDescription(
-      sceneName,
-      sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
-    );
-    const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
-    const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
-      "skybox",
-      runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
-      runtimeSettings.skyboxWorkflowJson?.trim() ?? ""
-    ) as SkyboxAssetWorkflowMode;
-    appendLog(`开始生成场景天空盒：${sceneName}`);
-    appendLog(`场景天空盒使用专用工作流：${sceneName}`);
-    let result: SkyboxGenerationResult;
     try {
-      result = await generateSkyboxFaces(
-        {
-          ...runtimeSettings,
-          skyboxWorkflowJson: skyboxWorkflow
-        },
-        description
-      );
-    } catch (error) {
-      if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
-      throw new Error(
-        `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
-      );
+      return await task;
+    } finally {
+      if (sceneKey && skyboxProvisionInFlightRef.current.get(sceneKey) === task) {
+        skyboxProvisionInFlightRef.current.delete(sceneKey);
+      }
     }
-    const primaryPath =
-      result.faces.front ||
-      result.faces.right ||
-      result.faces.back ||
-      result.faces.left ||
-      result.faces.up ||
-      result.faces.down ||
-      "";
-    if (!primaryPath) {
-      throw new Error("天空盒生成完成但未拿到任何可用面");
-    }
-    const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
-    addAsset({
-      type: "skybox",
-      name: sceneName,
-      filePath: primaryPath,
-      skyboxDescription: description,
-      skyboxFaces: result.faces,
-      skyboxUpdateEvents: []
-    });
-    const created =
-      useStoryboardStore
-        .getState()
-        .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "skybox" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName))
-        ?.id ?? findAssetIdByName("skybox", sceneName);
-    appendLog(`场景天空盒生成成功：${sceneName}`);
-    return {
-      assetId: created,
-      previewPaths: [
-        result.faces.front,
-        result.faces.right,
-        result.faces.left,
-        result.faces.back
-      ].filter((value): value is string => Boolean(value))
-    };
   };
 
   const provisionAssetsForItems = async (
@@ -4244,14 +4356,25 @@ export function ComfyPipelinePanel() {
 
   const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
     if (!autoProvisionAssets || items.length === 0) return;
+    if (phase === "running") {
+      appendLog("自动资产生成跳过：当前已有任务在运行", "error");
+      return;
+    }
     if (!(await ensureComfyReady())) {
       appendLog("自动资产生成跳过：ComfyUI 未连接", "error");
       return;
     }
-    const summary = await provisionAssetsForItems(items, runtimeSettings, { bindShots: true });
-    appendLog(
-      `自动资产生成与镜头绑定完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
-    );
+    setPhase("running");
+    setPipelineState("自动资产生成：预生成角色三视图与场景天空盒");
+    try {
+      const summary = await provisionAssetsForItems(items, runtimeSettings, { bindShots: true });
+      appendLog(
+        `自动资产生成与镜头绑定完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
+      );
+    } finally {
+      setPhase("idle");
+      setPipelineState("空闲");
+    }
   };
 
   const onPreGenerateProvisionAssets = async (
