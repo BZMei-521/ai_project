@@ -74,7 +74,9 @@
         "5",
         0
       ],
-      "azimuth_degrees": "{{AZIMUTH_DEGREES}}"
+      "azimuth_degrees": [
+        "{{AZIMUTH_DEGREES}}"
+      ]
     },
     "class_type": "DiffusersMVSampler"
   },
