@@ -80,8 +80,8 @@
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 1,
-      "embeds_scaling": "K+V"
+      "end_at": 0.72,
+      "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
   },
@@ -110,8 +110,8 @@
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 1,
-      "embeds_scaling": "K+V"
+      "end_at": 0.58,
+      "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
   },
@@ -140,8 +140,8 @@
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 1,
-      "embeds_scaling": "K+V"
+      "end_at": 0.72,
+      "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
   },
