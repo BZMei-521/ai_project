@@ -2011,61 +2011,61 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Scene-first baseline with controlled dual-character injection.
-        char1Primary: 0.38,
-        char1Secondary: 0.04,
-        char2Primary: 0.34,
-        denoise: 0.42,
-        steps: 30,
-        cfg: 6
+        // Mature baseline: scene-first, then lock both characters with primary views.
+        char1Primary: 0.56,
+        char1Secondary: 0.02,
+        char2Primary: 0.5,
+        denoise: 0.5,
+        steps: 32,
+        cfg: 6.2
       };
     }
     return {
-      char1Primary: 0.32,
-      char1Secondary: 0.03,
-      char2Primary: 0.28,
-      denoise: 0.38,
+      char1Primary: 0.46,
+      char1Secondary: 0.02,
+      char2Primary: 0.42,
+      denoise: 0.46,
       steps: 28,
-      cfg: 5.8
+      cfg: 6
     };
   }
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.42,
-        char1Secondary: 0.06,
+        char1Primary: 0.6,
+        char1Secondary: 0.04,
         char2Primary: 0,
-        denoise: 0.42,
-        steps: 30,
-        cfg: 6
+        denoise: 0.52,
+        steps: 32,
+        cfg: 6.2
       };
     }
     return {
-      char1Primary: 0.34,
-      char1Secondary: 0.04,
+      char1Primary: 0.48,
+      char1Secondary: 0.02,
       char2Primary: 0,
-      denoise: 0.38,
+      denoise: 0.46,
       steps: 28,
-      cfg: 5.8
+      cfg: 6
     };
   }
   if (hasSecondCharacter) {
     return {
-      char1Primary: 0.5,
-      char1Secondary: 0.08,
-      char2Primary: 0.46,
-      denoise: 0.5,
-      steps: 30,
-      cfg: 6.2
+      char1Primary: 0.62,
+      char1Secondary: 0.04,
+      char2Primary: 0.58,
+      denoise: 0.56,
+      steps: 32,
+      cfg: 6.3
     };
   }
   return {
-    char1Primary: 0.52,
-    char1Secondary: 0.1,
+    char1Primary: 0.66,
+    char1Secondary: 0.06,
     char2Primary: 0,
-    denoise: 0.5,
-    steps: 30,
-    cfg: 6.2
+    denoise: 0.56,
+    steps: 32,
+    cfg: 6.3
   };
 }
 
@@ -2171,6 +2171,23 @@ function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需位于中前景且清晰可辨识，建议各自占画面高度至少约 25%，不允许只出现剪影、极远小人、严重裁切或被场景主体完全遮挡。`;
 }
 
+function shouldUseSecondaryCharacterView(shot: Shot): boolean {
+  const corpus = [shot.title ?? "", shot.storyPrompt ?? "", shot.videoPrompt ?? "", shot.notes ?? "", ...(shot.tags ?? [])]
+    .join(" ")
+    .toLowerCase();
+  return containsAnyKeyword(corpus, [
+    "特写",
+    "近景",
+    "中近景",
+    "半身",
+    "侧身",
+    "回头",
+    "profile",
+    "close-up",
+    "medium close"
+  ]);
+}
+
 function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
   if (assets.length <= 1) return assets;
   const corpus = [shot.title ?? "", shot.storyPrompt ?? "", shot.videoPrompt ?? "", shot.notes ?? "", ...(shot.tags ?? [])]
@@ -2182,7 +2199,12 @@ function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
     "二人",
     "对峙",
     "对打",
+    "打斗",
     "交手",
+    "冲拳",
+    "直拳",
+    "闪避",
+    "反击",
     "互相",
     "face off",
     "duel",
@@ -2199,11 +2221,9 @@ function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
     "近景",
     "中近景",
     "反应",
-    "侧身",
-    "出拳",
-    "闪避",
-    "低扫",
-    "回头",
+    "半身",
+    "面部",
+    "胸像",
     "close-up",
     "medium close",
     "reaction"
@@ -3219,17 +3239,18 @@ function inferPromptTokens(
   const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
   const hasCharacters = characterAssets.length > 0;
   const hasSecondCharacter = Boolean(charSlots[1]);
+  const useSecondaryCharacterView = shouldUseSecondaryCharacterView(shot) && !hasSecondCharacter;
   const normalizedChar1PrimaryPath = char1PrimaryPath.trim();
   const normalizedChar1SecondaryPath = char1SecondaryPath.trim();
   const normalizedChar2PrimaryPath = char2PrimaryPath.trim();
-  const minChar1PrimaryWeight = hasCharacters ? (hasSecondCharacter ? 0.32 : 0.36) : 0;
-  const minChar1SecondaryWeight = hasSecondCharacter ? 0 : hasCharacters ? 0.04 : 0;
-  const minChar2PrimaryWeight = hasSecondCharacter ? 0.3 : 0;
+  const minChar1PrimaryWeight = hasCharacters ? (hasSecondCharacter ? 0.5 : 0.56) : 0;
+  const minChar1SecondaryWeight = useSecondaryCharacterView ? 0.04 : 0;
+  const minChar2PrimaryWeight = hasSecondCharacter ? 0.46 : 0;
   const effectiveChar1PrimaryWeight = normalizedChar1PrimaryPath
     ? Math.max(storyboardWeights.char1Primary, minChar1PrimaryWeight)
     : 0;
   const effectiveChar1SecondaryWeight =
-    normalizedChar1SecondaryPath && normalizedChar1SecondaryPath !== normalizedChar1PrimaryPath
+    normalizedChar1SecondaryPath && normalizedChar1SecondaryPath !== normalizedChar1PrimaryPath && useSecondaryCharacterView
       ? Math.max(storyboardWeights.char1Secondary, minChar1SecondaryWeight)
       : 0;
   const effectiveChar2PrimaryWeight =
