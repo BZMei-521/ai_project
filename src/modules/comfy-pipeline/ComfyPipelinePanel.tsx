@@ -3332,6 +3332,8 @@ export function ComfyPipelinePanel() {
       "完整穿衣",
       "完整服装设计",
       "上衣、下装或长袍、鞋子都要清楚可见",
+      "同一角色三视图必须保持同一张脸、同一发型、同一体型比例、同一服装款式与配色",
+      "不允许在 front/side/back 之间换装、换脸、换发型、换年龄、换体型",
       "禁止裸露、内衣态、泳装态、赤膊",
       "服装统一且前后侧一致",
       "面部与体型一致",
@@ -3348,7 +3350,9 @@ export function ComfyPipelinePanel() {
         : view === "side"
           ? "front view, facing camera, back view, rear view"
           : "front view, facing camera, side profile, looking at camera, face visible";
-    return `${baseNegativePrompt}, ${viewConstraint}`;
+    const identityDriftConstraint =
+      "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
+    return `${baseNegativePrompt}, ${viewConstraint}, ${identityDriftConstraint}`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -3583,7 +3587,7 @@ export function ComfyPipelinePanel() {
       );
       const side = await generateShotAsset(
         runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed + 1),
+        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed),
         0,
         "image",
         [],
@@ -3599,7 +3603,7 @@ export function ComfyPipelinePanel() {
       );
       const back = await generateShotAsset(
         runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", mvSeed + 2),
+        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", mvSeed),
         0,
         "image",
         [],
