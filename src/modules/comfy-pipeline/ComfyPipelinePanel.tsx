@@ -5145,7 +5145,19 @@ export function ComfyPipelinePanel() {
       );
       return true;
     } catch (error) {
+      const currentStoryboardMode =
+        runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
       if (kind === "image" && shouldRetryEmergencyImageWorkflow(error)) {
+        if (currentStoryboardMode === "mature_asset_guided") {
+          const strictErrorMessage =
+            `成熟资产约束模式已禁止自动降级到应急纯文生图模板，否则会丢失角色三视图/天空盒参考并产出随机图。` +
+            `请先修复分镜工作流节点与模型依赖后重试。原始错误：${String(error)}`;
+          setAssetStatus(kind, shotId, "failed");
+          setLastErrorByShot((previous) => ({ ...previous, [shotId]: strictErrorMessage }));
+          pushToast(`分镜图生成失败：${shot.title}`, "error");
+          appendLog(`生成失败：${shot.title}，${strictErrorMessage}`, "error");
+          return false;
+        }
         appendLog(`分镜图工作流不可用，尝试使用应急基础模板重试：${shot.title}，${String(error)}`, "error");
         try {
           const fallbackCheckpoint =
