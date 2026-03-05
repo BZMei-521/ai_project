@@ -694,6 +694,7 @@ function coerceWorkflowLiteralValues(value: unknown): unknown {
     ) {
       const slot = coerceWorkflowLiteralValues(value[1]);
       return [value[0], slot];
+    }
     if (isComfyNodeReferenceTuple(value)) {
       return [value[0], coerceWorkflowLiteralValues(value[1])];
     }
@@ -1905,31 +1906,31 @@ function inferStoryboardReferenceWeights(
   const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
   if (sceneLed && hasSecondCharacter) {
     return {
-      char1Primary: 0.4,
-      char1Secondary: 0.16,
-      char2Primary: 0.32,
-      denoise: 0.46,
-      steps: 28,
+      char1Primary: 0.46,
+      char1Secondary: 0.2,
+      char2Primary: 0.36,
+      denoise: 0.34,
+      steps: 30,
       cfg: 6
     };
   }
   if (sceneLed) {
     return {
-      char1Primary: 0.48,
-      char1Secondary: 0.2,
-      char2Primary: 0.18,
-      denoise: 0.52,
-      steps: 28,
-      cfg: 6.5
+      char1Primary: 0.54,
+      char1Secondary: 0.24,
+      char2Primary: 0.2,
+      denoise: 0.38,
+      steps: 30,
+      cfg: 6.2
     };
   }
   return {
-    char1Primary: 0.62,
-    char1Secondary: 0.26,
-    char2Primary: hasSecondCharacter ? 0.3 : 0.12,
-    denoise: 0.62,
-    steps: 30,
-    cfg: 7
+    char1Primary: 0.66,
+    char1Secondary: 0.3,
+    char2Primary: hasSecondCharacter ? 0.34 : 0.14,
+    denoise: 0.42,
+    steps: 32,
+    cfg: 6.8
   };
 }
 
@@ -2986,26 +2987,24 @@ function inferPromptTokens(
   const characterAllViewPaths = [...characterFrontPaths, ...characterSidePaths, ...characterBackPaths].filter(Boolean);
   const charSlots = [0, 1, 2, 3].map((slotIndex) => characterAssets[slotIndex]);
   const characterPlan = inferCharacterReferencePlan(shot);
+  const continuityCharacterRefPath = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
   const char1PrimaryPath =
-    assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || sceneRefPath || characterFrontPaths[0] || "";
+    assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || characterFrontPaths[0] || continuityCharacterRefPath || "";
   const char1SecondaryPath =
     assetPathForCharacterView(charSlots[0], characterPlan.secondaryViews[0] ?? "front") ||
     char1PrimaryPath ||
-    sceneRefPath ||
     "";
   const char2PrimaryPath =
     assetPathForCharacterView(charSlots[1], characterPlan.primaryView) ||
     assetPathForCharacterView(charSlots[1], "front") ||
     char1SecondaryPath ||
     char1PrimaryPath ||
-    sceneRefPath ||
     "";
   const char2SecondaryPath =
     assetPathForCharacterView(charSlots[1], characterPlan.secondaryViews[0] ?? "front") ||
     char2PrimaryPath ||
     char1SecondaryPath ||
     char1PrimaryPath ||
-    sceneRefPath ||
     "";
   const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";

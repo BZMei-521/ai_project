@@ -510,6 +510,8 @@ function buildEmergencyStoryboardImageWorkflowTemplateJson(checkpointName: strin
     }
   };
   return JSON.stringify(template, null, 2);
+}
+
 function mergePromptFragments(parts: Array<string | null | undefined>): string {
   return parts
     .map((item) => item?.trim() ?? "")
@@ -3210,13 +3212,13 @@ export function ComfyPipelinePanel() {
   });
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
-    const viewLabel = view === "front" ? "正视图" : view === "side" ? "左侧正交侧视图" : "正后方背视图";
+    const viewLabel = view === "front" ? "正视图" : view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const angleInstruction =
       view === "front"
         ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。"
         : view === "side"
-          ? "左侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面左侧，只允许左侧单角度。"
+          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度。"
           : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。";
     const core = mergePromptFragments([
       "single character",
@@ -3290,9 +3292,9 @@ export function ComfyPipelinePanel() {
     NEGATIVE_PROMPT: negativePrompt,
     CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
     CHARACTER_FRONT_RIGHT_VIEW: "false",
-    CHARACTER_RIGHT_VIEW: "false",
+    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
     CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
-    CHARACTER_LEFT_VIEW: view === "side" ? "true" : "false",
+    CHARACTER_LEFT_VIEW: "false",
     CHARACTER_FRONT_LEFT_VIEW: "false"
   });
 
@@ -3482,13 +3484,12 @@ export function ComfyPipelinePanel() {
       }
     );
     const referencePath = referenceFront.localPath || referenceFront.previewUrl;
-    const multiviewPrompt = buildCharacterMultiviewPrompt(name, context);
     try {
+      const mvSeed = baseSeed + 11;
       const [front, side, back] = await Promise.all([
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, multiviewPrompt, "", baseSeed + 11),
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed + 11),
+          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", mvSeed),
           0,
           "image",
           [],
@@ -3500,8 +3501,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, multiviewPrompt, "", baseSeed + 12),
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 12),
+          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed),
           0,
           "image",
           [],
@@ -3513,8 +3513,7 @@ export function ComfyPipelinePanel() {
         ),
         generateShotAsset(
           runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, multiviewPrompt, "", baseSeed + 13),
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 13),
+          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", mvSeed),
           0,
           "image",
           [],
@@ -3528,54 +3527,9 @@ export function ComfyPipelinePanel() {
       return { front, side, back };
     } catch (error) {
       if (!shouldFallbackAssetWorkflow(error)) throw error;
-      appendLog(`角色高级多视角工作流不可用，已自动降级为基础三视图模板：${String(error)}`, "error");
-      const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
-        runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-        runtimeSettings.characterTemplatePreset ?? "portrait",
-        runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+      throw new Error(
+        `角色高级多视角工作流不可用，已停止自动降级基础三视图模板：${String(error)}。当前基础三视图模板是三次独立文生图，无法稳定保证同一人物的视角与服装面容一致。请先修复 ComfyUI-MVAdapter / ViewSelector 节点加载。`
       );
-      const [front, side, back] = await Promise.all([
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: fallbackWorkflow,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
-            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", baseSeed + 1),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: fallbackWorkflow,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("side", negativePrompt) }
-            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", baseSeed + 2),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: fallbackWorkflow,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("back", negativePrompt) }
-            tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
-          }
-        )
-      ]);
-      return { front, side, back };
     }
   };
 
@@ -3985,18 +3939,6 @@ export function ComfyPipelinePanel() {
       );
     } catch (error) {
       if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
-      appendLog(`天空盒高级全景工作流不可用，已自动降级为基础六面模板：${String(error)}`, "error");
-      const fallbackWorkflow = buildSkyboxWorkflowTemplateJson(
-        runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
-        runtimeSettings.skyboxTemplatePreset ?? "wide"
-      );
-      result = await generateSkyboxFaces(
-        {
-          ...runtimeSettings,
-          skyboxWorkflowJson: fallbackWorkflow,
-          skyboxAssetWorkflowMode: "basic_builtin"
-        },
-        description
       throw new Error(
         `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
       );
