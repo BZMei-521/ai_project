@@ -1906,31 +1906,32 @@ function inferStoryboardReferenceWeights(
   const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
   if (sceneLed && hasSecondCharacter) {
     return {
-      char1Primary: 0.46,
-      char1Secondary: 0.2,
-      char2Primary: 0.36,
-      denoise: 0.34,
-      steps: 30,
-      cfg: 6
+      // Scene-first still needs visible characters; keep character anchors high enough.
+      char1Primary: 0.78,
+      char1Secondary: 0.42,
+      char2Primary: 0.68,
+      denoise: 0.44,
+      steps: 34,
+      cfg: 6.8
     };
   }
   if (sceneLed) {
     return {
-      char1Primary: 0.54,
-      char1Secondary: 0.24,
-      char2Primary: 0.2,
-      denoise: 0.38,
-      steps: 30,
-      cfg: 6.2
+      char1Primary: 0.86,
+      char1Secondary: 0.46,
+      char2Primary: 0.3,
+      denoise: 0.46,
+      steps: 34,
+      cfg: 6.9
     };
   }
   return {
-    char1Primary: 0.66,
-    char1Secondary: 0.3,
-    char2Primary: hasSecondCharacter ? 0.34 : 0.14,
-    denoise: 0.42,
-    steps: 32,
-    cfg: 6.8
+    char1Primary: 0.9,
+    char1Secondary: 0.5,
+    char2Primary: hasSecondCharacter ? 0.72 : 0.24,
+    denoise: 0.48,
+    steps: 36,
+    cfg: 7
   };
 }
 
@@ -2022,6 +2023,15 @@ function buildShotReferenceDirective(
   return lines.join("\n");
 }
 
+function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
+  if (characterAssets.length === 0) return "";
+  if (characterAssets.length === 1) {
+    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜。`;
+  }
+  const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
+  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜。`;
+}
+
 function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   const sceneName = tokens.SCENE_REF_NAME?.trim() ?? "";
   const characterNames = splitCsv(tokens.CHARACTER_REF_NAMES);
@@ -2052,6 +2062,7 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     pieces.push(
       `Lock character identity for ${characterNames.join(", ")}; keep face, hair, costume, silhouette, proportions, and colors consistent, and choose ${preferredCharacterView || "front/side/back"} appearance according to the shot angle.`
     );
+    pieces.push("Never output an empty environment plate when character references are provided.");
   }
   pieces.push(
     "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
@@ -3010,8 +3021,9 @@ function inferPromptTokens(
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
+  const characterPresenceDirective = buildCharacterPresenceDirective(characterAssets);
   const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
-  const promptBase = [referenceDirective, sceneContext, characterContext, promptBaseRaw]
+  const promptBase = [referenceDirective, characterPresenceDirective, sceneContext, characterContext, promptBaseRaw]
     .filter((item) => item.length > 0)
     .join("\n");
   const nextScenePrompt = toNextScenePrompt(promptBase);
@@ -3023,6 +3035,13 @@ function inferPromptTokens(
   const lastFramePath = parseComfyViewPath(
     shot.videoEndFramePath?.trim() || parseComfyViewPath(nextShot?.generatedImagePath ?? firstFramePath)
   );
+  const characterAbsenceNegativePrompt =
+    characterAssets.length > 0
+      ? "empty scene, no people, no person, no human, scenery only, landscape only, character missing, no protagonist"
+      : "";
+  const effectiveNegativePrompt = [shot.negativePrompt?.trim() || "", characterAbsenceNegativePrompt]
+    .filter((item) => item.length > 0)
+    .join(", ");
   const baseTokens: Record<string, string> = {
     SHOT_ID: shot.id,
     SHOT_TITLE: shot.title,
@@ -3031,7 +3050,7 @@ function inferPromptTokens(
     NEXT_SCENE_PROMPT: nextScenePrompt,
     VIDEO_PROMPT: videoPrompt,
     VIDEO_MODE: mode === "first_last_frame" ? "FIRST_LAST_FRAME" : "SINGLE_FRAME",
-    NEGATIVE_PROMPT: shot.negativePrompt?.trim() || "",
+    NEGATIVE_PROMPT: effectiveNegativePrompt,
     DIALOGUE: shot.dialogue?.trim() || "",
     SPEAKER_NAME: "",
     EMOTION: "",
