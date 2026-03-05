@@ -764,6 +764,11 @@ function sanitizeStoryboardNegativePrompt(base: string, hasCharacters: boolean):
   return filtered.join(", ");
 }
 
+function sanitizeCharacterDrivenNegativePrompt(base: string, hasCharacters: boolean): string {
+  if (!hasCharacters) return normalizePromptBody(base);
+  return sanitizeStoryboardNegativePrompt(base, true);
+}
+
 function toNextScenePrompt(value: string): string {
   const compact = normalizePromptBody(value);
   if (!compact) return "Next Scene: empty shot";
@@ -1010,6 +1015,10 @@ function applyGlobalStyleToTokens(
   if (styleNegative && kind !== "audio") {
     next.NEGATIVE_PROMPT = appendNegativePrompt(next.NEGATIVE_PROMPT ?? "", styleNegative);
     next.GLOBAL_STYLE_NEGATIVE = styleNegative;
+  }
+  if (kind !== "audio") {
+    const hasCharacterRefs = splitCsv(next.CHARACTER_REF_NAMES ?? "").length > 0;
+    next.NEGATIVE_PROMPT = sanitizeCharacterDrivenNegativePrompt(next.NEGATIVE_PROMPT ?? "", hasCharacterRefs);
   }
   return next;
 }
@@ -2003,41 +2012,41 @@ function inferStoryboardReferenceWeights(
     if (characterDriven) {
       return {
         // Keep scene structure stable first, but strongly enforce both characters.
-        char1Primary: 0.62,
-        char1Secondary: 0.22,
-        char2Primary: 0.58,
-        denoise: 0.56,
-        steps: 32,
-        cfg: 6.3
+        char1Primary: 0.72,
+        char1Secondary: 0.28,
+        char2Primary: 0.68,
+        denoise: 0.64,
+        steps: 34,
+        cfg: 6.8
       };
     }
     return {
-      char1Primary: 0.44,
-      char1Secondary: 0.14,
-      char2Primary: 0.4,
-      denoise: 0.5,
+      char1Primary: 0.56,
+      char1Secondary: 0.2,
+      char2Primary: 0.52,
+      denoise: 0.56,
       steps: 30,
-      cfg: 6.1
+      cfg: 6.3
     };
   }
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.66,
-        char1Secondary: 0.24,
+        char1Primary: 0.76,
+        char1Secondary: 0.3,
         char2Primary: 0,
-        denoise: 0.56,
-        steps: 32,
-        cfg: 6.3
+        denoise: 0.64,
+        steps: 34,
+        cfg: 6.8
       };
     }
     return {
-      char1Primary: 0.46,
-      char1Secondary: 0.16,
+      char1Primary: 0.58,
+      char1Secondary: 0.22,
       char2Primary: 0,
-      denoise: 0.5,
+      denoise: 0.56,
       steps: 30,
-      cfg: 6.1
+      cfg: 6.3
     };
   }
   if (hasSecondCharacter) {
@@ -2142,6 +2151,7 @@ function buildShotReferenceDirective(
         `人物硬参考：角色“${asset.name}”必须严格匹配三视图，保持脸型、发型、服装、配色、体型和道具一致；当前镜头优先匹配${preferredView}参考，可用视图为 ${viewText}，不得换脸、换装、换配色或混入其他角色特征。`
       );
     }
+    lines.push("人物构图硬约束：人物必须在中前景清晰可见，优先完整半身或全身，不得退化成远景小人影、剪影或被场景主体遮挡。");
   }
   if (continuityDirective && !sceneAsset && characterAssets.length === 0) {
     lines.push(continuityDirective);
@@ -2155,10 +2165,10 @@ function buildShotReferenceDirective(
 function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；角色主体需清晰可辨识，建议占画面高度至少约 25%，并保证头部与躯干完整，不得只剩远处小人影。`;
+    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证头部到躯干完整，不得只剩远处小人影或被树木建筑完全遮挡。`;
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
-  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需清晰可辨识，建议各自占画面高度至少约 18%，不允许只出现剪影、极远小人或严重裁切。`;
+  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需位于中前景且清晰可辨识，建议各自占画面高度至少约 25%，不允许只出现剪影、极远小人、严重裁切或被场景主体完全遮挡。`;
 }
 
 function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
@@ -3127,9 +3137,16 @@ function inferPromptTokens(
     sceneAsset?.type === "skybox"
       ? skyboxFacePaths[0] || sceneAsset.skyboxFaces?.front || sceneAsset.filePath
       : sceneAsset?.filePath ?? "";
-  const characterAssets = (shot.characterRefs ?? [])
-    .map((id) => assets.find((item) => item.id === id && item.type === "character"))
-    .filter((item): item is Asset => Boolean(item));
+  const characterAssets: Asset[] = [];
+  const seenCharacterIds = new Set<string>();
+  for (const refId of shot.characterRefs ?? []) {
+    const trimmedId = refId.trim();
+    if (!trimmedId || seenCharacterIds.has(trimmedId)) continue;
+    const matched = assets.find((item) => item.id === trimmedId && item.type === "character");
+    if (!matched) continue;
+    seenCharacterIds.add(trimmedId);
+    characterAssets.push(matched);
+  }
   const continuityPlan = inferShotContinuityPlan(shot, index, allShots);
   const characterFrontPaths = characterAssets.map((item) => item.characterFrontPath || item.filePath).filter(Boolean);
   const characterSidePaths = characterAssets.map((item) => item.characterSidePath || "").filter(Boolean);
@@ -3158,16 +3175,25 @@ function inferPromptTokens(
     char1PrimaryPath ||
     "";
   const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
+  const hasCharacters = characterAssets.length > 0;
   const hasSecondCharacter = Boolean(charSlots[1]);
   const normalizedChar1PrimaryPath = char1PrimaryPath.trim();
   const normalizedChar1SecondaryPath = char1SecondaryPath.trim();
   const normalizedChar2PrimaryPath = char2PrimaryPath.trim();
-  const effectiveChar1PrimaryWeight = normalizedChar1PrimaryPath ? storyboardWeights.char1Primary : 0;
+  const minChar1PrimaryWeight = hasCharacters ? (hasSecondCharacter ? 0.62 : 0.68) : 0;
+  const minChar1SecondaryWeight = hasCharacters ? 0.2 : 0;
+  const minChar2PrimaryWeight = hasSecondCharacter ? 0.58 : 0;
+  const effectiveChar1PrimaryWeight = normalizedChar1PrimaryPath
+    ? Math.max(storyboardWeights.char1Primary, minChar1PrimaryWeight)
+    : 0;
   const effectiveChar1SecondaryWeight =
     normalizedChar1SecondaryPath && normalizedChar1SecondaryPath !== normalizedChar1PrimaryPath
-      ? storyboardWeights.char1Secondary
+      ? Math.max(storyboardWeights.char1Secondary, minChar1SecondaryWeight)
       : 0;
-  const effectiveChar2PrimaryWeight = hasSecondCharacter && normalizedChar2PrimaryPath ? storyboardWeights.char2Primary : 0;
+  const effectiveChar2PrimaryWeight =
+    hasSecondCharacter && normalizedChar2PrimaryPath
+      ? Math.max(storyboardWeights.char2Primary, minChar2PrimaryWeight)
+      : 0;
   const targetRenderWidth =
     typeof settings.renderWidth === "number" && Number.isFinite(settings.renderWidth) ? Math.max(64, Math.round(settings.renderWidth)) : 1920;
   const targetRenderHeight =

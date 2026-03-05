@@ -81,7 +81,7 @@
       "combine_embeds": "concat",
       "start_at": 0,
       "end_at": 1,
-      "embeds_scaling": "V only"
+      "embeds_scaling": "K+V"
     },
     "class_type": "IPAdapterAdvanced"
   },
@@ -111,7 +111,7 @@
       "combine_embeds": "concat",
       "start_at": 0,
       "end_at": 1,
-      "embeds_scaling": "V only"
+      "embeds_scaling": "K+V"
     },
     "class_type": "IPAdapterAdvanced"
   },
@@ -141,7 +141,7 @@
       "combine_embeds": "concat",
       "start_at": 0,
       "end_at": 1,
-      "embeds_scaling": "V only"
+      "embeds_scaling": "K+V"
     },
     "class_type": "IPAdapterAdvanced"
   },
