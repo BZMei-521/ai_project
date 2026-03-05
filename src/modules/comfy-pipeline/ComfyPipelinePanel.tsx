@@ -1544,6 +1544,8 @@ function loadSettings(): ComfySettings {
       parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
         ? parsed.storyboardImageWorkflowMode
         : DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+    const forceAdvancedCharacterMode = resolvedStoryboardMode === "mature_asset_guided";
+    const effectiveCharacterMode = forceAdvancedCharacterMode ? "advanced_multiview" : resolvedCharacterMode;
     const parsedImageWorkflowJson = typeof parsed.imageWorkflowJson === "string" ? parsed.imageWorkflowJson : "";
     const shouldUpgradeStoryboardWorkflow =
       resolvedStoryboardMode === "mature_asset_guided" &&
@@ -1562,6 +1564,8 @@ function loadSettings(): ComfySettings {
       typeof parsed.videoWorkflowJson === "string" && parsed.videoWorkflowJson.trim().length > 0
         ? parsed.videoWorkflowJson
         : FISHER_WORKFLOW_JSON;
+    const shouldResetCharacterWorkflowJson =
+      shouldUpgradeCharacterMode || (forceAdvancedCharacterMode && parsed.characterAssetWorkflowMode !== "advanced_multiview");
     return {
       baseUrl: parsed.baseUrl ?? "http://127.0.0.1:8188",
       outputDir: parsed.outputDir ?? "",
@@ -1574,9 +1578,9 @@ function loadSettings(): ComfySettings {
           ? parsed.storyboardImageModelName.trim()
           : DEFAULT_STORYBOARD_IMAGE_MODEL,
       videoWorkflowJson: resolvedVideoWorkflowJson,
-      characterWorkflowJson: shouldUpgradeCharacterMode ? "" : parsedCharacterWorkflowJson,
+      characterWorkflowJson: shouldResetCharacterWorkflowJson ? "" : parsedCharacterWorkflowJson,
       skyboxWorkflowJson: shouldUpgradeSkyboxMode ? "" : parsedSkyboxWorkflowJson,
-      characterAssetWorkflowMode: resolvedCharacterMode,
+      characterAssetWorkflowMode: effectiveCharacterMode,
       skyboxAssetWorkflowMode: resolvedSkyboxMode,
       requireDedicatedCharacterWorkflow:
         typeof parsed.requireDedicatedCharacterWorkflow === "boolean" ? parsed.requireDedicatedCharacterWorkflow : true,
@@ -3409,11 +3413,15 @@ export function ComfyPipelinePanel() {
 
   const resolveCharacterWorkflowJson = (runtimeSettings: ComfySettings): string => {
     const existing = runtimeSettings.characterWorkflowJson?.trim();
-    const mode = resolveEffectiveAssetWorkflowMode(
+    const requestedMode = resolveEffectiveAssetWorkflowMode(
       "character",
       runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
       existing ?? ""
     ) as CharacterAssetWorkflowMode;
+    const mode =
+      (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"
+        ? "advanced_multiview"
+        : requestedMode;
     const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "character")) return existing;
     const builtIn =
@@ -3476,11 +3484,15 @@ export function ComfyPipelinePanel() {
     context: string,
     baseSeed: number
   ) => {
-    const mode = resolveEffectiveAssetWorkflowMode(
+    const requestedMode = resolveEffectiveAssetWorkflowMode(
       "character",
       runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
+    const mode =
+      (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"
+        ? "advanced_multiview"
+        : requestedMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
@@ -3957,12 +3969,29 @@ export function ComfyPipelinePanel() {
       const existingId = findAssetIdByName("character", name);
       if (existingId) {
         const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
-        return {
-          assetId: existingId,
-          previewPaths: [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath].filter(
-            (value): value is string => Boolean(value)
-          )
-        };
+        const front = asset?.characterFrontPath?.trim() || "";
+        const side = asset?.characterSidePath?.trim() || "";
+        const back = asset?.characterBackPath?.trim() || "";
+        const threeViewPaths = [front, side, back].filter((value) => value.length > 0);
+        const mode = resolveEffectiveAssetWorkflowMode(
+          "character",
+          runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+          runtimeSettings.characterWorkflowJson?.trim() ?? ""
+        ) as CharacterAssetWorkflowMode;
+        const strictAdvancedMode =
+          mode === "advanced_multiview" ||
+          (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided";
+        const hasDistinctThreeViews = new Set(threeViewPaths).size >= 3;
+        const hasLegacyBasicPrefix = threeViewPaths.some((value) => /character_threeview/i.test(value));
+        const shouldForceRegenerate =
+          strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix);
+        if (!shouldForceRegenerate) {
+          return {
+            assetId: existingId,
+            previewPaths: threeViewPaths
+          };
+        }
+        appendLog(`检测到旧版或异常角色三视图资产，已自动重建：${name}`, "info");
       }
       const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
       const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
@@ -6385,15 +6414,31 @@ export function ComfyPipelinePanel() {
         <label>
           角色三视图工作流模式
           <select
-            onChange={(event) =>
-              persistSettings((previous) => ({
-                ...previous,
-                characterAssetWorkflowMode: event.target.value as CharacterAssetWorkflowMode
-              }))
-            }
+            onChange={(event) => {
+              const requested = event.target.value as CharacterAssetWorkflowMode;
+              persistSettings((previous) => {
+                const storyboardMode = previous.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+                if (storyboardMode === "mature_asset_guided" && requested !== "advanced_multiview") {
+                  appendLog("成熟分镜模式已强制角色三视图为高级多视角工作流", "info");
+                  return {
+                    ...previous,
+                    characterAssetWorkflowMode: "advanced_multiview"
+                  };
+                }
+                return {
+                  ...previous,
+                  characterAssetWorkflowMode: requested
+                };
+              });
+            }}
             value={characterAssetWorkflowMode}
           >
-            <option value="basic_builtin">基础正交三视图模板</option>
+            <option
+              disabled={(settings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"}
+              value="basic_builtin"
+            >
+              基础正交三视图模板
+            </option>
             <option value="advanced_multiview">高级多视角角色工作流</option>
           </select>
         </label>
