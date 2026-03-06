@@ -3727,6 +3727,19 @@ export function ComfyPipelinePanel() {
     );
   };
 
+  const isHuggingFaceFetchError = (error: unknown): boolean => {
+    const text = String(error ?? "").toLowerCase();
+    if (!text) return false;
+    if (!text.includes("huggingface.co")) return false;
+    return (
+      text.includes("maxretryerror") ||
+      text.includes("httpsconnectionpool") ||
+      text.includes("ssl") ||
+      text.includes("ssleoferror") ||
+      text.includes("revision/main")
+    );
+  };
+
   const resolveCharacterWorkflowJson = (runtimeSettings: ComfySettings): string => {
     const existing = runtimeSettings.characterWorkflowJson?.trim();
     const mode = resolveEffectiveAssetWorkflowMode(
@@ -4039,6 +4052,29 @@ export function ComfyPipelinePanel() {
     try {
       return await runAdvancedThreeViewsWithAutoRetry(baseSeed);
     } catch (error) {
+      if (isHuggingFaceFetchError(error)) {
+        const fallbackModel =
+          requestedCharacterModel ||
+          runtimeSettings.characterAssetModelName?.trim() ||
+          DEFAULT_CHARACTER_ASSET_MODEL;
+        const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
+          fallbackModel,
+          runtimeSettings.characterTemplatePreset ?? "portrait",
+          runtimeSettings.characterRenderPreset ?? "clean_reference"
+        );
+        persistSettings((previous) => ({
+          ...previous,
+          characterAssetWorkflowMode: "basic_builtin",
+          characterAssetModelName: fallbackModel,
+          characterWorkflowJson: fallbackWorkflow
+        }));
+        appendLog(
+          `检测到 MVAdapter 依赖 HuggingFace 远程拉取失败（网络/SSL），已自动切换到本地基础三视图工作流：${name}`,
+          "info"
+        );
+        pushToast("MVAdapter 远程依赖不可用，已自动切换基础三视图模式", "warning");
+        return runBasicThreeViewsWithAutoRetry(fallbackWorkflow, baseSeed + 9157);
+      }
       if (!shouldFallbackAssetWorkflow(error)) throw error;
       throw new Error(
         `角色高级多视角工作流不可用，已禁止自动降级基础三视图模板：${String(error)}。` +
@@ -4702,6 +4738,8 @@ export function ComfyPipelinePanel() {
     let createdCharacters = 0;
     let reusedSkyboxes = 0;
     let createdSkyboxes = 0;
+    const failedCharacterKeys = new Set<string>();
+    const failedSkyboxKeys = new Set<string>();
     const tasks: Array<{ kind: "character" | "skybox"; name: string }> = [];
     for (const item of items) {
       for (const name of item.characterNames) {
@@ -4731,6 +4769,7 @@ export function ComfyPipelinePanel() {
       for (const name of item.characterNames) {
         const key = normalizeEntityKey(name);
         if (!key || characterIdMap.has(key)) continue;
+        if (failedCharacterKeys.has(key)) continue;
         if (isSuspiciousCharacterCandidate(name)) {
           appendLog(`角色三视图跳过：${name}（名称可疑，已拦截）`, "error");
           upsertProvisionPreview({
@@ -4788,6 +4827,7 @@ export function ComfyPipelinePanel() {
           }
         } catch (error) {
           appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
+          failedCharacterKeys.add(key);
           upsertProvisionPreview({
             key: `character:${key}`,
             kind: "character",
@@ -4801,6 +4841,7 @@ export function ComfyPipelinePanel() {
       if (item.sceneName) {
         const key = normalizeEntityKey(item.sceneName);
         if (!sceneIdMap.has(key)) {
+          if (failedSkyboxKeys.has(key)) continue;
           if (isSuspiciousSceneCandidate(item.sceneName)) {
             appendLog(`场景天空盒跳过：${item.sceneName}（名称可疑，已拦截）`, "error");
             upsertProvisionPreview({
@@ -4865,6 +4906,7 @@ export function ComfyPipelinePanel() {
             }
           } catch (error) {
             appendLog(`场景天空盒生成失败：${item.sceneName}，${String(error)}`, "error");
+            failedSkyboxKeys.add(key);
             upsertProvisionPreview({
               key: `skybox:${key}`,
               kind: "skybox",
