@@ -3649,11 +3649,16 @@ export function ComfyPipelinePanel() {
         layoutAlerts.push(`${label}_subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     });
-    const lowOrientation = orientationAlerts.length > 0 || layoutAlerts.length > 0;
+    const blockingLayoutAlerts = layoutAlerts.filter((alert) => {
+      if (!alert.endsWith("_touching_edge")) return true;
+      return alert.startsWith("front_");
+    });
+    const lowOrientation = orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0;
     const score =
       (avgSharpness ?? 0) +
       (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0) -
-      (lowOrientation ? 8 : 0);
+      ((orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0) ? 8 : 0) -
+      (layoutAlerts.length > blockingLayoutAlerts.length ? 2 : 0);
     return {
       lowDiversity: diversity.inspected && diversity.lowDiversity,
       lowSharpness,
