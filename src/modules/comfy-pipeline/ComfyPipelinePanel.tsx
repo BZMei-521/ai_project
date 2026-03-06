@@ -3636,7 +3636,18 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
       existing ?? ""
     ) as CharacterAssetWorkflowMode;
-    const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+    const requestedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+    const selectedModel =
+      mode === "advanced_multiview" && !looksLikeSdxlModelName(requestedModel)
+        ? ONE_CLICK_SDXL_CHARACTER_MODEL
+        : requestedModel;
+    if (mode === "advanced_multiview" && selectedModel !== requestedModel) {
+      persistSettings((previous) => ({ ...previous, characterAssetModelName: selectedModel }));
+      appendLog(
+        `检测到高级 MVAdapter 三视图模式使用了非 SDXL 模型（${requestedModel}），已自动切换为 ${selectedModel}`,
+        "info"
+      );
+    }
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "character")) return existing;
     const builtIn =
       mode === "advanced_multiview"
@@ -3704,6 +3715,11 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
+    const requestedCharacterModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+    const characterModelForWorkflow =
+      mode === "advanced_multiview" && !looksLikeSdxlModelName(requestedCharacterModel)
+        ? ONE_CLICK_SDXL_CHARACTER_MODEL
+        : requestedCharacterModel;
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       [
@@ -3813,7 +3829,7 @@ export function ComfyPipelinePanel() {
     }
 
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
-      runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+      characterModelForWorkflow,
       runtimeSettings.characterTemplatePreset ?? "portrait",
       runtimeSettings.characterRenderPreset ?? "clean_reference"
     );
@@ -3986,7 +4002,8 @@ export function ComfyPipelinePanel() {
       outputDir: ""
     }));
     const storyboardModel = profile === "sd15" ? ONE_CLICK_SD15_STORYBOARD_MODEL : ONE_CLICK_SDXL_STORYBOARD_MODEL;
-    const characterModel = profile === "sd15" ? ONE_CLICK_SD15_CHARACTER_MODEL : ONE_CLICK_SDXL_CHARACTER_MODEL;
+    // Mature three-view pipeline is MVAdapter (SDXL-only). Keep character asset model on SDXL even in SD1.5 storyboard profile.
+    const characterModel = ONE_CLICK_SDXL_CHARACTER_MODEL;
     const skyboxModel = profile === "sd15" ? ONE_CLICK_SD15_SKYBOX_MODEL : ONE_CLICK_SDXL_SKYBOX_MODEL;
     const characterRenderPreset: "stable_fullbody" | "clean_reference" = "clean_reference";
     const characterTemplatePreset: "portrait" | "square" = "portrait";
@@ -4009,7 +4026,7 @@ export function ComfyPipelinePanel() {
         storyboardImageWorkflowMode: "mature_asset_guided",
         imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
         storyboardImageModelName: storyboardModel,
-        characterAssetWorkflowMode: "basic_builtin",
+        characterAssetWorkflowMode: "advanced_multiview",
         skyboxAssetWorkflowMode: "basic_builtin",
         requireDedicatedCharacterWorkflow: false,
         requireDedicatedSkyboxWorkflow: false,
@@ -4017,7 +4034,7 @@ export function ComfyPipelinePanel() {
         skyboxAssetModelName: skyboxModel,
         characterTemplatePreset,
         characterRenderPreset,
-        characterWorkflowJson: buildCharacterWorkflowTemplateJson(
+        characterWorkflowJson: buildCharacterAdvancedWorkflowTemplateJson(
           characterModel,
           characterTemplatePreset,
           characterRenderPreset
@@ -4030,7 +4047,7 @@ export function ComfyPipelinePanel() {
       };
     });
     const label = profile === "sd15" ? "SD1.5" : "SDXL";
-    appendLog(`已应用 ${label} 一键整片配置：成熟分镜模板 + 基础资产模板 + 本地视频模式`);
+    appendLog(`已应用 ${label} 一键整片配置：成熟分镜模板 + MVAdapter 三视图模板 + 本地视频模式`);
     pushToast(`已应用 ${label} 一键整片配置`, "success");
   };
 
