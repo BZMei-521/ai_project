@@ -171,6 +171,17 @@ function workflowContainsWanSamplerNodes(workflowJson: string): boolean {
   return nodeTypes.some((item) => item.includes("wan") || item.includes("moeksampler"));
 }
 
+function normalizeWorkflowFingerprint(workflowJson: string): string {
+  return workflowJson.replace(/\s+/g, "").trim();
+}
+
+function workflowsAreCoupled(imageWorkflowJson: string, videoWorkflowJson: string): boolean {
+  const imageFingerprint = normalizeWorkflowFingerprint(imageWorkflowJson);
+  const videoFingerprint = normalizeWorkflowFingerprint(videoWorkflowJson);
+  if (!imageFingerprint || !videoFingerprint) return false;
+  return imageFingerprint === videoFingerprint;
+}
+
 function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
   if (mode === "advanced_multiview") {
     return {
@@ -4053,7 +4064,8 @@ export function ComfyPipelinePanel() {
           skyboxModel,
           previous.skyboxTemplatePreset ?? "wide"
         ),
-        videoGenerationMode: "local_motion"
+        videoGenerationMode: "local_motion",
+        videoWorkflowJson: FISHER_WORKFLOW_JSON
       };
     });
     const label = profile === "sd15" ? "SD1.5" : "SDXL";
@@ -5851,6 +5863,19 @@ export function ComfyPipelinePanel() {
       }
       const shotsForRun = getScopedShotsSnapshot();
       let runtimeSettings = settings;
+      if (workflowsAreCoupled(runtimeSettings.imageWorkflowJson ?? "", runtimeSettings.videoWorkflowJson ?? "")) {
+        runtimeSettings = {
+          ...runtimeSettings,
+          videoGenerationMode: "local_motion",
+          videoWorkflowJson: FISHER_WORKFLOW_JSON
+        };
+        persistSettings((previous) => ({
+          ...previous,
+          videoGenerationMode: "local_motion",
+          videoWorkflowJson: FISHER_WORKFLOW_JSON
+        }));
+        appendLog("检测到分镜与视频使用同一工作流，已自动拆分并锁定独立视频流程", "info");
+      }
       if (
         (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
         (!runtimeSettings.imageWorkflowJson.trim() || workflowLooksLikeBuiltinStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson))
@@ -6025,6 +6050,34 @@ export function ComfyPipelinePanel() {
       }
       const shotsForRun = getScopedShotsSnapshot();
       let runtimeSettings = settings;
+      if (workflowsAreCoupled(runtimeSettings.imageWorkflowJson ?? "", runtimeSettings.videoWorkflowJson ?? "")) {
+        runtimeSettings = {
+          ...runtimeSettings,
+          videoGenerationMode: "local_motion",
+          videoWorkflowJson: FISHER_WORKFLOW_JSON
+        };
+        persistSettings((previous) => ({
+          ...previous,
+          videoGenerationMode: "local_motion",
+          videoWorkflowJson: FISHER_WORKFLOW_JSON
+        }));
+        appendLog("检测到分镜与视频使用同一工作流，已自动拆分：分镜保留当前模板，视频切换为独立本地模式", "info");
+        pushToast("已自动拆分分镜/视频工作流", "warning");
+      }
+      if (workflowContainsWanSamplerNodes(runtimeSettings.videoWorkflowJson ?? "")) {
+        runtimeSettings = {
+          ...runtimeSettings,
+          videoGenerationMode: "local_motion",
+          videoWorkflowJson: FISHER_WORKFLOW_JSON
+        };
+        persistSettings((previous) => ({
+          ...previous,
+          videoGenerationMode: "local_motion",
+          videoWorkflowJson: FISHER_WORKFLOW_JSON
+        }));
+        appendLog("检测到视频工作流包含 Wan 采样节点，已自动切换为独立本地视频模式以避免 OOM", "info");
+        pushToast("视频工作流包含 Wan 节点，已自动切换本地模式", "warning");
+      }
       if (!runtimeSettings.videoWorkflowJson.trim()) {
         runtimeSettings = { ...runtimeSettings, videoWorkflowJson: FISHER_WORKFLOW_JSON };
         persistSettings((previous) => ({ ...previous, videoWorkflowJson: FISHER_WORKFLOW_JSON }));
