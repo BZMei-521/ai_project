@@ -3966,6 +3966,18 @@ export function ComfyPipelinePanel() {
     );
   };
 
+  const isEnvironmentBlockingAssetError = (error: unknown) => {
+    const text = String(error ?? "").toLowerCase();
+    if (!text) return false;
+    return (
+      text.includes("missing_node_type") ||
+      text.includes("custom node may not be installed") ||
+      text.includes("ldmpipelineloader") ||
+      text.includes("diffusersmvmodelmakeup") ||
+      text.includes("角色三视图生成前置检查失败")
+    );
+  };
+
   const isHuggingFaceFetchError = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
     if (!text) return false;
@@ -5037,6 +5049,9 @@ export function ComfyPipelinePanel() {
             detail: `生成失败：${String(error)}`,
             thumbs: []
           });
+          if (isEnvironmentBlockingAssetError(error)) {
+            throw error;
+          }
         }
       }
       if (item.sceneName) {
@@ -5220,6 +5235,9 @@ export function ComfyPipelinePanel() {
       appendLog(
         `自动资产生成与镜头绑定完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
       );
+    } catch (error) {
+      appendLog(`自动资产生成中断：${String(error)}`, "error");
+      setPipelineState(`自动资产生成中断：${String(error)}`);
     } finally {
       setPhase("idle");
       setPipelineState("空闲");
