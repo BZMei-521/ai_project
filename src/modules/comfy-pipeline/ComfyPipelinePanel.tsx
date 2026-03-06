@@ -5622,6 +5622,16 @@ export function ComfyPipelinePanel() {
     }
     const shotIndex = latestScopedShots.findIndex((item) => item.id === shotId);
     if (shotIndex < 0) return false;
+    if (
+      kind === "video" &&
+      runtimeSettings.videoGenerationMode !== "local_motion" &&
+      workflowContainsWanSamplerNodes(runtimeSettings.videoWorkflowJson ?? "")
+    ) {
+      runtimeSettings = { ...runtimeSettings, videoGenerationMode: "local_motion" };
+      persistSettings((previous) => ({ ...previous, videoGenerationMode: "local_motion" }));
+      appendLog("检测到视频工作流包含 Wan 采样节点，已自动切换为本地轻量视频模式，避免 OOM", "info");
+      pushToast("检测到 Wan 视频工作流，已自动切换本地视频模式", "warning");
+    }
     const latestAssets = useStoryboardStore.getState().assets;
     const assetRuntimeSettings: ComfySettings = {
       ...runtimeSettings,
