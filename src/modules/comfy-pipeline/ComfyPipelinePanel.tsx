@@ -1382,17 +1382,7 @@ function resolveEffectiveAssetWorkflowMode(
   mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode,
   workflowJson: string
 ): CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode {
-  if (kind === "character") {
-    if (mode === "advanced_multiview") return mode;
-    if (!workflowJson.trim() || workflowHasBrokenApiPromptReferences(workflowJson) || workflowLooksLikeLegacyBasicAssetWorkflow(workflowJson, "character")) {
-      return "advanced_multiview";
-    }
-    return mode;
-  }
-  if (mode === "advanced_panorama") return mode;
-  if (!workflowJson.trim() || workflowHasBrokenApiPromptReferences(workflowJson) || workflowLooksLikeLegacyBasicAssetWorkflow(workflowJson, "skybox")) {
-    return "advanced_panorama";
-  }
+  // Respect user-selected mode directly. Workflow content mismatch is handled by shouldAutoRewriteAssetWorkflow.
   return mode;
 }
 
@@ -1404,12 +1394,26 @@ function shouldAutoRewriteAssetWorkflow(
   const trimmed = workflowJson.trim();
   if (!trimmed) return true;
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
+  const nodeTypes = new Set(collectWorkflowNodeTypesForHeuristics(trimmed));
+  const hasBasicImageCore =
+    nodeTypes.has("CheckpointLoaderSimple") &&
+    nodeTypes.has("CLIPTextEncode") &&
+    nodeTypes.has("EmptyLatentImage") &&
+    nodeTypes.has("KSampler") &&
+    nodeTypes.has("VAEDecode") &&
+    nodeTypes.has("SaveImage");
   const hasAllAdvancedCharacterViewTokens = [
     "{{FRAME_IMAGE_PATH}}",
     "{{CHARACTER_FRONT_VIEW}}",
     "{{CHARACTER_RIGHT_VIEW}}",
     "{{CHARACTER_BACK_VIEW}}"
   ].every((token) => trimmed.includes(token));
+  const hasAdvancedCharacterNode = ["LdmPipelineLoader", "DiffusersMVModelMakeup", "ViewSelector", "DiffusersMVSampler"].some((type) =>
+    nodeTypes.has(type)
+  );
+  const hasAdvancedSkyboxNode = ["LoraLoader", "Equirectangular to Face", "Apply Circular Padding Model", "Apply Circular Padding VAE"].some(
+    (type) => nodeTypes.has(type)
+  );
   if (kind === "character" && mode === "advanced_multiview") {
     return (
       !workflowIncludesAllNodeTypes(trimmed, CHARACTER_ADVANCED_NODE_TYPES) ||
@@ -1419,8 +1423,14 @@ function shouldAutoRewriteAssetWorkflow(
       trimmed.includes("\"height\": 1216")
     );
   }
+  if (kind === "character" && mode === "basic_builtin") {
+    return hasAdvancedCharacterNode || !hasBasicImageCore || !workflowLooksLikeLegacyBasicAssetWorkflow(trimmed, "character");
+  }
   if (kind === "skybox" && mode === "advanced_panorama") {
     return !workflowIncludesAllNodeTypes(trimmed, SKYBOX_ADVANCED_NODE_TYPES);
+  }
+  if (kind === "skybox" && mode === "basic_builtin") {
+    return hasAdvancedSkyboxNode || !hasBasicImageCore || !workflowLooksLikeLegacyBasicAssetWorkflow(trimmed, "skybox");
   }
   return false;
 }
@@ -3308,14 +3318,15 @@ export function ComfyPipelinePanel() {
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const angleInstruction =
       view === "front"
-        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。"
+        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。front view, body yaw 0 degree, facing camera, single-view only."
         : view === "side"
-          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度。"
-          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。";
+          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度。strict right profile, body yaw 90 degree, side view only, no front-facing."
+          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
       "single character",
       "single-view full-body character turnaround reference",
       "orthographic view",
+      "single panel turnaround reference, not multi-panel",
       "full body centered",
       "fully clothed",
       "complete outfit",
@@ -3342,6 +3353,8 @@ export function ComfyPipelinePanel() {
       "无武打动作",
       "无道具遮挡",
       "无裁切",
+      "no three-quarter view",
+      "no 3/4 view",
       "完整穿衣",
       "完整服装设计",
       "上衣、下装或长袍、鞋子都要清楚可见",
@@ -3353,6 +3366,9 @@ export function ComfyPipelinePanel() {
       "禁止裸露、内衣态、泳装态、赤膊",
       "服装统一且前后侧一致",
       "面部与体型一致",
+      view === "front" ? "front-only, not side, not back" : "",
+      view === "side" ? "strict side-only, not front, not back, not looking at camera" : "",
+      view === "back" ? "strict back-only, no visible face, no looking back, no side face" : "",
       "写实角色参考图",
       "美术统一"
     ]);
@@ -3362,14 +3378,14 @@ export function ComfyPipelinePanel() {
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
     const viewConstraint =
       view === "front"
-        ? "side profile, back view, rear view"
+        ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
         : view === "side"
-          ? "front view, facing camera, back view, rear view"
-          : "front view, facing camera, side profile, looking at camera, face visible";
+          ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal"
+          : "front view, facing camera, side profile, looking at camera, face visible, three quarter back view, over shoulder";
     const identityDriftConstraint =
       "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
     const cropConstraint =
-      "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body";
+      "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing";
     return `${baseNegativePrompt}, ${viewConstraint}, ${identityDriftConstraint}, ${cropConstraint}`;
   };
 
@@ -4060,8 +4076,10 @@ export function ComfyPipelinePanel() {
         const strictAdvancedMode = mode === "advanced_multiview";
         const hasDistinctThreeViews = new Set(threeViewPaths).size >= 3;
         const hasLegacyBasicPrefix = threeViewPaths.some((value) => /character_threeview/i.test(value));
+        const hasLegacyMvPrefix = threeViewPaths.some((value) => /character_mv_/i.test(value));
         const shouldForceRegenerate =
-          strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix);
+          (strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix)) ||
+          (!strictAdvancedMode && hasLegacyMvPrefix);
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
