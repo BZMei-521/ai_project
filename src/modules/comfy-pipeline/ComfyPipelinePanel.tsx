@@ -148,6 +148,8 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
     scheduler: "karras"
   }
 };
+const CHARACTER_VIEW_HASH_SIZE = 8;
+const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
 
 function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
   const normalized = workflowJson.replace(/\s+/g, "");
@@ -3295,6 +3297,71 @@ export function ComfyPipelinePanel() {
     return Math.abs(hash >>> 0);
   };
 
+  const loadImageForHash = (src: string) =>
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.crossOrigin = "anonymous";
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`加载图片失败：${src}`));
+      image.src = src;
+    });
+
+  const computeImageAverageHash = async (pathOrUrl: string): Promise<bigint | null> => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const canvas = document.createElement("canvas");
+      canvas.width = CHARACTER_VIEW_HASH_SIZE;
+      canvas.height = CHARACTER_VIEW_HASH_SIZE;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0, CHARACTER_VIEW_HASH_SIZE, CHARACTER_VIEW_HASH_SIZE);
+      const data = context.getImageData(0, 0, CHARACTER_VIEW_HASH_SIZE, CHARACTER_VIEW_HASH_SIZE).data;
+      const grayValues: number[] = [];
+      for (let index = 0; index < data.length; index += 4) {
+        const gray = Math.round(data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114);
+        grayValues.push(gray);
+      }
+      const avg = grayValues.reduce((sum, value) => sum + value, 0) / grayValues.length;
+      let hash = 0n;
+      grayValues.forEach((value, bitIndex) => {
+        if (value >= avg) hash |= 1n << BigInt(bitIndex);
+      });
+      return hash;
+    } catch {
+      return null;
+    }
+  };
+
+  const hammingDistance64 = (left: bigint, right: bigint): number => {
+    let value = left ^ right;
+    let count = 0;
+    while (value !== 0n) {
+      count += Number(value & 1n);
+      value >>= 1n;
+    }
+    return count;
+  };
+
+  const detectLowDiversityThreeViews = async (paths: string[]) => {
+    const targets = paths.slice(0, 3);
+    if (targets.length < 3) return { inspected: false, lowDiversity: false, distances: [] as number[] };
+    const hashes = await Promise.all(targets.map((path) => computeImageAverageHash(path)));
+    if (hashes.some((value) => value === null)) return { inspected: false, lowDiversity: false, distances: [] as number[] };
+    const [frontHash, sideHash, backHash] = hashes as [bigint, bigint, bigint];
+    const distances = [
+      hammingDistance64(frontHash, sideHash),
+      hammingDistance64(frontHash, backHash),
+      hammingDistance64(sideHash, backHash)
+    ];
+    const nearDuplicatePairs = distances.filter((distance) => distance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD).length;
+    const lowDiversity = nearDuplicatePairs >= 2 || Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 4;
+    return { inspected: true, lowDiversity, distances };
+  };
+
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
     id,
     sequenceId: currentSequenceId,
@@ -4098,14 +4165,24 @@ export function ComfyPipelinePanel() {
         const hasDistinctThreeViews = new Set(threeViewPaths).size >= 3;
         const hasLegacyBasicPrefix = threeViewPaths.some((value) => /character_threeview/i.test(value));
         const hasLegacyMvPrefix = threeViewPaths.some((value) => /character_mv_/i.test(value));
+        const diversityCheck = await detectLowDiversityThreeViews(threeViewPaths);
+        const hasLowVisualDiversity = diversityCheck.inspected && diversityCheck.lowDiversity;
         const shouldForceRegenerate =
-          (strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix)) ||
-          (!strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyMvPrefix));
+          (strictAdvancedMode &&
+            (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix || hasLowVisualDiversity)) ||
+          (!strictAdvancedMode &&
+            (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyMvPrefix || hasLowVisualDiversity));
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
             previewPaths: threeViewPaths
           };
+        }
+        if (hasLowVisualDiversity) {
+          appendLog(
+            `检测到角色三视图过于相似（哈希距离：${diversityCheck.distances.join("/") || "unknown"}），已自动重建：${name}`,
+            "info"
+          );
         }
         appendLog(`检测到旧版或异常角色三视图资产，已自动重建：${name}`, "info");
       }
