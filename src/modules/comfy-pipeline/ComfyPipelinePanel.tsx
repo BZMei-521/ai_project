@@ -134,22 +134,23 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
   stable_fullbody: {
     label: "稳定全身",
     seed: 101001,
-    steps: 32,
-    cfg: 5.8,
+    steps: 30,
+    cfg: 5.4,
     sampler_name: "dpmpp_2m",
     scheduler: "karras"
   },
   clean_reference: {
     label: "干净设定",
     seed: 202002,
-    steps: 36,
-    cfg: 6.2,
+    steps: 34,
+    cfg: 5.6,
     sampler_name: "dpmpp_2m",
     scheduler: "karras"
   }
 };
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
+const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
 
 function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
   const normalized = workflowJson.replace(/\s+/g, "");
@@ -380,9 +381,9 @@ function looksLikeSdxlModelName(name: string): boolean {
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
   const isSdxl = looksLikeSdxlModelName(checkpointName);
   if (preset === "square") {
-    return isSdxl ? { width: 1024, height: 1024 } : { width: 768, height: 768 };
+    return isSdxl ? { width: 1024, height: 1024 } : { width: 832, height: 832 };
   }
-  return isSdxl ? { width: 896, height: 1344 } : { width: 704, height: 1024 };
+  return isSdxl ? { width: 896, height: 1344 } : { width: 768, height: 1152 };
 }
 
 function buildCharacterWorkflowTemplateJson(
@@ -3380,6 +3381,68 @@ export function ComfyPipelinePanel() {
     return { inspected: true, lowDiversity, distances };
   };
 
+  const computeImageSharpnessScore = async (pathOrUrl: string): Promise<number | null> => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0, size, size);
+      const data = context.getImageData(0, 0, size, size).data;
+      const gray = new Float32Array(size * size);
+      for (let index = 0, pixel = 0; index < data.length; index += 4, pixel += 1) {
+        gray[pixel] = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+      }
+      let sum = 0;
+      let count = 0;
+      for (let y = 1; y < size - 1; y += 1) {
+        for (let x = 1; x < size - 1; x += 1) {
+          const idx = y * size + x;
+          const gx =
+            -gray[idx - size - 1] - 2 * gray[idx - 1] - gray[idx + size - 1] +
+            gray[idx - size + 1] + 2 * gray[idx + 1] + gray[idx + size + 1];
+          const gy =
+            -gray[idx - size - 1] - 2 * gray[idx - size] - gray[idx - size + 1] +
+            gray[idx + size - 1] + 2 * gray[idx + size] + gray[idx + size + 1];
+          sum += Math.sqrt(gx * gx + gy * gy);
+          count += 1;
+        }
+      }
+      if (count <= 0) return null;
+      return sum / count;
+    } catch {
+      return null;
+    }
+  };
+
+  const evaluateThreeViewQuality = async (paths: string[]) => {
+    const diversity = await detectLowDiversityThreeViews(paths);
+    const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
+      (value): value is number => typeof value === "number" && Number.isFinite(value)
+    );
+    const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
+    const avgSharpness =
+      sharpnessValues.length > 0 ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length : null;
+    const lowSharpness = typeof minSharpness === "number" && minSharpness < CHARACTER_VIEW_MIN_SHARPNESS_SCORE;
+    const score =
+      (avgSharpness ?? 0) +
+      (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0);
+    return {
+      lowDiversity: diversity.inspected && diversity.lowDiversity,
+      lowSharpness,
+      minSharpness,
+      avgSharpness,
+      distances: diversity.distances,
+      score
+    };
+  };
+
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
     id,
     sequenceId: currentSequenceId,
@@ -3418,6 +3481,7 @@ export function ComfyPipelinePanel() {
           ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度。strict right profile, body yaw 90 degree, side view only, no front-facing."
           : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
+      "masterpiece, best quality, high detail",
       "single character, solo",
       "single-view full-body orthographic character reference",
       "orthographic view",
@@ -3427,6 +3491,9 @@ export function ComfyPipelinePanel() {
       "high quality character design illustration",
       "clean linework and smooth shading",
       "natural human proportions, anatomically correct limbs",
+      "neutral standing pose",
+      "arms naturally down and slightly away from torso",
+      "both hands visible, both legs fully visible, feet fully visible",
       "fully clothed",
       "complete outfit",
       "top, bottom or robe, and shoes clearly visible",
@@ -3442,6 +3509,8 @@ export function ComfyPipelinePanel() {
       backgroundPrompt,
       "A-pose 或自然站姿",
       "站立稳定",
+      "双臂自然下垂且略微离开躯干，双手完整可见",
+      "双腿完整可见，膝关节与脚踝结构自然",
       "单张图只允许一个角色",
       "单张图只允许一个角度",
       "画面只允许一个人体实体，禁止并排双人、镜像双人、克隆分身",
@@ -3453,6 +3522,8 @@ export function ComfyPipelinePanel() {
       "无群像",
       "无场景叙事",
       "无武打动作",
+      "禁止双手交叉胸前、禁止背手、禁止插兜、禁止抱臂",
+      "禁止抬臂遮挡躯干或遮挡脸部",
       "无道具遮挡",
       "无裁切",
       "no three-quarter view",
@@ -3468,6 +3539,7 @@ export function ComfyPipelinePanel() {
       "禁止裸露、内衣态、泳装态、赤膊",
       "人体比例自然，头身比协调，肩胯关系合理，四肢长度正常",
       "手脚结构清楚，不允许手指粘连或肢体扭曲",
+      "结构清晰，不允许透视畸变、鱼眼变形或人体拉伸",
       "服装统一且前后侧一致",
       "面部与体型一致",
       view === "front" ? "front-only, not side, not back" : "",
@@ -3494,7 +3566,11 @@ export function ComfyPipelinePanel() {
       "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing";
     const anatomyConstraint =
       "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, dislocated joints, extra arms, extra legs, fused fingers, malformed hands, asymmetrical eyes, long neck";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}`;
+    const poseOcclusionConstraint =
+      "crossed arms, folded arms, hands behind back, hands in pockets, self occlusion, hidden hands, hidden legs, crouching, kneeling, sitting pose";
+    const qualityConstraint =
+      "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo";
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -3707,8 +3783,33 @@ export function ComfyPipelinePanel() {
       return { front, side, back };
     };
 
+    const runBasicThreeViewsWithAutoRetry = async (workflowJsonOverride: string, seedBase: number) => {
+      const first = await runBasicThreeViews(workflowJsonOverride, seedBase);
+      const firstPaths = [first.front.localPath || first.front.previewUrl, first.side.localPath || first.side.previewUrl, first.back.localPath || first.back.previewUrl].filter(
+        (value): value is string => Boolean(value)
+      );
+      const firstQuality = await evaluateThreeViewQuality(firstPaths);
+      if (!firstQuality.lowDiversity && !firstQuality.lowSharpness) return first;
+
+      appendLog(
+        `检测到三视图质量不稳定（${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && firstQuality.lowSharpness ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}），自动重试一次：${name}`,
+        "info"
+      );
+      const second = await runBasicThreeViews(workflowJsonOverride, seedBase + 7331);
+      const secondPaths = [second.front.localPath || second.front.previewUrl, second.side.localPath || second.side.previewUrl, second.back.localPath || second.back.previewUrl].filter(
+        (value): value is string => Boolean(value)
+      );
+      const secondQuality = await evaluateThreeViewQuality(secondPaths);
+      const chooseSecond = secondQuality.score >= firstQuality.score;
+      appendLog(
+        `三视图自动优选结果：${name} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstQuality.score.toFixed(2)} / 重试分数 ${secondQuality.score.toFixed(2)}）`,
+        "info"
+      );
+      return chooseSecond ? second : first;
+    };
+
     if (mode !== "advanced_multiview") {
-      return runBasicThreeViews(workflowOverride, baseSeed);
+      return runBasicThreeViewsWithAutoRetry(workflowOverride, baseSeed);
     }
 
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
@@ -4194,13 +4295,22 @@ export function ComfyPipelinePanel() {
         const hasDistinctThreeViews = new Set(threeViewPaths).size >= 3;
         const hasLegacyBasicPrefix = threeViewPaths.some((value) => /character_threeview/i.test(value));
         const hasLegacyMvPrefix = threeViewPaths.some((value) => /character_mv_/i.test(value));
-        const diversityCheck = await detectLowDiversityThreeViews(threeViewPaths);
-        const hasLowVisualDiversity = diversityCheck.inspected && diversityCheck.lowDiversity;
+        const qualityCheck = await evaluateThreeViewQuality(threeViewPaths);
+        const hasLowVisualDiversity = qualityCheck.lowDiversity;
+        const hasLowVisualSharpness = qualityCheck.lowSharpness;
         const shouldForceRegenerate =
           (strictAdvancedMode &&
-            (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix || hasLowVisualDiversity)) ||
+            (threeViewPaths.length < 3 ||
+              !hasDistinctThreeViews ||
+              hasLegacyBasicPrefix ||
+              hasLowVisualDiversity ||
+              hasLowVisualSharpness)) ||
           (!strictAdvancedMode &&
-            (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyMvPrefix || hasLowVisualDiversity));
+            (threeViewPaths.length < 3 ||
+              !hasDistinctThreeViews ||
+              hasLegacyMvPrefix ||
+              hasLowVisualDiversity ||
+              hasLowVisualSharpness));
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
@@ -4209,7 +4319,13 @@ export function ComfyPipelinePanel() {
         }
         if (hasLowVisualDiversity) {
           appendLog(
-            `检测到角色三视图过于相似（哈希距离：${diversityCheck.distances.join("/") || "unknown"}），已自动重建：${name}`,
+            `检测到角色三视图过于相似（哈希距离：${qualityCheck.distances.join("/") || "unknown"}），已自动重建：${name}`,
+            "info"
+          );
+        }
+        if (hasLowVisualSharpness) {
+          appendLog(
+            `检测到角色三视图清晰度偏低（min=${(qualityCheck.minSharpness ?? 0).toFixed(1)}），已自动重建：${name}`,
             "info"
           );
         }
@@ -6803,8 +6919,8 @@ export function ComfyPipelinePanel() {
             }
             value={settings.characterTemplatePreset ?? "portrait"}
           >
-            <option value="portrait">竖版全身（832x1216）</option>
-            <option value="square">方版设定（1024x1024）</option>
+            <option value="portrait">竖版全身（SD1.5:768x1152 / SDXL:896x1344）</option>
+            <option value="square">方版设定（SD1.5:832x832 / SDXL:1024x1024）</option>
           </select>
         </label>
         <label>
@@ -6818,8 +6934,8 @@ export function ComfyPipelinePanel() {
             }
             value={settings.characterRenderPreset ?? "clean_reference"}
           >
-            <option value="stable_fullbody">稳定全身（DPM++ 2M / 32 steps / cfg 5.8）</option>
-            <option value="clean_reference">干净设定（DPM++ 2M / 36 steps / cfg 6.2）</option>
+            <option value="stable_fullbody">稳定全身（DPM++ 2M / 30 steps / cfg 5.4）</option>
+            <option value="clean_reference">干净设定（DPM++ 2M / 34 steps / cfg 5.6）</option>
           </select>
         </label>
         <label>
