@@ -267,6 +267,10 @@ export type ComfyModelHealthReport = {
 };
 
 export const SKYBOX_FACES: SkyboxFace[] = ["front", "right", "back", "left", "up", "down"];
+const STORYBOARD_SD15_MAX_SIDE = 960;
+const STORYBOARD_SDXL_MAX_SIDE = 1280;
+const STORYBOARD_SD15_MIN_SIDE = 512;
+const STORYBOARD_SDXL_MIN_SIDE = 640;
 
 export type SkyboxGenerationResult = {
   faces: Partial<Record<SkyboxFace, string>>;
@@ -287,6 +291,53 @@ async function invokeDesktop<T>(cmd: string, args?: Record<string, unknown>): Pr
 function normalizeBaseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, "");
   return trimmed.length > 0 ? trimmed : "http://127.0.0.1:8188";
+}
+
+function looksLikeSdxlCheckpoint(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  if (/sd[_-]?xl/.test(normalized)) return true;
+  if (/animagine[-_]?xl/.test(normalized)) return true;
+  if (/juggernautxl/.test(normalized)) return true;
+  return /(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)/.test(normalized);
+}
+
+function snapRenderSize(value: number): number {
+  const clamped = Math.max(320, Math.round(value));
+  return Math.max(320, Math.round(clamped / 64) * 64);
+}
+
+function normalizeStoryboardStillRenderSize(
+  settings: ComfySettings,
+  width: number,
+  height: number
+): { width: number; height: number } {
+  const storyboardMode = settings.storyboardImageWorkflowMode ?? "mature_asset_guided";
+  if (storyboardMode !== "mature_asset_guided") {
+    return { width: snapRenderSize(width), height: snapRenderSize(height) };
+  }
+  const modelName = settings.storyboardImageModelName?.trim() || "";
+  const isSdxl = looksLikeSdxlCheckpoint(modelName);
+  const maxSide = isSdxl ? STORYBOARD_SDXL_MAX_SIDE : STORYBOARD_SD15_MAX_SIDE;
+  const minSide = isSdxl ? STORYBOARD_SDXL_MIN_SIDE : STORYBOARD_SD15_MIN_SIDE;
+
+  let outWidth = Math.max(320, Math.round(width));
+  let outHeight = Math.max(320, Math.round(height));
+
+  const downScale = Math.min(1, maxSide / Math.max(outWidth, outHeight));
+  outWidth = Math.round(outWidth * downScale);
+  outHeight = Math.round(outHeight * downScale);
+
+  if (Math.min(outWidth, outHeight) < minSide) {
+    const upScale = minSide / Math.max(1, Math.min(outWidth, outHeight));
+    outWidth = Math.round(outWidth * upScale);
+    outHeight = Math.round(outHeight * upScale);
+  }
+
+  const finalScale = Math.min(1, maxSide / Math.max(outWidth, outHeight));
+  outWidth = snapRenderSize(outWidth * finalScale);
+  outHeight = snapRenderSize(outHeight * finalScale);
+  return { width: outWidth, height: outHeight };
 }
 
 export function defaultVideoGenerationMode(): "comfy" | "local_motion" {
@@ -733,6 +784,15 @@ function appendNegativePrompt(base: string, extra: string): string {
   if (!addition) return primary;
   if (!primary) return addition;
   return `${primary}, ${addition}`;
+}
+
+function stableNumericId(value: string): number {
+  let hash = 2166136261 >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return Math.max(1, hash % 1_000_000_000);
 }
 
 function sanitizeStoryboardNegativePrompt(base: string, hasCharacters: boolean): string {
@@ -2012,12 +2072,12 @@ function inferStoryboardReferenceWeights(
     if (characterDriven) {
       return {
         // Mature baseline: scene-first, then lock both characters with primary views.
-        char1Primary: 0.56,
+        char1Primary: 0.62,
         char1Secondary: 0.02,
-        char2Primary: 0.5,
-        denoise: 0.5,
-        steps: 32,
-        cfg: 6.2
+        char2Primary: 0.58,
+        denoise: 0.44,
+        steps: 30,
+        cfg: 5.9
       };
     }
     return {
@@ -2032,12 +2092,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.6,
-        char1Secondary: 0.04,
+        char1Primary: 0.72,
+        char1Secondary: 0.06,
         char2Primary: 0,
-        denoise: 0.52,
-        steps: 32,
-        cfg: 6.2
+        denoise: 0.44,
+        steps: 30,
+        cfg: 5.9
       };
     }
     return {
@@ -2169,6 +2229,20 @@ function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
   return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需位于中前景且清晰可辨识，建议各自占画面高度至少约 25%，不允许只出现剪影、极远小人、严重裁切或被场景主体完全遮挡。`;
+}
+
+function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
+  const parts: string[] = [
+    "画面稳定约束：单张分镜图，透视关系稳定，构图清晰，主体边界清楚，拒绝抽象涂抹和随机扭曲。",
+    "clean single storyboard frame, coherent perspective, clear composition, no surreal warping, no abstract artifacts."
+  ];
+  if (hasSceneRef) {
+    parts.push("场景稳定约束：地平线、道路、栏杆、树木、建筑等结构保持笔直或自然透视，不允许融化、卷曲、漂浮。");
+  }
+  if (hasCharacters) {
+    parts.push("人物稳定约束：人物解剖正确，四肢完整，站姿自然，禁止畸形肢体、重复身体、拼贴分身。");
+  }
+  return parts.join("\n");
 }
 
 function shouldUseSecondaryCharacterView(shot: Shot): boolean {
@@ -3175,7 +3249,8 @@ function inferPromptTokens(
   index: number,
   mapping: ComfySettings["tokenMapping"],
   allShots: Shot[] = [],
-  assets: Asset[] = []
+  assets: Asset[] = [],
+  kind: "image" | "video" | "audio" = "image"
 ): Record<string, string> {
   const nextShot = allShots[index + 1];
   const mode = inferVideoMode(shot, nextShot);
@@ -3257,17 +3332,32 @@ function inferPromptTokens(
     hasSecondCharacter && normalizedChar2PrimaryPath
       ? Math.max(storyboardWeights.char2Primary, minChar2PrimaryWeight)
       : 0;
-  const targetRenderWidth =
+  const rawRenderWidth =
     typeof settings.renderWidth === "number" && Number.isFinite(settings.renderWidth) ? Math.max(64, Math.round(settings.renderWidth)) : 1920;
-  const targetRenderHeight =
+  const rawRenderHeight =
     typeof settings.renderHeight === "number" && Number.isFinite(settings.renderHeight) ? Math.max(64, Math.round(settings.renderHeight)) : 1080;
+  const normalizedStoryboardSize =
+    kind === "image"
+      ? normalizeStoryboardStillRenderSize(settings, rawRenderWidth, rawRenderHeight)
+      : { width: snapRenderSize(rawRenderWidth), height: snapRenderSize(rawRenderHeight) };
+  const targetRenderWidth = normalizedStoryboardSize.width;
+  const targetRenderHeight = normalizedStoryboardSize.height;
   const sceneContext = sceneAsset ? `场景参考：${sceneAsset.name}` : "";
   const cameraContext = shotCameraDescriptor(shot) ? `镜头机位：${shotCameraDescriptor(shot)}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
   const characterPresenceDirective = buildCharacterPresenceDirective(characterAssets);
+  const stabilityDirective = buildStoryboardStabilityDirective(Boolean(sceneAsset), characterAssets.length > 0);
   const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
-  const promptBase = [referenceDirective, characterPresenceDirective, sceneContext, cameraContext, characterContext, promptBaseRaw]
+  const promptBase = [
+    referenceDirective,
+    characterPresenceDirective,
+    sceneContext,
+    cameraContext,
+    characterContext,
+    promptBaseRaw,
+    stabilityDirective
+  ]
     .filter((item) => item.length > 0)
     .join("\n");
   const nextScenePrompt = toNextScenePrompt(promptBase);
@@ -3291,6 +3381,12 @@ function inferPromptTokens(
     characterAssets.length > 0
       ? "duplicated person, cloned person, mirror duplicate, twin body, double body, fused body, extra limbs, malformed anatomy, deformed hands, twisted posture, collage artifacts, split-screen layout"
       : "";
+  const characterVisibilityNegativePrompt =
+    characterAssets.length > 0
+      ? "tiny person, distant tiny figure, far-away silhouette, person hidden behind objects, person fully occluded"
+      : "";
+  const structureChaosNegativePrompt =
+    "surreal abstract texture, warped geometry, twisted architecture, melted buildings, bent horizon, fisheye distortion, random scribble lines, chaotic glitch artifacts, smeared details";
   const sanitizedShotNegativePrompt = sanitizeStoryboardNegativePrompt(
     shot.negativePrompt?.trim() || "",
     characterAssets.length > 0
@@ -3299,7 +3395,9 @@ function inferPromptTokens(
     sanitizedShotNegativePrompt,
     characterAbsenceNegativePrompt,
     characterCropNegativePrompt,
-    characterChaosNegativePrompt
+    characterChaosNegativePrompt,
+    characterVisibilityNegativePrompt,
+    structureChaosNegativePrompt
   ]
     .filter((item) => item.length > 0)
     .join(", ");
@@ -3319,7 +3417,7 @@ function inferPromptTokens(
     SPEECH_RATE: "",
     VOICE_PROFILE: characterVoiceProfiles[0] ?? "",
     CHARACTER_VOICE_PROFILES: characterVoiceProfiles.join(","),
-    SEED: String(shot.seed ?? Math.floor(Math.random() * 1_000_000_000)),
+    SEED: String(shot.seed ?? stableNumericId(`${shot.id}|${index}|${promptBaseRaw}`)),
     DURATION_FRAMES: String(Math.max(1, shot.durationFrames)),
     DURATION_SEC: String((shot.durationFrames / 24).toFixed(2)),
     CAMERA_YAW: typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw) ? String(shot.cameraYaw) : "",
@@ -4182,7 +4280,7 @@ async function generateLocalCompatibleVideo(
   index: number,
   allShots: Shot[]
 ): Promise<{ previewUrl: string; localPath: string }> {
-  const tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, []);
+  const tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, [], "video");
   const nextShot = allShots[index + 1];
   const mode = inferVideoMode(shot, nextShot);
   const motionPreset = inferLocalMotionPreset(shot, mode, nextShot);
@@ -4401,7 +4499,7 @@ export async function generateShotAsset(
     }
     const workflow = ensureWorkflowJson(workflowRaw);
     const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
-    let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets);
+    let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets, kind);
     if (options?.tokenOverrides) {
       tokens = {
         ...tokens,
