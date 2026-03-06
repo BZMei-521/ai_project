@@ -420,6 +420,20 @@ function buildCharacterWorkflowTemplateJson(
   return JSON.stringify(template, null, 2);
 }
 
+function buildCharacterReferenceWorkflowTemplateJson(
+  checkpointName: string,
+  preset: "portrait" | "square",
+  renderPreset: "stable_fullbody" | "clean_reference"
+): string {
+  const template = JSON.parse(
+    buildCharacterWorkflowTemplateJson(checkpointName, preset, renderPreset)
+  ) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["7"]?.inputs) {
+    template["7"].inputs.filename_prefix = "Storyboard/character_anchor";
+  }
+  return JSON.stringify(template, null, 2);
+}
+
 function buildCharacterAdvancedWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
@@ -2408,6 +2422,17 @@ type NormalizedImportedShot = {
   scenePrompt: string;
 };
 
+type NormalizedImportedCharacterProfile = {
+  name: string;
+  anchorImagePath: string;
+  frontPath: string;
+  sidePath: string;
+  backPath: string;
+  description: string;
+  voiceProfile: string;
+  seed?: number;
+};
+
 function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] {
   const list = Array.isArray(parsed.shots) ? parsed.shots : [];
   const parseNumber = (value: unknown): number | undefined => {
@@ -2512,6 +2537,48 @@ function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>>
   }));
 }
 
+function normalizeImportedCharacterProfiles(parsed: {
+  characters?: Array<Record<string, unknown>>;
+}): NormalizedImportedCharacterProfile[] {
+  const list = Array.isArray(parsed.characters) ? parsed.characters : [];
+  const parseNumber = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : undefined;
+    }
+    return undefined;
+  };
+  return list
+    .map((item) => {
+      const name = sanitizeCharacterCandidate(String(item.name ?? item.character_name ?? item.characterName ?? "").trim());
+      const frontPath = String(
+        item.front_path ?? item.frontPath ?? item.anchor_image ?? item.anchorImage ?? item.reference_image ?? item.referenceImage ?? ""
+      ).trim();
+      const anchorImagePath = String(
+        item.anchor_image ?? item.anchorImage ?? item.reference_image ?? item.referenceImage ?? item.image ?? item.file_path ?? item.filePath ?? frontPath
+      ).trim();
+      const sidePath = String(item.side_path ?? item.sidePath ?? "").trim();
+      const backPath = String(item.back_path ?? item.backPath ?? "").trim();
+      const description = String(
+        item.description ?? item.prompt ?? item.character_prompt ?? item.characterPrompt ?? item.reference_prompt ?? item.referencePrompt ?? ""
+      ).trim();
+      const voiceProfile = String(item.voice_profile ?? item.voiceProfile ?? "").trim();
+      const seed = parseNumber(item.seed);
+      return {
+        name,
+        anchorImagePath,
+        frontPath: frontPath || anchorImagePath,
+        sidePath,
+        backPath,
+        description,
+        voiceProfile,
+        seed
+      };
+    })
+    .filter((item) => item.name.length > 0);
+}
+
 export function ComfyPipelinePanel() {
   const project = useStoryboardStore((state) => state.project);
   const shots = useStoryboardStore((state) => state.shots);
@@ -2521,6 +2588,7 @@ export function ComfyPipelinePanel() {
   const replaceShotsForCurrentSequence = useStoryboardStore((state) => state.replaceShotsForCurrentSequence);
   const updateShotFields = useStoryboardStore((state) => state.updateShotFields);
   const addAsset = useStoryboardStore((state) => state.addAsset);
+  const updateAsset = useStoryboardStore((state) => state.updateAsset);
   const setShotDuration = useStoryboardStore((state) => state.setShotDuration);
   const upsertAudioTrack = useStoryboardStore((state) => state.upsertAudioTrack);
   const updateAudioTrack = useStoryboardStore((state) => state.updateAudioTrack);
@@ -4671,6 +4739,97 @@ export function ComfyPipelinePanel() {
     return findMatchingAssetId(useStoryboardStore.getState().assets, type, name);
   };
 
+  const upsertImportedCharacterAssets = async (
+    profiles: NormalizedImportedCharacterProfile[],
+    sourceLabel: string,
+    runtimeSettings: ComfySettings
+  ) => {
+    if (profiles.length === 0) return;
+    const needGeneratedAnchors = profiles.some(
+      (profile) => !profile.anchorImagePath.trim() && !profile.frontPath.trim() && profile.description.trim().length > 0
+    );
+    if (needGeneratedAnchors && !(await ensureComfyReady())) {
+      throw new Error(`${sourceLabel}失败：ComfyUI 未连接，无法根据角色描述生成正视锚点图`);
+    }
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const profile of profiles) {
+      let anchorPath = (profile.anchorImagePath || profile.frontPath).trim();
+      const existingId = findAssetIdByName("character", profile.name);
+      const existingAsset = existingId
+        ? useStoryboardStore.getState().assets.find((item) => item.id === existingId && item.type === "character")
+        : null;
+      if (!anchorPath && profile.description.trim().length > 0) {
+        appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
+        const requestedCharacterModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+        const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModel);
+        const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
+          characterModel,
+          "square",
+          runtimeSettings.characterRenderPreset ?? "clean_reference"
+        );
+        const negativePrompt = buildCharacterViewNegativePrompt(
+          "front",
+          runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
+        );
+        const generated = await generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(
+            `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}`,
+            `${profile.name} 正视锚点`,
+            buildCharacterViewPrompt(profile.name, profile.description, "front"),
+            "",
+            profile.seed
+          ),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: referenceWorkflow,
+            tokenOverrides: {
+              NEGATIVE_PROMPT: negativePrompt
+            }
+          }
+        );
+        anchorPath = (generated.localPath || generated.previewUrl || "").trim();
+        if (anchorPath) {
+          appendLog(`${sourceLabel}角色正视锚点生成成功：${profile.name}`);
+        }
+      }
+      const hasUsableAnchor = anchorPath.length > 0;
+      if (!hasUsableAnchor && !existingAsset) {
+        skipped += 1;
+        appendLog(`${sourceLabel}跳过角色资料：${profile.name} 缺少 anchor_image/front_path，且未提供 description`, "error");
+        continue;
+      }
+      const nextFilePath =
+        (profile.frontPath || anchorPath || existingAsset?.filePath || existingAsset?.characterFrontPath || "").trim();
+      const patch = {
+        filePath: nextFilePath,
+        characterFrontPath: (profile.frontPath || anchorPath || existingAsset?.characterFrontPath || nextFilePath).trim(),
+        characterSidePath: (profile.sidePath || existingAsset?.characterSidePath || "").trim(),
+        characterBackPath: (profile.backPath || existingAsset?.characterBackPath || "").trim(),
+        voiceProfile: (profile.voiceProfile || existingAsset?.voiceProfile || "").trim()
+      };
+      if (existingId) {
+        updateAsset(existingId, patch);
+        updated += 1;
+      } else {
+        addAsset({
+          type: "character",
+          name: profile.name,
+          ...patch
+        });
+        created += 1;
+      }
+    }
+    if (created > 0 || updated > 0 || skipped > 0) {
+      appendLog(`${sourceLabel}角色资料入库完成：新建 ${created} / 更新 ${updated} / 跳过 ${skipped}`);
+    }
+  };
+
   const applyProvisionOverrides = (
     items: NormalizedImportedShot[],
     characterOverrides: Record<string, string>,
@@ -5401,7 +5560,12 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const applyImportedShots = (parsed: { shots?: Array<Record<string, unknown>> }) => {
+  const applyImportedShots = async (parsed: {
+    shots?: Array<Record<string, unknown>>;
+    characters?: Array<Record<string, unknown>>;
+  }) => {
+    const profiles = normalizeImportedCharacterProfiles(parsed);
+    await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
     const normalizedItems = normalizeImportedShots(parsed);
     return applyImportedShotItems(normalizedItems);
   };
@@ -5444,7 +5608,12 @@ export function ComfyPipelinePanel() {
 
   const onImportScript = async () => {
     try {
-      const parsed = JSON.parse(scriptText) as { shots?: Array<Record<string, unknown>> };
+      const parsed = JSON.parse(scriptText) as {
+        shots?: Array<Record<string, unknown>>;
+        characters?: Array<Record<string, unknown>>;
+      };
+      const profiles = normalizeImportedCharacterProfiles(parsed);
+      await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
       const normalized = normalizeImportedShots(parsed);
       const items = applyImportedShotItems(
         applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
@@ -5465,6 +5634,10 @@ export function ComfyPipelinePanel() {
       setScriptText(formatted);
       appendLog(`故事解析成功，共生成 ${parsed.shots.length} 条镜头脚本`);
       if (shouldImport) {
+        const profiles = normalizeImportedCharacterProfiles(parsed as unknown as {
+          characters?: Array<Record<string, unknown>>;
+        });
+        await upsertImportedCharacterAssets(profiles, "故事解析导入", settings);
         const normalized = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
         const items = applyImportedShotItems(
           applyProvisionOverrides(normalized, storyCharacterOverrides, storySkyboxOverrides)
