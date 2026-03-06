@@ -4523,6 +4523,34 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const ensureCharacterWorkflowReady = async (runtimeSettings: ComfySettings) => {
+    const mode = resolveEffectiveAssetWorkflowMode(
+      "character",
+      runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      runtimeSettings.characterWorkflowJson?.trim() ?? ""
+    ) as CharacterAssetWorkflowMode;
+    if (mode !== "advanced_multiview") return;
+    const workflowText = resolveCharacterWorkflowJson(runtimeSettings);
+    const dependencyReport = await inspectWorkflowDependencies(settings.baseUrl, workflowText);
+    if (dependencyReport.missingNodeTypes.length <= 0) return;
+    setLastDependencyHints(dependencyReport.hints);
+    setCharacterWorkflowDiagnostic((previous) =>
+      previous
+        ? {
+            ...previous,
+            dependencyReport
+          }
+        : previous
+    );
+    const hintPlugins =
+      dependencyReport.hints.length > 0
+        ? dependencyReport.hints.map((item) => item.plugin).join("、")
+        : "ComfyUI-MVAdapter";
+    throw new Error(
+      `角色三视图生成前置检查失败：缺少节点 ${dependencyReport.missingNodeTypes.join("、")}；请先安装或启用 ${hintPlugins}。`
+    );
+  };
+
   const buildProvisionItemsFromShots = (items: Shot[]): NormalizedImportedShot[] =>
     items.map((shot) => {
       const prompt = shot.storyPrompt?.trim() ?? "";
@@ -4699,6 +4727,7 @@ export function ComfyPipelinePanel() {
       const orthographicContext = createCharacterOrthographicContext(name);
       const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
       const baseSeed = stableAssetSeed(`${name}|orthographic_threeview|${styleAnchor || "default"}|character`);
+      await ensureCharacterWorkflowReady(runtimeSettings);
       appendLog(`开始生成角色三视图：${name}`);
       appendLog(`角色三视图已与剧情文本解绑，仅按标准正交设定生成：${name}`, "info");
       appendLog(`角色三视图使用专用工作流：${name}`);
