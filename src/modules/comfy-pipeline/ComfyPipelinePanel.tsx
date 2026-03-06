@@ -3469,6 +3469,112 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const analyzeForegroundLayout = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const size = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0, size, size);
+      const data = context.getImageData(0, 0, size, size).data;
+      const gray = new Float32Array(size * size);
+      for (let index = 0, pixel = 0; index < data.length; index += 4, pixel += 1) {
+        gray[pixel] = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+      }
+
+      let borderSum = 0;
+      let borderCount = 0;
+      for (let x = 0; x < size; x += 1) {
+        borderSum += gray[x];
+        borderSum += gray[(size - 1) * size + x];
+        borderCount += 2;
+      }
+      for (let y = 1; y < size - 1; y += 1) {
+        borderSum += gray[y * size];
+        borderSum += gray[y * size + (size - 1)];
+        borderCount += 2;
+      }
+      if (borderCount <= 0) return null;
+      const backgroundGray = borderSum / borderCount;
+      const threshold = 22;
+      const mask = new Uint8Array(size * size);
+      for (let index = 0; index < gray.length; index += 1) {
+        mask[index] = Math.abs(gray[index] - backgroundGray) >= threshold ? 1 : 0;
+      }
+
+      let minX = size;
+      let minY = size;
+      let maxX = -1;
+      let maxY = -1;
+      let foregroundPixels = 0;
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const idx = y * size + x;
+          if (mask[idx] === 0) continue;
+          foregroundPixels += 1;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+      if (foregroundPixels <= 0 || maxX < minX || maxY < minY) return null;
+
+      const visited = new Uint8Array(size * size);
+      const queue = new Int32Array(size * size);
+      const minComponentArea = Math.round(size * size * 0.025);
+      let significantComponents = 0;
+      for (let start = 0; start < mask.length; start += 1) {
+        if (mask[start] === 0 || visited[start] === 1) continue;
+        let area = 0;
+        let head = 0;
+        let tail = 0;
+        visited[start] = 1;
+        queue[tail++] = start;
+        while (head < tail) {
+          const current = queue[head++];
+          area += 1;
+          const x = current % size;
+          const y = Math.floor(current / size);
+          const neighbors = [
+            y > 0 ? current - size : -1,
+            y < size - 1 ? current + size : -1,
+            x > 0 ? current - 1 : -1,
+            x < size - 1 ? current + 1 : -1
+          ];
+          neighbors.forEach((neighbor) => {
+            if (neighbor < 0 || mask[neighbor] === 0 || visited[neighbor] === 1) return;
+            visited[neighbor] = 1;
+            queue[tail++] = neighbor;
+          });
+        }
+        if (area >= minComponentArea) significantComponents += 1;
+      }
+
+      return {
+        significantComponents,
+        touchingEdges: minX <= 2 || minY <= 2 || maxX >= size - 3 || maxY >= size - 3,
+        bbox: {
+          minX,
+          minY,
+          maxX,
+          maxY,
+          widthRatio: (maxX - minX + 1) / size,
+          heightRatio: (maxY - minY + 1) / size
+        },
+        foregroundRatio: foregroundPixels / (size * size)
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const evaluateThreeViewQuality = async (paths: string[]) => {
     const diversity = await detectLowDiversityThreeViews(paths);
     const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
@@ -3479,6 +3585,11 @@ export function ComfyPipelinePanel() {
       frontPath ? computeHorizontalMirrorSimilarity(frontPath) : Promise.resolve(null),
       sidePath ? computeHorizontalMirrorSimilarity(sidePath) : Promise.resolve(null),
       backPath ? computeHorizontalMirrorSimilarity(backPath) : Promise.resolve(null)
+    ]);
+    const [frontLayout, sideLayout, backLayout] = await Promise.all([
+      frontPath ? analyzeForegroundLayout(frontPath) : Promise.resolve(null),
+      sidePath ? analyzeForegroundLayout(sidePath) : Promise.resolve(null),
+      backPath ? analyzeForegroundLayout(backPath) : Promise.resolve(null)
     ]);
     const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
     const avgSharpness =
@@ -3494,7 +3605,26 @@ export function ComfyPipelinePanel() {
     if (typeof backSymmetry === "number" && backSymmetry < 0.72) {
       orientationAlerts.push(`back_not_centered(sym=${backSymmetry.toFixed(2)})`);
     }
-    const lowOrientation = orientationAlerts.length > 0;
+    const layoutAlerts: string[] = [];
+    (
+      [
+        ["front", frontLayout],
+        ["side", sideLayout],
+        ["back", backLayout]
+      ] as const
+    ).forEach(([label, layout]) => {
+      if (!layout) return;
+      if (layout.significantComponents > 1) {
+        layoutAlerts.push(`${label}_multi_blob=${layout.significantComponents}`);
+      }
+      if (layout.touchingEdges) {
+        layoutAlerts.push(`${label}_touching_edge`);
+      }
+      if (layout.bbox.heightRatio < 0.68) {
+        layoutAlerts.push(`${label}_subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
+      }
+    });
+    const lowOrientation = orientationAlerts.length > 0 || layoutAlerts.length > 0;
     const score =
       (avgSharpness ?? 0) +
       (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0) -
@@ -3503,7 +3633,7 @@ export function ComfyPipelinePanel() {
       lowDiversity: diversity.inspected && diversity.lowDiversity,
       lowSharpness,
       lowOrientation,
-      orientationAlerts,
+      orientationAlerts: [...orientationAlerts, ...layoutAlerts],
       symmetry: {
         front: frontSymmetry,
         side: sideSymmetry,
@@ -3537,24 +3667,33 @@ export function ComfyPipelinePanel() {
   };
 
   const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
-    const [sharpness, symmetry] = await Promise.all([
+    const [sharpness, symmetry, layout] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
-      computeHorizontalMirrorSimilarity(pathOrUrl)
+      computeHorizontalMirrorSimilarity(pathOrUrl),
+      analyzeForegroundLayout(pathOrUrl)
     ]);
     const lowSharpness =
       typeof sharpness === "number" && sharpness < CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE;
     const lowSymmetry =
       typeof symmetry === "number" && symmetry < CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY;
+    const layoutIssues = [
+      layout?.significantComponents && layout.significantComponents > 1
+        ? `疑似多主体/多角度(blob=${layout.significantComponents})`
+        : "",
+      layout?.touchingEdges ? "人物贴边或裁切" : "",
+      layout && layout.bbox.heightRatio < 0.68 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : ""
+    ].filter(Boolean);
     const issues = [
       lowSharpness && typeof sharpness === "number" ? `清晰度偏低(min=${sharpness.toFixed(1)})` : "",
-      lowSymmetry && typeof symmetry === "number" ? `正面不够居中(sym=${symmetry.toFixed(2)})` : ""
+      lowSymmetry && typeof symmetry === "number" ? `正面不够居中(sym=${symmetry.toFixed(2)})` : "",
+      ...layoutIssues
     ].filter(Boolean);
     return {
       sharpness,
       symmetry,
       lowSharpness,
       lowSymmetry,
-      acceptable: !lowSharpness && !lowSymmetry,
+      acceptable: !lowSharpness && !lowSymmetry && layoutIssues.length === 0,
       score: (sharpness ?? 0) + (symmetry ?? 0) * 10,
       issues
     };
