@@ -107,7 +107,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, nude, naked, nsfw, underwear, lingerie, bikini, topless, shirtless, bare chest, exposed breasts, exposed nipples";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -134,16 +134,16 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
   stable_fullbody: {
     label: "稳定全身",
     seed: 101001,
-    steps: 28,
-    cfg: 5.5,
-    sampler_name: "euler",
-    scheduler: "normal"
+    steps: 32,
+    cfg: 5.8,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras"
   },
   clean_reference: {
     label: "干净设定",
     seed: 202002,
-    steps: 32,
-    cfg: 6,
+    steps: 36,
+    cfg: 6.2,
     sampler_name: "dpmpp_2m",
     scheduler: "karras"
   }
@@ -368,6 +368,23 @@ function pickFirstAvailableModel(preferred: readonly string[], available: string
   return available[0] ?? null;
 }
 
+function looksLikeSdxlModelName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  if (/sd[_-]?xl/.test(normalized)) return true;
+  if (/animagine[-_]?xl/.test(normalized)) return true;
+  if (/juggernautxl/.test(normalized)) return true;
+  return /(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)/.test(normalized);
+}
+
+function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
+  const isSdxl = looksLikeSdxlModelName(checkpointName);
+  if (preset === "square") {
+    return isSdxl ? { width: 1024, height: 1024 } : { width: 768, height: 768 };
+  }
+  return isSdxl ? { width: 896, height: 1344 } : { width: 704, height: 1024 };
+}
+
 function buildCharacterWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
@@ -378,8 +395,9 @@ function buildCharacterWorkflowTemplateJson(
     template["1"].inputs.ckpt_name = checkpointName;
   }
   if (template["4"]?.inputs) {
-    template["4"].inputs.width = preset === "square" ? 1024 : 832;
-    template["4"].inputs.height = preset === "square" ? 1024 : 1216;
+    const { width, height } = resolveCharacterTemplateSize(checkpointName, preset);
+    template["4"].inputs.width = width;
+    template["4"].inputs.height = height;
   }
   if (template["5"]?.inputs) {
     const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
@@ -1529,7 +1547,7 @@ function loadSettings(): ComfySettings {
       characterAssetModelName: DEFAULT_CHARACTER_ASSET_MODEL,
       skyboxAssetModelName: DEFAULT_SKYBOX_ASSET_MODEL,
       characterTemplatePreset: "portrait",
-      characterRenderPreset: "stable_fullbody",
+      characterRenderPreset: "clean_reference",
       characterBackgroundPreset: "gray",
       skyboxTemplatePreset: "wide",
       skyboxPromptPreset: "day_exterior",
@@ -1625,7 +1643,7 @@ function loadSettings(): ComfySettings {
       characterRenderPreset:
         parsed.characterRenderPreset === "clean_reference" || parsed.characterRenderPreset === "stable_fullbody"
           ? parsed.characterRenderPreset
-          : "stable_fullbody",
+          : "clean_reference",
       characterBackgroundPreset:
         parsed.characterBackgroundPreset === "white" ||
         parsed.characterBackgroundPreset === "studio" ||
@@ -1687,7 +1705,7 @@ function loadSettings(): ComfySettings {
       characterAssetModelName: DEFAULT_CHARACTER_ASSET_MODEL,
       skyboxAssetModelName: DEFAULT_SKYBOX_ASSET_MODEL,
       characterTemplatePreset: "portrait",
-      characterRenderPreset: "stable_fullbody",
+      characterRenderPreset: "clean_reference",
       characterBackgroundPreset: "gray",
       skyboxTemplatePreset: "wide",
       skyboxPromptPreset: "day_exterior",
@@ -3406,6 +3424,9 @@ export function ComfyPipelinePanel() {
       "single panel character reference, no sheet layout, no split layout",
       "full body centered, exactly one person",
       "character occupies about 75% to 90% of frame height",
+      "high quality character design illustration",
+      "clean linework and smooth shading",
+      "natural human proportions, anatomically correct limbs",
       "fully clothed",
       "complete outfit",
       "top, bottom or robe, and shoes clearly visible",
@@ -3445,12 +3466,14 @@ export function ComfyPipelinePanel() {
       "必须与参考正视图为同一角色身份，不允许变成另一个人",
       "不允许在 front/side/back 之间换装、换脸、换发型、换年龄、换体型",
       "禁止裸露、内衣态、泳装态、赤膊",
+      "人体比例自然，头身比协调，肩胯关系合理，四肢长度正常",
+      "手脚结构清楚，不允许手指粘连或肢体扭曲",
       "服装统一且前后侧一致",
       "面部与体型一致",
       view === "front" ? "front-only, not side, not back" : "",
       view === "side" ? "strict side-only, not front, not back, not looking at camera" : "",
       view === "back" ? "strict back-only, no visible face, no looking back, no side face" : "",
-      "写实角色参考图",
+      "illustration style character reference",
       "美术统一"
     ]);
     return `${core}。严格要求：${constraints}。`;
@@ -3469,7 +3492,9 @@ export function ComfyPipelinePanel() {
       "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
     const cropConstraint =
       "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}`;
+    const anatomyConstraint =
+      "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, dislocated joints, extra arms, extra legs, fused fingers, malformed hands, asymmetrical eyes, long neck";
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -3542,12 +3567,12 @@ export function ComfyPipelinePanel() {
         ? buildCharacterAdvancedWorkflowTemplateJson(
             selectedModel,
             runtimeSettings.characterTemplatePreset ?? "portrait",
-            runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+            runtimeSettings.characterRenderPreset ?? "clean_reference"
           )
         : buildCharacterWorkflowTemplateJson(
             selectedModel,
             runtimeSettings.characterTemplatePreset ?? "portrait",
-            runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+            runtimeSettings.characterRenderPreset ?? "clean_reference"
           );
     persistSettings((previous) => ({ ...previous, characterWorkflowJson: builtIn }));
     appendLog(
@@ -3689,7 +3714,7 @@ export function ComfyPipelinePanel() {
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
       runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
       runtimeSettings.characterTemplatePreset ?? "portrait",
-      runtimeSettings.characterRenderPreset ?? "stable_fullbody"
+      runtimeSettings.characterRenderPreset ?? "clean_reference"
     );
     const referenceFront = await generateShotAsset(
       runtimeSettings,
@@ -3862,6 +3887,8 @@ export function ComfyPipelinePanel() {
     const storyboardModel = profile === "sd15" ? ONE_CLICK_SD15_STORYBOARD_MODEL : ONE_CLICK_SDXL_STORYBOARD_MODEL;
     const characterModel = profile === "sd15" ? ONE_CLICK_SD15_CHARACTER_MODEL : ONE_CLICK_SDXL_CHARACTER_MODEL;
     const skyboxModel = profile === "sd15" ? ONE_CLICK_SD15_SKYBOX_MODEL : ONE_CLICK_SDXL_SKYBOX_MODEL;
+    const characterRenderPreset: "stable_fullbody" | "clean_reference" = "clean_reference";
+    const characterTemplatePreset: "portrait" | "square" = "portrait";
     persistSettings((previous) => {
       const previousRoot = previous.comfyRootDir.trim();
       const discoveredRoot = discovered.rootDir.trim();
@@ -3887,10 +3914,12 @@ export function ComfyPipelinePanel() {
         requireDedicatedSkyboxWorkflow: false,
         characterAssetModelName: characterModel,
         skyboxAssetModelName: skyboxModel,
+        characterTemplatePreset,
+        characterRenderPreset,
         characterWorkflowJson: buildCharacterWorkflowTemplateJson(
           characterModel,
-          previous.characterTemplatePreset ?? "portrait",
-          previous.characterRenderPreset ?? "stable_fullbody"
+          characterTemplatePreset,
+          characterRenderPreset
         ),
         skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
           skyboxModel,
@@ -6787,10 +6816,10 @@ export function ComfyPipelinePanel() {
                 characterRenderPreset: event.target.value as "stable_fullbody" | "clean_reference"
               }))
             }
-            value={settings.characterRenderPreset ?? "stable_fullbody"}
+            value={settings.characterRenderPreset ?? "clean_reference"}
           >
-            <option value="stable_fullbody">稳定全身（Euler / 28 steps / cfg 5.5）</option>
-            <option value="clean_reference">干净设定（DPM++ 2M / 32 steps / cfg 6）</option>
+            <option value="stable_fullbody">稳定全身（DPM++ 2M / 32 steps / cfg 5.8）</option>
+            <option value="clean_reference">干净设定（DPM++ 2M / 36 steps / cfg 6.2）</option>
           </select>
         </label>
         <label>
@@ -6831,12 +6860,12 @@ export function ComfyPipelinePanel() {
                     ? buildCharacterAdvancedWorkflowTemplateJson(
                         previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
                         previous.characterTemplatePreset ?? "portrait",
-                        previous.characterRenderPreset ?? "stable_fullbody"
+                        previous.characterRenderPreset ?? "clean_reference"
                       )
                     : buildCharacterWorkflowTemplateJson(
                         previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
                         previous.characterTemplatePreset ?? "portrait",
-                        previous.characterRenderPreset ?? "stable_fullbody"
+                        previous.characterRenderPreset ?? "clean_reference"
                       )
               }));
               appendLog(
@@ -6894,10 +6923,10 @@ export function ComfyPipelinePanel() {
             : `内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 ${DEFAULT_CHARACTER_ASSET_MODEL}；可替换为 realisticVisionV60B1_v51VAE.safetensors 或 animagine-xl-4.0.safetensors。`}
         </div>
         <div className="timeline-meta">
-          当前采样预设：{CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].label} /
-          seed {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].seed} /
-          steps {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].steps} /
-          cfg {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "stable_fullbody"].cfg}
+          当前采样预设：{CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "clean_reference"].label} /
+          seed {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "clean_reference"].seed} /
+          steps {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "clean_reference"].steps} /
+          cfg {CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "clean_reference"].cfg}
         </div>
         <div className="timeline-meta">
           当前背景模板：{settings.characterBackgroundPreset === "white"
