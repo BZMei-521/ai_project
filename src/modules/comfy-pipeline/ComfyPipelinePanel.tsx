@@ -63,7 +63,7 @@ const ONE_CLICK_SD15_STORYBOARD_MODEL = "v1-5-pruned-emaonly-fp16.safetensors";
 const ONE_CLICK_SD15_CHARACTER_MODEL = "v1-5-pruned-emaonly-fp16.safetensors";
 const ONE_CLICK_SD15_SKYBOX_MODEL = "dreamshaper_8.safetensors";
 const ONE_CLICK_SDXL_STORYBOARD_MODEL = "animagine-xl-4.0.safetensors";
-const ONE_CLICK_SDXL_CHARACTER_MODEL = "animagine-xl-4.0.safetensors";
+const ONE_CLICK_SDXL_CHARACTER_MODEL = "sd_xl_base_1.0.safetensors";
 const ONE_CLICK_SDXL_SKYBOX_MODEL = "sd_xl_base_1.0.safetensors";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
   "v1-5-pruned-emaonly-fp16.safetensors",
@@ -380,6 +380,13 @@ function looksLikeSdxlModelName(name: string): boolean {
   return /(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)/.test(normalized);
 }
 
+function resolveMvAdapterCharacterModel(requestedModel: string): string {
+  const normalized = requestedModel.trim().toLowerCase();
+  if (!normalized) return DEFAULT_CHARACTER_ASSET_MODEL;
+  if (normalized === DEFAULT_CHARACTER_ASSET_MODEL.toLowerCase()) return DEFAULT_CHARACTER_ASSET_MODEL;
+  return DEFAULT_CHARACTER_ASSET_MODEL;
+}
+
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
   const isSdxl = looksLikeSdxlModelName(checkpointName);
   if (preset === "square") {
@@ -433,7 +440,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
     const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
     // MVAdapter self-attention assumes square token grids (ih == iw).
     // Non-square sizes like 832x1216 can trigger einops rearrange failures.
-    const side = preset === "square" ? 1024 : 896;
+    const side = 1024;
     template["7"].inputs.num_views = 1;
     template["7"].inputs.width = side;
     template["7"].inputs.height = side;
@@ -3557,16 +3564,18 @@ export function ComfyPipelinePanel() {
         if (area >= minComponentArea) significantComponents += 1;
       }
 
+      const widthRatio = (maxX - minX + 1) / size;
+      const heightRatio = (maxY - minY + 1) / size;
       return {
         significantComponents,
-        touchingEdges: minX <= 2 || minY <= 2 || maxX >= size - 3 || maxY >= size - 3,
+        touchingEdges: minX <= 2 || minY <= 2 || maxX >= size - 3 || (maxY >= size - 2 && heightRatio > 0.92),
         bbox: {
           minX,
           minY,
           maxX,
           maxY,
-          widthRatio: (maxX - minX + 1) / size,
-          heightRatio: (maxY - minY + 1) / size
+          widthRatio,
+          heightRatio
         },
         foregroundRatio: foregroundPixels / (size * size)
       };
@@ -3778,7 +3787,9 @@ export function ComfyPipelinePanel() {
       "flat camera, eye-level camera, centered framing",
       "single panel character reference, no sheet layout, no split layout",
       "full body centered, exactly one person",
-      "character occupies about 75% to 90% of frame height",
+      "character occupies about 62% to 78% of frame height",
+      "clear margin around head, hands, feet, and hair",
+      "leave visible blank background on all four sides",
       "high quality character design illustration",
       "clean linework and smooth cel shading",
       "plain studio setup, even lighting, no dramatic rim light",
@@ -3976,14 +3987,11 @@ export function ComfyPipelinePanel() {
       existing ?? ""
     ) as CharacterAssetWorkflowMode;
     const requestedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
-    const selectedModel =
-      mode === "advanced_multiview" && !looksLikeSdxlModelName(requestedModel)
-        ? ONE_CLICK_SDXL_CHARACTER_MODEL
-        : requestedModel;
+    const selectedModel = mode === "advanced_multiview" ? resolveMvAdapterCharacterModel(requestedModel) : requestedModel;
     if (mode === "advanced_multiview" && selectedModel !== requestedModel) {
       persistSettings((previous) => ({ ...previous, characterAssetModelName: selectedModel }));
       appendLog(
-        `检测到高级 MVAdapter 三视图模式使用了非 SDXL 模型（${requestedModel}），已自动切换为 ${selectedModel}`,
+        `检测到角色三视图使用了与 MVAdapter 几何不稳定的模型（${requestedModel}），已强制切换为 ${selectedModel}`,
         "info"
       );
     }
@@ -4056,9 +4064,7 @@ export function ComfyPipelinePanel() {
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
     const requestedCharacterModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
     const characterModelForWorkflow =
-      mode === "advanced_multiview" && !looksLikeSdxlModelName(requestedCharacterModel)
-        ? ONE_CLICK_SDXL_CHARACTER_MODEL
-        : requestedCharacterModel;
+      mode === "advanced_multiview" ? resolveMvAdapterCharacterModel(requestedCharacterModel) : requestedCharacterModel;
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       [
@@ -4331,7 +4337,7 @@ export function ComfyPipelinePanel() {
     const characterModel = ONE_CLICK_SDXL_CHARACTER_MODEL;
     const skyboxModel = profile === "sd15" ? ONE_CLICK_SD15_SKYBOX_MODEL : ONE_CLICK_SDXL_SKYBOX_MODEL;
     const characterRenderPreset: "stable_fullbody" | "clean_reference" = "clean_reference";
-    const characterTemplatePreset: "portrait" | "square" = "portrait";
+    const characterTemplatePreset: "portrait" | "square" = "square";
     persistSettings((previous) => {
       const previousRoot = previous.comfyRootDir.trim();
       const discoveredRoot = discovered.rootDir.trim();
