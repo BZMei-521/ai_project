@@ -6,12 +6,44 @@ import {
   generateSkyboxFaces,
   type ComfySettings
 } from "../comfy-pipeline/comfyService";
+import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-threeview-default.json";
+import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-mvadapter-default.json";
+import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
+import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-panorama-default.json";
 import { useStoryboardStore } from "../storyboard-core/store";
 import type { AssetType, Shot, SkyboxFace } from "../storyboard-core/types";
 import { confirmDialog } from "../ui/dialogStore";
 import { pushToast } from "../ui/toastStore";
 
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
+const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
+const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_VAE = "sdxl.vae.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_ADAPTER = "mvadapter_i2mv_sdxl_beta.safetensors";
+const DEFAULT_SKYBOX_LORA = "View360.safetensors";
+const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes";
+
+type CharacterAssetWorkflowMode = "advanced_multiview";
+type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
+
+const CHARACTER_RENDER_PRESET_CONFIG: Record<
+  "stable_fullbody" | "clean_reference",
+  { steps: number; cfg: number; sampler_name: string; scheduler: string }
+> = {
+  stable_fullbody: {
+    steps: 30,
+    cfg: 5.4,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras"
+  },
+  clean_reference: {
+    steps: 34,
+    cfg: 5.6,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras"
+  }
+};
 
 const SKYBOX_FACES: SkyboxFace[] = ["front", "right", "back", "left", "up", "down"];
 
@@ -19,7 +51,124 @@ function normalizeStoryInput(raw: string): string {
   return raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, " ").trim();
 }
 
-function makeAssetGenerationShot(sequenceId: string, id: string, title: string, prompt: string): Shot {
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function looksLikeSdxlCheckpoint(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /sd[_-]?xl|animagine[-_]?xl|juggernautxl|(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)/.test(normalized);
+}
+
+function resolveMvAdapterCharacterModel(name: string): string {
+  return looksLikeSdxlCheckpoint(name) ? name : DEFAULT_CHARACTER_ASSET_MODEL;
+}
+
+function resolveCharacterTemplateSize(
+  checkpointName: string,
+  preset: "portrait" | "square"
+): { width: number; height: number } {
+  const isSdxl = looksLikeSdxlCheckpoint(checkpointName);
+  if (preset === "square") {
+    return isSdxl ? { width: 1024, height: 1024 } : { width: 832, height: 832 };
+  }
+  return isSdxl ? { width: 896, height: 1344 } : { width: 768, height: 1152 };
+}
+
+function buildCharacterWorkflowTemplateJson(
+  checkpointName: string,
+  preset: "portrait" | "square",
+  renderPreset: "stable_fullbody" | "clean_reference"
+): string {
+  const template = cloneJson(CHARACTER_THREEVIEW_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
+  if (template["4"]?.inputs) {
+    const { width, height } = resolveCharacterTemplateSize(checkpointName, preset);
+    template["4"].inputs.width = width;
+    template["4"].inputs.height = height;
+  }
+  if (template["5"]?.inputs) {
+    const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+    template["5"].inputs.seed = "{{SEED}}";
+    template["5"].inputs.steps = config.steps;
+    template["5"].inputs.cfg = config.cfg;
+    template["5"].inputs.sampler_name = config.sampler_name;
+    template["5"].inputs.scheduler = config.scheduler;
+  }
+  return JSON.stringify(template, null, 2);
+}
+
+function buildCharacterAdvancedWorkflowTemplateJson(
+  checkpointName: string,
+  renderPreset: "stable_fullbody" | "clean_reference"
+): string {
+  const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
+  if (template["3"]?.inputs) {
+    template["3"].inputs.vae_name = DEFAULT_CHARACTER_ADVANCED_VAE;
+  }
+  if (template["4"]?.inputs) {
+    template["4"].inputs.num_views = 1;
+    template["4"].inputs.adapter_name = DEFAULT_CHARACTER_ADVANCED_ADAPTER;
+  }
+  if (template["7"]?.inputs) {
+    const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+    template["7"].inputs.num_views = 1;
+    template["7"].inputs.width = 1024;
+    template["7"].inputs.height = 1024;
+    template["7"].inputs.steps = config.steps;
+    template["7"].inputs.cfg = config.cfg;
+  }
+  return JSON.stringify(template, null, 2);
+}
+
+function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
+  const template = cloneJson(SKYBOX_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
+  if (template["4"]?.inputs) {
+    template["4"].inputs.width = preset === "square" ? 1024 : 1600;
+    template["4"].inputs.height = preset === "square" ? 1024 : 900;
+  }
+  return JSON.stringify(template, null, 2);
+}
+
+function buildSkyboxPanoramaWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
+  const template = cloneJson(SKYBOX_PANORAMA_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  const width = preset === "square" ? 1536 : 1920;
+  const height = Math.max(512, Math.round(width / 2));
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = checkpointName;
+  }
+  if (template["2"]?.inputs) {
+    template["2"].inputs.lora_name = DEFAULT_SKYBOX_LORA;
+  }
+  if (template["7"]?.inputs) {
+    template["7"].inputs.width = width;
+    template["7"].inputs.height = height;
+  }
+  for (const nodeId of ["11", "13", "15", "17", "19", "21"]) {
+    if (template[nodeId]?.inputs) {
+      template[nodeId].inputs.face_width = height;
+    }
+  }
+  return JSON.stringify(template, null, 2);
+}
+
+function makeAssetGenerationShot(
+  sequenceId: string,
+  id: string,
+  title: string,
+  prompt: string,
+  negativePrompt = "",
+  seed?: number
+): Shot {
   return {
     id,
     sequenceId,
@@ -30,17 +179,69 @@ function makeAssetGenerationShot(sequenceId: string, id: string, title: string, 
     notes: "",
     tags: [],
     storyPrompt: prompt,
-    negativePrompt: "",
+    negativePrompt,
     videoPrompt: "",
     videoMode: "single_frame",
     characterRefs: [],
-    sceneRefId: ""
+    sceneRefId: "",
+    seed
   };
 }
 
 function buildCharacterViewPrompt(name: string, context: string, view: "front" | "side" | "back") {
-  const viewLabel = view === "front" ? "正视图" : view === "side" ? "侧视图" : "背视图";
-  return `角色设定三视图，${viewLabel}，单人全身，角色：${name}。${normalizeStoryInput(context)}。中性纯净背景，人物完整无遮挡，服装统一，脸部与身体比例稳定，设定图风格，写实电影美术。`;
+  const viewLabel = view === "front" ? "正视图" : view === "side" ? "标准右侧视图" : "背视图";
+  const viewConstraint =
+    view === "front"
+      ? "strict front orthographic view, facing camera, shoulders level, feet parallel"
+      : view === "side"
+        ? "strict right profile orthographic view, nose points right, only one eye visible, shoulders and hips stacked in profile"
+        : "strict back orthographic view, facing away from camera, no visible face, shoulders level";
+  return [
+    `角色设定三视图，${viewLabel}，单人全身，角色：${name}。`,
+    normalizeStoryInput(context),
+    "设定板用途，标准正交视角，完整服装，完整鞋靴，头顶到脚底完整入镜。",
+    "中性站姿，双臂自然下垂且略微离开身体，双腿自然站立，禁止剧情动作和时装摆拍。",
+    "纯净中性背景，无道具，无环境叙事，无其他人物，无拼版，无分屏。",
+    "同一角色身份稳定，脸型、发型、体型、服装款式与配色必须一致。",
+    viewConstraint
+  ].join(" ");
+}
+
+function buildCharacterViewNegativePrompt(view: "front" | "side" | "back", baseNegativePrompt: string) {
+  const viewConstraint =
+    view === "front"
+      ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
+      : view === "side"
+        ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, visible far eye, both eyes frontal, frontal shoulders, frontal chest, over shoulder"
+        : "front view, facing camera, side profile, looking back, face visible, over shoulder, three quarter back view";
+  return [
+    baseNegativePrompt,
+    viewConstraint,
+    "two characters, two bodies, clone, mirrored twin, duplicate body, split composition, character sheet layout, turnaround sheet, collage",
+    "close-up portrait, bust shot, upper body only, cowboy shot, cropped body, cut off head, cut off feet, oversized subject",
+    "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra arms, extra legs, malformed hands, fused fingers",
+    "crossed arms, folded arms, hands behind back, hands in pockets, leaning pose, contrapposto, runway pose, bent knee, tilted shoulders, tilted hips",
+    "dramatic perspective, foreshortening, fisheye, dutch angle, low angle shot, high angle shot, scene background clutter"
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(", ");
+}
+
+function buildCharacterViewSelectionTokenOverrides(
+  view: "front" | "side" | "back",
+  frameImagePath: string,
+  negativePrompt: string
+) {
+  return {
+    FRAME_IMAGE_PATH: frameImagePath,
+    NEGATIVE_PROMPT: negativePrompt,
+    CHARACTER_FRONT_VIEW: view === "front" ? "true" : "false",
+    CHARACTER_FRONT_RIGHT_VIEW: "false",
+    CHARACTER_RIGHT_VIEW: view === "side" ? "true" : "false",
+    CHARACTER_BACK_VIEW: view === "back" ? "true" : "false",
+    CHARACTER_LEFT_VIEW: "false",
+    CHARACTER_FRONT_LEFT_VIEW: "false"
+  };
 }
 
 function loadComfySettingsFromLocalStorage(): ComfySettings | null {
@@ -48,14 +249,97 @@ function loadComfySettingsFromLocalStorage(): ComfySettings | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<ComfySettings>;
-    if (!parsed.baseUrl || !parsed.imageWorkflowJson) return null;
+    if (!parsed.baseUrl) return null;
+    const characterAssetWorkflowMode: CharacterAssetWorkflowMode = "advanced_multiview";
+    const skyboxAssetWorkflowMode: SkyboxAssetWorkflowMode =
+      parsed.skyboxAssetWorkflowMode === "advanced_panorama" ? "advanced_panorama" : "basic_builtin";
+    const characterTemplatePreset =
+      parsed.characterTemplatePreset === "square" || parsed.characterTemplatePreset === "portrait"
+        ? parsed.characterTemplatePreset
+        : "square";
+    const characterRenderPreset =
+      parsed.characterRenderPreset === "stable_fullbody" || parsed.characterRenderPreset === "clean_reference"
+        ? parsed.characterRenderPreset
+        : "clean_reference";
+    const skyboxTemplatePreset =
+      parsed.skyboxTemplatePreset === "square" || parsed.skyboxTemplatePreset === "wide"
+        ? parsed.skyboxTemplatePreset
+        : "wide";
+    const requestedCharacterModel =
+      typeof parsed.characterAssetModelName === "string" && parsed.characterAssetModelName.trim()
+        ? parsed.characterAssetModelName.trim()
+        : DEFAULT_CHARACTER_ASSET_MODEL;
+    const characterAssetModelName = resolveMvAdapterCharacterModel(requestedCharacterModel);
+    const skyboxAssetModelName =
+      typeof parsed.skyboxAssetModelName === "string" && parsed.skyboxAssetModelName.trim()
+        ? parsed.skyboxAssetModelName.trim()
+        : DEFAULT_SKYBOX_ASSET_MODEL;
+    const characterWorkflowJson =
+      typeof parsed.characterWorkflowJson === "string" && parsed.characterWorkflowJson.trim()
+        ? parsed.characterWorkflowJson
+        : buildCharacterAdvancedWorkflowTemplateJson(characterAssetModelName, characterRenderPreset);
+    const skyboxWorkflowJson =
+      typeof parsed.skyboxWorkflowJson === "string" && parsed.skyboxWorkflowJson.trim()
+        ? parsed.skyboxWorkflowJson
+        : skyboxAssetWorkflowMode === "advanced_panorama"
+          ? buildSkyboxPanoramaWorkflowTemplateJson(skyboxAssetModelName, skyboxTemplatePreset)
+          : buildSkyboxWorkflowTemplateJson(skyboxAssetModelName, skyboxTemplatePreset);
     return {
       baseUrl: parsed.baseUrl,
       outputDir: parsed.outputDir ?? "",
       comfyInputDir: parsed.comfyInputDir ?? "",
       comfyRootDir: parsed.comfyRootDir ?? "",
       imageWorkflowJson: parsed.imageWorkflowJson ?? "",
+      storyboardImageWorkflowMode:
+        parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
+          ? parsed.storyboardImageWorkflowMode
+          : "mature_asset_guided",
+      storyboardImageModelName: parsed.storyboardImageModelName ?? DEFAULT_CHARACTER_ASSET_MODEL,
       videoWorkflowJson: parsed.videoWorkflowJson ?? parsed.imageWorkflowJson ?? "",
+      characterWorkflowJson,
+      skyboxWorkflowJson,
+      characterAssetWorkflowMode,
+      skyboxAssetWorkflowMode,
+      requireDedicatedCharacterWorkflow:
+        typeof parsed.requireDedicatedCharacterWorkflow === "boolean" ? parsed.requireDedicatedCharacterWorkflow : true,
+      requireDedicatedSkyboxWorkflow:
+        typeof parsed.requireDedicatedSkyboxWorkflow === "boolean" ? parsed.requireDedicatedSkyboxWorkflow : true,
+      characterAssetModelName,
+      skyboxAssetModelName,
+      characterTemplatePreset,
+      characterRenderPreset,
+      characterBackgroundPreset:
+        parsed.characterBackgroundPreset === "white" ||
+        parsed.characterBackgroundPreset === "gray" ||
+        parsed.characterBackgroundPreset === "studio"
+          ? parsed.characterBackgroundPreset
+          : "gray",
+      skyboxTemplatePreset,
+      skyboxPromptPreset:
+        parsed.skyboxPromptPreset === "night_exterior" ||
+        parsed.skyboxPromptPreset === "interior" ||
+        parsed.skyboxPromptPreset === "day_exterior"
+          ? parsed.skyboxPromptPreset
+          : "day_exterior",
+      skyboxNegativePreset:
+        parsed.skyboxNegativePreset === "night_exterior" ||
+        parsed.skyboxNegativePreset === "interior" ||
+        parsed.skyboxNegativePreset === "day_exterior"
+          ? parsed.skyboxNegativePreset
+          : "day_exterior",
+      characterAssetNegativePrompt:
+        typeof parsed.characterAssetNegativePrompt === "string"
+          ? parsed.characterAssetNegativePrompt
+          : DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+      skyboxAssetNegativePrompt: typeof parsed.skyboxAssetNegativePrompt === "string" ? parsed.skyboxAssetNegativePrompt : "",
+      audioWorkflowJson: typeof parsed.audioWorkflowJson === "string" ? parsed.audioWorkflowJson : "",
+      soundWorkflowJson: typeof parsed.soundWorkflowJson === "string" ? parsed.soundWorkflowJson : "",
+      globalVisualStylePrompt: typeof parsed.globalVisualStylePrompt === "string" ? parsed.globalVisualStylePrompt : "",
+      globalStyleNegativePrompt: typeof parsed.globalStyleNegativePrompt === "string" ? parsed.globalStyleNegativePrompt : "",
+      videoGenerationMode: parsed.videoGenerationMode ?? "comfy",
+      renderWidth: typeof parsed.renderWidth === "number" ? parsed.renderWidth : undefined,
+      renderHeight: typeof parsed.renderHeight === "number" ? parsed.renderHeight : undefined,
+      renderFps: typeof parsed.renderFps === "number" ? parsed.renderFps : undefined,
       tokenMapping: {
         ...DEFAULT_TOKEN_MAPPING,
         ...(parsed.tokenMapping ?? {})
@@ -138,31 +422,66 @@ export function AssetPanel() {
     try {
       setBusy(true);
       const batchId = Date.now();
+      const characterModel = resolveMvAdapterCharacterModel(
+        comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+      );
+      const characterRenderPreset = comfySettings.characterRenderPreset ?? "clean_reference";
+      const characterTemplatePreset = comfySettings.characterTemplatePreset ?? "square";
+      const baseNegativePrompt = comfySettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
+      const referenceWorkflow = buildCharacterWorkflowTemplateJson(
+        characterModel,
+        characterTemplatePreset,
+        characterRenderPreset
+      );
+      const advancedWorkflow =
+        comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterModel, characterRenderPreset);
       const front = await generateShotAsset(
         comfySettings,
         makeAssetGenerationShot(
           currentSequenceId,
           `asset_panel_char_${batchId}_front`,
           `${trimmedName} 正视图`,
-          buildCharacterViewPrompt(trimmedName, context, "front")
+          buildCharacterViewPrompt(trimmedName, context, "front"),
+          buildCharacterViewNegativePrompt("front", baseNegativePrompt),
+          batchId
         ),
         0,
         "image",
         [],
-        []
+        [],
+        {
+          workflowJsonOverride: referenceWorkflow,
+          tokenOverrides: {
+            NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", baseNegativePrompt)
+          }
+        }
       );
+      const frontPath = front.localPath || front.previewUrl;
+      if (!frontPath) {
+        throw new Error("角色正视参考图生成成功，但没有可用输出路径");
+      }
       const side = await generateShotAsset(
         comfySettings,
         makeAssetGenerationShot(
           currentSequenceId,
           `asset_panel_char_${batchId}_side`,
           `${trimmedName} 侧视图`,
-          buildCharacterViewPrompt(trimmedName, context, "side")
+          buildCharacterViewPrompt(trimmedName, context, "side"),
+          buildCharacterViewNegativePrompt("side", baseNegativePrompt),
+          batchId + 101
         ),
         0,
         "image",
         [],
-        []
+        [],
+        {
+          workflowJsonOverride: advancedWorkflow,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
+            "side",
+            frontPath,
+            buildCharacterViewNegativePrompt("side", baseNegativePrompt)
+          )
+        }
       );
       const back = await generateShotAsset(
         comfySettings,
@@ -170,18 +489,28 @@ export function AssetPanel() {
           currentSequenceId,
           `asset_panel_char_${batchId}_back`,
           `${trimmedName} 背视图`,
-          buildCharacterViewPrompt(trimmedName, context, "back")
+          buildCharacterViewPrompt(trimmedName, context, "back"),
+          buildCharacterViewNegativePrompt("back", baseNegativePrompt),
+          batchId + 202
         ),
         0,
         "image",
         [],
-        []
+        [],
+        {
+          workflowJsonOverride: advancedWorkflow,
+          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
+            "back",
+            frontPath,
+            buildCharacterViewNegativePrompt("back", baseNegativePrompt)
+          )
+        }
       );
       setFrontPath(front.localPath || front.previewUrl);
       setSidePath(side.localPath || side.previewUrl);
       setBackPath(back.localPath || back.previewUrl);
       setFilePath(front.localPath || front.previewUrl);
-      pushToast("角色三视图生成完成", "success");
+      pushToast("角色三视图生成完成，已按参考正视图约束侧视图和背视图", "success");
     } catch (error) {
       pushToast(`角色三视图生成失败：${String(error)}`, "error");
     } finally {
