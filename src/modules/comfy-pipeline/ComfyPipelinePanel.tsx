@@ -3400,7 +3400,15 @@ export function ComfyPipelinePanel() {
       hammingDistance64(sideHash, backHash)
     ];
     const nearDuplicatePairs = distances.filter((distance) => distance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD).length;
-    const lowDiversity = nearDuplicatePairs >= 2 || Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 4;
+    const [frontSideDistance, frontBackDistance, sideBackDistance] = distances;
+    const strictOrientationGapTooSmall =
+      frontSideDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 6 ||
+      frontBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 8 ||
+      sideBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 4;
+    const lowDiversity =
+      nearDuplicatePairs >= 2 ||
+      Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 4 ||
+      strictOrientationGapTooSmall;
     return { inspected: true, lowDiversity, distances };
   };
 
@@ -3444,21 +3452,84 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const computeHorizontalMirrorSimilarity = async (pathOrUrl: string): Promise<number | null> => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const size = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0, size, size);
+      const data = context.getImageData(0, 0, size, size).data;
+      const gray = new Float32Array(size * size);
+      for (let index = 0, pixel = 0; index < data.length; index += 4, pixel += 1) {
+        gray[pixel] = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+      }
+      let diffSum = 0;
+      let count = 0;
+      for (let y = 0; y < size; y += 1) {
+        const rowOffset = y * size;
+        for (let x = 0; x < Math.floor(size / 2); x += 1) {
+          const left = gray[rowOffset + x];
+          const right = gray[rowOffset + (size - 1 - x)];
+          diffSum += Math.abs(left - right);
+          count += 1;
+        }
+      }
+      if (count <= 0) return null;
+      const meanDiff = diffSum / count;
+      const similarity = 1 - meanDiff / 255;
+      return Math.max(0, Math.min(1, similarity));
+    } catch {
+      return null;
+    }
+  };
+
   const evaluateThreeViewQuality = async (paths: string[]) => {
     const diversity = await detectLowDiversityThreeViews(paths);
     const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
       (value): value is number => typeof value === "number" && Number.isFinite(value)
     );
+    const [frontPath, sidePath, backPath] = paths.slice(0, 3);
+    const [frontSymmetry, sideSymmetry, backSymmetry] = await Promise.all([
+      frontPath ? computeHorizontalMirrorSimilarity(frontPath) : Promise.resolve(null),
+      sidePath ? computeHorizontalMirrorSimilarity(sidePath) : Promise.resolve(null),
+      backPath ? computeHorizontalMirrorSimilarity(backPath) : Promise.resolve(null)
+    ]);
     const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
     const avgSharpness =
       sharpnessValues.length > 0 ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length : null;
     const lowSharpness = typeof minSharpness === "number" && minSharpness < CHARACTER_VIEW_MIN_SHARPNESS_SCORE;
+    const orientationAlerts: string[] = [];
+    if (typeof frontSymmetry === "number" && frontSymmetry < 0.66) {
+      orientationAlerts.push(`front_symmetry_low=${frontSymmetry.toFixed(2)}`);
+    }
+    if (typeof sideSymmetry === "number" && sideSymmetry > 0.8) {
+      orientationAlerts.push(`side_not_profile(sym=${sideSymmetry.toFixed(2)})`);
+    }
+    if (typeof backSymmetry === "number" && backSymmetry < 0.72) {
+      orientationAlerts.push(`back_not_centered(sym=${backSymmetry.toFixed(2)})`);
+    }
+    const lowOrientation = orientationAlerts.length > 0;
     const score =
       (avgSharpness ?? 0) +
-      (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0);
+      (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0) -
+      (lowOrientation ? 8 : 0);
     return {
       lowDiversity: diversity.inspected && diversity.lowDiversity,
       lowSharpness,
+      lowOrientation,
+      orientationAlerts,
+      symmetry: {
+        front: frontSymmetry,
+        side: sideSymmetry,
+        back: backSymmetry
+      },
       minSharpness,
       avgSharpness,
       distances: diversity.distances,
@@ -3916,10 +3987,10 @@ export function ComfyPipelinePanel() {
         (value): value is string => Boolean(value)
       );
       const firstQuality = await evaluateThreeViewQuality(firstPaths);
-      if (!firstQuality.lowDiversity && !firstQuality.lowSharpness) return first;
+      if (!firstQuality.lowDiversity && !firstQuality.lowSharpness && !firstQuality.lowOrientation) return first;
 
       appendLog(
-        `检测到三视图质量不稳定（${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && firstQuality.lowSharpness ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}），自动重试一次：${name}`,
+        `检测到三视图质量不稳定（${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && (firstQuality.lowSharpness || firstQuality.lowOrientation) ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}${firstQuality.lowSharpness && firstQuality.lowOrientation ? " / " : ""}${firstQuality.lowOrientation ? `视角异常 ${firstQuality.orientationAlerts.join("|")}` : ""}），自动重试一次：${name}`,
         "info"
       );
       const second = await runBasicThreeViews(workflowJsonOverride, seedBase + 7331);
@@ -4025,11 +4096,11 @@ export function ComfyPipelinePanel() {
       ].filter((value): value is string => Boolean(value));
       const firstQuality = await evaluateThreeViewQuality(firstPaths);
       const firstIncomplete = firstPaths.length < 3;
-      const firstUnstable = firstIncomplete || firstQuality.lowDiversity || firstQuality.lowSharpness;
+      const firstUnstable = firstIncomplete || firstQuality.lowDiversity || firstQuality.lowSharpness || firstQuality.lowOrientation;
       if (!firstUnstable) return first;
 
       appendLog(
-        `检测到 MVAdapter 三视图质量不稳定（${firstIncomplete ? "输出数量不足" : ""}${firstIncomplete && (firstQuality.lowDiversity || firstQuality.lowSharpness) ? " / " : ""}${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && firstQuality.lowSharpness ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}），自动重试一次：${name}`,
+        `检测到 MVAdapter 三视图质量不稳定（${firstIncomplete ? "输出数量不足" : ""}${firstIncomplete && (firstQuality.lowDiversity || firstQuality.lowSharpness || firstQuality.lowOrientation) ? " / " : ""}${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && (firstQuality.lowSharpness || firstQuality.lowOrientation) ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(firstQuality.lowSharpness || firstQuality.lowDiversity) && firstQuality.lowOrientation ? " / " : ""}${firstQuality.lowOrientation ? `视角异常 ${firstQuality.orientationAlerts.join("|")}` : ""}），自动重试一次：${name}`,
         "info"
       );
       const second = await runAdvancedThreeViews(seedBase + 7331);
@@ -4492,19 +4563,22 @@ export function ComfyPipelinePanel() {
         const qualityCheck = await evaluateThreeViewQuality(threeViewPaths);
         const hasLowVisualDiversity = qualityCheck.lowDiversity;
         const hasLowVisualSharpness = qualityCheck.lowSharpness;
+        const hasLowOrientation = qualityCheck.lowOrientation;
         const shouldForceRegenerate =
           (strictAdvancedMode &&
             (threeViewPaths.length < 3 ||
               !hasDistinctThreeViews ||
               hasLegacyBasicPrefix ||
               hasLowVisualDiversity ||
-              hasLowVisualSharpness)) ||
+              hasLowVisualSharpness ||
+              hasLowOrientation)) ||
           (!strictAdvancedMode &&
             (threeViewPaths.length < 3 ||
               !hasDistinctThreeViews ||
               hasLegacyMvPrefix ||
               hasLowVisualDiversity ||
-              hasLowVisualSharpness));
+              hasLowVisualSharpness ||
+              hasLowOrientation));
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
@@ -4522,6 +4596,9 @@ export function ComfyPipelinePanel() {
             `检测到角色三视图清晰度偏低（min=${(qualityCheck.minSharpness ?? 0).toFixed(1)}），已自动重建：${name}`,
             "info"
           );
+        }
+        if (hasLowOrientation) {
+          appendLog(`检测到角色三视图角度异常（${qualityCheck.orientationAlerts.join("|")}），已自动重建：${name}`, "info");
         }
         appendLog(`检测到旧版或异常角色三视图资产，已自动重建：${name}`, "info");
       }
