@@ -162,6 +162,15 @@ function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
   );
 }
 
+function workflowContainsWanSamplerNodes(workflowJson: string): boolean {
+  const trimmed = workflowJson.trim();
+  if (!trimmed) return false;
+  const normalized = trimmed.replace(/\s+/g, "").toLowerCase();
+  if (normalized.includes("wanmoeksampler")) return true;
+  const nodeTypes = collectWorkflowNodeTypesForHeuristics(trimmed).map((item) => item.toLowerCase());
+  return nodeTypes.some((item) => item.includes("wan") || item.includes("moeksampler"));
+}
+
 function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
   if (mode === "advanced_multiview") {
     return {
@@ -1595,6 +1604,7 @@ function loadSettings(): ComfySettings {
       resolvedStoryboardMode === "mature_asset_guided" &&
       (!parsedImageWorkflowJson.trim() ||
         isLegacyMixedStoryboardImageWorkflow(parsedImageWorkflowJson) ||
+        workflowContainsWanSamplerNodes(parsedImageWorkflowJson) ||
         workflowLooksLikeBuiltinStoryboardImageWorkflow(parsedImageWorkflowJson));
     const resolvedImageWorkflowJson =
       shouldUpgradeStoryboardWorkflow
@@ -5848,6 +5858,20 @@ export function ComfyPipelinePanel() {
         persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON }));
         appendLog("检测到旧版混合 Wan 分镜图工作流，已自动切换为内置成熟分镜模板", "info");
         pushToast("已将旧版重型分镜图工作流切换为内置成熟分镜模板", "warning");
+      }
+      if (workflowContainsWanSamplerNodes(runtimeSettings.imageWorkflowJson)) {
+        runtimeSettings = {
+          ...runtimeSettings,
+          storyboardImageWorkflowMode: "mature_asset_guided",
+          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        };
+        persistSettings((previous) => ({
+          ...previous,
+          storyboardImageWorkflowMode: "mature_asset_guided",
+          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        }));
+        appendLog("检测到 WanMoeKSampler/Wan 节点（高显存 3D 采样），已自动切换为内置成熟分镜模板以避免 OOM", "info");
+        pushToast("检测到 Wan 工作流并已自动切换为成熟分镜模板", "warning");
       }
       if (!runtimeSettings.imageWorkflowJson.trim()) {
         const fallbackWorkflow =
