@@ -151,6 +151,8 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
+const SKYBOX_MIN_SHARPNESS_SCORE = 14;
+const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
 
 function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
   const normalized = workflowJson.replace(/\s+/g, "");
@@ -3464,6 +3466,26 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const evaluateImageSharpnessQuality = async (paths: string[], minSharpnessThreshold: number) => {
+    const targets = paths.map((item) => item.trim()).filter((item) => item.length > 0);
+    const sharpnessValues = (await Promise.all(targets.map((path) => computeImageSharpnessScore(path)))).filter(
+      (value): value is number => typeof value === "number" && Number.isFinite(value)
+    );
+    const inspected = sharpnessValues.length > 0;
+    const minSharpness = inspected ? Math.min(...sharpnessValues) : null;
+    const avgSharpness = inspected
+      ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length
+      : null;
+    return {
+      inspected,
+      inspectedCount: sharpnessValues.length,
+      minSharpness,
+      avgSharpness,
+      lowSharpness: typeof minSharpness === "number" && minSharpness < minSharpnessThreshold,
+      score: avgSharpness ?? 0
+    };
+  };
+
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
     id,
     sequenceId: currentSequenceId,
@@ -3491,21 +3513,47 @@ export function ComfyPipelinePanel() {
       .replace(/\s{2,}/g, " ")
       .trim();
 
+  const normalizeStyleAnchor = (value: string) =>
+    normalizeStoryInput(value)
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+  const resolvePipelineVisualStyleHint = () => {
+    const modelName = (
+      settings.storyboardImageModelName?.trim() ||
+      settings.characterAssetModelName?.trim() ||
+      settings.skyboxAssetModelName?.trim() ||
+      ""
+    ).toLowerCase();
+    if (
+      /(animagine|anime|anything|abyss|awpainting|cardos|neta|yume|anima|pencil|illustration|cartoon)/.test(modelName)
+    ) {
+      return "二次元插画风，线稿清晰，平滑上色";
+    }
+    if (/(realistic|vision|majicmix|dreamshaper|juggernaut|interior|architecture)/.test(modelName)) {
+      return "写实影视美术风，材质与光影自然";
+    }
+    return "统一风格美术表达";
+  };
+
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const sanitizedContext = sanitizeCharacterViewContext(context);
+    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const styleHint = resolvePipelineVisualStyleHint();
     const angleInstruction =
       view === "front"
         ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。front view, body yaw 0 degree, facing camera, single-view only."
         : view === "side"
-          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度。strict right profile, body yaw 90 degree, side view only, no front-facing."
-          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。strict back view, body yaw 180 degree, back-facing only, face not visible.";
+          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度，鼻尖朝右，只保留一只眼睛轮廓。strict right profile, body yaw 90 degree, side view only, no front-facing, no back-facing."
+          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度，面部特征不可见。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
       "masterpiece, best quality, high detail",
       "single character, solo",
       "single-view full-body orthographic character reference",
       "orthographic view",
+      "no perspective exaggeration",
       "single panel character reference, no sheet layout, no split layout",
       "full body centered, exactly one person",
       "character occupies about 75% to 90% of frame height",
@@ -3524,7 +3572,9 @@ export function ComfyPipelinePanel() {
       "只保留角色设定信息与服装设计",
       "不要叙事场景",
       "不要与他人互动",
-      sanitizedContext
+      sanitizedContext,
+      `风格倾向：${styleHint}`,
+      styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
     ]);
     const constraints = mergePromptFragments([
       backgroundPrompt,
@@ -3539,6 +3589,7 @@ export function ComfyPipelinePanel() {
       "禁止同画面出现第二角度、第二姿态、第二个分身",
       "禁止 front+back 同画面、side+back 同画面、left+right 同画面",
       "禁止多视图拼版、转面设定板、拼图排版、分屏",
+      "必须为标准角色设定三视图中的单视角，不允许生成组合视角",
       "无第二人物",
       "无群像",
       "无场景叙事",
@@ -3564,8 +3615,8 @@ export function ComfyPipelinePanel() {
       "服装统一且前后侧一致",
       "面部与体型一致",
       view === "front" ? "front-only, not side, not back" : "",
-      view === "side" ? "strict side-only, not front, not back, not looking at camera" : "",
-      view === "back" ? "strict back-only, no visible face, no looking back, no side face" : "",
+      view === "side" ? "strict side-only, not front, not back, not looking at camera, one-eye profile only" : "",
+      view === "back" ? "strict back-only, no visible face, no looking back, no side face, no facial features" : "",
       "illustration style character reference",
       "美术统一"
     ]);
@@ -3577,8 +3628,8 @@ export function ComfyPipelinePanel() {
       view === "front"
         ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
         : view === "side"
-          ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal"
-          : "front view, facing camera, side profile, looking at camera, face visible, three quarter back view, over shoulder";
+          ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal, two-eye frontal face, over shoulder"
+          : "front view, facing camera, side profile, looking at camera, face visible, three quarter back view, over shoulder, side face visible";
     const multiCharacterConstraint =
       "two characters, two bodies, duplicate character, cloned person, mirrored twin, side by side characters, split composition, front and back in one image, side and back in one image, multi pose sheet, turnaround sheet, character sheet layout";
     const identityDriftConstraint =
@@ -3596,13 +3647,39 @@ export function ComfyPipelinePanel() {
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定图`;
-    return `${prompt}。无人物，无角色，无动物，无群像，无主体表演，仅保留环境本身。不要出现打斗、对白、姿态、剪影或任何人的痕迹。空间关系清晰，环境一致，材质稳定，光影明确，场景设定图，写实电影美术。`;
+    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const styleHint = resolvePipelineVisualStyleHint();
+    return `${mergePromptFragments([
+      prompt,
+      "场景设定图",
+      "纯环境，不含人物或动物",
+      "空间关系清晰，透视正确，结构稳定",
+      "主光方向明确，阴影逻辑自然",
+      "材质细节清晰，画面干净锐利",
+      "符合物理规律与常识，不扭曲不违和",
+      styleHint,
+      styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
+    ])}。`;
   };
 
   const buildSkyboxDescription = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
     const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
-    return `${prompt}。${presetPrompt}。生成可复用天空盒六面。严格要求：六张图都不得出现任何人物、角色、动物、群像、道具持有人物表演；只保留纯环境空间。要求空间结构统一、材质一致、光照一致、可支撑不同镜头角度下的场景一致性。`;
+    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const styleHint = resolvePipelineVisualStyleHint();
+    return `${mergePromptFragments([
+      prompt,
+      presetPrompt,
+      "生成可复用天空盒六面",
+      "六张图都不得出现任何人物、角色、动物、群像",
+      "只保留纯环境空间",
+      "空间结构统一、材质一致、光照一致",
+      "保持地平线与垂直结构稳定，避免几何扭曲",
+      "画面清晰锐利，可支持后续角色合成",
+      "符合真实空间与物理逻辑",
+      `风格倾向：${styleHint}`,
+      styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
+    ])}。`;
   };
 
   const buildCharacterViewSelectionTokenOverrides = (
@@ -3854,21 +3931,27 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterTemplatePreset ?? "portrait",
       runtimeSettings.characterRenderPreset ?? "clean_reference"
     );
-    const referenceFront = await generateShotAsset(
-      runtimeSettings,
-      makeAssetGenerationShot(`asset_char_${name}_reference`, `${name} 参考正视图`, buildCharacterViewPrompt(name, context, "front"), "", baseSeed),
-      0,
-      "image",
-      [],
-      [],
-      {
-        workflowJsonOverride: referenceWorkflow,
-        tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
-      }
-    );
-    const referencePath = referenceFront.localPath || referenceFront.previewUrl;
-    try {
-      const mvSeed = baseSeed + 11;
+    const runAdvancedThreeViews = async (seedBase: number) => {
+      const referenceFront = await generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(
+          `asset_char_${name}_reference`,
+          `${name} 参考正视图`,
+          buildCharacterViewPrompt(name, context, "front"),
+          "",
+          seedBase
+        ),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: referenceWorkflow,
+          tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+        }
+      );
+      const referencePath = referenceFront.localPath || referenceFront.previewUrl;
+      const mvSeed = seedBase + 11;
       const front = await generateShotAsset(
         runtimeSettings,
         makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", mvSeed),
@@ -3919,6 +4002,42 @@ export function ComfyPipelinePanel() {
         }
       );
       return { front, side, back };
+    };
+    const runAdvancedThreeViewsWithAutoRetry = async (seedBase: number) => {
+      const first = await runAdvancedThreeViews(seedBase);
+      const firstPaths = [
+        first.front.localPath || first.front.previewUrl,
+        first.side.localPath || first.side.previewUrl,
+        first.back.localPath || first.back.previewUrl
+      ].filter((value): value is string => Boolean(value));
+      const firstQuality = await evaluateThreeViewQuality(firstPaths);
+      const firstIncomplete = firstPaths.length < 3;
+      const firstUnstable = firstIncomplete || firstQuality.lowDiversity || firstQuality.lowSharpness;
+      if (!firstUnstable) return first;
+
+      appendLog(
+        `检测到 MVAdapter 三视图质量不稳定（${firstIncomplete ? "输出数量不足" : ""}${firstIncomplete && (firstQuality.lowDiversity || firstQuality.lowSharpness) ? " / " : ""}${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && firstQuality.lowSharpness ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}），自动重试一次：${name}`,
+        "info"
+      );
+      const second = await runAdvancedThreeViews(seedBase + 7331);
+      const secondPaths = [
+        second.front.localPath || second.front.previewUrl,
+        second.side.localPath || second.side.previewUrl,
+        second.back.localPath || second.back.previewUrl
+      ].filter((value): value is string => Boolean(value));
+      const secondQuality = await evaluateThreeViewQuality(secondPaths);
+      const secondIncomplete = secondPaths.length < 3;
+      const secondScore = secondQuality.score + (secondIncomplete ? -1000 : 0);
+      const firstScore = firstQuality.score + (firstIncomplete ? -1000 : 0);
+      const chooseSecond = secondScore >= firstScore;
+      appendLog(
+        `MVAdapter 三视图自动优选结果：${name} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstScore.toFixed(2)} / 重试分数 ${secondScore.toFixed(2)}）`,
+        "info"
+      );
+      return chooseSecond ? second : first;
+    };
+    try {
+      return await runAdvancedThreeViewsWithAutoRetry(baseSeed);
     } catch (error) {
       if (!shouldFallbackAssetWorkflow(error)) throw error;
       throw new Error(
@@ -4413,6 +4532,23 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const listSkyboxPrimaryFacePaths = (
+    faces?: Partial<Record<"front" | "right" | "back" | "left" | "up" | "down", string>>
+  ) =>
+    [faces?.front, faces?.right, faces?.back, faces?.left]
+      .map((item) => item?.trim() ?? "")
+      .filter((item): item is string => item.length > 0);
+
+  const hasCompleteSkyboxPrimaryFaces = (
+    faces?: Partial<Record<"front" | "right" | "back" | "left" | "up" | "down", string>>
+  ) =>
+    Boolean(
+      faces?.front?.trim() &&
+        faces?.right?.trim() &&
+        faces?.back?.trim() &&
+        faces?.left?.trim()
+    );
+
   const createSkyboxAssetIfMissing = async (
     runtimeSettings: ComfySettings,
     sceneName: string,
@@ -4427,15 +4563,26 @@ export function ComfyPipelinePanel() {
       const existingId = findAssetIdByName("skybox", sceneName);
       if (existingId) {
         const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
-        return {
-          assetId: existingId,
-          previewPaths: [
-            asset?.skyboxFaces?.front,
-            asset?.skyboxFaces?.right,
-            asset?.skyboxFaces?.left,
-            asset?.skyboxFaces?.back
-          ].filter((value): value is string => Boolean(value))
-        };
+        const primaryPaths = listSkyboxPrimaryFacePaths(asset?.skyboxFaces);
+        const hasCompleteFaces = hasCompleteSkyboxPrimaryFaces(asset?.skyboxFaces);
+        const qualityCheck = await evaluateImageSharpnessQuality(primaryPaths, SKYBOX_MIN_SHARPNESS_SCORE);
+        const shouldForceRegenerate = !hasCompleteFaces || qualityCheck.lowSharpness;
+        if (!shouldForceRegenerate) {
+          return {
+            assetId: existingId,
+            previewPaths: primaryPaths
+          };
+        }
+        if (!hasCompleteFaces) {
+          appendLog(`检测到天空盒主方向缺失（front/right/back/left），已自动重建：${sceneName}`, "info");
+        }
+        if (qualityCheck.lowSharpness) {
+          appendLog(
+            `检测到天空盒清晰度偏低（min=${(qualityCheck.minSharpness ?? 0).toFixed(1)}），已自动重建：${sceneName}`,
+            "info"
+          );
+        }
+        appendLog(`检测到旧版或异常天空盒资产，已自动重建：${sceneName}`, "info");
       }
       const sanitizedScenePrompt = stripCharacterMentions(scenePrompt, characterNames);
       const description = buildSkyboxDescription(
@@ -4452,13 +4599,43 @@ export function ComfyPipelinePanel() {
       appendLog(`场景天空盒使用专用工作流：${sceneName}`);
       let result: SkyboxGenerationResult;
       try {
-        result = await generateSkyboxFaces(
+        const firstResult = await generateSkyboxFaces(
           {
             ...runtimeSettings,
             skyboxWorkflowJson: skyboxWorkflow
           },
           description
         );
+        const firstPaths = listSkyboxPrimaryFacePaths(firstResult.faces);
+        const firstHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(firstResult.faces);
+        const firstQuality = await evaluateImageSharpnessQuality(firstPaths, SKYBOX_MIN_SHARPNESS_SCORE);
+        if (firstHasCompleteFaces && !firstQuality.lowSharpness) {
+          result = firstResult;
+        } else {
+          appendLog(
+            `天空盒首轮结果不稳定（${firstHasCompleteFaces ? "" : "主方向缺失"}${!firstHasCompleteFaces && firstQuality.lowSharpness ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}），自动重试一次：${sceneName}`,
+            "info"
+          );
+          const retryDescription = `${description}。补充要求：输出清晰锐利、边界明确、结构无扭曲、纹理完整、避免模糊。`;
+          const secondResult = await generateSkyboxFaces(
+            {
+              ...runtimeSettings,
+              skyboxWorkflowJson: skyboxWorkflow
+            },
+            retryDescription
+          );
+          const secondPaths = listSkyboxPrimaryFacePaths(secondResult.faces);
+          const secondHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(secondResult.faces);
+          const secondQuality = await evaluateImageSharpnessQuality(secondPaths, SKYBOX_MIN_SHARPNESS_SCORE);
+          const firstScore = firstQuality.score + (firstHasCompleteFaces ? 0 : -1000);
+          const secondScore = secondQuality.score + (secondHasCompleteFaces ? 0 : -1000);
+          const chooseSecond = secondScore >= firstScore;
+          appendLog(
+            `天空盒自动优选结果：${sceneName} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstScore.toFixed(2)} / 重试分数 ${secondScore.toFixed(2)}）`,
+            "info"
+          );
+          result = chooseSecond ? secondResult : firstResult;
+        }
       } catch (error) {
         if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;
         throw new Error(
@@ -5690,14 +5867,56 @@ export function ComfyPipelinePanel() {
           }
         }
       }
-      const output = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, kind, latestScopedShots, latestAssets, {
-        dialogueAudioTracks: kind === "video" ? dialogueAudioTracksForVideo : undefined,
-        onProgress: (progress, message) => {
-          const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
-          const label = kind === "image" ? "分镜图" : kind === "video" ? "镜头视频" : "镜头配音";
-          setPipelineState(`${label}生成中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
+      let output: { previewUrl: string; localPath: string };
+      if (kind === "image") {
+        const firstOutput = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, "image", latestScopedShots, latestAssets, {
+          onProgress: (progress, message) => {
+            const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+            setPipelineState(`分镜图生成中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
+          }
+        });
+        const firstImagePath = firstOutput.localPath || firstOutput.previewUrl;
+        const firstQuality = await evaluateImageSharpnessQuality([firstImagePath], STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE);
+        if (!firstQuality.lowSharpness) {
+          output = firstOutput;
+        } else {
+          appendLog(
+            `分镜图清晰度偏低（min=${(firstQuality.minSharpness ?? 0).toFixed(1)}），自动重试一次：${shot.title}`,
+            "info"
+          );
+          const retrySeedBase =
+            typeof shot.seed === "number" && Number.isFinite(shot.seed)
+              ? Math.max(1, Math.round(shot.seed))
+              : stableAssetSeed(`${shot.id}|${shot.title}|storyboard_image`);
+          const seedToken = assetRuntimeSettings.tokenMapping.seed?.trim() || "SEED";
+          const secondOutput = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, "image", latestScopedShots, latestAssets, {
+            tokenOverrides: {
+              [seedToken]: String(retrySeedBase + 9173)
+            },
+            onProgress: (progress, message) => {
+              const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+              setPipelineState(`分镜图重试中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
+            }
+          });
+          const secondImagePath = secondOutput.localPath || secondOutput.previewUrl;
+          const secondQuality = await evaluateImageSharpnessQuality([secondImagePath], STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE);
+          const chooseSecond = secondQuality.score >= firstQuality.score;
+          appendLog(
+            `分镜图自动优选结果：${shot.title} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstQuality.score.toFixed(2)} / 重试分数 ${secondQuality.score.toFixed(2)}）`,
+            "info"
+          );
+          output = chooseSecond ? secondOutput : firstOutput;
         }
-      });
+      } else {
+        output = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, kind, latestScopedShots, latestAssets, {
+          dialogueAudioTracks: kind === "video" ? dialogueAudioTracksForVideo : undefined,
+          onProgress: (progress, message) => {
+            const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+            const label = kind === "video" ? "镜头视频" : "镜头配音";
+            setPipelineState(`${label}生成中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
+          }
+        });
+      }
       if (kind === "image") {
         updateShotFields(shot.id, { generatedImagePath: output.previewUrl });
       } else if (kind === "video") {
@@ -5994,8 +6213,18 @@ export function ComfyPipelinePanel() {
         const shot = latestShotsForRun[index];
         if (retryFailedOnly && imageStatusByShot[shot.id] !== "failed") continue;
         if (skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
-          skippedCount += 1;
-          continue;
+          const existingQuality = await evaluateImageSharpnessQuality(
+            [shot.generatedImagePath],
+            STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE
+          );
+          if (!existingQuality.lowSharpness) {
+            skippedCount += 1;
+            continue;
+          }
+          appendLog(
+            `检测到已有分镜图清晰度偏低（min=${(existingQuality.minSharpness ?? 0).toFixed(1)}），将自动重建：${shot.title}`,
+            "info"
+          );
         }
         attemptedCount += 1;
         setPipelineState(`生成分镜图：${shot.title} (${index + 1}/${latestShotsForRun.length})`);

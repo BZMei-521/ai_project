@@ -2093,7 +2093,7 @@ function inferStoryboardReferenceWeights(
     if (characterDriven) {
       return {
         char1Primary: 0.72,
-        char1Secondary: 0.06,
+        char1Secondary: 0.03,
         char2Primary: 0,
         denoise: 0.44,
         steps: 30,
@@ -2112,7 +2112,7 @@ function inferStoryboardReferenceWeights(
   if (hasSecondCharacter) {
     return {
       char1Primary: 0.62,
-      char1Secondary: 0.04,
+      char1Secondary: 0.02,
       char2Primary: 0.58,
       denoise: 0.56,
       steps: 32,
@@ -2121,7 +2121,7 @@ function inferStoryboardReferenceWeights(
   }
   return {
     char1Primary: 0.66,
-    char1Secondary: 0.06,
+    char1Secondary: 0.03,
     char2Primary: 0,
     denoise: 0.56,
     steps: 32,
@@ -2212,6 +2212,7 @@ function buildShotReferenceDirective(
       );
     }
     lines.push("人物构图硬约束：人物必须在中前景清晰可见，优先完整半身或全身，不得退化成远景小人影、剪影或被场景主体遮挡。");
+    lines.push("人物-场景物理约束：人物脚部与地面接触关系自然，接触阴影方向与场景主光一致，不允许漂浮、穿模、比例失真。");
   }
   if (continuityDirective && !sceneAsset && characterAssets.length === 0) {
     lines.push(continuityDirective);
@@ -2234,13 +2235,16 @@ function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
 function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
   const parts: string[] = [
     "画面稳定约束：单张分镜图，透视关系稳定，构图清晰，主体边界清楚，拒绝抽象涂抹和随机扭曲。",
-    "clean single storyboard frame, coherent perspective, clear composition, no surreal warping, no abstract artifacts."
+    "clean single storyboard frame, coherent perspective, clear composition, no surreal warping, no abstract artifacts.",
+    "物理常识约束：重力方向、接触关系和遮挡关系合理，禁止人物漂浮、穿透地面或与场景尺度冲突。",
+    "光照约束：主光方向统一，人物与场景阴影逻辑一致，不允许前后光源矛盾。"
   ];
   if (hasSceneRef) {
     parts.push("场景稳定约束：地平线、道路、栏杆、树木、建筑等结构保持笔直或自然透视，不允许融化、卷曲、漂浮。");
   }
   if (hasCharacters) {
     parts.push("人物稳定约束：人物解剖正确，四肢完整，站姿自然，禁止畸形肢体、重复身体、拼贴分身。");
+    parts.push("人物尺度约束：人物头身比、手脚比例、与环境物体尺度保持常识范围，不允许巨人化或玩偶化。");
   }
   return parts.join("\n");
 }
@@ -2250,15 +2254,15 @@ function shouldUseSecondaryCharacterView(shot: Shot): boolean {
     .join(" ")
     .toLowerCase();
   return containsAnyKeyword(corpus, [
-    "特写",
-    "近景",
-    "中近景",
-    "半身",
     "侧身",
     "回头",
+    "背影",
+    "背面",
+    "背对",
     "profile",
-    "close-up",
-    "medium close"
+    "side view",
+    "back view",
+    "over shoulder"
   ]);
 }
 
@@ -3319,7 +3323,7 @@ function inferPromptTokens(
   const normalizedChar1SecondaryPath = char1SecondaryPath.trim();
   const normalizedChar2PrimaryPath = char2PrimaryPath.trim();
   const minChar1PrimaryWeight = hasCharacters ? (hasSecondCharacter ? 0.5 : 0.56) : 0;
-  const minChar1SecondaryWeight = useSecondaryCharacterView ? 0.04 : 0;
+  const minChar1SecondaryWeight = useSecondaryCharacterView ? 0.02 : 0;
   const minChar2PrimaryWeight = hasSecondCharacter ? 0.46 : 0;
   const effectiveChar1PrimaryWeight = normalizedChar1PrimaryPath
     ? Math.max(storyboardWeights.char1Primary, minChar1PrimaryWeight)
