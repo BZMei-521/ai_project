@@ -3973,6 +3973,20 @@ export function ComfyPipelinePanel() {
     CHARACTER_FRONT_LEFT_VIEW: "false"
   });
 
+  const isGeneratedCharacterViewPath = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return false;
+    return trimmed.includes("character_threeview") || trimmed.includes("character_mv_");
+  };
+
+  const resolveExistingCharacterAnchorPath = (asset?: Asset | null) => {
+    const front = asset?.characterFrontPath?.trim() || "";
+    if (front && !isGeneratedCharacterViewPath(front)) return front;
+    const file = asset?.filePath?.trim() || "";
+    if (file && !isGeneratedCharacterViewPath(file)) return file;
+    return "";
+  };
+
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
     if (!text) return false;
@@ -4103,7 +4117,8 @@ export function ComfyPipelinePanel() {
     runtimeSettings: ComfySettings,
     name: string,
     context: string,
-    baseSeed: number
+    baseSeed: number,
+    existingFrontReferencePath = ""
   ) => {
     const mode = resolveEffectiveAssetWorkflowMode(
       "character",
@@ -4147,42 +4162,52 @@ export function ComfyPipelinePanel() {
     const runAdvancedThreeViews = async (seedBase: number) => {
       let bestReference: Awaited<ReturnType<typeof generateShotAsset>> | null = null;
       let bestReferenceScore = Number.NEGATIVE_INFINITY;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const referenceSeed = seedBase + attempt * 997;
-        const currentReference = await generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(
-            `asset_char_${name}_reference_${attempt + 1}`,
-            `${name} 参考正视图`,
-            buildCharacterViewPrompt(name, context, "front"),
-            "",
-            referenceSeed
-          ),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: referenceWorkflow,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
+      const reusableFrontReferencePath = existingFrontReferencePath.trim();
+      if (reusableFrontReferencePath) {
+        bestReference = {
+          localPath: reusableFrontReferencePath,
+          previewUrl: reusableFrontReferencePath
+        };
+        bestReferenceScore = Number.POSITIVE_INFINITY;
+        appendLog(`检测到已有角色正视锚点，直接复用：${name}`, "info");
+      } else {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const referenceSeed = seedBase + attempt * 997;
+          const currentReference = await generateShotAsset(
+            runtimeSettings,
+            makeAssetGenerationShot(
+              `asset_char_${name}_reference_${attempt + 1}`,
+              `${name} 参考正视图`,
+              buildCharacterViewPrompt(name, context, "front"),
+              "",
+              referenceSeed
+            ),
+            0,
+            "image",
+            [],
+            [],
+            {
+              workflowJsonOverride: referenceWorkflow,
+              tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
+            }
+          );
+          const currentReferencePath = currentReference.localPath || currentReference.previewUrl;
+          if (!currentReferencePath) continue;
+          const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath);
+          if (currentReferenceQuality.score > bestReferenceScore) {
+            bestReference = currentReference;
+            bestReferenceScore = currentReferenceQuality.score;
           }
-        );
-        const currentReferencePath = currentReference.localPath || currentReference.previewUrl;
-        if (!currentReferencePath) continue;
-        const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath);
-        if (currentReferenceQuality.score > bestReferenceScore) {
-          bestReference = currentReference;
-          bestReferenceScore = currentReferenceQuality.score;
-        }
-        if (currentReferenceQuality.acceptable) {
-          if (attempt > 0) {
-            appendLog(`正视参考图经第 ${attempt + 1} 次重试后达标：${name}`, "info");
+          if (currentReferenceQuality.acceptable) {
+            if (attempt > 0) {
+              appendLog(`正视参考图经第 ${attempt + 1} 次重试后达标：${name}`, "info");
+            }
+            bestReference = currentReference;
+            break;
           }
-          bestReference = currentReference;
-          break;
-        }
-        if (attempt < 4) {
-          appendLog(`参考正视图未达标（${currentReferenceQuality.issues.join(" / ")}），继续重试：${name}`, "info");
+          if (attempt < 4) {
+            appendLog(`参考正视图未达标（${currentReferenceQuality.issues.join(" / ")}），继续重试：${name}`, "info");
+          }
         }
       }
       if (!bestReference) {
@@ -4716,8 +4741,12 @@ export function ComfyPipelinePanel() {
 
     const task: Promise<ProvisionCreateResult> = (async () => {
       const existingId = findAssetIdByName("character", name);
+      const existingAsset = existingId
+        ? useStoryboardStore.getState().assets.find((item) => item.id === existingId)
+        : null;
+      const reusableFrontReferencePath = resolveExistingCharacterAnchorPath(existingAsset);
       if (existingId) {
-        const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
+        const asset = existingAsset;
         const front = asset?.characterFrontPath?.trim() || "";
         const side = asset?.characterSidePath?.trim() || "";
         const back = asset?.characterBackPath?.trim() || "";
@@ -4773,6 +4802,11 @@ export function ComfyPipelinePanel() {
         }
         appendLog(`检测到旧版或异常角色三视图资产，已自动重建：${name}`, "info");
       }
+      if (!reusableFrontReferencePath) {
+        const message = `角色 ${name} 缺少正视锚点图，已停止自动三视图生成。请先在人物库中为该角色提供正视参考图，再生成侧视图/背视图和分镜。`;
+        appendLog(message, "error");
+        throw new Error(message);
+      }
       const orthographicContext = createCharacterOrthographicContext(name);
       const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
       const baseSeed = stableAssetSeed(`${name}|orthographic_threeview|${styleAnchor || "default"}|character`);
@@ -4780,22 +4814,30 @@ export function ComfyPipelinePanel() {
       appendLog(`开始生成角色三视图：${name}`);
       appendLog(`角色三视图已与剧情文本解绑，仅按标准正交设定生成：${name}`, "info");
       appendLog(`角色三视图使用专用工作流：${name}`);
-      const { front, side, back } = await generateCharacterThreeViews(runtimeSettings, name, orthographicContext, baseSeed);
-
-      const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
-      addAsset({
-        type: "character",
+      const { front, side, back } = await generateCharacterThreeViews(
+        runtimeSettings,
         name,
+        orthographicContext,
+        baseSeed,
+        reusableFrontReferencePath
+      );
+
+      const nextAssetPatch = {
         filePath: front.localPath || front.previewUrl,
         characterFrontPath: front.localPath || front.previewUrl,
         characterSidePath: side.localPath || side.previewUrl,
         characterBackPath: back.localPath || back.previewUrl
-      });
-      const created =
-        useStoryboardStore
-          .getState()
-          .assets.find((asset) => !beforeIds.has(asset.id) && asset.type === "character" && normalizeEntityKey(asset.name) === normalizeEntityKey(name))
-          ?.id ?? findAssetIdByName("character", name);
+      };
+      if (existingId) {
+        useStoryboardStore.getState().updateAsset(existingId, nextAssetPatch);
+      } else {
+        addAsset({
+          type: "character",
+          name,
+          ...nextAssetPatch
+        });
+      }
+      const created = existingId || findAssetIdByName("character", name);
       appendLog(`角色三视图生成成功：${name}`);
       return {
         assetId: created,

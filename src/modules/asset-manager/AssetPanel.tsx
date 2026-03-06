@@ -244,6 +244,20 @@ function buildCharacterViewSelectionTokenOverrides(
   };
 }
 
+function isGeneratedCharacterViewPath(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return false;
+  return trimmed.includes("character_threeview") || trimmed.includes("character_mv_");
+}
+
+function resolveManualCharacterAnchor(frontPath: string, filePath: string): string {
+  const front = frontPath.trim();
+  if (front && !isGeneratedCharacterViewPath(front)) return front;
+  const file = filePath.trim();
+  if (file && !isGeneratedCharacterViewPath(file)) return file;
+  return "";
+}
+
 function loadComfySettingsFromLocalStorage(): ComfySettings | null {
   const raw = localStorage.getItem(SETTINGS_KEY);
   if (!raw) return null;
@@ -435,29 +449,36 @@ export function AssetPanel() {
       );
       const advancedWorkflow =
         comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterModel, characterRenderPreset);
-      const front = await generateShotAsset(
-        comfySettings,
-        makeAssetGenerationShot(
-          currentSequenceId,
-          `asset_panel_char_${batchId}_front`,
-          `${trimmedName} 正视图`,
-          buildCharacterViewPrompt(trimmedName, context, "front"),
-          buildCharacterViewNegativePrompt("front", baseNegativePrompt),
-          batchId
-        ),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: referenceWorkflow,
-          tokenOverrides: {
-            NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", baseNegativePrompt)
-          }
-        }
-      );
-      const frontPath = front.localPath || front.previewUrl;
-      if (!frontPath) {
+      const manualAnchorPath = resolveManualCharacterAnchor(frontPath, filePath);
+      const front =
+        manualAnchorPath.length > 0
+          ? {
+              localPath: manualAnchorPath,
+              previewUrl: manualAnchorPath
+            }
+          : await generateShotAsset(
+              comfySettings,
+              makeAssetGenerationShot(
+                currentSequenceId,
+                `asset_panel_char_${batchId}_front`,
+                `${trimmedName} 正视图`,
+                buildCharacterViewPrompt(trimmedName, context, "front"),
+                buildCharacterViewNegativePrompt("front", baseNegativePrompt),
+                batchId
+              ),
+              0,
+              "image",
+              [],
+              [],
+              {
+                workflowJsonOverride: referenceWorkflow,
+                tokenOverrides: {
+                  NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", baseNegativePrompt)
+                }
+              }
+            );
+      const frontAnchorPath = front.localPath || front.previewUrl;
+      if (!frontAnchorPath) {
         throw new Error("角色正视参考图生成成功，但没有可用输出路径");
       }
       const side = await generateShotAsset(
@@ -478,7 +499,7 @@ export function AssetPanel() {
           workflowJsonOverride: advancedWorkflow,
           tokenOverrides: buildCharacterViewSelectionTokenOverrides(
             "side",
-            frontPath,
+            frontAnchorPath,
             buildCharacterViewNegativePrompt("side", baseNegativePrompt)
           )
         }
@@ -501,7 +522,7 @@ export function AssetPanel() {
           workflowJsonOverride: advancedWorkflow,
           tokenOverrides: buildCharacterViewSelectionTokenOverrides(
             "back",
-            frontPath,
+            frontAnchorPath,
             buildCharacterViewNegativePrompt("back", baseNegativePrompt)
           )
         }
@@ -510,7 +531,12 @@ export function AssetPanel() {
       setSidePath(side.localPath || side.previewUrl);
       setBackPath(back.localPath || back.previewUrl);
       setFilePath(front.localPath || front.previewUrl);
-      pushToast("角色三视图生成完成，已按参考正视图约束侧视图和背视图", "success");
+      pushToast(
+        manualAnchorPath.length > 0
+          ? "角色三视图生成完成，已使用现有人物正视图作为锚点"
+          : "角色三视图生成完成，已按参考正视图约束侧视图和背视图",
+        "success"
+      );
     } catch (error) {
       pushToast(`角色三视图生成失败：${String(error)}`, "error");
     } finally {
