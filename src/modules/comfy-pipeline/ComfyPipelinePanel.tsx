@@ -59,7 +59,14 @@ const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE: StoryboardImageWorkflowMode = "mature_asset_guided";
 const DEFAULT_STORYBOARD_IMAGE_MODEL = "sd_xl_base_1.0.safetensors";
+const ONE_CLICK_SD15_STORYBOARD_MODEL = "v1-5-pruned-emaonly-fp16.safetensors";
+const ONE_CLICK_SD15_CHARACTER_MODEL = "v1-5-pruned-emaonly-fp16.safetensors";
+const ONE_CLICK_SD15_SKYBOX_MODEL = "dreamshaper_8.safetensors";
+const ONE_CLICK_SDXL_STORYBOARD_MODEL = "animagine-xl-4.0.safetensors";
+const ONE_CLICK_SDXL_CHARACTER_MODEL = "animagine-xl-4.0.safetensors";
+const ONE_CLICK_SDXL_SKYBOX_MODEL = "sd_xl_base_1.0.safetensors";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
+  "v1-5-pruned-emaonly-fp16.safetensors",
   "sd_xl_base_1.0.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
   "realisticVisionV60B1_v51VAE.safetensors",
@@ -75,8 +82,8 @@ const SKYBOX_ASSET_MODEL_OPTIONS = [
 ] as const;
 const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [...CHARACTER_ASSET_MODEL_OPTIONS];
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
-const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
-const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "advanced_panorama";
+const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "basic_builtin";
+const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
 const DEFAULT_CHARACTER_ADVANCED_VAE = "sdxl.vae.safetensors";
 const DEFAULT_CHARACTER_ADVANCED_ADAPTER = "mvadapter_i2mv_sdxl_beta.safetensors";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
@@ -1551,8 +1558,7 @@ function loadSettings(): ComfySettings {
       parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
         ? parsed.storyboardImageWorkflowMode
         : DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
-    const forceAdvancedCharacterMode = resolvedStoryboardMode === "mature_asset_guided";
-    const effectiveCharacterMode = forceAdvancedCharacterMode ? "advanced_multiview" : resolvedCharacterMode;
+    const effectiveCharacterMode = resolvedCharacterMode;
     const parsedImageWorkflowJson = typeof parsed.imageWorkflowJson === "string" ? parsed.imageWorkflowJson : "";
     const shouldUpgradeStoryboardWorkflow =
       resolvedStoryboardMode === "mature_asset_guided" &&
@@ -1571,8 +1577,7 @@ function loadSettings(): ComfySettings {
       typeof parsed.videoWorkflowJson === "string" && parsed.videoWorkflowJson.trim().length > 0
         ? parsed.videoWorkflowJson
         : FISHER_WORKFLOW_JSON;
-    const shouldResetCharacterWorkflowJson =
-      shouldUpgradeCharacterMode || (forceAdvancedCharacterMode && parsed.characterAssetWorkflowMode !== "advanced_multiview");
+    const shouldResetCharacterWorkflowJson = shouldUpgradeCharacterMode;
     return {
       baseUrl: parsed.baseUrl ?? "http://127.0.0.1:8188",
       outputDir: parsed.outputDir ?? "",
@@ -3426,15 +3431,11 @@ export function ComfyPipelinePanel() {
 
   const resolveCharacterWorkflowJson = (runtimeSettings: ComfySettings): string => {
     const existing = runtimeSettings.characterWorkflowJson?.trim();
-    const requestedMode = resolveEffectiveAssetWorkflowMode(
+    const mode = resolveEffectiveAssetWorkflowMode(
       "character",
       runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
       existing ?? ""
     ) as CharacterAssetWorkflowMode;
-    const mode =
-      (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"
-        ? "advanced_multiview"
-        : requestedMode;
     const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
     if (existing && !shouldAutoRewriteAssetWorkflow(existing, mode, "character")) return existing;
     const builtIn =
@@ -3497,15 +3498,11 @@ export function ComfyPipelinePanel() {
     context: string,
     baseSeed: number
   ) => {
-    const requestedMode = resolveEffectiveAssetWorkflowMode(
+    const mode = resolveEffectiveAssetWorkflowMode(
       "character",
       runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
-    const mode =
-      (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"
-        ? "advanced_multiview"
-        : requestedMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
@@ -3750,6 +3747,57 @@ export function ComfyPipelinePanel() {
         : "已写入内置 Qwen 兼容分镜模板",
       "info"
     );
+  };
+
+  const applyOneClickProfile = async (profile: "sd15" | "sdxl") => {
+    const discovered = await discoverComfyLocalDirs().catch(() => ({
+      rootDir: "",
+      inputDir: "",
+      outputDir: ""
+    }));
+    const storyboardModel = profile === "sd15" ? ONE_CLICK_SD15_STORYBOARD_MODEL : ONE_CLICK_SDXL_STORYBOARD_MODEL;
+    const characterModel = profile === "sd15" ? ONE_CLICK_SD15_CHARACTER_MODEL : ONE_CLICK_SDXL_CHARACTER_MODEL;
+    const skyboxModel = profile === "sd15" ? ONE_CLICK_SD15_SKYBOX_MODEL : ONE_CLICK_SDXL_SKYBOX_MODEL;
+    persistSettings((previous) => {
+      const previousRoot = previous.comfyRootDir.trim();
+      const discoveredRoot = discovered.rootDir.trim();
+      const comfyRootDir = previousRoot || discoveredRoot;
+      const previousInput = previous.comfyInputDir.trim();
+      const discoveredInput = discovered.inputDir.trim();
+      const comfyInputDir =
+        previousInput ||
+        discoveredInput ||
+        (comfyRootDir ? `${comfyRootDir.replace(/[\\/]+$/, "")}/input` : "");
+      const outputDir = previous.outputDir.trim() || discovered.outputDir.trim() || previous.outputDir;
+      return {
+        ...previous,
+        comfyRootDir,
+        comfyInputDir,
+        outputDir,
+        storyboardImageWorkflowMode: "mature_asset_guided",
+        imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
+        storyboardImageModelName: storyboardModel,
+        characterAssetWorkflowMode: "basic_builtin",
+        skyboxAssetWorkflowMode: "basic_builtin",
+        requireDedicatedCharacterWorkflow: false,
+        requireDedicatedSkyboxWorkflow: false,
+        characterAssetModelName: characterModel,
+        skyboxAssetModelName: skyboxModel,
+        characterWorkflowJson: buildCharacterWorkflowTemplateJson(
+          characterModel,
+          previous.characterTemplatePreset ?? "portrait",
+          previous.characterRenderPreset ?? "stable_fullbody"
+        ),
+        skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
+          skyboxModel,
+          previous.skyboxTemplatePreset ?? "wide"
+        ),
+        videoGenerationMode: "local_motion"
+      };
+    });
+    const label = profile === "sd15" ? "SD1.5" : "SDXL";
+    appendLog(`已应用 ${label} 一键整片配置：成熟分镜模板 + 基础资产模板 + 本地视频模式`);
+    pushToast(`已应用 ${label} 一键整片配置`, "success");
   };
 
   const copyAssetDiagnosticSummary = async (kind: "character" | "skybox") => {
@@ -4009,9 +4057,7 @@ export function ComfyPipelinePanel() {
           runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
           runtimeSettings.characterWorkflowJson?.trim() ?? ""
         ) as CharacterAssetWorkflowMode;
-        const strictAdvancedMode =
-          mode === "advanced_multiview" ||
-          (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided";
+        const strictAdvancedMode = mode === "advanced_multiview";
         const hasDistinctThreeViews = new Set(threeViewPaths).size >= 3;
         const hasLegacyBasicPrefix = threeViewPaths.some((value) => /character_threeview/i.test(value));
         const shouldForceRegenerate =
@@ -4410,24 +4456,31 @@ export function ComfyPipelinePanel() {
       `${sourceLabel}识别结果：角色 ${detectedCharacterNames.length > 0 ? detectedCharacterNames.join("、") : "无"}；场景 ${detectedSceneNames.length > 0 ? detectedSceneNames.join("、") : "无"}`
     );
     appendLog(`${sourceLabel}开始`);
-    const summary = await provisionAssetsForItems(items, runtimeSettings, {
-      bindShots: true,
-      onProgress: (current, total, message) => {
-        const prefix = total > 0 ? `(${current}/${total})` : "";
-        setPipelineState(`${sourceLabel}${prefix} ${message}`);
-        if (runAllActive) {
-          const base = 8;
-          const span = 14;
-          const ratio = total > 0 ? current / total : 1;
-          setRunAllProgress(base + span * ratio);
-          setRunAllStage(`步骤 1/6 资产预生成 · ${message}`);
+    try {
+      const summary = await provisionAssetsForItems(items, runtimeSettings, {
+        bindShots: true,
+        onProgress: (current, total, message) => {
+          const prefix = total > 0 ? `(${current}/${total})` : "";
+          setPipelineState(`${sourceLabel}${prefix} ${message}`);
+          if (runAllActive) {
+            const base = 8;
+            const span = 14;
+            const ratio = total > 0 ? current / total : 1;
+            setRunAllProgress(base + span * ratio);
+            setRunAllStage(`步骤 1/6 资产预生成 · ${message}`);
+          }
         }
-      }
-    });
-    appendLog(
-      `${sourceLabel}完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
-    );
-    return true;
+      });
+      appendLog(
+        `${sourceLabel}完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
+      );
+      return true;
+    } catch (error) {
+      const message = String(error);
+      appendLog(`${sourceLabel}失败：${message}`, "error");
+      setPipelineState(`${sourceLabel}失败：${message}`);
+      return false;
+    }
   };
 
   const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
@@ -5977,9 +6030,8 @@ export function ComfyPipelinePanel() {
       appendLog("一键生成前置资产阶段已启用：将先检查角色三视图与场景天空盒");
       const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, settings, "一键生成前置资产生成");
       if (!provisionOk) {
-        setPipelineState("一键生成中断：前置资产生成未完成");
-        appendLog("一键生成中断：前置资产生成未完成", "error");
-        return;
+        appendLog("一键生成提示：前置资产阶段未完成，继续执行后续分镜/视频流程", "error");
+        pushToast("前置资产未完成：本轮继续生成分镜与视频", "warning");
       }
 
       setPipelineState("一键生成整片：步骤 2/6 生成分镜图");
@@ -6227,6 +6279,17 @@ export function ComfyPipelinePanel() {
             本模式不依赖 ComfyUI 视频模型。会用当前分镜图或首尾帧在本地生成可拼接的镜头视频，适合 Mac。
           </div>
         )}
+        <div className="timeline-actions">
+          <button className="btn-secondary" onClick={() => void applyOneClickProfile("sd15")} type="button">
+            应用 SD1.5 一键整片配置
+          </button>
+          <button className="btn-ghost" onClick={() => void applyOneClickProfile("sdxl")} type="button">
+            应用 SDXL 一键整片配置
+          </button>
+        </div>
+        <div className="timeline-meta">
+          一键配置会自动设置分镜模板、角色/天空盒资产模板、模型和本地视频模式，减少整片直跑的节点依赖。
+        </div>
         <label className="comfy-script-block">
           全局视觉风格锚点
           <textarea
@@ -6445,31 +6508,15 @@ export function ComfyPipelinePanel() {
         <label>
           角色三视图工作流模式
           <select
-            onChange={(event) => {
-              const requested = event.target.value as CharacterAssetWorkflowMode;
-              persistSettings((previous) => {
-                const storyboardMode = previous.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
-                if (storyboardMode === "mature_asset_guided" && requested !== "advanced_multiview") {
-                  appendLog("成熟分镜模式已强制角色三视图为高级多视角工作流", "info");
-                  return {
-                    ...previous,
-                    characterAssetWorkflowMode: "advanced_multiview"
-                  };
-                }
-                return {
-                  ...previous,
-                  characterAssetWorkflowMode: requested
-                };
-              });
-            }}
+            onChange={(event) =>
+              persistSettings((previous) => ({
+                ...previous,
+                characterAssetWorkflowMode: event.target.value as CharacterAssetWorkflowMode
+              }))
+            }
             value={characterAssetWorkflowMode}
           >
-            <option
-              disabled={(settings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"}
-              value="basic_builtin"
-            >
-              基础正交三视图模板
-            </option>
+            <option value="basic_builtin">基础正交三视图模板</option>
             <option value="advanced_multiview">高级多视角角色工作流</option>
           </select>
         </label>

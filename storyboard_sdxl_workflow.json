@@ -10,7 +10,7 @@
         80
       ],
       "widgets_values": [
-        "v1-5-pruned-emaonly-fp16.safetensors"
+        "animagine-xl-4.0.safetensors"
       ],
       "outputs": [
         {
@@ -99,8 +99,8 @@
         610
       ],
       "widgets_values": [
-        768,
-        512,
+        1024,
+        576,
         1
       ],
       "outputs": [
@@ -141,7 +141,7 @@
         230
       ],
       "widgets_values": [
-        "control_v11f1p_sd15_depth_fp16.safetensors"
+        "diffusers_xl_depth_full.safetensors"
       ],
       "outputs": [
         {
@@ -183,7 +183,7 @@
         }
       ],
       "widgets_values": [
-        0.75
+        0.65
       ],
       "outputs": [
         {
@@ -210,7 +210,7 @@
         610
       ],
       "widgets_values": [
-        "ip-adapter_sd15.safetensors"
+        "ip-adapter-plus_sdxl_vit-h.safetensors"
       ],
       "outputs": [
         {
@@ -333,7 +333,7 @@
         }
       ],
       "widgets_values": [
-        0.35,
+        0.4,
         "linear",
         "concat",
         0,
@@ -497,7 +497,7 @@
         123456,
         "fixed",
         28,
-        6.5,
+        5.5,
         "euler",
         "normal",
         1
@@ -556,7 +556,7 @@
         }
       ],
       "widgets_values": [
-        "storyboard_sd15_test"
+        "storyboard_sdxl_test"
       ]
     }
   ],
