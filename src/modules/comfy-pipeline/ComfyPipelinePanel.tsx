@@ -2612,6 +2612,7 @@ export function ComfyPipelinePanel() {
   const [previewVideoPath, setPreviewVideoPath] = useState("");
   const characterProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const skyboxProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
+  const scriptImportInFlightRef = useRef(false);
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
   const [imageStatusByShot, setImageStatusByShot] = useState<Record<string, AssetStatus>>({});
@@ -5607,6 +5608,11 @@ export function ComfyPipelinePanel() {
   };
 
   const onImportScript = async () => {
+    if (scriptImportInFlightRef.current) {
+      appendLog("导入镜头脚本跳过：上一次导入仍在执行", "error");
+      return;
+    }
+    scriptImportInFlightRef.current = true;
     try {
       const parsed = JSON.parse(scriptText) as {
         shots?: Array<Record<string, unknown>>;
@@ -5624,6 +5630,8 @@ export function ComfyPipelinePanel() {
     } catch (error) {
       pushToast(`导入失败：${String(error)}`, "error");
       appendLog(`导入镜头脚本失败：${String(error)}`, "error");
+    } finally {
+      scriptImportInFlightRef.current = false;
     }
   };
 

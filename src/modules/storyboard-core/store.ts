@@ -670,7 +670,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const skyboxDescription = input.skyboxDescription?.trim() ?? "";
       const skyboxTags = (input.skyboxTags ?? []).map((item) => item.trim()).filter((item) => item.length > 0);
       const skyboxFaces = input.skyboxFaces ?? {};
-      if (input.type === "character" && (!front || !side || !back)) return state;
+      if (input.type === "character" && !front) return state;
       const asset: Asset = {
         id: `asset_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         projectId: state.project.id,
@@ -678,8 +678,8 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         name,
         filePath,
         characterFrontPath: input.type === "character" ? front : undefined,
-        characterSidePath: input.type === "character" ? side : undefined,
-        characterBackPath: input.type === "character" ? back : undefined,
+        characterSidePath: input.type === "character" ? side || undefined : undefined,
+        characterBackPath: input.type === "character" ? back || undefined : undefined,
         voiceProfile: input.type === "character" ? voiceProfile : undefined,
         skyboxDescription: input.type === "skybox" ? skyboxDescription : undefined,
         skyboxTags: input.type === "skybox" ? skyboxTags : undefined,
