@@ -42,7 +42,7 @@ const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT);
 const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
-type CharacterAssetWorkflowMode = "basic_builtin" | "advanced_multiview";
+type CharacterAssetWorkflowMode = "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
 type StoryboardImageWorkflowMode = "builtin_qwen" | "mature_asset_guided";
 
@@ -82,7 +82,7 @@ const SKYBOX_ASSET_MODEL_OPTIONS = [
 ] as const;
 const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [...CHARACTER_ASSET_MODEL_OPTIONS];
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
-const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "basic_builtin";
+const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
 const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
 const DEFAULT_CHARACTER_ADVANCED_VAE = "sdxl.vae.safetensors";
 const DEFAULT_CHARACTER_ADVANCED_ADAPTER = "mvadapter_i2mv_sdxl_beta.safetensors";
@@ -185,50 +185,28 @@ function workflowsAreCoupled(imageWorkflowJson: string, videoWorkflowJson: strin
 }
 
 function buildCharacterAssetModeSpec(mode: CharacterAssetWorkflowMode, selectedModel: string): AssetWorkflowModeSpec {
-  if (mode === "advanced_multiview") {
-    return {
-      label: "高级多视角角色工作流",
-      summary:
-        "推荐用 ComfyUI-MVAdapter 做 image-to-multi-view，一次从单张参考图稳定产出 front/right/back，而不是三次独立 txt2img。",
-      requiredNodes: [
-        "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter / View Selector 等）",
-        "主模型加载节点（CheckpointLoaderSimple 或 Diffusers 模型加载节点）",
-        "文本编码节点（CLIPTextEncode 或等价节点）",
-        "视角选择节点（front / right / back 或 front / left / back）",
-        "单张图片输出节点（SaveImage / PreviewImage）"
-      ],
-      requiredModels: [
-        `主模型：${selectedModel}`,
-        "MV-Adapter 权重：mvadapter_i2mv_sdxl.safetensors（推荐）或 mvadapter_i2mv_sdxl_beta.safetensors",
-        "VAE：sdxl.vae.safetensors（推荐）",
-        "可选：OpenPose/Depth ControlNet，用于后续单张修姿"
-      ],
-      recommendedPlugins: ["ComfyUI-MVAdapter", "可选：ComfyUI-Advanced-ControlNet"],
-      notes: [
-        "当前项目已内置一套基于 MVAdapter i2mv 的高级模板，可直接写入。",
-        "高级模式会先生成一张正面参考图，再用 MVAdapter 生成 front / side / back。",
-        "高级模板已强制使用方形分辨率（square token grid），避免 MVAdapter 在非方形尺寸下触发 einops rearrange 报错。",
-        "MV-Adapter 官方仓库明确支持 text/image-to-multi-view，并支持视角选择与 ControlNet 集成。",
-        "目标是标准 front / side / back 视角一致性，而不是三次独立随机出图。"
-      ]
-    };
-  }
   return {
-    label: "基础正交三视图模板",
-    summary: "内置纯文生图模板，按 front / side / back 三次单独调用。适合先跑通标准设定板，但一致性依赖提示词和固定 seed。",
+    label: "高级多视角角色工作流",
+    summary: "固定使用 ComfyUI-MVAdapter：先产一张参考正视图，再生成 front/right/back，禁止基础模式与自动降级。",
     requiredNodes: [
-      "CheckpointLoaderSimple",
-      "CLIPTextEncode",
-      "EmptyLatentImage",
-      "KSampler",
-      "VAEDecode",
-      "SaveImage"
+      "ComfyUI-MVAdapter 节点组（Diffusers Model Makeup / MV-Adapter / View Selector 等）",
+      "主模型加载节点（CheckpointLoaderSimple 或 Diffusers 模型加载节点）",
+      "文本编码节点（CLIPTextEncode 或等价节点）",
+      "视角选择节点（front / right / back 或 front / left / back）",
+      "单张图片输出节点（SaveImage / PreviewImage）"
     ],
-    requiredModels: [`主模型：${selectedModel}`],
-    recommendedPlugins: [],
+    requiredModels: [
+      `主模型：${selectedModel}`,
+      "MV-Adapter 权重：mvadapter_i2mv_sdxl.safetensors（推荐）或 mvadapter_i2mv_sdxl_beta.safetensors",
+      "VAE：sdxl.vae.safetensors（推荐）",
+      "可选：OpenPose/Depth ControlNet，用于后续单张修姿"
+    ],
+    recommendedPlugins: ["ComfyUI-MVAdapter", "可选：ComfyUI-Advanced-ControlNet"],
     notes: [
-      "不依赖 LoadImage、视频节点或音频节点。",
-      "适合没有多视角插件时先做标准 front / side / back 设定图。"
+      "当前项目已内置一套基于 MVAdapter i2mv 的高级模板，可直接写入。",
+      "高级模板已强制使用方形分辨率（square token grid），避免 MVAdapter 在非方形尺寸下触发 einops rearrange 报错。",
+      "MV-Adapter 官方仓库明确支持 text/image-to-multi-view，并支持视角选择与 ControlNet 集成。",
+      "目标是标准 front / side / back 视角一致性。"
     ]
   };
 }
@@ -1425,7 +1403,11 @@ function resolveEffectiveAssetWorkflowMode(
   mode: CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode,
   workflowJson: string
 ): CharacterAssetWorkflowMode | SkyboxAssetWorkflowMode {
-  // Respect user-selected mode directly. Workflow content mismatch is handled by shouldAutoRewriteAssetWorkflow.
+  if (kind === "character") {
+    // Character three-view is now permanently locked to advanced multiview mode.
+    return "advanced_multiview";
+  }
+  // Respect user-selected mode directly for skybox. Workflow content mismatch is handled by shouldAutoRewriteAssetWorkflow.
   return mode;
 }
 
@@ -1465,9 +1447,6 @@ function shouldAutoRewriteAssetWorkflow(
       trimmed.includes("\"width\": 832") ||
       trimmed.includes("\"height\": 1216")
     );
-  }
-  if (kind === "character" && mode === "basic_builtin") {
-    return hasAdvancedCharacterNode || !hasBasicImageCore || !workflowLooksLikeLegacyBasicAssetWorkflow(trimmed, "character");
   }
   if (kind === "skybox" && mode === "advanced_panorama") {
     return !workflowIncludesAllNodeTypes(trimmed, SKYBOX_ADVANCED_NODE_TYPES);
@@ -1593,9 +1572,7 @@ function loadSettings(): ComfySettings {
       typeof parsed.skyboxWorkflowJson === "string" ? parsed.skyboxWorkflowJson : "";
     const resolvedCharacterMode = resolveEffectiveAssetWorkflowMode(
       "character",
-      parsed.characterAssetWorkflowMode === "advanced_multiview" || parsed.characterAssetWorkflowMode === "basic_builtin"
-        ? parsed.characterAssetWorkflowMode
-        : DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
+      "advanced_multiview",
       parsedCharacterWorkflowJson
     ) as CharacterAssetWorkflowMode;
     const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
@@ -1605,7 +1582,7 @@ function loadSettings(): ComfySettings {
         : DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
       parsedSkyboxWorkflowJson
     ) as SkyboxAssetWorkflowMode;
-    const shouldUpgradeCharacterMode = resolvedCharacterMode === "advanced_multiview" && parsed.characterAssetWorkflowMode !== "advanced_multiview";
+    const shouldUpgradeCharacterMode = parsed.characterAssetWorkflowMode !== "advanced_multiview";
     const shouldUpgradeSkyboxMode = resolvedSkyboxMode === "advanced_panorama" && parsed.skyboxAssetWorkflowMode !== "advanced_panorama";
     const resolvedStoryboardMode =
       parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
@@ -3933,111 +3910,6 @@ export function ComfyPipelinePanel() {
         "mirrored body"
       ]
     );
-    const runBasicThreeViews = async (workflowJsonOverride: string, seedBase: number) => {
-      const [front, side, back] = await Promise.all([
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", seedBase),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(
-            `asset_char_${name}_side`,
-            `${name} 侧视图`,
-            buildCharacterViewPrompt(name, context, "side"),
-            "",
-            seedBase + 101
-          ),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("side", negativePrompt) }
-          }
-        ),
-        generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(
-            `asset_char_${name}_back`,
-            `${name} 背视图`,
-            buildCharacterViewPrompt(name, context, "back"),
-            "",
-            seedBase + 202
-          ),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride,
-            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("back", negativePrompt) }
-          }
-        )
-      ]);
-      return { front, side, back };
-    };
-
-    const runBasicThreeViewsWithAutoRetry = async (workflowJsonOverride: string, seedBase: number) => {
-      let bestResult: Awaited<ReturnType<typeof runBasicThreeViews>> | null = null;
-      let bestQuality: Awaited<ReturnType<typeof evaluateThreeViewQuality>> | null = null;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const seed = seedBase + attempt * 7331;
-        const current = await runBasicThreeViews(workflowJsonOverride, seed);
-        const currentPaths = [
-          current.front.localPath || current.front.previewUrl,
-          current.side.localPath || current.side.previewUrl,
-          current.back.localPath || current.back.previewUrl
-        ].filter((value): value is string => Boolean(value));
-        const currentQuality = await evaluateThreeViewQuality(currentPaths);
-        const isAcceptable = !currentQuality.lowDiversity && !currentQuality.lowSharpness && !currentQuality.lowOrientation;
-        if (!bestQuality || currentQuality.score > bestQuality.score) {
-          bestResult = current;
-          bestQuality = currentQuality;
-        }
-        if (isAcceptable && bestResult) {
-          if (attempt > 0 && bestQuality) {
-            appendLog(`角色三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
-          }
-          return current;
-        }
-        if (attempt < 3) {
-          appendLog(
-            `三视图候选 ${attempt + 1}/4 未达标（${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
-            "info"
-          );
-        }
-      }
-      if (bestResult && bestQuality) {
-        if (bestQuality.lowDiversity || bestQuality.lowSharpness || bestQuality.lowOrientation) {
-          throw new Error(
-            `角色三视图多轮生成仍未达标（视角/清晰度约束未通过：${[
-              bestQuality.lowDiversity ? "视角过近" : "",
-              bestQuality.lowSharpness ? `清晰度偏低(min=${(bestQuality.minSharpness ?? 0).toFixed(1)})` : "",
-              bestQuality.lowOrientation ? `视角异常(${bestQuality.orientationAlerts.join("|")})` : ""
-            ]
-              .filter(Boolean)
-              .join(" / ")}）。请更换角色基模或补充更明确的人设描述。`
-          );
-        }
-        return bestResult;
-      }
-      throw new Error("角色三视图生成失败：未获得有效候选输出");
-    };
-
-    if (mode !== "advanced_multiview") {
-      return runBasicThreeViewsWithAutoRetry(workflowOverride, baseSeed);
-    }
-
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
       characterModelForWorkflow,
       runtimeSettings.characterTemplatePreset ?? "portrait",
@@ -4162,31 +4034,13 @@ export function ComfyPipelinePanel() {
       return await runAdvancedThreeViewsWithAutoRetry(baseSeed);
     } catch (error) {
       if (isHuggingFaceFetchError(error)) {
-        const fallbackModel =
-          requestedCharacterModel ||
-          runtimeSettings.characterAssetModelName?.trim() ||
-          DEFAULT_CHARACTER_ASSET_MODEL;
-        const fallbackWorkflow = buildCharacterWorkflowTemplateJson(
-          fallbackModel,
-          runtimeSettings.characterTemplatePreset ?? "portrait",
-          runtimeSettings.characterRenderPreset ?? "clean_reference"
+        throw new Error(
+          `角色高级多视角工作流执行失败：MVAdapter 远程依赖请求异常（HuggingFace 网络/SSL）。当前版本已禁用基础三视图降级，请修复网络后重试。原始错误：${String(error)}`
         );
-        persistSettings((previous) => ({
-          ...previous,
-          characterAssetWorkflowMode: "basic_builtin",
-          characterAssetModelName: fallbackModel,
-          characterWorkflowJson: fallbackWorkflow
-        }));
-        appendLog(
-          `检测到 MVAdapter 依赖 HuggingFace 远程拉取失败（网络/SSL），已自动切换到本地基础三视图工作流：${name}`,
-          "info"
-        );
-        pushToast("MVAdapter 远程依赖不可用，已自动切换基础三视图模式", "warning");
-        return runBasicThreeViewsWithAutoRetry(fallbackWorkflow, baseSeed + 9157);
       }
       if (!shouldFallbackAssetWorkflow(error)) throw error;
       throw new Error(
-        `角色高级多视角工作流不可用，已禁止自动降级基础三视图模板：${String(error)}。` +
+        `角色高级多视角工作流不可用，当前版本已禁用基础三视图降级：${String(error)}。` +
           `当前已强制 MVAdapter 使用方形分辨率（避免非方形触发 einops rearrange 失败）。` +
           `请确认 ComfyUI-MVAdapter 版本与模型权重匹配后重试。`
       );
@@ -4572,10 +4426,20 @@ export function ComfyPipelinePanel() {
       };
     });
 
+  const createCharacterOrthographicContext = (name: string) =>
+    mergePromptFragments([
+      `${name} 角色设定`,
+      "标准正交三视图",
+      "完整服装",
+      "中性站姿",
+      "全身完整入镜",
+      "禁止剧情动作",
+      "禁止场景叙事"
+    ]);
+
   const createCharacterAssetIfMissing = async (
     runtimeSettings: ComfySettings,
-    name: string,
-    context: string
+    name: string
   ): Promise<ProvisionCreateResult> => {
     const nameKey = normalizeEntityKey(name);
     const inFlight = nameKey ? characterProvisionInFlightRef.current.get(nameKey) : undefined;
@@ -4640,11 +4504,13 @@ export function ComfyPipelinePanel() {
         }
         appendLog(`检测到旧版或异常角色三视图资产，已自动重建：${name}`, "info");
       }
-      const safeContext = stripCharacterMentions(context.trim() || `${name} 的角色设定`, extractCharacterCandidates(context));
-      const baseSeed = stableAssetSeed(`${name}|${safeContext}|character`);
+      const orthographicContext = createCharacterOrthographicContext(name);
+      const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+      const baseSeed = stableAssetSeed(`${name}|orthographic_threeview|${styleAnchor || "default"}|character`);
       appendLog(`开始生成角色三视图：${name}`);
+      appendLog(`角色三视图已与剧情文本解绑，仅按标准正交设定生成：${name}`, "info");
       appendLog(`角色三视图使用专用工作流：${name}`);
-      const { front, side, back } = await generateCharacterThreeViews(runtimeSettings, name, safeContext, baseSeed);
+      const { front, side, back } = await generateCharacterThreeViews(runtimeSettings, name, orthographicContext, baseSeed);
 
       const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
       addAsset({
@@ -4908,7 +4774,6 @@ export function ComfyPipelinePanel() {
           thumbs: []
         });
         try {
-          const context = [item.prompt, item.notes, item.dialogue].filter(Boolean).join(" ");
           const reusedId = findAssetIdByName("character", name);
           if (reusedId) {
             characterIdMap.set(key, reusedId);
@@ -4927,7 +4792,7 @@ export function ComfyPipelinePanel() {
             });
             continue;
           }
-          const result = await createCharacterAssetIfMissing(runtimeSettings, name, context);
+          const result = await createCharacterAssetIfMissing(runtimeSettings, name);
           if (result.assetId) {
             characterIdMap.set(key, result.assetId);
             createdCharacters += 1;
@@ -7251,26 +7116,12 @@ export function ComfyPipelinePanel() {
             onChange={(event) =>
               persistSettings((previous) => ({ ...previous, characterWorkflowJson: event.target.value }))
             }
-            placeholder='可选。粘贴专用于角色三视图的 ComfyUI API 工作流 JSON；留空则回退到图片工作流。'
+            placeholder='可选。粘贴专用于角色三视图的 ComfyUI API 工作流 JSON；留空会自动写入内置 MVAdapter 模板。'
             rows={5}
             value={settings.characterWorkflowJson ?? ""}
           />
         </label>
-        <label>
-          角色三视图工作流模式
-          <select
-            onChange={(event) =>
-              persistSettings((previous) => ({
-                ...previous,
-                characterAssetWorkflowMode: event.target.value as CharacterAssetWorkflowMode
-              }))
-            }
-            value={characterAssetWorkflowMode}
-          >
-            <option value="basic_builtin">基础正交三视图模板</option>
-            <option value="advanced_multiview">高级多视角角色工作流</option>
-          </select>
-        </label>
+        <div className="timeline-meta">角色三视图模式固定为高级多视角（MVAdapter），已移除基础模式与自动降级。</div>
         <div className="comfy-asset-mode-card">
           <div className="comfy-asset-mode-head">
             <strong>{characterAssetModeSpec.label}</strong>
@@ -7461,34 +7312,19 @@ export function ComfyPipelinePanel() {
             onClick={() => {
               persistSettings((previous) => ({
                 ...previous,
-                characterWorkflowJson:
-                  characterAssetWorkflowMode === "advanced_multiview"
-                    ? buildCharacterAdvancedWorkflowTemplateJson(
-                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-                        previous.characterTemplatePreset ?? "portrait",
-                        previous.characterRenderPreset ?? "clean_reference"
-                      )
-                    : buildCharacterWorkflowTemplateJson(
-                        previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
-                        previous.characterTemplatePreset ?? "portrait",
-                        previous.characterRenderPreset ?? "clean_reference"
-                      )
+                characterAssetWorkflowMode: "advanced_multiview",
+                characterWorkflowJson: buildCharacterAdvancedWorkflowTemplateJson(
+                  previous.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL,
+                  previous.characterTemplatePreset ?? "portrait",
+                  previous.characterRenderPreset ?? "clean_reference"
+                )
               }));
-              appendLog(
-                characterAssetWorkflowMode === "advanced_multiview"
-                  ? "已写入内置高级多视角角色工作流模板"
-                  : "已写入内置角色三视图默认工作流模板"
-              );
-              pushToast(
-                characterAssetWorkflowMode === "advanced_multiview"
-                  ? "已写入内置高级多视角角色工作流模板"
-                  : "已写入内置角色三视图默认工作流模板",
-                "success"
-              );
+              appendLog("已写入内置高级多视角角色工作流模板");
+              pushToast("已写入内置高级多视角角色工作流模板", "success");
             }}
             type="button"
           >
-            {characterAssetWorkflowMode === "advanced_multiview" ? "写入内置高级多视角模板" : "写入内置角色三视图模板"}
+            写入内置高级多视角模板
           </button>
           <button
             className="btn-ghost"
@@ -7513,20 +7349,15 @@ export function ComfyPipelinePanel() {
         </div>
         <div className="timeline-meta">
           要求：一张图只能有一个角色、一个角度；不要输出拼图或三联图；
-          {characterAssetWorkflowMode === "advanced_multiview"
-            ? "允许使用动态参考图 {{FRAME_IMAGE_PATH}}，但不要写死固定 LoadImage。"
-            : "不要依赖固定 LoadImage；"}
+          允许使用动态参考图 {"{{FRAME_IMAGE_PATH}}"}，但不要写死固定 LoadImage。
           最终必须稳定产出单张图片。
         </div>
         <div className="timeline-meta">
-          {characterAssetWorkflowMode === "advanced_multiview"
-            ? "内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup / ViewSelector / DiffusersMVSampler / SaveImage"
-            : "内置模板节点：CheckpointLoaderSimple / CLIPTextEncode / EmptyLatentImage / KSampler / VAEDecode / SaveImage"}
+          内置高级模板节点：LdmPipelineLoader / LdmVaeLoader / DiffusersMVSchedulerLoader / DiffusersMVModelMakeup /
+          ViewSelector / DiffusersMVSampler / SaveImage
         </div>
         <div className="timeline-meta">
-          {characterAssetWorkflowMode === "advanced_multiview"
-            ? `内置高级模板会使用 ${DEFAULT_CHARACTER_ASSET_MODEL} + ${DEFAULT_CHARACTER_ADVANCED_VAE} + ${DEFAULT_CHARACTER_ADVANCED_ADAPTER}。`
-            : `内置模板模型：1 个主模型。基于你当前 Windows 已有模型，默认推荐 ${DEFAULT_CHARACTER_ASSET_MODEL}；可替换为 realisticVisionV60B1_v51VAE.safetensors 或 animagine-xl-4.0.safetensors。`}
+          {`内置高级模板会使用 ${DEFAULT_CHARACTER_ASSET_MODEL} + ${DEFAULT_CHARACTER_ADVANCED_VAE} + ${DEFAULT_CHARACTER_ADVANCED_ADAPTER}。`}
         </div>
         <div className="timeline-meta">
           当前采样预设：{CHARACTER_RENDER_PRESET_CONFIG[settings.characterRenderPreset ?? "clean_reference"].label} /
@@ -8039,9 +7870,7 @@ export function ComfyPipelinePanel() {
                 if (settings.characterWorkflowJson?.trim()) {
                   appendLog(`角色三视图工作流预检通过，检测到 ${check.used.length} 个 token`);
                 } else if (advancedMode) {
-                  appendLog("角色三视图当前处于高级多视角角色工作流模式，但尚未配置专用工作流 JSON。", "error");
-                } else {
-                  appendLog(`角色三视图工作流未单独配置，当前会使用基础内置模板，检测到 ${check.used.length} 个 token`);
+                  appendLog("角色三视图当前固定为高级多视角模式，尚未配置专用工作流 JSON 时会使用内置 MVAdapter 模板。");
                 }
                 if (settings.requireDedicatedCharacterWorkflow !== false && !settings.characterWorkflowJson?.trim()) {
                   appendLog("角色三视图严格资产模式已开启：当前未配置专用工作流时，正式生成会被拦截。", "error");
