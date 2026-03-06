@@ -151,6 +151,8 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
+const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 20;
+const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
 
@@ -3534,6 +3536,30 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
+    const [sharpness, symmetry] = await Promise.all([
+      computeImageSharpnessScore(pathOrUrl),
+      computeHorizontalMirrorSimilarity(pathOrUrl)
+    ]);
+    const lowSharpness =
+      typeof sharpness === "number" && sharpness < CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE;
+    const lowSymmetry =
+      typeof symmetry === "number" && symmetry < CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY;
+    const issues = [
+      lowSharpness && typeof sharpness === "number" ? `清晰度偏低(min=${sharpness.toFixed(1)})` : "",
+      lowSymmetry && typeof symmetry === "number" ? `正面不够居中(sym=${symmetry.toFixed(2)})` : ""
+    ].filter(Boolean);
+    return {
+      sharpness,
+      symmetry,
+      lowSharpness,
+      lowSymmetry,
+      acceptable: !lowSharpness && !lowSymmetry,
+      score: (sharpness ?? 0) + (symmetry ?? 0) * 10,
+      issues
+    };
+  };
+
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
     id,
     sequenceId: currentSequenceId,
@@ -3607,14 +3633,20 @@ export function ComfyPipelinePanel() {
       "single character, solo",
       "single-view full-body orthographic character reference",
       "orthographic view",
+      "character turnaround reference illustration",
+      "model sheet quality single pose reference",
       "no perspective exaggeration",
+      "flat camera, eye-level camera, centered framing",
       "single panel character reference, no sheet layout, no split layout",
       "full body centered, exactly one person",
       "character occupies about 75% to 90% of frame height",
       "high quality character design illustration",
-      "clean linework and smooth shading",
+      "clean linework and smooth cel shading",
+      "plain studio setup, even lighting, no dramatic rim light",
       "natural human proportions, anatomically correct limbs",
       "neutral standing pose",
+      "upright spine, level shoulders, level hips",
+      "feet parallel, weight balanced, no contrapposto",
       "arms naturally down and slightly away from torso",
       "both hands visible, both legs fully visible, feet fully visible",
       "fully clothed",
@@ -3666,6 +3698,9 @@ export function ComfyPipelinePanel() {
       "人体比例自然，头身比协调，肩胯关系合理，四肢长度正常",
       "手脚结构清楚，不允许手指粘连或肢体扭曲",
       "结构清晰，不允许透视畸变、鱼眼变形或人体拉伸",
+      "禁止倾斜站姿、禁止时装摆拍、禁止 S 形站姿、禁止扭胯",
+      "禁止耸肩、歪头、塌腰、踮脚、跨步、叉腿",
+      "禁止镜头仰拍、俯拍、广角透视、近大远小",
       "服装统一且前后侧一致",
       "面部与体型一致",
       view === "front" ? "front-only, not side, not back" : "",
@@ -3691,11 +3726,11 @@ export function ComfyPipelinePanel() {
     const cropConstraint =
       "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing";
     const anatomyConstraint =
-      "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, dislocated joints, extra arms, extra legs, fused fingers, malformed hands, asymmetrical eyes, long neck";
+      "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, dislocated joints, extra arms, extra legs, fused fingers, malformed hands, asymmetrical eyes, long neck, missing arm, missing hand, missing leg, missing foot";
     const poseOcclusionConstraint =
-      "crossed arms, folded arms, hands behind back, hands in pockets, self occlusion, hidden hands, hidden legs, crouching, kneeling, sitting pose";
+      "crossed arms, folded arms, hands behind back, hands in pockets, self occlusion, hidden hands, hidden legs, crouching, kneeling, sitting pose, contrapposto, runway pose, fashion pose, leaning pose, one leg forward, crossed legs, bent knee, tilted shoulders, tilted hips, head tilt";
     const qualityConstraint =
-      "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo";
+      "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo, dramatic perspective, foreshortening, fisheye lens, dutch angle, low angle shot, high angle shot, photo background clutter";
     return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}`;
   };
 
@@ -3912,50 +3947,62 @@ export function ComfyPipelinePanel() {
     );
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
       characterModelForWorkflow,
-      runtimeSettings.characterTemplatePreset ?? "portrait",
+      "square",
       runtimeSettings.characterRenderPreset ?? "clean_reference"
     );
     const runAdvancedThreeViews = async (seedBase: number) => {
-      const referenceFront = await generateShotAsset(
-        runtimeSettings,
-        makeAssetGenerationShot(
-          `asset_char_${name}_reference`,
-          `${name} 参考正视图`,
-          buildCharacterViewPrompt(name, context, "front"),
-          "",
-          seedBase
-        ),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: referenceWorkflow,
-          tokenOverrides: { NEGATIVE_PROMPT: negativePrompt }
+      let bestReference: Awaited<ReturnType<typeof generateShotAsset>> | null = null;
+      let bestReferenceScore = Number.NEGATIVE_INFINITY;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const referenceSeed = seedBase + attempt * 997;
+        const currentReference = await generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(
+            `asset_char_${name}_reference_${attempt + 1}`,
+            `${name} 参考正视图`,
+            buildCharacterViewPrompt(name, context, "front"),
+            "",
+            referenceSeed
+          ),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: referenceWorkflow,
+            tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
+          }
+        );
+        const currentReferencePath = currentReference.localPath || currentReference.previewUrl;
+        if (!currentReferencePath) continue;
+        const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath);
+        if (currentReferenceQuality.score > bestReferenceScore) {
+          bestReference = currentReference;
+          bestReferenceScore = currentReferenceQuality.score;
         }
-      );
-      const referencePath = referenceFront.localPath || referenceFront.previewUrl;
-      const mvSeed = seedBase + 11;
-      const front = await generateShotAsset(
-        runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_front`, `${name} 正视图`, buildCharacterViewPrompt(name, context, "front"), "", mvSeed),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: workflowOverride,
-          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
-            "front",
-            referencePath,
-            buildCharacterViewNegativePrompt("front", negativePrompt)
-          )
+        if (currentReferenceQuality.acceptable) {
+          if (attempt > 0) {
+            appendLog(`正视参考图经第 ${attempt + 1} 次重试后达标：${name}`, "info");
+          }
+          bestReference = currentReference;
+          break;
         }
-      );
-      const frontAnchorPath = front.localPath || referencePath;
+        if (attempt < 3) {
+          appendLog(`参考正视图未达标（${currentReferenceQuality.issues.join(" / ")}），继续重试：${name}`, "info");
+        }
+      }
+      if (!bestReference) {
+        throw new Error("角色参考正视图生成失败：未获得有效输出");
+      }
+      const referencePath = bestReference.localPath || bestReference.previewUrl;
+      if (!referencePath) {
+        throw new Error("角色参考正视图生成失败：输出路径为空");
+      }
+      const front = bestReference;
+      const frontAnchorPath = referencePath;
       const side = await generateShotAsset(
         runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", mvSeed),
+        makeAssetGenerationShot(`asset_char_${name}_side`, `${name} 侧视图`, buildCharacterViewPrompt(name, context, "side"), "", seedBase + 101),
         0,
         "image",
         [],
@@ -3971,7 +4018,7 @@ export function ComfyPipelinePanel() {
       );
       const back = await generateShotAsset(
         runtimeSettings,
-        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", mvSeed),
+        makeAssetGenerationShot(`asset_char_${name}_back`, `${name} 背视图`, buildCharacterViewPrompt(name, context, "back"), "", seedBase + 202),
         0,
         "image",
         [],
