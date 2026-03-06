@@ -3509,7 +3509,7 @@ export function ComfyPipelinePanel() {
       }
       if (borderCount <= 0) return null;
       const backgroundGray = borderSum / borderCount;
-      const threshold = 22;
+      const threshold = 28;
       const mask = new Uint8Array(size * size);
       for (let index = 0; index < gray.length; index += 1) {
         mask[index] = Math.abs(gray[index] - backgroundGray) >= threshold ? 1 : 0;
@@ -3535,7 +3535,7 @@ export function ComfyPipelinePanel() {
 
       const visited = new Uint8Array(size * size);
       const queue = new Int32Array(size * size);
-      const minComponentArea = Math.round(size * size * 0.025);
+      const minComponentArea = Math.round(size * size * 0.05);
       let significantComponents = 0;
       for (let start = 0; start < mask.length; start += 1) {
         if (mask[start] === 0 || visited[start] === 1) continue;
@@ -3568,7 +3568,7 @@ export function ComfyPipelinePanel() {
       const heightRatio = (maxY - minY + 1) / size;
       return {
         significantComponents,
-        touchingEdges: minX <= 2 || minY <= 2 || maxX >= size - 3 || (maxY >= size - 2 && heightRatio > 0.92),
+        touchingEdges: minX <= 1 || minY <= 1 || maxX >= size - 2 || (maxY >= size - 1 && heightRatio > 0.97),
         bbox: {
           minX,
           minY,
@@ -3608,7 +3608,7 @@ export function ComfyPipelinePanel() {
     if (typeof frontSymmetry === "number" && frontSymmetry < 0.66) {
       orientationAlerts.push(`front_symmetry_low=${frontSymmetry.toFixed(2)}`);
     }
-    if (typeof sideSymmetry === "number" && sideSymmetry > 0.8) {
+    if (typeof sideSymmetry === "number" && sideSymmetry > 0.9) {
       orientationAlerts.push(`side_not_profile(sym=${sideSymmetry.toFixed(2)})`);
     }
     if (typeof backSymmetry === "number" && backSymmetry < 0.72) {
@@ -3629,7 +3629,7 @@ export function ComfyPipelinePanel() {
       if (layout.touchingEdges) {
         layoutAlerts.push(`${label}_touching_edge`);
       }
-      if (layout.bbox.heightRatio < 0.68) {
+      if (layout.bbox.heightRatio < 0.6) {
         layoutAlerts.push(`${label}_subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     });
@@ -3690,7 +3690,7 @@ export function ComfyPipelinePanel() {
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
       layout?.touchingEdges ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.68 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : ""
+      layout && layout.bbox.heightRatio < 0.6 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : ""
     ].filter(Boolean);
     const issues = [
       lowSharpness && typeof sharpness === "number" ? `清晰度偏低(min=${sharpness.toFixed(1)})` : "",
@@ -3772,9 +3772,9 @@ export function ComfyPipelinePanel() {
     const styleHint = resolvePipelineVisualStyleHint();
     const angleInstruction =
       view === "front"
-        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。front view, body yaw 0 degree, facing camera, single-view only."
+        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。头部摆正，肩线水平，骨盆水平，双臂自然垂直下放，双腿平行站立，不允许任何扭身。front view, body yaw 0 degree, facing camera, single-view only, head straight, shoulders level, hips level, arms down, legs parallel."
         : view === "side"
-          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度，鼻尖朝右，只保留一只眼睛轮廓。strict right profile, body yaw 90 degree, side view only, no front-facing, no back-facing."
+          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度，鼻尖朝右，只保留一只眼睛轮廓。严格轮廓侧面图，肩线与髋线侧向重合，胸腔和骨盆都以侧面轮廓表现，远侧手臂与远侧腿不可前露。strict right profile, body yaw 90 degree, side view only, no front-facing, no back-facing, silhouette profile only."
           : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度，面部特征不可见。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
       "masterpiece, best quality, high detail",
@@ -3787,9 +3787,9 @@ export function ComfyPipelinePanel() {
       "flat camera, eye-level camera, centered framing",
       "single panel character reference, no sheet layout, no split layout",
       "full body centered, exactly one person",
-      "character occupies about 62% to 78% of frame height",
-      "clear margin around head, hands, feet, and hair",
-      "leave visible blank background on all four sides",
+      "character occupies about 55% to 70% of frame height",
+      "clear margin around head, hands, feet, hair, and clothing silhouette",
+      "leave generous blank background on all four sides",
       "high quality character design illustration",
       "clean linework and smooth cel shading",
       "plain studio setup, even lighting, no dramatic rim light",
@@ -3816,8 +3816,9 @@ export function ComfyPipelinePanel() {
       backgroundPrompt,
       "A-pose 或自然站姿",
       "站立稳定",
-      "双臂自然下垂且略微离开躯干，双手完整可见",
+      "双臂自然下垂且略微离开躯干，双手完整可见，手肘不过分外展",
       "双腿完整可见，膝关节与脚踝结构自然",
+      "头发与裙摆或衣摆保持自然下垂，禁止大幅外扩占满画面",
       "单张图只允许一个角色",
       "单张图只允许一个角度",
       "画面只允许一个人体实体，禁止并排双人、镜像双人、克隆分身",
@@ -3839,7 +3840,7 @@ export function ComfyPipelinePanel() {
       "完整穿衣",
       "完整服装设计",
       "上衣、下装或长袍、鞋子都要清楚可见",
-      "全身完整入镜，头顶到鞋底必须全部在画面内，保留上下边距",
+      "全身完整入镜，头顶到鞋底必须全部在画面内，保留明确上下左右边距",
       "镜头距离为中远景，禁止半身、胸像、特写构图",
       "同一角色三视图必须保持同一张脸、同一发型、同一体型比例、同一服装款式与配色",
       "必须与参考正视图为同一角色身份，不允许变成另一个人",
@@ -3854,7 +3855,9 @@ export function ComfyPipelinePanel() {
       "服装统一且前后侧一致",
       "面部与体型一致",
       view === "front" ? "front-only, not side, not back" : "",
-      view === "side" ? "strict side-only, not front, not back, not looking at camera, one-eye profile only" : "",
+      view === "side"
+        ? "strict side-only, not front, not back, not looking at camera, one-eye profile only, nose points right, only one eyebrow visible, only one sleeve silhouette visible, only one shoe silhouette clearly dominant"
+        : "",
       view === "back" ? "strict back-only, no visible face, no looking back, no side face, no facial features" : "",
       "illustration style character reference",
       "美术统一"
@@ -3867,14 +3870,14 @@ export function ComfyPipelinePanel() {
       view === "front"
         ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
         : view === "side"
-          ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal, two-eye frontal face, over shoulder"
+          ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal, two-eye frontal face, over shoulder, visible far eye, frontal shoulders, frontal chest, visible second arm in front, visible second leg in front"
           : "front view, facing camera, side profile, looking at camera, face visible, three quarter back view, over shoulder, side face visible";
     const multiCharacterConstraint =
       "two characters, two bodies, duplicate character, cloned person, mirrored twin, side by side characters, split composition, front and back in one image, side and back in one image, multi pose sheet, turnaround sheet, character sheet layout";
     const identityDriftConstraint =
       "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
     const cropConstraint =
-      "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing";
+      "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing, oversized subject, body touching frame edge";
     const anatomyConstraint =
       "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, dislocated joints, extra arms, extra legs, fused fingers, malformed hands, asymmetrical eyes, long neck, missing arm, missing hand, missing leg, missing foot";
     const poseOcclusionConstraint =
@@ -4110,7 +4113,7 @@ export function ComfyPipelinePanel() {
     const runAdvancedThreeViews = async (seedBase: number) => {
       let bestReference: Awaited<ReturnType<typeof generateShotAsset>> | null = null;
       let bestReferenceScore = Number.NEGATIVE_INFINITY;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
         const referenceSeed = seedBase + attempt * 997;
         const currentReference = await generateShotAsset(
           runtimeSettings,
@@ -4144,7 +4147,7 @@ export function ComfyPipelinePanel() {
           bestReference = currentReference;
           break;
         }
-        if (attempt < 3) {
+        if (attempt < 4) {
           appendLog(`参考正视图未达标（${currentReferenceQuality.issues.join(" / ")}），继续重试：${name}`, "info");
         }
       }
@@ -4194,7 +4197,7 @@ export function ComfyPipelinePanel() {
     const runAdvancedThreeViewsWithAutoRetry = async (seedBase: number) => {
       let bestResult: Awaited<ReturnType<typeof runAdvancedThreeViews>> | null = null;
       let bestQuality: Awaited<ReturnType<typeof evaluateThreeViewQuality>> | null = null;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
         const seed = seedBase + attempt * 7331;
         const current = await runAdvancedThreeViews(seed);
         const currentPaths = [
@@ -4214,9 +4217,9 @@ export function ComfyPipelinePanel() {
           if (attempt > 0) appendLog(`MVAdapter 三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
           return current;
         }
-        if (attempt < 3) {
+        if (attempt < 4) {
           appendLog(
-            `MVAdapter 候选 ${attempt + 1}/4 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
+            `MVAdapter 候选 ${attempt + 1}/5 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
             "info"
           );
         }
