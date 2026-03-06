@@ -3584,6 +3584,22 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const isLayoutTooTight = (
+    layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>>,
+    view: "front" | "side" | "back" | "reference_front"
+  ) => {
+    if (!layout.touchingEdges) return false;
+    const { widthRatio, heightRatio } = layout.bbox;
+    const { foregroundRatio } = layout;
+    if (view === "side") {
+      return heightRatio > 0.66 || widthRatio > 0.42 || foregroundRatio > 0.14;
+    }
+    if (view === "back") {
+      return heightRatio > 0.68 || widthRatio > 0.5 || foregroundRatio > 0.15;
+    }
+    return heightRatio > 0.68 || widthRatio > 0.48 || foregroundRatio > 0.15;
+  };
+
   const evaluateThreeViewQuality = async (paths: string[]) => {
     const diversity = await detectLowDiversityThreeViews(paths);
     const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
@@ -3626,7 +3642,7 @@ export function ComfyPipelinePanel() {
       if (layout.significantComponents > 1) {
         layoutAlerts.push(`${label}_multi_blob=${layout.significantComponents}`);
       }
-      if (layout.touchingEdges) {
+      if (isLayoutTooTight(layout, label)) {
         layoutAlerts.push(`${label}_touching_edge`);
       }
       if (layout.bbox.heightRatio < 0.6) {
@@ -3689,7 +3705,7 @@ export function ComfyPipelinePanel() {
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
-      layout?.touchingEdges ? "人物贴边或裁切" : "",
+      layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
       layout && layout.bbox.heightRatio < 0.6 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : ""
     ].filter(Boolean);
     const issues = [
@@ -3770,6 +3786,10 @@ export function ComfyPipelinePanel() {
     const sanitizedContext = sanitizeCharacterViewContext(context);
     const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     const styleHint = resolvePipelineVisualStyleHint();
+    const framingInstruction =
+      view === "front"
+        ? "character occupies about 56% to 68% of frame height, centered with generous left right top bottom margins"
+        : "character occupies about 50% to 62% of frame height, centered with extra blank margin on both sides and above the head";
     const angleInstruction =
       view === "front"
         ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。头部摆正，肩线水平，骨盆水平，双臂自然垂直下放，双腿平行站立，不允许任何扭身。front view, body yaw 0 degree, facing camera, single-view only, head straight, shoulders level, hips level, arms down, legs parallel."
@@ -3787,7 +3807,7 @@ export function ComfyPipelinePanel() {
       "flat camera, eye-level camera, centered framing",
       "single panel character reference, no sheet layout, no split layout",
       "full body centered, exactly one person",
-      "character occupies about 55% to 70% of frame height",
+      framingInstruction,
       "clear margin around head, hands, feet, hair, and clothing silhouette",
       "leave generous blank background on all four sides",
       "high quality character design illustration",
@@ -3856,7 +3876,7 @@ export function ComfyPipelinePanel() {
       "面部与体型一致",
       view === "front" ? "front-only, not side, not back" : "",
       view === "side"
-        ? "strict side-only, not front, not back, not looking at camera, one-eye profile only, nose points right, only one eyebrow visible, only one sleeve silhouette visible, only one shoe silhouette clearly dominant"
+        ? "strict side-only, not front, not back, not looking at camera, one-eye profile only, nose points right, only one eyebrow visible, only one sleeve silhouette visible, only one shoe silhouette clearly dominant, arms close to torso, legs vertically stacked in profile"
         : "",
       view === "back" ? "strict back-only, no visible face, no looking back, no side face, no facial features" : "",
       "illustration style character reference",
