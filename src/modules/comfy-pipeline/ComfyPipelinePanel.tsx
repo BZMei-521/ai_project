@@ -3581,6 +3581,12 @@ export function ComfyPipelinePanel() {
         /(三视图|三面图|多视图|多角度|设定板|角色设定板|角色表|转面设定板|front[\s_-]*view|side[\s_-]*view|back[\s_-]*view|turnaround|character sheet|model sheet|multi[\s_-]*view|split[\s_-]*screen|diptych|triptych|collage)/gi,
         " "
       )
+      .replace(/[“"'][^“”"']{1,60}[”"']/g, " ")
+      .replace(
+        /(说话|对白|台词|看向|凝视|回头|转身|走向|跑向|冲向|奔跑|跳起|挥手|抬手|举手|握拳|出拳|踢腿|打斗|战斗|拥抱|牵手|坐下|下跪|跪地|哭泣|大笑|惊讶|怒吼|亲吻|拥吻|拥抱|追逐)/gi,
+        " "
+      )
+      .replace(/(near river|by the river|桥上|河边|街道|房间|走廊|天空|夜景|白天|傍晚)/gi, " ")
       .replace(/\s{2,}/g, " ")
       .trim();
 
@@ -3982,28 +3988,50 @@ export function ComfyPipelinePanel() {
     };
 
     const runBasicThreeViewsWithAutoRetry = async (workflowJsonOverride: string, seedBase: number) => {
-      const first = await runBasicThreeViews(workflowJsonOverride, seedBase);
-      const firstPaths = [first.front.localPath || first.front.previewUrl, first.side.localPath || first.side.previewUrl, first.back.localPath || first.back.previewUrl].filter(
-        (value): value is string => Boolean(value)
-      );
-      const firstQuality = await evaluateThreeViewQuality(firstPaths);
-      if (!firstQuality.lowDiversity && !firstQuality.lowSharpness && !firstQuality.lowOrientation) return first;
-
-      appendLog(
-        `检测到三视图质量不稳定（${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && (firstQuality.lowSharpness || firstQuality.lowOrientation) ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}${firstQuality.lowSharpness && firstQuality.lowOrientation ? " / " : ""}${firstQuality.lowOrientation ? `视角异常 ${firstQuality.orientationAlerts.join("|")}` : ""}），自动重试一次：${name}`,
-        "info"
-      );
-      const second = await runBasicThreeViews(workflowJsonOverride, seedBase + 7331);
-      const secondPaths = [second.front.localPath || second.front.previewUrl, second.side.localPath || second.side.previewUrl, second.back.localPath || second.back.previewUrl].filter(
-        (value): value is string => Boolean(value)
-      );
-      const secondQuality = await evaluateThreeViewQuality(secondPaths);
-      const chooseSecond = secondQuality.score >= firstQuality.score;
-      appendLog(
-        `三视图自动优选结果：${name} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstQuality.score.toFixed(2)} / 重试分数 ${secondQuality.score.toFixed(2)}）`,
-        "info"
-      );
-      return chooseSecond ? second : first;
+      let bestResult: Awaited<ReturnType<typeof runBasicThreeViews>> | null = null;
+      let bestQuality: Awaited<ReturnType<typeof evaluateThreeViewQuality>> | null = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const seed = seedBase + attempt * 7331;
+        const current = await runBasicThreeViews(workflowJsonOverride, seed);
+        const currentPaths = [
+          current.front.localPath || current.front.previewUrl,
+          current.side.localPath || current.side.previewUrl,
+          current.back.localPath || current.back.previewUrl
+        ].filter((value): value is string => Boolean(value));
+        const currentQuality = await evaluateThreeViewQuality(currentPaths);
+        const isAcceptable = !currentQuality.lowDiversity && !currentQuality.lowSharpness && !currentQuality.lowOrientation;
+        if (!bestQuality || currentQuality.score > bestQuality.score) {
+          bestResult = current;
+          bestQuality = currentQuality;
+        }
+        if (isAcceptable && bestResult) {
+          if (attempt > 0 && bestQuality) {
+            appendLog(`角色三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
+          }
+          return current;
+        }
+        if (attempt < 3) {
+          appendLog(
+            `三视图候选 ${attempt + 1}/4 未达标（${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
+            "info"
+          );
+        }
+      }
+      if (bestResult && bestQuality) {
+        if (bestQuality.lowDiversity || bestQuality.lowSharpness || bestQuality.lowOrientation) {
+          throw new Error(
+            `角色三视图多轮生成仍未达标（视角/清晰度约束未通过：${[
+              bestQuality.lowDiversity ? "视角过近" : "",
+              bestQuality.lowSharpness ? `清晰度偏低(min=${(bestQuality.minSharpness ?? 0).toFixed(1)})` : "",
+              bestQuality.lowOrientation ? `视角异常(${bestQuality.orientationAlerts.join("|")})` : ""
+            ]
+              .filter(Boolean)
+              .join(" / ")}）。请更换角色基模或补充更明确的人设描述。`
+          );
+        }
+        return bestResult;
+      }
+      throw new Error("角色三视图生成失败：未获得有效候选输出");
     };
 
     if (mode !== "advanced_multiview") {
@@ -4088,37 +4116,47 @@ export function ComfyPipelinePanel() {
       return { front, side, back };
     };
     const runAdvancedThreeViewsWithAutoRetry = async (seedBase: number) => {
-      const first = await runAdvancedThreeViews(seedBase);
-      const firstPaths = [
-        first.front.localPath || first.front.previewUrl,
-        first.side.localPath || first.side.previewUrl,
-        first.back.localPath || first.back.previewUrl
-      ].filter((value): value is string => Boolean(value));
-      const firstQuality = await evaluateThreeViewQuality(firstPaths);
-      const firstIncomplete = firstPaths.length < 3;
-      const firstUnstable = firstIncomplete || firstQuality.lowDiversity || firstQuality.lowSharpness || firstQuality.lowOrientation;
-      if (!firstUnstable) return first;
-
-      appendLog(
-        `检测到 MVAdapter 三视图质量不稳定（${firstIncomplete ? "输出数量不足" : ""}${firstIncomplete && (firstQuality.lowDiversity || firstQuality.lowSharpness || firstQuality.lowOrientation) ? " / " : ""}${firstQuality.lowDiversity ? "视角过近" : ""}${firstQuality.lowDiversity && (firstQuality.lowSharpness || firstQuality.lowOrientation) ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(firstQuality.lowSharpness || firstQuality.lowDiversity) && firstQuality.lowOrientation ? " / " : ""}${firstQuality.lowOrientation ? `视角异常 ${firstQuality.orientationAlerts.join("|")}` : ""}），自动重试一次：${name}`,
-        "info"
-      );
-      const second = await runAdvancedThreeViews(seedBase + 7331);
-      const secondPaths = [
-        second.front.localPath || second.front.previewUrl,
-        second.side.localPath || second.side.previewUrl,
-        second.back.localPath || second.back.previewUrl
-      ].filter((value): value is string => Boolean(value));
-      const secondQuality = await evaluateThreeViewQuality(secondPaths);
-      const secondIncomplete = secondPaths.length < 3;
-      const secondScore = secondQuality.score + (secondIncomplete ? -1000 : 0);
-      const firstScore = firstQuality.score + (firstIncomplete ? -1000 : 0);
-      const chooseSecond = secondScore >= firstScore;
-      appendLog(
-        `MVAdapter 三视图自动优选结果：${name} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstScore.toFixed(2)} / 重试分数 ${secondScore.toFixed(2)}）`,
-        "info"
-      );
-      return chooseSecond ? second : first;
+      let bestResult: Awaited<ReturnType<typeof runAdvancedThreeViews>> | null = null;
+      let bestQuality: Awaited<ReturnType<typeof evaluateThreeViewQuality>> | null = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const seed = seedBase + attempt * 7331;
+        const current = await runAdvancedThreeViews(seed);
+        const currentPaths = [
+          current.front.localPath || current.front.previewUrl,
+          current.side.localPath || current.side.previewUrl,
+          current.back.localPath || current.back.previewUrl
+        ].filter((value): value is string => Boolean(value));
+        const currentQuality = await evaluateThreeViewQuality(currentPaths);
+        const incomplete = currentPaths.length < 3;
+        const currentScore = currentQuality.score + (incomplete ? -1000 : 0);
+        const isAcceptable = !incomplete && !currentQuality.lowDiversity && !currentQuality.lowSharpness && !currentQuality.lowOrientation;
+        if (!bestQuality || currentScore > bestQuality.score) {
+          bestResult = current;
+          bestQuality = { ...currentQuality, score: currentScore };
+        }
+        if (isAcceptable && bestResult) {
+          if (attempt > 0) appendLog(`MVAdapter 三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
+          return current;
+        }
+        if (attempt < 3) {
+          appendLog(
+            `MVAdapter 候选 ${attempt + 1}/4 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
+            "info"
+          );
+        }
+      }
+      if (bestResult && bestQuality) {
+        throw new Error(
+          `MVAdapter 三视图多轮生成仍未达标（${[
+            bestQuality.lowDiversity ? "视角过近" : "",
+            bestQuality.lowSharpness ? `清晰度偏低(min=${(bestQuality.minSharpness ?? 0).toFixed(1)})` : "",
+            bestQuality.lowOrientation ? `视角异常(${bestQuality.orientationAlerts.join("|")})` : ""
+          ]
+            .filter(Boolean)
+            .join(" / ")}）。`
+        );
+      }
+      throw new Error("MVAdapter 三视图生成失败：未获得有效候选输出");
     };
     try {
       return await runAdvancedThreeViewsWithAutoRetry(baseSeed);
