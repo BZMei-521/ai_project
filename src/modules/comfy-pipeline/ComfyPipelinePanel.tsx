@@ -3313,9 +3313,19 @@ export function ComfyPipelinePanel() {
     sceneRefId: ""
   });
 
+  const sanitizeCharacterViewContext = (context: string) =>
+    normalizeStoryInput(context)
+      .replace(
+        /(三视图|三面图|多视图|多角度|设定板|角色设定板|角色表|转面设定板|front[\s_-]*view|side[\s_-]*view|back[\s_-]*view|turnaround|character sheet|model sheet|multi[\s_-]*view|split[\s_-]*screen|diptych|triptych|collage)/gi,
+        " "
+      )
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
+    const sanitizedContext = sanitizeCharacterViewContext(context);
     const angleInstruction =
       view === "front"
         ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。front view, body yaw 0 degree, facing camera, single-view only."
@@ -3323,11 +3333,12 @@ export function ComfyPipelinePanel() {
           ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度。strict right profile, body yaw 90 degree, side view only, no front-facing."
           : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
-      "single character",
-      "single-view full-body character turnaround reference",
+      "single character, solo",
+      "single-view full-body orthographic character reference",
       "orthographic view",
-      "single panel turnaround reference, not multi-panel",
-      "full body centered",
+      "single panel character reference, no sheet layout, no split layout",
+      "full body centered, exactly one person",
+      "character occupies about 75% to 90% of frame height",
       "fully clothed",
       "complete outfit",
       "top, bottom or robe, and shoes clearly visible",
@@ -3337,7 +3348,7 @@ export function ComfyPipelinePanel() {
       "只保留角色设定信息与服装设计",
       "不要叙事场景",
       "不要与他人互动",
-      normalizeStoryInput(context)
+      sanitizedContext
     ]);
     const constraints = mergePromptFragments([
       backgroundPrompt,
@@ -3345,7 +3356,10 @@ export function ComfyPipelinePanel() {
       "站立稳定",
       "单张图只允许一个角色",
       "单张图只允许一个角度",
+      "画面只允许一个人体实体，禁止并排双人、镜像双人、克隆分身",
+      "exactly one person, no clone, no mirrored twin, no duplicate body",
       "禁止同画面出现第二角度、第二姿态、第二个分身",
+      "禁止 front+back 同画面、side+back 同画面、left+right 同画面",
       "禁止多视图拼版、转面设定板、拼图排版、分屏",
       "无第二人物",
       "无群像",
@@ -3382,11 +3396,13 @@ export function ComfyPipelinePanel() {
         : view === "side"
           ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal"
           : "front view, facing camera, side profile, looking at camera, face visible, three quarter back view, over shoulder";
+    const multiCharacterConstraint =
+      "two characters, two bodies, duplicate character, cloned person, mirrored twin, side by side characters, split composition, front and back in one image, side and back in one image, multi pose sheet, turnaround sheet, character sheet layout";
     const identityDriftConstraint =
       "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
     const cropConstraint =
       "portrait crop, bust shot, upper body only, close-up portrait, headshot, cowboy shot, cut off head, cut off feet, cropped body, selfie framing";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${identityDriftConstraint}, ${cropConstraint}`;
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -3535,6 +3551,11 @@ export function ComfyPipelinePanel() {
         "diptych",
         "triptych",
         "collage",
+        "front and back in one image",
+        "side and back in one image",
+        "two bodies one frame",
+        "duplicate character",
+        "mirrored twin",
         "duplicate pose",
         "duplicate body",
         "mirrored body"
@@ -4079,7 +4100,7 @@ export function ComfyPipelinePanel() {
         const hasLegacyMvPrefix = threeViewPaths.some((value) => /character_mv_/i.test(value));
         const shouldForceRegenerate =
           (strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyBasicPrefix)) ||
-          (!strictAdvancedMode && hasLegacyMvPrefix);
+          (!strictAdvancedMode && (threeViewPaths.length < 3 || !hasDistinctThreeViews || hasLegacyMvPrefix));
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
