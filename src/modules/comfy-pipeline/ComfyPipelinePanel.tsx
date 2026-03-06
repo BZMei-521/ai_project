@@ -107,7 +107,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -120,11 +120,11 @@ const SKYBOX_PROMPT_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "int
 };
 const SKYBOX_NEGATIVE_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "interior", string> = {
   day_exterior:
-    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, stage performance, poster, signage with faces",
+    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, stage performance, poster, signage with faces, aerial view, bird's-eye view, drone shot, site plan, floor plan, campus masterplan, top-down map, architectural diagram, exploded axonometric",
   night_exterior:
-    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, car interior, neon character signage, stage light performer",
+    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, car interior, neon character signage, stage light performer, aerial view, bird's-eye view, drone shot, site plan, floor plan, top-down map, architectural diagram, masterplan render",
   interior:
-    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, mirror reflection of people, television host, poster portrait"
+    "person, people, character, crowd, group shot, portrait, close-up, actor, animal, fighting, action pose, silhouette, dialogue scene, mirror reflection of people, television host, poster portrait, aerial view, bird's-eye view, floor plan, top-down render, architectural concept board, parametric sculpture mockup"
 };
 const DEFAULT_SKYBOX_NEGATIVE_PROMPT = SKYBOX_NEGATIVE_PRESET_TEXT.day_exterior;
 const CHARACTER_RENDER_PRESET_CONFIG: Record<
@@ -3871,6 +3871,7 @@ export function ComfyPipelinePanel() {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const sanitizedContext = sanitizeCharacterViewContext(context);
+    const styleHint = resolvePipelineVisualStyleHint();
     const framingInstruction =
       view === "front"
         ? "character occupies about 56% to 68% of frame height, centered with generous left right top bottom margins"
@@ -3884,10 +3885,11 @@ export function ComfyPipelinePanel() {
     const core = mergePromptFragments([
       "masterpiece, best quality, high detail",
       "single character, solo",
-      "single-view full-body orthographic character reference",
+      "single-view full-body orthographic character reference image",
       "orthographic view",
-      "character turnaround reference illustration",
-      "model sheet quality single pose reference",
+      "single panel costume reference",
+      "production-ready character anchor image",
+      "clean studio character reference",
       "no perspective exaggeration",
       "flat camera, eye-level camera, centered framing",
       "single panel character reference, no sheet layout, no split layout",
@@ -3895,8 +3897,7 @@ export function ComfyPipelinePanel() {
       framingInstruction,
       "clear margin around head, hands, feet, hair, and clothing silhouette",
       "leave generous blank background on all four sides",
-      "high quality character design illustration",
-      "clean linework and smooth cel shading",
+      "high quality character design",
       "plain studio setup, even lighting, no dramatic rim light",
       "natural human proportions, anatomically correct limbs",
       "neutral standing pose",
@@ -3909,6 +3910,7 @@ export function ComfyPipelinePanel() {
       "top, bottom or robe, and shoes clearly visible",
       viewLabel,
       `角色：${name}`,
+      `风格倾向：${styleHint}`,
       angleInstruction,
       "只保留角色设定信息与服装设计",
       "不要叙事场景",
@@ -3962,7 +3964,7 @@ export function ComfyPipelinePanel() {
         ? "strict side-only, not front, not back, not looking at camera, one-eye profile only, nose points right, only one eyebrow visible, only one sleeve silhouette visible, only one shoe silhouette clearly dominant, arms close to torso, legs vertically stacked in profile"
         : "",
       view === "back" ? "strict back-only, no visible face, no looking back, no side face, no facial features" : "",
-      "illustration style character reference",
+      "不是建筑图，不是蓝图，不是环境概念页，不是拼贴板",
       "美术统一"
     ]);
     return `${core}。严格要求：${constraints}。`;
@@ -3987,7 +3989,9 @@ export function ComfyPipelinePanel() {
       "crossed arms, folded arms, hands behind back, hands in pockets, self occlusion, hidden hands, hidden legs, crouching, kneeling, sitting pose, contrapposto, runway pose, fashion pose, leaning pose, one leg forward, crossed legs, bent knee, tilted shoulders, tilted hips, head tilt";
     const qualityConstraint =
       "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo, dramatic perspective, foreshortening, fisheye lens, dutch angle, low angle shot, high angle shot, photo background clutter";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}`;
+    const environmentConstraint =
+      "architecture, building, temple, pagoda, palace exterior, blueprint, floor plan, site plan, campus aerial render, throne, statue, environment concept art, landscape sheet, aerial view, bird's-eye view, top-down view, moodboard, picture-in-picture, inset panels";
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}`;
   };
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -4774,27 +4778,52 @@ export function ComfyPipelinePanel() {
           "front",
           runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
         );
-        const generated = await generateShotAsset(
-          runtimeSettings,
-          makeAssetGenerationShot(
-            `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}`,
-            `${profile.name} 正视锚点`,
-            buildCharacterViewPrompt(profile.name, profile.description, "front"),
-            "",
-            profile.seed
-          ),
-          0,
-          "image",
-          [],
-          [],
-          {
-            workflowJsonOverride: referenceWorkflow,
-            tokenOverrides: {
-              NEGATIVE_PROMPT: negativePrompt
+        const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+        const baseSeed =
+          profile.seed ??
+          stableAssetSeed(`${profile.name}|character_anchor|${profile.description}|${styleAnchor || "default"}`);
+        let bestAnchorPath = "";
+        let bestAnchorScore = Number.NEGATIVE_INFINITY;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const generated = await generateShotAsset(
+            runtimeSettings,
+            makeAssetGenerationShot(
+              `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}_${attempt + 1}`,
+              `${profile.name} 正视锚点`,
+              buildCharacterViewPrompt(profile.name, profile.description, "front"),
+              "",
+              baseSeed + attempt * 997
+            ),
+            0,
+            "image",
+            [],
+            [],
+            {
+              workflowJsonOverride: referenceWorkflow,
+              tokenOverrides: {
+                NEGATIVE_PROMPT: negativePrompt
+              }
             }
+          );
+          const candidatePath = (generated.localPath || generated.previewUrl || "").trim();
+          if (!candidatePath) continue;
+          const quality = await evaluateFrontReferenceQuality(candidatePath);
+          if (quality.score > bestAnchorScore) {
+            bestAnchorPath = candidatePath;
+            bestAnchorScore = quality.score;
           }
-        );
-        anchorPath = (generated.localPath || generated.previewUrl || "").trim();
+          if (quality.acceptable) {
+            if (attempt > 0) {
+              appendLog(`${sourceLabel}角色正视锚点经第 ${attempt + 1} 次重试后达标：${profile.name}`, "info");
+            }
+            bestAnchorPath = candidatePath;
+            break;
+          }
+          if (attempt < 3) {
+            appendLog(`${sourceLabel}角色正视锚点未达标（${quality.issues.join(" / ")}），继续重试：${profile.name}`, "info");
+          }
+        }
+        anchorPath = bestAnchorPath.trim();
         if (anchorPath) {
           appendLog(`${sourceLabel}角色正视锚点生成成功：${profile.name}`);
         }
