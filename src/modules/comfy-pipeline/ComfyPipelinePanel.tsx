@@ -36,7 +36,6 @@ import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
 import STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT from "./presets/storyboard-image-asset-guided-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
-import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "./presets/asset-character-mvadapter-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-kontext-threeview-default.json";
 import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "./presets/assets/character-threeview-layout-ref.png?inline";
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
@@ -497,28 +496,63 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 }
 
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName: string): string {
-  const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
-  if (template["1"]?.inputs) {
-    template["1"].inputs.ckpt_name = resolveMvAdapterFallbackModel(checkpointName);
-  }
-  if (template["9"]?.inputs) {
-    template["9"].inputs.ckpt_name = "ZhengPeng7/BiRefNet";
-  }
-  if (template["7"]?.inputs) {
-    const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterFallbackModel(checkpointName), "square");
-    template["7"].inputs.prompt = "{{PROMPT}}";
-    template["7"].inputs.negative_prompt = "{{NEGATIVE_PROMPT}}";
-    template["7"].inputs.width = width;
-    template["7"].inputs.height = height;
-    template["7"].inputs.seed = "{{SEED}}";
-    if (template["10"]?.inputs) {
-      template["10"].inputs.width = width;
-      template["10"].inputs.height = height;
+  const fallbackModel = resolveMvAdapterFallbackModel(checkpointName);
+  const { width, height } = resolveCharacterTemplateSize(fallbackModel, "portrait");
+  const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
+    "1": {
+      inputs: { ckpt_name: fallbackModel },
+      class_type: "CheckpointLoaderSimple"
+    },
+    "2": {
+      inputs: { image: "{{FRAME_IMAGE_PATH}}", upload: "image" },
+      class_type: "LoadImage"
+    },
+    "3": {
+      inputs: {
+        image: ["2", 0],
+        upscale_method: "lanczos",
+        width,
+        height,
+        crop: "center"
+      },
+      class_type: "ImageScale"
+    },
+    "4": {
+      inputs: { pixels: ["3", 0], vae: ["1", 2] },
+      class_type: "VAEEncode"
+    },
+    "5": {
+      inputs: { text: "{{PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "6": {
+      inputs: { text: "{{NEGATIVE_PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "7": {
+      inputs: {
+        seed: "{{SEED}}",
+        steps: 32,
+        cfg: 6,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        denoise: 0.72,
+        model: ["1", 0],
+        positive: ["5", 0],
+        negative: ["6", 0],
+        latent_image: ["4", 0]
+      },
+      class_type: "KSampler"
+    },
+    "8": {
+      inputs: { samples: ["7", 0], vae: ["1", 2] },
+      class_type: "VAEDecode"
+    },
+    "9": {
+      inputs: { filename_prefix: CHARACTER_THREEVIEW_OUTPUT_PREFIX, images: ["8", 0] },
+      class_type: "SaveImage"
     }
-  }
-  if (template["8"]?.inputs) {
-    template["8"].inputs.filename_prefix = CHARACTER_THREEVIEW_OUTPUT_PREFIX;
-  }
+  };
   return JSON.stringify(template, null, 2);
 }
 
@@ -4810,7 +4844,7 @@ export function ComfyPipelinePanel() {
     const referenceEditModel = resolveMvAdapterFallbackModel(characterModelForWorkflow);
     const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson(referenceEditModel);
     if (referenceEditModel !== characterModelForWorkflow) {
-      appendLog(`角色三视图单视角补全固定使用 MVAdapter 基础模型：${characterModelForWorkflow} -> ${referenceEditModel}`, "info");
+      appendLog(`角色三视图单视角补全固定使用角色图生图模型：${characterModelForWorkflow} -> ${referenceEditModel}`, "info");
     }
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
