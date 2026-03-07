@@ -126,6 +126,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(281, [DEFAULT_CHARACTER_ADVANCED_UNET, "fp8_e4m3fn_fast"]);
   setNodeWidgets(280, [DEFAULT_CHARACTER_ADVANCED_CLIP_L, DEFAULT_CHARACTER_ADVANCED_CLIP_T5, "flux", "default"]);
   setNodeWidgets(279, [DEFAULT_CHARACTER_ADVANCED_VAE]);
+  setNodeWidgets(335, ["RMBG-2.0", 1, 1024, 0, 0, "gray", false, "Color", false]);
   setNodeWidgets(286, ["{{PROMPT}}"]);
   setNodeWidgets(301, ["{{SEED}}", "fixed"]);
   setNodeWidgets(302, [Math.max(20, config.steps), "fixed"]);
@@ -265,15 +266,35 @@ function stripInlineDataUrlPrefix(raw: string): string {
   return raw.replace(/^data:[^,]+,/, "");
 }
 
+async function encodeFetchedAssetAsBase64(assetRef: string): Promise<string> {
+  const trimmed = assetRef.trim();
+  if (!trimmed) throw new Error("角色三视图版式参考资源为空");
+  if (trimmed.startsWith("data:")) {
+    return stripInlineDataUrlPrefix(trimmed);
+  }
+  const response = await fetch(trimmed);
+  if (!response.ok) {
+    throw new Error(`读取角色三视图版式参考失败：HTTP ${response.status}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
 async function ensureCharacterThreeViewLayoutReferenceFilename(comfySettings: ComfySettings): Promise<string> {
   const inputDir = comfySettings.comfyInputDir.trim().replace(/[\\/]+$/, "");
   if (!inputDir) {
     throw new Error("角色三视图工作流需要 ComfyUI input 目录，但当前设置里没有 input 路径。");
   }
   const targetPath = `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`;
+  const base64Data = await encodeFetchedAssetAsBase64(CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL);
   await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
     filePath: targetPath,
-    base64Data: stripInlineDataUrlPrefix(CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL)
+    base64Data
   });
   return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
 }

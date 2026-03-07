@@ -3172,6 +3172,13 @@ function basenameModelChoice(value: string): string {
   return segments[segments.length - 1] ?? normalized;
 }
 
+function tokenizeComboChoice(value: string): string[] {
+  return basenameModelChoice(value)
+    .split(/[^a-z0-9]+/i)
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length >= 2);
+}
+
 function extractComboOptionsFromObjectInfo(
   objectInfo: Record<string, unknown>,
   classType: string,
@@ -3190,7 +3197,12 @@ function extractComboOptionsFromObjectInfo(
   return first.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
-function resolveBestModelOption(desiredValue: string, options: string[]): string {
+function resolveBestModelOption(
+  desiredValue: string,
+  options: string[],
+  classType = "",
+  inputName = ""
+): string {
   if (!desiredValue.trim() || options.length === 0) return desiredValue;
   const desiredNormalized = normalizeModelChoice(desiredValue);
   const desiredBase = basenameModelChoice(desiredValue);
@@ -3203,6 +3215,37 @@ function resolveBestModelOption(desiredValue: string, options: string[]): string
 
   const suffixMatch = options.find((option) => normalizeModelChoice(option).endsWith(`/${desiredBase}`));
   if (suffixMatch) return suffixMatch;
+
+  const desiredTokens = tokenizeComboChoice(desiredValue);
+  if (desiredTokens.length > 0) {
+    let bestOption = "";
+    let bestScore = 0;
+    for (const option of options) {
+      const optionNormalized = normalizeModelChoice(option);
+      let score = 0;
+      for (const token of desiredTokens) {
+        if (!optionNormalized.includes(token)) continue;
+        score += token.length >= 5 ? 4 : token.length >= 3 ? 2 : 1;
+      }
+      if (score > bestScore) {
+        bestOption = option;
+        bestScore = score;
+      }
+    }
+    if (bestOption && bestScore > 0) return bestOption;
+  }
+
+  if (classType === "RMBG" && inputName === "background") {
+    const normalizedDesired = desiredValue.trim().toLowerCase();
+    if (/(gray|grey|white|black|color|colour|solid)/.test(normalizedDesired)) {
+      return options.find((option) => option.trim().toLowerCase() === "color") ?? options[0]!;
+    }
+    return options.find((option) => option.trim().toLowerCase() === "alpha") ?? options[0]!;
+  }
+
+  if (/^(default|auto)$/i.test(desiredValue.trim())) {
+    return options[0]!;
+  }
 
   return desiredValue;
 }
@@ -3222,7 +3265,7 @@ function applyComfyModelOptionBindings(
         if (typeof currentValue !== "string" || !currentValue.trim()) continue;
         const options = extractComboOptionsFromObjectInfo(objectInfo, classType, name);
         if (options.length === 0) continue;
-        const resolved = resolveBestModelOption(currentValue, options);
+        const resolved = resolveBestModelOption(currentValue, options, classType, name);
         if (resolved !== currentValue) {
           (inputs as Record<string, unknown>)[name] = resolved;
         }
@@ -3234,7 +3277,26 @@ function applyComfyModelOptionBindings(
   const nodes = workflowNodes(workflow);
   for (const node of nodes) {
     if (!node || typeof node.type !== "string") continue;
-    if (!Array.isArray(node.inputs) || !Array.isArray(node.widgets_values)) continue;
+    if (!Array.isArray(node.widgets_values)) continue;
+
+    const orderedNames = objectInfoInputOrderNames(objectInfo, node.type);
+    if (orderedNames.length > 0) {
+      const maxCount = Math.min(orderedNames.length, node.widgets_values.length);
+      for (let index = 0; index < maxCount; index += 1) {
+        const name = orderedNames[index] ?? "";
+        const currentValue = node.widgets_values[index];
+        if (!name || typeof currentValue !== "string" || !currentValue.trim()) continue;
+        const options = extractComboOptionsFromObjectInfo(objectInfo, node.type, name);
+        if (options.length === 0) continue;
+        const resolved = resolveBestModelOption(currentValue, options, node.type, name);
+        if (resolved !== currentValue) {
+          setNodeWidgetValue(node, index, resolved);
+        }
+      }
+      continue;
+    }
+
+    if (!Array.isArray(node.inputs)) continue;
 
     const comboInputs = node.inputs
       .map((input, index) => ({ input, index }))
@@ -3251,7 +3313,7 @@ function applyComfyModelOptionBindings(
       if (typeof currentValue !== "string" || !currentValue.trim()) continue;
       const options = extractComboOptionsFromObjectInfo(objectInfo, node.type, name);
       if (options.length === 0) continue;
-      const resolved = resolveBestModelOption(currentValue, options);
+      const resolved = resolveBestModelOption(currentValue, options, node.type, name);
       if (resolved !== currentValue) {
         setNodeWidgetValue(node, index, resolved);
       }
@@ -3763,10 +3825,10 @@ const WIDGET_ONLY_INPUT_FALLBACKS: Record<string, string[]> = {
     "process_res",
     "mask_blur",
     "mask_offset",
-    "background",
+    "background_color",
     "invert_output",
-    "refine_foreground",
-    "background_color"
+    "background",
+    "refine_foreground"
   ],
   ImageResizeKJv2: [
     "width",
@@ -4161,6 +4223,9 @@ async function queueComfyPrompt(
   objectInfo?: Record<string, unknown>
 ): Promise<string> {
   const prompt = normalizeWorkflowForQueue(workflow, objectInfo);
+  if (objectInfo) {
+    applyComfyModelOptionBindings(prompt, objectInfo);
+  }
   ensureComfyProgressSocket(baseUrl);
   return invokeDesktop<string>("comfy_queue_prompt", {
     baseUrl: normalizeBaseUrl(baseUrl),

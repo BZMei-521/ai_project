@@ -480,6 +480,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(281, [DEFAULT_CHARACTER_ADVANCED_UNET, "fp8_e4m3fn_fast"]);
   setNodeWidgets(280, [DEFAULT_CHARACTER_ADVANCED_CLIP_L, DEFAULT_CHARACTER_ADVANCED_CLIP_T5, "flux", "default"]);
   setNodeWidgets(279, [DEFAULT_CHARACTER_ADVANCED_VAE]);
+  setNodeWidgets(335, ["RMBG-2.0", 1, 1024, 0, 0, "gray", false, "Color", false]);
   setNodeWidgets(286, ["{{PROMPT}}"]);
   setNodeWidgets(301, ["{{SEED}}", "fixed"]);
   setNodeWidgets(302, [Math.max(20, config.steps), "fixed"]);
@@ -898,6 +899,23 @@ function uniqueEntities(values: string[]): string[] {
     output.push(trimmed);
   }
   return output;
+}
+
+function normalizeComparableFsPath(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function isPortableComfyDirCandidate(value: string): boolean {
+  return normalizeComparableFsPath(value).includes("/comfyui_jm_windows_portable/comfyui");
+}
+
+function shouldAdoptDiscoveredComfyPath(current: string, discovered: string): boolean {
+  const currentNormalized = normalizeComparableFsPath(current);
+  const discoveredNormalized = normalizeComparableFsPath(discovered);
+  if (!discoveredNormalized) return false;
+  if (!currentNormalized) return true;
+  if (currentNormalized === discoveredNormalized) return false;
+  return isPortableComfyDirCandidate(discoveredNormalized) && !isPortableComfyDirCandidate(currentNormalized);
 }
 
 const CHARACTER_ROLE_HINTS = [
@@ -4246,6 +4264,25 @@ export function ComfyPipelinePanel() {
 
   const stripInlineDataUrlPrefix = (raw: string) => raw.replace(/^data:[^,]+,/, "");
 
+  const encodeFetchedAssetAsBase64 = async (assetRef: string) => {
+    const trimmed = assetRef.trim();
+    if (!trimmed) throw new Error("角色三视图版式参考资源为空");
+    if (trimmed.startsWith("data:")) {
+      return stripInlineDataUrlPrefix(trimmed);
+    }
+    const response = await fetch(trimmed);
+    if (!response.ok) {
+      throw new Error(`读取角色三视图版式参考失败：HTTP ${response.status}`);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    return btoa(binary);
+  };
+
   const ensureCharacterThreeViewLayoutReferenceFilename = async (runtimeSettings: ComfySettings) => {
     const discovered =
       runtimeSettings.comfyInputDir.trim().length > 0
@@ -4256,9 +4293,10 @@ export function ComfyPipelinePanel() {
       throw new Error("角色三视图工作流需要 ComfyUI input 目录，但当前未检测到 input 路径。");
     }
     const targetPath = `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`;
+    const base64Data = await encodeFetchedAssetAsBase64(CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL);
     await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
       filePath: targetPath,
-      base64Data: stripInlineDataUrlPrefix(CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL)
+      base64Data
     });
     return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
   };
@@ -6501,15 +6539,15 @@ export function ComfyPipelinePanel() {
       const changedLabels: string[] = [];
       persistSettings((previous) => {
         const next = { ...previous };
-        if (!next.comfyRootDir.trim() && localDirs.rootDir) {
+        if (shouldAdoptDiscoveredComfyPath(next.comfyRootDir, localDirs.rootDir)) {
           next.comfyRootDir = localDirs.rootDir;
           changedLabels.push(`根目录: ${localDirs.rootDir}`);
         }
-        if (!next.comfyInputDir.trim() && localDirs.inputDir) {
+        if (shouldAdoptDiscoveredComfyPath(next.comfyInputDir, localDirs.inputDir)) {
           next.comfyInputDir = localDirs.inputDir;
           changedLabels.push(`input: ${localDirs.inputDir}`);
         }
-        if (!next.outputDir.trim() && localDirs.outputDir) {
+        if (shouldAdoptDiscoveredComfyPath(next.outputDir, localDirs.outputDir)) {
           next.outputDir = localDirs.outputDir;
           changedLabels.push(`output: ${localDirs.outputDir}`);
         }
@@ -6569,15 +6607,15 @@ export function ComfyPipelinePanel() {
       const changedLabels: string[] = [];
       persistSettings((previous) => {
         const next = { ...previous };
-        if (!next.comfyRootDir.trim() && localDirs.rootDir) {
+        if (shouldAdoptDiscoveredComfyPath(next.comfyRootDir, localDirs.rootDir)) {
           next.comfyRootDir = localDirs.rootDir;
           changedLabels.push(`根目录: ${localDirs.rootDir}`);
         }
-        if (!next.comfyInputDir.trim() && localDirs.inputDir) {
+        if (shouldAdoptDiscoveredComfyPath(next.comfyInputDir, localDirs.inputDir)) {
           next.comfyInputDir = localDirs.inputDir;
           changedLabels.push(`input: ${localDirs.inputDir}`);
         }
-        if (!next.outputDir.trim() && localDirs.outputDir) {
+        if (shouldAdoptDiscoveredComfyPath(next.outputDir, localDirs.outputDir)) {
           next.outputDir = localDirs.outputDir;
           changedLabels.push(`output: ${localDirs.outputDir}`);
         }

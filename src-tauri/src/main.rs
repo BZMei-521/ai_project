@@ -2215,6 +2215,10 @@ fn comfy_discover_endpoints() -> Result<ComfyDiscoverResult, String> {
 #[tauri::command]
 fn comfy_discover_local_dirs() -> Result<ComfyLocalDirsResult, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("../ComfyUI_JM_windows_portable/ComfyUI"));
+        candidates.push(cwd.join("ComfyUI_JM_windows_portable/ComfyUI"));
+    }
     if let Ok(home) = std::env::var("HOME") {
         let home_dir = PathBuf::from(home);
         candidates.push(home_dir.join("Documents/ComfyUI"));
