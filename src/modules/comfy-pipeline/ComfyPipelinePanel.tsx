@@ -126,7 +126,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, vehicle, train, locomotive, car, bus, aircraft, tank, mech, robot, machinery, technical drawing, manuscript page, calligraphy page, sepia sketch page, ancient painting scan, old paper illustration, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, lineup sheet, sprite sheet, costume lineup, many tiny characters, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, magic circle, petals, floral background, ornate background, poster background, decorative frame, vehicle, train, locomotive, car, bus, aircraft, tank, mech, robot, machinery, technical drawing, manuscript page, calligraphy page, sepia sketch page, ancient painting scan, old paper illustration, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -3905,6 +3905,81 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const buildNormalizedAnchorOutputPath = (sourcePath: string) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, "_flatbg.png");
+  };
+
+  const normalizeCharacterAnchorBackground = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return pathOrUrl;
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return pathOrUrl;
+    const src = toDesktopMediaSource(trimmed);
+    if (!src) return pathOrUrl;
+    const image = await loadImageForHash(src);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth || image.width;
+    canvas.height = image.naturalHeight || image.height;
+    const context = canvas.getContext("2d");
+    if (!context) return pathOrUrl;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = frame.data;
+    const step = Math.max(1, Math.floor(Math.min(canvas.width, canvas.height) / 96));
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    let count = 0;
+    const sample = (x: number, y: number) => {
+      const index = (y * canvas.width + x) * 4;
+      sumR += data[index] ?? 0;
+      sumG += data[index + 1] ?? 0;
+      sumB += data[index + 2] ?? 0;
+      count += 1;
+    };
+    for (let x = 0; x < canvas.width; x += step) {
+      sample(x, 0);
+      sample(x, Math.max(0, canvas.height - 1));
+    }
+    for (let y = step; y < canvas.height - step; y += step) {
+      sample(0, y);
+      sample(Math.max(0, canvas.width - 1), y);
+    }
+    if (count <= 0) return pathOrUrl;
+    const bgR = sumR / count;
+    const bgG = sumG / count;
+    const bgB = sumB / count;
+    const targetR = 236;
+    const targetG = 236;
+    const targetB = 236;
+    let replaced = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const dr = (data[index] ?? 0) - bgR;
+      const dg = (data[index + 1] ?? 0) - bgG;
+      const db = (data[index + 2] ?? 0) - bgB;
+      const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+      if (distance <= 42) {
+        data[index] = targetR;
+        data[index + 1] = targetG;
+        data[index + 2] = targetB;
+        data[index + 3] = 255;
+        replaced += 1;
+      }
+    }
+    if (replaced <= 0) return pathOrUrl;
+    context.putImageData(frame, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    const filePath = buildNormalizedAnchorOutputPath(trimmed);
+    if (!filePath) return pathOrUrl;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: dataUrl.replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath || pathOrUrl;
+  };
+
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
     id,
     sequenceId: currentSequenceId,
@@ -4007,6 +4082,7 @@ export function ComfyPipelinePanel() {
       framingInstruction,
       "clear margin around head, hands, feet, hair, and clothing silhouette",
       "leave generous blank background on all four sides",
+      "solid plain light gray background only, no gradient background, no scenery, no decorative effects",
       "high quality character design",
       "plain studio setup, even lighting, no dramatic rim light",
       "natural human proportions, anatomically correct limbs",
@@ -4035,6 +4111,8 @@ export function ComfyPipelinePanel() {
       "双臂自然下垂且略微离开躯干，双手完整可见，手肘不过分外展",
       "双腿完整可见，膝关节与脚踝结构自然",
       "头发与裙摆或衣摆保持自然下垂，禁止大幅外扩占满画面",
+      "背景必须纯净单色，不允许花纹背景、光效背景、魔法阵背景、花瓣背景、海报背景",
+      "背景里不能出现任何场景、纹样、道具墙、角色设定表、立绘排版、小人阵列",
       "单张图只允许一个角色",
       "单张图只允许一个角度",
       "画面只允许一个人体实体，禁止并排双人、镜像双人、克隆分身",
@@ -4042,6 +4120,7 @@ export function ComfyPipelinePanel() {
       "禁止同画面出现第二角度、第二姿态、第二个分身",
       "禁止 front+back 同画面、side+back 同画面、left+right 同画面",
       "禁止多视图拼版、转面设定板、拼图排版、分屏",
+      "禁止角色设定总表、多人设定页、整页小人排表、lineup sheet、sprite sheet、character lineup",
       "必须为标准角色设定三视图中的单视角，不允许生成组合视角",
       "必须是人类角色设定图，不是车辆，不是火车，不是建筑，不是佛像，不是雕像，不是机械物体，不是古画扫描页",
       "must depict one human character only, not a train, not a vehicle, not a building, not a statue, not a manuscript page",
@@ -4104,7 +4183,7 @@ export function ComfyPipelinePanel() {
           ? "front view, facing camera, back view, rear view, three quarter view, 3/4 view, turned torso, both eyes frontal, two-eye frontal face, over shoulder, visible far eye, frontal shoulders, frontal chest, visible second arm in front, visible second leg in front"
           : "front view, facing camera, side profile, looking at camera, face visible, three quarter back view, over shoulder, side face visible";
     const multiCharacterConstraint =
-      "two characters, two bodies, duplicate character, cloned person, mirrored twin, side by side characters, split composition, front and back in one image, side and back in one image, multi pose sheet, turnaround sheet, character sheet layout";
+      "two characters, two bodies, duplicate character, cloned person, mirrored twin, side by side characters, split composition, front and back in one image, side and back in one image, multi pose sheet, turnaround sheet, character sheet layout, lineup sheet, sprite sheet, many tiny characters, costume lineup, model lineup";
     const identityDriftConstraint =
       "different face, another person, different hairstyle, hair length changed, costume change, outfit change, color palette changed, body shape changed, age changed";
     const cropConstraint =
@@ -4116,7 +4195,7 @@ export function ComfyPipelinePanel() {
     const qualityConstraint =
       "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo, dramatic perspective, foreshortening, fisheye lens, dutch angle, low angle shot, high angle shot, photo background clutter";
     const environmentConstraint =
-      "architecture, building, temple, pagoda, palace exterior, blueprint, floor plan, site plan, campus aerial render, throne, statue, environment concept art, landscape sheet, aerial view, bird's-eye view, top-down view, moodboard, picture-in-picture, inset panels";
+      "architecture, building, temple, pagoda, palace exterior, blueprint, floor plan, site plan, campus aerial render, throne, statue, environment concept art, landscape sheet, aerial view, bird's-eye view, top-down view, moodboard, picture-in-picture, inset panels, magic circle, petals, floral background, ornate background, decorative frame, poster background, scene background, gradient backdrop";
     return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}`;
   };
 
@@ -4435,7 +4514,7 @@ export function ComfyPipelinePanel() {
             makeAssetGenerationShot(
               `asset_char_${name}_reference_${attempt + 1}`,
               `${name} 参考正视图`,
-              buildCharacterViewPrompt(name, context, "front"),
+              buildFrontAnchorRetryPrompt(name, context, attempt),
               "",
               referenceSeed
             ),
@@ -4448,18 +4527,29 @@ export function ComfyPipelinePanel() {
               tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
             }
           );
-          const currentReferencePath = currentReference.localPath || currentReference.previewUrl;
+          const currentReferencePathRaw = currentReference.localPath || currentReference.previewUrl;
+          const currentReferencePath = currentReferencePathRaw
+            ? await normalizeCharacterAnchorBackground(currentReferencePathRaw)
+            : "";
           if (!currentReferencePath) continue;
           const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath);
           if (currentReferenceQuality.score > bestReferenceScore) {
-            bestReference = currentReference;
+            bestReference = {
+              ...currentReference,
+              localPath: currentReferencePath,
+              previewUrl: currentReferencePath
+            };
             bestReferenceScore = currentReferenceQuality.score;
           }
           if (currentReferenceQuality.acceptable) {
             if (attempt > 0) {
               appendLog(`正视参考图经第 ${attempt + 1} 次重试后达标：${name}`, "info");
             }
-            bestReference = currentReference;
+            bestReference = {
+              ...currentReference,
+              localPath: currentReferencePath,
+              previewUrl: currentReferencePath
+            };
             break;
           }
           if (attempt < 4) {
@@ -5016,6 +5106,7 @@ export function ComfyPipelinePanel() {
         }
         anchorPath = bestAnchorPath.trim();
         if (anchorPath) {
+          anchorPath = await normalizeCharacterAnchorBackground(anchorPath);
           appendLog(`${sourceLabel}角色正视锚点生成成功：${profile.name}`);
         }
       }
