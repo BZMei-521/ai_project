@@ -56,6 +56,27 @@
     },
     "class_type": "LoadImage"
   },
+  "9": {
+    "inputs": {
+      "model_name": "ZhengPeng7/BiRefNet"
+    },
+    "class_type": "BiRefNet"
+  },
+  "10": {
+    "inputs": {
+      "remove_bg_fn": [
+        "9",
+        0
+      ],
+      "image": [
+        "5",
+        0
+      ],
+      "max_side_len": 768,
+      "image_size": 768
+    },
+    "class_type": "ImagePreprocessor"
+  },
   "6": {
     "inputs": {
       "front_view": "{{CHARACTER_FRONT_VIEW}}",
@@ -82,7 +103,7 @@
       "cfg": 5.5,
       "seed": "{{SEED}}",
       "reference_image": [
-        "5",
+        "10",
         0
       ],
       "azimuth_degrees": [

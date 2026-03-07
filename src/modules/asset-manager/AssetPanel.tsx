@@ -75,7 +75,7 @@ function resolveMvAdapterCharacterModel(name: string): string {
 }
 
 function resolveMvAdapterFallbackModel(_name: string): string {
-  return DEFAULT_CHARACTER_ASSET_MODEL;
+  return resolveMvAdapterCharacterModel(_name);
 }
 
 function resolveCharacterTemplateSize(

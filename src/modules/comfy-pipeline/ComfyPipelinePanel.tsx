@@ -418,7 +418,7 @@ function resolveMvAdapterCharacterModel(requestedModel: string): string {
 }
 
 function resolveMvAdapterFallbackModel(requestedModel: string): string {
-  return DEFAULT_CHARACTER_ASSET_MODEL;
+  return resolveMvAdapterCharacterModel(requestedModel);
 }
 
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
@@ -4090,6 +4090,12 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, "_framed.png");
   };
 
+  const buildCharacterViewPanelOutputPath = (sourcePath: string, panelIndex: number) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, `_panel${panelIndex}.png`);
+  };
+
   const normalizeCharacterAnchorBackground = async (pathOrUrl: string) => {
     if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
     const trimmed = pathOrUrl.trim();
@@ -4221,6 +4227,48 @@ export function ComfyPipelinePanel() {
       base64Data: dataUrl.replace(/^data:[^,]+,/, "")
     });
     return result.filePath || pathOrUrl;
+  };
+
+  const expandCharacterViewCandidatePanels = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return [pathOrUrl];
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return [];
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return [pathOrUrl];
+    const layout = await analyzeForegroundLayout(trimmed);
+    if (!layout) return [pathOrUrl];
+    const shouldSplitPanels =
+      layout.significantComponents >= 2 && layout.bbox.widthRatio >= 0.58 && layout.bbox.heightRatio >= 0.7;
+    if (!shouldSplitPanels) return [pathOrUrl];
+    const source = toDesktopMediaSource(trimmed);
+    if (!source) return [pathOrUrl];
+    const image = await loadImageForHash(source);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width < 3 || height < 1) return [pathOrUrl];
+    if (width < Math.round(height * 0.9) || width > Math.round(height * 1.2)) return [pathOrUrl];
+    const panelWidth = Math.floor(width / 3);
+    if (panelWidth < 64) return [pathOrUrl];
+    const overlap = Math.max(4, Math.round(width * 0.01));
+    const createdPaths: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const startX = index === 0 ? 0 : Math.max(0, index * panelWidth - overlap);
+      const endX = index === 2 ? width : Math.min(width, (index + 1) * panelWidth + overlap);
+      const cropWidth = Math.max(1, endX - startX);
+      const canvas = document.createElement("canvas");
+      canvas.width = cropWidth;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) continue;
+      context.drawImage(image, startX, 0, cropWidth, height, 0, 0, cropWidth, height);
+      const filePath = buildCharacterViewPanelOutputPath(trimmed, index + 1);
+      if (!filePath) continue;
+      const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+        filePath,
+        base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+      });
+      if (result.filePath) createdPaths.push(result.filePath);
+    }
+    return createdPaths.length > 0 ? createdPaths : [pathOrUrl];
   };
 
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
@@ -4797,6 +4845,8 @@ export function ComfyPipelinePanel() {
         let bestScore = Number.NEGATIVE_INFINITY;
         let bestIssues: string[] = [];
         for (let attempt = 0; attempt < 5; attempt += 1) {
+          let attemptBestIssues: string[] = [];
+          let attemptBestScore = Number.NEGATIVE_INFINITY;
           const generated = await generateShotAsset(
             runtimeSettings,
             makeAssetGenerationShot(
@@ -4824,26 +4874,36 @@ export function ComfyPipelinePanel() {
                 }
           );
           const candidatePathRaw = generated.localPath || generated.previewUrl;
-          const normalizedCandidatePath = candidatePathRaw ? await normalizeCharacterAnchorBackground(candidatePathRaw) : "";
-          const candidatePath = normalizedCandidatePath
-            ? await fitCharacterViewWithinCanvas(normalizedCandidatePath, view)
-            : "";
-          if (!candidatePath) continue;
-          const quality = await evaluateSingleCharacterViewQuality(candidatePath, view);
-          if (quality.score > bestScore) {
-            bestPath = candidatePath;
-            bestScore = quality.score;
-            bestIssues = quality.issues;
+          const rawCandidatePaths = candidatePathRaw ? await expandCharacterViewCandidatePanels(candidatePathRaw) : [];
+          if (rawCandidatePaths.length > 1) {
+            appendLog(`单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 检测到多面板输出，已自动拆分单图：${name}`, "info");
           }
-          if (quality.acceptable) {
-            if (attempt > 0) {
-              appendLog(`单视角${view === "side" ? "侧视" : "背视"}补全经第 ${attempt + 1} 次重试后达标：${name}`, "info");
+          for (const rawCandidatePath of rawCandidatePaths) {
+            const normalizedCandidatePath = await normalizeCharacterAnchorBackground(rawCandidatePath);
+            const candidatePath = normalizedCandidatePath
+              ? await fitCharacterViewWithinCanvas(normalizedCandidatePath, view)
+              : "";
+            if (!candidatePath) continue;
+            const quality = await evaluateSingleCharacterViewQuality(candidatePath, view);
+            if (quality.score > attemptBestScore) {
+              attemptBestScore = quality.score;
+              attemptBestIssues = quality.issues;
             }
-            return candidatePath;
+            if (quality.score > bestScore) {
+              bestPath = candidatePath;
+              bestScore = quality.score;
+              bestIssues = quality.issues;
+            }
+            if (quality.acceptable) {
+              if (attempt > 0) {
+                appendLog(`单视角${view === "side" ? "侧视" : "背视"}补全经第 ${attempt + 1} 次重试后达标：${name}`, "info");
+              }
+              return candidatePath;
+            }
           }
           if (attempt < 4) {
             appendLog(
-              `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 未达标（${quality.issues.join(" / ") || "视角不稳定"}），继续重试：${name}`,
+              `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 未达标（${attemptBestIssues.join(" / ") || "视角不稳定"}），继续重试：${name}`,
               "info"
             );
           }
