@@ -481,7 +481,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(280, [DEFAULT_CHARACTER_ADVANCED_CLIP_L, DEFAULT_CHARACTER_ADVANCED_CLIP_T5, "flux", "default"]);
   setNodeWidgets(279, [DEFAULT_CHARACTER_ADVANCED_VAE]);
   setNodeWidgets(315, ["weight_patch_first", "auto"]);
-  setNodeWidgets(335, ["RMBG-2.0", 1, 1024, 0, 0, "gray", false, "Color", false]);
+  setNodeWidgets(335, ["RMBG-2.0", 1, 1024, 0, 0, "#808080", false, "Color", false]);
   setNodeWidgets(286, ["{{PROMPT}}"]);
   setNodeWidgets(301, ["{{SEED}}", "fixed"]);
   setNodeWidgets(302, [Math.max(20, config.steps), "fixed"]);
@@ -509,7 +509,11 @@ function workflowHasKnownBrokenCharacterAdvancedDefaults(workflowJson: string): 
   if (nodes.length <= 0) return false;
   const rmbgNode = nodes.find((node) => node.id === 335 || node.type === "RMBG");
   if (Array.isArray(rmbgNode?.widgets_values)) {
+    const backgroundColor = rmbgNode.widgets_values[5];
     const background = rmbgNode.widgets_values[7];
+    if (typeof backgroundColor === "string" && backgroundColor.trim() && !/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(backgroundColor.trim())) {
+      return true;
+    }
     if (typeof background === "string" && !/^(Color|Alpha)$/i.test(background.trim())) {
       return true;
     }
