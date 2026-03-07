@@ -3744,7 +3744,39 @@ function inputTypeValue(input: Record<string, unknown>): unknown {
 
 const WIDGET_ONLY_INPUT_FALLBACKS: Record<string, string[]> = {
   LoadImage: ["image", "upload"],
-  ConditioningAverage: ["conditioning_to_strength"]
+  ConditioningAverage: ["conditioning_to_strength"],
+  CLIPTextEncode: ["text"],
+  SaveImage: ["filename_prefix"],
+  PrimitiveInt: ["value"],
+  UNETLoader: ["unet_name", "weight_dtype"],
+  DualCLIPLoader: ["clip_name1", "clip_name2", "type", "device"],
+  VAELoader: ["vae_name"],
+  RMBG: [
+    "model",
+    "sensitivity",
+    "process_res",
+    "mask_blur",
+    "mask_offset",
+    "background",
+    "invert_output",
+    "refine_foreground",
+    "background_color"
+  ],
+  ImageResizeKJv2: [
+    "width",
+    "height",
+    "upscale_method",
+    "keep_proportion",
+    "pad_color",
+    "crop_position",
+    "divisible_by",
+    "device"
+  ],
+  ImageStitch: ["direction", "match_image_size", "spacing_width", "spacing_color"],
+  EmptySD3LatentImage: ["width", "height", "batch_size"],
+  FluxGuidance: ["guidance"],
+  PathchSageAttentionKJ: ["sage_attention", "allow_compile"],
+  PatchModelPatcherOrder: ["patch_order", "full_load"]
 };
 
 function isNumericString(value: string): boolean {
@@ -3786,7 +3818,95 @@ function isValueCompatibleForInputType(value: unknown, type: unknown): boolean {
   return true;
 }
 
-function buildWidgetValuesByInputName(node: WorkflowNode): Record<string, unknown> {
+function objectInfoInputOrderNames(objectInfo: Record<string, unknown> | undefined, classType: string): string[] {
+  if (!objectInfo || !classType.trim()) return [];
+  const classInfo = objectInfo[classType];
+  if (!classInfo || typeof classInfo !== "object" || Array.isArray(classInfo)) return [];
+  const inputOrder = (classInfo as { input_order?: unknown }).input_order;
+  const ordered: string[] = [];
+  const appendBucketNames = (container: unknown, bucket: "required" | "optional") => {
+    if (!container || typeof container !== "object" || Array.isArray(container)) return;
+    const names = (container as Record<string, unknown>)[bucket];
+    if (!Array.isArray(names)) return;
+    for (const name of names) {
+      if (typeof name !== "string") continue;
+      const trimmed = name.trim();
+      if (!trimmed) continue;
+      ordered.push(trimmed);
+    }
+  };
+  if (inputOrder && typeof inputOrder === "object" && !Array.isArray(inputOrder)) {
+    for (const bucket of ["required", "optional"] as const) {
+      appendBucketNames(inputOrder, bucket);
+    }
+  }
+  if (ordered.length > 0) return ordered;
+  const input = (classInfo as { input?: unknown }).input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return [];
+  for (const bucket of ["required", "optional"] as const) {
+    const entries = (input as Record<string, unknown>)[bucket];
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) continue;
+    for (const key of Object.keys(entries)) {
+      const trimmed = key.trim();
+      if (!trimmed) continue;
+      ordered.push(trimmed);
+    }
+  }
+  return ordered;
+}
+
+function buildWidgetFallbackNames(
+  node: WorkflowNode,
+  widgetInputs: Array<Record<string, unknown>>,
+  objectInfo?: Record<string, unknown>
+): string[] {
+  const nodeType = typeof node.type === "string" ? node.type.trim() : "";
+  if (objectInfo && nodeType) {
+    const orderedNames = objectInfoInputOrderNames(objectInfo, nodeType);
+    if (orderedNames.length > 0) {
+      const excludedNames = new Set<string>();
+      const nodeInputs = Array.isArray(node.inputs) ? node.inputs : [];
+      for (const rawInput of nodeInputs) {
+        if (!rawInput || typeof rawInput !== "object") continue;
+        const input = rawInput as Record<string, unknown>;
+        const name = typeof input.name === "string" ? input.name.trim() : "";
+        if (!name) continue;
+        const hasLink = typeof input.link === "number";
+        if (hasLink || hasWidgetMeta(input)) {
+          excludedNames.add(name);
+        }
+      }
+      for (const input of widgetInputs) {
+        const name = typeof input.name === "string" ? input.name.trim() : "";
+        if (!name) continue;
+        excludedNames.add(name);
+      }
+      const derived = orderedNames.filter((name) => !excludedNames.has(name));
+      if (derived.length > 0) return derived;
+    }
+  }
+  return WIDGET_ONLY_INPUT_FALLBACKS[nodeType] ?? [];
+}
+
+function getWorkflowVariableNodeName(node: WorkflowNode): string {
+  const widgets = node.widgets_values;
+  if (Array.isArray(widgets) && typeof widgets[0] === "string" && widgets[0].trim()) {
+    return widgets[0].trim();
+  }
+  const properties = (node as { properties?: unknown }).properties;
+  if (properties && typeof properties === "object" && !Array.isArray(properties)) {
+    const previousName = (properties as Record<string, unknown>).previousName;
+    if (typeof previousName === "string" && previousName.trim()) {
+      return previousName.trim();
+    }
+  }
+  return "";
+}
+
+function buildWidgetValuesByInputName(
+  node: WorkflowNode,
+  objectInfo?: Record<string, unknown>
+): Record<string, unknown> {
   const nodeInputs = Array.isArray(node.inputs) ? node.inputs : [];
   const output: Record<string, unknown> = {};
   const widgetValues = node.widgets_values;
@@ -3835,25 +3955,112 @@ function buildWidgetValuesByInputName(node: WorkflowNode): Record<string, unknow
     output[name] = value;
   }
 
-  const fallbackNames = WIDGET_ONLY_INPUT_FALLBACKS[node.type ?? ""] ?? [];
+  const fallbackNames = buildWidgetFallbackNames(node, widgetInputs, objectInfo);
   for (let index = 0; index < fallbackNames.length; index += 1) {
     const name = fallbackNames[index] ?? "";
     if (!name || Object.prototype.hasOwnProperty.call(output, name)) continue;
-    if (index >= widgets.length) break;
-    output[name] = widgets[index];
+    const widgetIndex = cursor + index;
+    if (widgetIndex >= widgets.length) break;
+    output[name] = widgets[widgetIndex];
   }
   return output;
 }
 
-function graphWorkflowToApiPrompt(workflow: Record<string, unknown>): Record<string, unknown> {
+function buildSetNodeSourceLinkByName(nodes: WorkflowNode[]): Map<string, number> {
+  const mapping = new Map<string, number>();
+  for (const node of nodes) {
+    if (isNodeDisabled(node)) continue;
+    if ((node.type ?? "").trim() !== "SetNode") continue;
+    const name = getWorkflowVariableNodeName(node);
+    if (!name) continue;
+    const nodeInputs = Array.isArray(node.inputs) ? node.inputs : [];
+    const linkId = typeof nodeInputs[0]?.link === "number" ? nodeInputs[0].link : null;
+    if (typeof linkId === "number") {
+      mapping.set(name, linkId);
+    }
+  }
+  return mapping;
+}
+
+function resolveWorkflowSourceNode(
+  nodeId: string,
+  outputSlot: number,
+  nodeById: Map<string, WorkflowNode>,
+  linkById: Map<number, WorkflowLink>,
+  setNodeSourceLinkByName: Map<string, number>,
+  seenAliases: Set<string> = new Set(),
+  seenNodes: Set<string> = new Set()
+): [string, number] | null {
+  if (seenNodes.has(nodeId)) return null;
+  seenNodes.add(nodeId);
+  const node = nodeById.get(nodeId);
+  const nodeType = typeof node?.type === "string" ? node.type.trim() : "";
+  if (nodeType === "GetNode") {
+    const alias = node ? getWorkflowVariableNodeName(node) : "";
+    if (!alias || seenAliases.has(alias)) return null;
+    seenAliases.add(alias);
+    const sourceLinkId = setNodeSourceLinkByName.get(alias);
+    if (typeof sourceLinkId !== "number") return null;
+    return resolveWorkflowLinkedSource(
+      sourceLinkId,
+      nodeById,
+      linkById,
+      setNodeSourceLinkByName,
+      seenAliases,
+      seenNodes
+    );
+  }
+  if (nodeType === "SetNode") {
+    const nodeInputs = Array.isArray(node?.inputs) ? node.inputs : [];
+    const sourceLinkId = typeof nodeInputs[0]?.link === "number" ? nodeInputs[0].link : null;
+    if (typeof sourceLinkId !== "number") return null;
+    return resolveWorkflowLinkedSource(
+      sourceLinkId,
+      nodeById,
+      linkById,
+      setNodeSourceLinkByName,
+      seenAliases,
+      seenNodes
+    );
+  }
+  return [nodeId, outputSlot];
+}
+
+function resolveWorkflowLinkedSource(
+  linkId: number,
+  nodeById: Map<string, WorkflowNode>,
+  linkById: Map<number, WorkflowLink>,
+  setNodeSourceLinkByName: Map<string, number>,
+  seenAliases: Set<string> = new Set(),
+  seenNodes: Set<string> = new Set()
+): [string, number] | null {
+  const link = linkById.get(linkId);
+  if (!link) return null;
+  return resolveWorkflowSourceNode(
+    String(link[1]),
+    Number(link[2]),
+    nodeById,
+    linkById,
+    setNodeSourceLinkByName,
+    seenAliases,
+    seenNodes
+  );
+}
+
+function graphWorkflowToApiPrompt(
+  workflow: Record<string, unknown>,
+  objectInfo?: Record<string, unknown>
+): Record<string, unknown> {
   const nodes = workflowNodes(workflow);
   if (nodes.length === 0) return {};
   const activeNodeIds = new Set<string>();
+  const nodeById = new Map<string, WorkflowNode>();
   for (const node of nodes) {
     if (isNodeDisabled(node)) continue;
     const id = typeof node.id === "number" || typeof node.id === "string" ? String(node.id) : "";
     if (!id) continue;
     activeNodeIds.add(id);
+    nodeById.set(id, node);
   }
   const links = workflowLinks(workflow);
   const linkById = new Map<number, WorkflowLink>();
@@ -3867,12 +4074,14 @@ function graphWorkflowToApiPrompt(workflow: Record<string, unknown>): Record<str
     linkedNodeIds.add(sourceNodeId);
     linkedNodeIds.add(targetNodeId);
   }
+  const setNodeSourceLinkByName = buildSetNodeSourceLinkByName(nodes);
   const prompt: Record<string, unknown> = {};
   for (const node of nodes) {
     if (isNodeDisabled(node)) continue;
     const nodeIdRaw = (node as { id?: unknown }).id;
     const nodeType = typeof node.type === "string" ? node.type.trim() : "";
     if (!nodeType) continue;
+    if (nodeType === "SetNode" || nodeType === "GetNode") continue;
     const nodeId =
       typeof nodeIdRaw === "number" || typeof nodeIdRaw === "string"
         ? String(nodeIdRaw)
@@ -3882,7 +4091,7 @@ function graphWorkflowToApiPrompt(workflow: Record<string, unknown>): Record<str
 
     const inputValues: Record<string, unknown> = {};
     const nodeInputs = Array.isArray(node.inputs) ? node.inputs : [];
-    const widgetByInputName = buildWidgetValuesByInputName(node);
+    const widgetByInputName = buildWidgetValuesByInputName(node, objectInfo);
 
     for (const rawInput of nodeInputs) {
       if (!rawInput || typeof rawInput !== "object") continue;
@@ -3892,6 +4101,11 @@ function graphWorkflowToApiPrompt(workflow: Record<string, unknown>): Record<str
 
       const linkId = typeof input.link === "number" ? input.link : null;
       if (typeof linkId === "number") {
+        const resolvedLink = resolveWorkflowLinkedSource(linkId, nodeById, linkById, setNodeSourceLinkByName);
+        if (resolvedLink) {
+          inputValues[name] = resolvedLink;
+          continue;
+        }
         const link = linkById.get(linkId);
         if (link) {
           inputValues[name] = [String(link[1]), Number(link[2])];
@@ -3917,7 +4131,10 @@ function graphWorkflowToApiPrompt(workflow: Record<string, unknown>): Record<str
   return prompt;
 }
 
-function normalizeWorkflowForQueue(workflow: Record<string, unknown>): Record<string, unknown> {
+function normalizeWorkflowForQueue(
+  workflow: Record<string, unknown>,
+  objectInfo?: Record<string, unknown>
+): Record<string, unknown> {
   if (isLikelyComfyApiPrompt(workflow)) {
     return workflow;
   }
@@ -3925,15 +4142,19 @@ function normalizeWorkflowForQueue(workflow: Record<string, unknown>): Record<st
   if (!hasGraphNodes) {
     return workflow;
   }
-  const converted = graphWorkflowToApiPrompt(workflow);
+  const converted = graphWorkflowToApiPrompt(workflow, objectInfo);
   if (Object.keys(converted).length === 0) {
     throw new Error("工作流转换失败：无法从 nodes/links 生成 Comfy API prompt");
   }
   return converted;
 }
 
-async function queueComfyPrompt(baseUrl: string, workflow: Record<string, unknown>): Promise<string> {
-  const prompt = normalizeWorkflowForQueue(workflow);
+async function queueComfyPrompt(
+  baseUrl: string,
+  workflow: Record<string, unknown>,
+  objectInfo?: Record<string, unknown>
+): Promise<string> {
+  const prompt = normalizeWorkflowForQueue(workflow, objectInfo);
   ensureComfyProgressSocket(baseUrl);
   return invokeDesktop<string>("comfy_queue_prompt", {
     baseUrl: normalizeBaseUrl(baseUrl),
@@ -4231,7 +4452,29 @@ function selectOutputAsset(outputs: ComfyOutputAsset[], kind: "image" | "video" 
     if (audios.length === 0) return null;
     return audios.sort((left, right) => scoreAudioOutputAsset(right) - scoreAudioOutputAsset(left))[0] ?? null;
   }
-  return outputs.find((asset) => !isVideoOutputAsset(asset) && !isAudioOutputAsset(asset)) ?? outputs[0] ?? null;
+  const images = outputs.filter((asset) => !isVideoOutputAsset(asset) && !isAudioOutputAsset(asset));
+  if (images.length === 0) return outputs[0] ?? null;
+  return (
+    images.sort((left, right) => {
+      const leftType = String(left.type ?? "").toLowerCase();
+      const rightType = String(right.type ?? "").toLowerCase();
+      const leftSubfolder = String(left.subfolder ?? "").toLowerCase();
+      const rightSubfolder = String(right.subfolder ?? "").toLowerCase();
+      const leftName = String(left.filename ?? "").toLowerCase();
+      const rightName = String(right.filename ?? "").toLowerCase();
+      const leftScore =
+        (leftType === "output" ? 100 : 0) +
+        (leftType === "temp" ? -20 : 0) +
+        (leftSubfolder.includes("storyboard") ? 20 : 0) +
+        (/character_orthoview|skybox_|image_asset_|shot_/.test(leftName) ? 10 : 0);
+      const rightScore =
+        (rightType === "output" ? 100 : 0) +
+        (rightType === "temp" ? -20 : 0) +
+        (rightSubfolder.includes("storyboard") ? 20 : 0) +
+        (/character_orthoview|skybox_|image_asset_|shot_/.test(rightName) ? 10 : 0);
+      return rightScore - leftScore;
+    })[0] ?? null
+  );
 }
 
 function sanitizePathSegment(value: string): string {
@@ -4554,13 +4797,14 @@ export async function generateShotAsset(
     applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
+    let objectInfo: Record<string, unknown> | undefined;
     try {
-      const objectInfo = await fetchObjectInfo(settings.baseUrl);
+      objectInfo = await fetchObjectInfo(settings.baseUrl);
       applyComfyModelOptionBindings(built, objectInfo);
     } catch {
       // Keep queueing with the original values if object_info is unavailable.
     }
-    const promptId = await queueComfyPrompt(settings.baseUrl, built);
+    const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
     const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress);
     const chosen = selectOutputAsset(outputs, kind);
     if (!chosen) {
@@ -4789,14 +5033,15 @@ async function generateSkyboxPanoramaFaces(
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);
+  let objectInfo: Record<string, unknown> | undefined;
   try {
-    const objectInfo = await fetchObjectInfo(settings.baseUrl);
+    objectInfo = await fetchObjectInfo(settings.baseUrl);
     applyComfyModelOptionBindings(built, objectInfo);
   } catch {
     // ignore object_info failures during skybox generation
   }
 
-  const promptId = await queueComfyPrompt(settings.baseUrl, built);
+  const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
   const outputs = await waitForComfyOutput(settings.baseUrl, promptId);
   const faces: Partial<Record<SkyboxFace, string>> = {};
   const previews: Partial<Record<SkyboxFace, string>> = {};
@@ -4836,13 +5081,14 @@ export async function generateSkyboxFaces(
     applyDynamicCharacterRefsForImageWorkflow(workflow, []);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, "image", tokens);
+    let objectInfo: Record<string, unknown> | undefined;
     try {
-      const objectInfo = await fetchObjectInfo(settings.baseUrl);
+      objectInfo = await fetchObjectInfo(settings.baseUrl);
       applyComfyModelOptionBindings(built, objectInfo);
     } catch {
       // ignore object_info failures during skybox generation
     }
-    const promptId = await queueComfyPrompt(settings.baseUrl, built);
+    const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
     const outputs = await waitForComfyOutput(settings.baseUrl, promptId);
     const first = outputs[0];
     if (!first) continue;
@@ -4872,13 +5118,14 @@ export async function generateSkyboxFaceUpdate(
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);
+  let objectInfo: Record<string, unknown> | undefined;
   try {
-    const objectInfo = await fetchObjectInfo(settings.baseUrl);
+    objectInfo = await fetchObjectInfo(settings.baseUrl);
     applyComfyModelOptionBindings(built, objectInfo);
   } catch {
     // ignore object_info failures during skybox update
   }
-  const promptId = await queueComfyPrompt(settings.baseUrl, built);
+  const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
   const outputs = await waitForComfyOutput(settings.baseUrl, promptId);
   const first = outputs[0];
   if (!first) throw new Error("天空盒更新完成但未获取到输出");
