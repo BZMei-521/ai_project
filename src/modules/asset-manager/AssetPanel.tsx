@@ -319,7 +319,7 @@ function loadComfySettingsFromLocalStorage(): ComfySettings | null {
     const characterTemplatePreset =
       parsed.characterTemplatePreset === "square" || parsed.characterTemplatePreset === "portrait"
         ? parsed.characterTemplatePreset
-        : "square";
+        : "portrait";
     const characterRenderPreset =
       parsed.characterRenderPreset === "stable_fullbody" || parsed.characterRenderPreset === "clean_reference"
         ? parsed.characterRenderPreset
@@ -489,7 +489,7 @@ export function AssetPanel() {
         comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
       );
       const characterRenderPreset = comfySettings.characterRenderPreset ?? "clean_reference";
-      const characterTemplatePreset = comfySettings.characterTemplatePreset ?? "square";
+      const characterTemplatePreset = comfySettings.characterTemplatePreset ?? "portrait";
       const baseNegativePrompt = comfySettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
       const referenceWorkflow = buildCharacterWorkflowTemplateJson(
         characterModel,

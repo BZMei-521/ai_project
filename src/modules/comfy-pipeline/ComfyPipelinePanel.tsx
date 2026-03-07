@@ -4399,7 +4399,7 @@ export function ComfyPipelinePanel() {
     );
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
       characterModelForWorkflow,
-      "square",
+      runtimeSettings.characterTemplatePreset ?? "portrait",
       runtimeSettings.characterRenderPreset ?? "clean_reference"
     );
     const runAdvancedThreeViews = async (seedBase: number) => {
@@ -4655,7 +4655,7 @@ export function ComfyPipelinePanel() {
     const characterModel = ONE_CLICK_SDXL_CHARACTER_MODEL;
     const skyboxModel = profile === "sd15" ? ONE_CLICK_SD15_SKYBOX_MODEL : ONE_CLICK_SDXL_SKYBOX_MODEL;
     const characterRenderPreset: "stable_fullbody" | "clean_reference" = "clean_reference";
-    const characterTemplatePreset: "portrait" | "square" = "square";
+    const characterTemplatePreset: "portrait" | "square" = "portrait";
     persistSettings((previous) => {
       const previousRoot = previous.comfyRootDir.trim();
       const discoveredRoot = discovered.rootDir.trim();
@@ -4938,7 +4938,7 @@ export function ComfyPipelinePanel() {
         const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModel);
         const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
           characterModel,
-          "square",
+          runtimeSettings.characterTemplatePreset ?? "portrait",
           runtimeSettings.characterRenderPreset ?? "clean_reference"
         );
         const negativePrompt = buildCharacterViewNegativePrompt(
