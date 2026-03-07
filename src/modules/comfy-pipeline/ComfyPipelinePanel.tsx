@@ -421,7 +421,7 @@ function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait"
   if (preset === "square") {
     return isSdxl ? { width: 1024, height: 1024 } : { width: 832, height: 832 };
   }
-  return isSdxl ? { width: 896, height: 1344 } : { width: 768, height: 1152 };
+  return isSdxl ? { width: 1024, height: 1536 } : { width: 832, height: 1344 };
 }
 
 function buildCharacterWorkflowTemplateJson(
@@ -4083,6 +4083,19 @@ export function ComfyPipelinePanel() {
     return `${core}。严格要求：${constraints}。`;
   };
 
+  const buildFrontAnchorRetryPrompt = (name: string, context: string, attempt: number) => {
+    const basePrompt = buildCharacterViewPrompt(name, context, "front");
+    const retryTuning =
+      attempt <= 0
+        ? ""
+        : attempt === 1
+          ? "补充要求：镜头再拉远一档，人物仅占画面高度约 50% 到 58%，头顶、脚底、左右两侧都保留明显空白。full body long shot, zoomed out, generous empty margin on all sides."
+          : attempt === 2
+            ? "补充要求：必须是标准立式角色设定板取景，人物完整站在画面中央，绝不允许贴边，绝不允许顶到头顶和鞋底。camera farther away, full body entirely inside frame, substantial blank space above head and below feet."
+            : "补充要求：严格远机位全身设定图，主体只占画面高度约 45% 到 55%，四周大留白，像服装设定页而不是人物海报。very zoomed out costume reference sheet, subject smaller in frame, large negative space, not a poster close-up.";
+    return retryTuning ? `${basePrompt} ${retryTuning}` : basePrompt;
+  };
+
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
     const viewConstraint =
       view === "front"
@@ -4952,13 +4965,13 @@ export function ComfyPipelinePanel() {
         let bestAnchorPath = "";
         let bestAnchorScore = Number.NEGATIVE_INFINITY;
         let bestAnchorIssues: string[] = [];
-        for (let attempt = 0; attempt < 4; attempt += 1) {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
           const generated = await generateShotAsset(
             runtimeSettings,
             makeAssetGenerationShot(
               `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}_${attempt + 1}`,
               `${profile.name} 正视锚点`,
-              buildCharacterViewPrompt(profile.name, profile.description, "front"),
+              buildFrontAnchorRetryPrompt(profile.name, profile.description, attempt),
               "",
               baseSeed + attempt * 997
             ),
@@ -4988,7 +5001,7 @@ export function ComfyPipelinePanel() {
             bestAnchorPath = candidatePath;
             break;
           }
-          if (attempt < 3) {
+          if (attempt < 4) {
             appendLog(`${sourceLabel}角色正视锚点未达标（${quality.issues.join(" / ")}），继续重试：${profile.name}`, "info");
           }
         }
