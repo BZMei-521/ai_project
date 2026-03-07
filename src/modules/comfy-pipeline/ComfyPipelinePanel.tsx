@@ -3872,19 +3872,19 @@ export function ComfyPipelinePanel() {
       layout && layout.bbox.heightRatio > 0 ? layout.bbox.widthRatio / layout.bbox.heightRatio : null;
     const abnormalFullBodySilhouette =
       layout
-        ? layout.bbox.widthRatio > 0.58 ||
-          layout.bbox.widthRatio < 0.12 ||
-          layout.foregroundRatio > 0.24 ||
-          layout.foregroundRatio < 0.05 ||
-          layout.bbox.heightRatio < 0.68 ||
-          (typeof bboxAspect === "number" && (bboxAspect > 0.72 || bboxAspect < 0.14))
+        ? layout.bbox.widthRatio < 0.08 ||
+          layout.foregroundRatio > 0.34 ||
+          layout.foregroundRatio < 0.04 ||
+          layout.bbox.heightRatio < 0.64 ||
+          (layout.bbox.widthRatio > 0.94 && layout.foregroundRatio > 0.26) ||
+          (typeof bboxAspect === "number" && (bboxAspect > 1.02 || bboxAspect < 0.1))
         : false;
     const layoutIssues = [
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.68 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      layout && layout.bbox.heightRatio < 0.64 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
