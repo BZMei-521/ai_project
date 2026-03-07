@@ -13,6 +13,7 @@ import {
   explainStoryboardVideoModeByMatureCase,
   extractLocalMotionPresetFromText,
   generateShotAsset,
+  generateShotAssetOutputs,
   generateSkyboxFaces,
   inferComfyRootDir,
   inferStoryboardVideoModeByMatureCase,
@@ -4854,7 +4855,7 @@ export function ComfyPipelinePanel() {
         for (let attempt = 0; attempt < 5; attempt += 1) {
           let attemptBestIssues: string[] = [];
           let attemptBestScore = Number.NEGATIVE_INFINITY;
-          const generated = await generateShotAsset(
+          const generatedOutputs = await generateShotAssetOutputs(
             runtimeSettings,
             makeAssetGenerationShot(
               `asset_char_${name}_fallback_${view}_${attempt + 1}`,
@@ -4880,12 +4881,18 @@ export function ComfyPipelinePanel() {
                   }
                 }
           );
-          const candidatePathRaw = generated.localPath || generated.previewUrl;
-          const rawCandidatePaths = candidatePathRaw ? await expandCharacterViewCandidatePanels(candidatePathRaw) : [];
-          if (rawCandidatePaths.length > 1) {
+          const rawCandidatePaths: string[] = [];
+          for (const generated of generatedOutputs) {
+            const candidatePathRaw = generated.localPath || generated.previewUrl;
+            if (!candidatePathRaw) continue;
+            const expandedPaths = await expandCharacterViewCandidatePanels(candidatePathRaw);
+            rawCandidatePaths.push(...expandedPaths);
+          }
+          const uniqueCandidatePaths = [...new Set(rawCandidatePaths.map((item) => item.trim()).filter(Boolean))];
+          if (uniqueCandidatePaths.length > 1) {
             appendLog(`单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 检测到多面板输出，已自动拆分单图：${name}`, "info");
           }
-          for (const rawCandidatePath of rawCandidatePaths) {
+          for (const rawCandidatePath of uniqueCandidatePaths) {
             const normalizedCandidatePath = await normalizeCharacterAnchorBackground(rawCandidatePath);
             const candidatePath = normalizedCandidatePath
               ? await fitCharacterViewWithinCanvas(normalizedCandidatePath, view)

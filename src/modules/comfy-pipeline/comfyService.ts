@@ -4563,6 +4563,16 @@ function selectOutputAsset(outputs: ComfyOutputAsset[], kind: "image" | "video" 
   );
 }
 
+function filterOutputAssetsByKind(outputs: ComfyOutputAsset[], kind: "image" | "video" | "audio"): ComfyOutputAsset[] {
+  if (kind === "video") {
+    return outputs.filter((asset) => isVideoOutputAsset(asset));
+  }
+  if (kind === "audio") {
+    return outputs.filter((asset) => isAudioOutputAsset(asset));
+  }
+  return outputs.filter((asset) => !isVideoOutputAsset(asset) && !isAudioOutputAsset(asset));
+}
+
 function sanitizePathSegment(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
   return sanitized || "asset";
@@ -4922,6 +4932,117 @@ export async function generateShotAsset(
     if (kind === "video" && settings.videoGenerationMode !== "local_motion" && shouldFallbackToLocalVideo(baseMessage)) {
       options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
       return await generateLocalCompatibleVideo(settings, shot, index, allShots);
+    }
+    const logTail = await readComfyServerLogTail(settings);
+    const diagnosis = logTail ? summarizeComfyServerLogFailure(logTail) : null;
+    if (!diagnosis || baseMessage.includes(diagnosis)) {
+      throw error;
+    }
+    throw new Error(`${baseMessage}；${diagnosis}`);
+  }
+}
+
+export async function generateShotAssetOutputs(
+  settings: ComfySettings,
+  shot: Shot,
+  index: number,
+  kind: "image" | "video" | "audio",
+  allShots: Shot[] = [],
+  assets: Asset[] = [],
+  options?: {
+    onProgress?: (progress: number, message: string) => void;
+    tokenOverrides?: Record<string, string>;
+    workflowJsonOverride?: string;
+    dialogueAudioTracks?: AudioTrack[];
+  }
+): Promise<Array<{ previewUrl: string; localPath: string }>> {
+  try {
+    if (kind === "video" && settings.videoGenerationMode === "local_motion") {
+      return [await generateLocalCompatibleVideo(settings, shot, index, allShots)];
+    }
+    const workflowRaw =
+      options?.workflowJsonOverride ??
+      (kind === "image"
+        ? settings.imageWorkflowJson
+        : kind === "video"
+          ? settings.videoWorkflowJson
+          : settings.audioWorkflowJson ?? "");
+    if (!workflowRaw.trim()) {
+      throw new Error(
+        kind === "image" ? "请先导入图片工作流" : kind === "video" ? "请先导入视频工作流" : "请先导入配音工作流"
+      );
+    }
+    const workflow = ensureWorkflowJson(workflowRaw);
+    const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
+    let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets, kind);
+    if (options?.tokenOverrides) {
+      tokens = {
+        ...tokens,
+        ...Object.fromEntries(
+          Object.entries(options.tokenOverrides).map(([key, value]) => [key, String(value ?? "")])
+        )
+      };
+    }
+    tokens = applyGlobalStyleToTokens(settings, tokens, kind);
+    if (kind === "video") {
+      if (lipSyncSupport?.usesDialogueAudioPathToken) {
+        tokens = await stageDialogueAudioTokens(
+          settings,
+          shot,
+          tokens,
+          options?.dialogueAudioTracks ?? [],
+          Math.max(1, Math.round(settings.renderFps ?? 24))
+        );
+      }
+      tokens = await stageVideoFrameTokens(settings, shot, tokens);
+    }
+    if (kind === "image") {
+      tokens = await stageImageReferenceTokens(settings, shot, tokens);
+      tokens = await stageImageFrameToken(settings, shot, tokens);
+    }
+    let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
+    if (kind === "image") {
+      const sources = extractImageReferenceSources(shot, assets, index, allShots);
+      stagedCharacterImages =
+        sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
+    }
+    applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
+    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
+    let objectInfo: Record<string, unknown> | undefined;
+    try {
+      objectInfo = await fetchObjectInfo(settings.baseUrl);
+      applyComfyModelOptionBindings(built, objectInfo);
+    } catch {
+      // Keep queueing with the original values if object_info is unavailable.
+    }
+    const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
+    const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress);
+    const filtered = filterOutputAssetsByKind(outputs, kind);
+    const candidates = filtered.length > 0 ? filtered : outputs;
+    if (candidates.length === 0) {
+      if (kind === "video") {
+        throw new Error("工作流未产出视频文件，请检查视频输出节点（如 VHS_VideoCombine）的格式与连接。");
+      }
+      if (kind === "audio") {
+        throw new Error("工作流未产出音频文件，请检查音频输出节点是否保存 WAV/MP3。");
+      }
+      throw new Error("任务完成但未找到输出文件");
+    }
+    return await Promise.all(
+      candidates.map(async (asset) => {
+        const localPath = await materializeOutputAssetPath(settings, asset);
+        return {
+          previewUrl: kind === "audio" ? localPath || toComfyViewUrl(settings.baseUrl, asset) : toComfyViewUrl(settings.baseUrl, asset),
+          localPath
+        };
+      })
+    );
+  } catch (error) {
+    const baseMessage = String(error);
+    if (kind === "video" && settings.videoGenerationMode !== "local_motion" && shouldFallbackToLocalVideo(baseMessage)) {
+      options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
+      return [await generateLocalCompatibleVideo(settings, shot, index, allShots)];
     }
     const logTail = await readComfyServerLogTail(settings);
     const diagnosis = logTail ? summarizeComfyServerLogFailure(logTail) : null;
