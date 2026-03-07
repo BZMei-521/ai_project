@@ -502,39 +502,75 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 }
 
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(): string {
-  const template = cloneJson(STORYBOARD_IMAGE_WORKFLOW_OBJECT) as {
-    nodes?: Array<{ id?: number; widgets_values?: unknown[] }>;
-  };
-  const setNodeWidgets = (nodeId: number, values: unknown[]) => {
-    const node = template.nodes?.find((item) => item.id === nodeId);
-    if (!node) return;
-    node.widgets_values = values;
-  };
-  setNodeWidgets(13, ["{{CHAR1_PRIMARY_PATH}}", "image"]);
-  setNodeWidgets(49, ["{{STORYBOARD_IMAGE_MODEL}}"]);
-  setNodeWidgets(89, [CHARACTER_THREEVIEW_OUTPUT_PREFIX, ""]);
-  setNodeWidgets(123, ["{{PROMPT}}", 0, 1, ""]);
-  setNodeWidgets(139, ["{{NEGATIVE_PROMPT}}"]);
-  setNodeWidgets(10, ["{{SEED}}", "fixed", 28, 4, "euler_ancestral", "normal", 0.82]);
-  setNodeWidgets(21, [
-    "",
-    CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
-    CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
-    "lanczos",
-    CHARACTER_REFERENCE_EDIT_CROP_MODE,
-    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. Keep generous blank margin around the full body. No extra panels, no duplicate figures, no scenery, no text."
-  ]);
-  const loraNode = template.nodes?.find((item) => item.id === 216);
-  if (loraNode && Array.isArray(loraNode.widgets_values)) {
-    loraNode.widgets_values = loraNode.widgets_values.map((value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value) || !("on" in value)) return value;
-      return {
-        ...(value as Record<string, unknown>),
-        on: false
-      };
-    });
-  }
-  return JSON.stringify(template, null, 2);
+  return JSON.stringify(
+    {
+      "13": {
+        class_type: "LoadImage",
+        inputs: {
+          image: "{{CHAR1_PRIMARY_PATH}}",
+          upload: "image"
+        }
+      },
+      "49": {
+        class_type: "CheckpointLoaderSimple",
+        inputs: {
+          ckpt_name: "{{STORYBOARD_IMAGE_MODEL}}"
+        }
+      },
+      "21": {
+        class_type: "TextEncodeQwenImageEditPlusAdvance_lrzjason",
+        inputs: {
+          clip: ["49", 1],
+          vae: ["49", 2],
+          vl_resize_image1: ["13", 0],
+          prompt: "{{PROMPT}}",
+          target_size: CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
+          target_vl_size: CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
+          upscale_method: "lanczos",
+          crop: CHARACTER_REFERENCE_EDIT_CROP_MODE,
+          instruction:
+            "{{CHARACTER_VIEW_EDIT_INSTRUCTION}}"
+        }
+      },
+      "7": {
+        class_type: "ConditioningZeroOut",
+        inputs: {
+          conditioning: ["21", 0]
+        }
+      },
+      "10": {
+        class_type: "KSampler",
+        inputs: {
+          model: ["49", 0],
+          positive: ["21", 0],
+          negative: ["7", 0],
+          latent_image: ["21", 1],
+          seed: "{{SEED}}",
+          steps: 28,
+          cfg: 4,
+          sampler_name: "euler_ancestral",
+          scheduler: "normal",
+          denoise: 0.82
+        }
+      },
+      "8": {
+        class_type: "VAEDecode",
+        inputs: {
+          samples: ["10", 0],
+          vae: ["49", 2]
+        }
+      },
+      "89": {
+        class_type: "SaveImage",
+        inputs: {
+          images: ["8", 0],
+          filename_prefix: CHARACTER_THREEVIEW_OUTPUT_PREFIX
+        }
+      }
+    },
+    null,
+    2
+  );
 }
 
 function workflowGraphNodes(workflowJson: string): Array<Record<string, unknown>> {
@@ -4199,7 +4235,8 @@ export function ComfyPipelinePanel() {
       sourceHeight > sourceWidth ? sourceHeight : Math.max(sourceHeight, Math.round(sourceWidth * 1.3125));
     const outputWidth = sourceWidth;
     const outputHeight = portraitTargetHeight;
-    const requiresRefit = isLayoutTooTight(layout, view) || sourceHeight <= sourceWidth;
+    const minimumHeightRatio = view === "side" ? 0.52 : view === "back" ? 0.54 : 0.56;
+    const requiresRefit = isLayoutTooTight(layout, view) || sourceHeight <= sourceWidth || layout.bbox.heightRatio < minimumHeightRatio;
     if (!requiresRefit) return pathOrUrl;
     const bboxWidthPx = Math.max(1, layout.bbox.widthRatio * sourceWidth);
     const bboxHeightPx = Math.max(1, layout.bbox.heightRatio * sourceHeight);
@@ -4207,9 +4244,9 @@ export function ComfyPipelinePanel() {
     const bboxCenterX = (((layout.bbox.minX + layout.bbox.maxX + 1) / 2) / analysisSize) * sourceWidth;
     const bboxCenterY = (((layout.bbox.minY + layout.bbox.maxY + 1) / 2) / analysisSize) * sourceHeight;
     const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.6 : 0.62;
-    const targetWidthRatio = view === "side" ? 0.28 : view === "back" ? 0.36 : 0.42;
+    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.4 : 0.46;
     const scale = Math.min(
-      1,
+      1.8,
       (outputHeight * targetHeightRatio) / bboxHeightPx,
       (outputWidth * targetWidthRatio) / bboxWidthPx
     );
@@ -4462,6 +4499,24 @@ export function ComfyPipelinePanel() {
               ? "Keep the body rigidly aligned to the requested angle. Avoid frontal shoulder reveal, avoid face turn, avoid second arm appearing in front."
               : "Minimal production-sheet composition. One isolated figure, smaller in frame, clean flat grey background, no poster styling.";
     return mergePromptFragments([basePrompt, identityInstruction, sheetConstraint, retryTuning]);
+  };
+
+  const buildCharacterViewEditInstruction = (view: "side" | "back", attempt: number) => {
+    const baseInstruction =
+      view === "side"
+        ? "Transform the reference into exactly one strict right-facing orthographic full-body side profile. Keep the same person, same face identity, same hairstyle, same costume, same body proportions, and same colors. Only one eye contour may be visible. No frontal torso, no back view, no three-quarter view."
+        : "Transform the reference into exactly one strict orthographic full-body back view. Keep the same person, same hairstyle from behind, same costume back details, same body proportions, and same colors. The face must not be visible. No side view, no front view, no three-quarter back view.";
+    const framingInstruction =
+      attempt <= 0
+        ? "Keep the full body fully inside frame with generous margin above the head, below the feet, and on both sides."
+        : attempt === 1
+          ? "Zoom out slightly and preserve larger empty grey background around the character."
+          : attempt === 2
+            ? "Reduce character scale and keep the silhouette smaller and cleaner inside the frame."
+            : attempt === 3
+              ? "Maintain rigid orthographic alignment, neutral standing pose, and one clean silhouette only."
+              : "Output one centered production-sheet figure on plain grey background, with no crop and no extra elements.";
+    return `${baseInstruction} ${framingInstruction}`;
   };
 
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
@@ -4854,14 +4909,15 @@ export function ComfyPipelinePanel() {
             "image",
             [],
             [],
-            {
-              workflowJsonOverride: referenceEditWorkflow,
-              tokenOverrides: {
-                CHAR1_PRIMARY_PATH: normalizedFrontPath,
-                STORYBOARD_IMAGE_MODEL: referenceEditModel,
-                NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, negativePrompt)
-              }
-            }
+                {
+                  workflowJsonOverride: referenceEditWorkflow,
+                  tokenOverrides: {
+                    CHAR1_PRIMARY_PATH: normalizedFrontPath,
+                    STORYBOARD_IMAGE_MODEL: referenceEditModel,
+                    CHARACTER_VIEW_EDIT_INSTRUCTION: buildCharacterViewEditInstruction(view, attempt),
+                    NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, negativePrompt)
+                  }
+                }
           );
           const candidatePathRaw = generated.localPath || generated.previewUrl;
           const normalizedCandidatePath = candidatePathRaw ? await normalizeCharacterAnchorBackground(candidatePathRaw) : "";

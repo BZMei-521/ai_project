@@ -7,7 +7,6 @@ import {
   splitCharacterThreeViewSheet,
   type ComfySettings
 } from "../comfy-pipeline/comfyService";
-import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "../comfy-pipeline/presets/storyboard-image-fisher-light-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-threeview-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-kontext-threeview-default.json";
 import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.png?inline";
@@ -141,39 +140,74 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 }
 
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(): string {
-  const template = cloneJson(STORYBOARD_IMAGE_WORKFLOW_OBJECT) as {
-    nodes?: Array<{ id?: number; widgets_values?: unknown[] }>;
-  };
-  const setNodeWidgets = (nodeId: number, values: unknown[]) => {
-    const node = template.nodes?.find((item) => item.id === nodeId);
-    if (!node) return;
-    node.widgets_values = values;
-  };
-  setNodeWidgets(13, ["{{CHAR1_PRIMARY_PATH}}", "image"]);
-  setNodeWidgets(49, ["{{STORYBOARD_IMAGE_MODEL}}"]);
-  setNodeWidgets(89, [CHARACTER_THREEVIEW_OUTPUT_PREFIX, ""]);
-  setNodeWidgets(123, ["{{PROMPT}}", 0, 1, ""]);
-  setNodeWidgets(139, ["{{NEGATIVE_PROMPT}}"]);
-  setNodeWidgets(10, ["{{SEED}}", "fixed", 28, 4, "euler_ancestral", "normal", 0.82]);
-  setNodeWidgets(21, [
-    "",
-    CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
-    CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
-    "lanczos",
-    CHARACTER_REFERENCE_EDIT_CROP_MODE,
-    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. Keep generous blank margin around the full body. No extra panels, no duplicate figures, no scenery, no text."
-  ]);
-  const loraNode = template.nodes?.find((item) => item.id === 216);
-  if (loraNode && Array.isArray(loraNode.widgets_values)) {
-    loraNode.widgets_values = loraNode.widgets_values.map((value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value) || !("on" in value)) return value;
-      return {
-        ...(value as Record<string, unknown>),
-        on: false
-      };
-    });
-  }
-  return JSON.stringify(template, null, 2);
+  return JSON.stringify(
+    {
+      "13": {
+        class_type: "LoadImage",
+        inputs: {
+          image: "{{CHAR1_PRIMARY_PATH}}",
+          upload: "image"
+        }
+      },
+      "49": {
+        class_type: "CheckpointLoaderSimple",
+        inputs: {
+          ckpt_name: "{{STORYBOARD_IMAGE_MODEL}}"
+        }
+      },
+      "21": {
+        class_type: "TextEncodeQwenImageEditPlusAdvance_lrzjason",
+        inputs: {
+          clip: ["49", 1],
+          vae: ["49", 2],
+          vl_resize_image1: ["13", 0],
+          prompt: "{{PROMPT}}",
+          target_size: CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
+          target_vl_size: CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
+          upscale_method: "lanczos",
+          crop: CHARACTER_REFERENCE_EDIT_CROP_MODE,
+          instruction: "{{CHARACTER_VIEW_EDIT_INSTRUCTION}}"
+        }
+      },
+      "7": {
+        class_type: "ConditioningZeroOut",
+        inputs: {
+          conditioning: ["21", 0]
+        }
+      },
+      "10": {
+        class_type: "KSampler",
+        inputs: {
+          model: ["49", 0],
+          positive: ["21", 0],
+          negative: ["7", 0],
+          latent_image: ["21", 1],
+          seed: "{{SEED}}",
+          steps: 28,
+          cfg: 4,
+          sampler_name: "euler_ancestral",
+          scheduler: "normal",
+          denoise: 0.82
+        }
+      },
+      "8": {
+        class_type: "VAEDecode",
+        inputs: {
+          samples: ["10", 0],
+          vae: ["49", 2]
+        }
+      },
+      "89": {
+        class_type: "SaveImage",
+        inputs: {
+          images: ["8", 0],
+          filename_prefix: CHARACTER_THREEVIEW_OUTPUT_PREFIX
+        }
+      }
+    },
+    null,
+    2
+  );
 }
 
 function workflowGraphNodes(workflowJson: string): Array<Record<string, unknown>> {
@@ -414,6 +448,20 @@ function buildCharacterViewEditRetryPrompt(name: string, context: string, view: 
   ]
     .filter((item) => item.trim().length > 0)
     .join(" ");
+}
+
+function buildCharacterViewEditInstruction(view: "side" | "back", attempt: number): string {
+  const baseInstruction =
+    view === "side"
+      ? "Transform the reference into exactly one strict right-facing orthographic full-body side profile. Keep the same person, same hairstyle, same costume, same body proportions, and same colors. No front view, no back view, no three-quarter view."
+      : "Transform the reference into exactly one strict orthographic full-body back view. Keep the same person, same hairstyle from behind, same costume back details, same body proportions, and same colors. The face must not be visible.";
+  const retryInstruction =
+    attempt <= 0
+      ? "Keep generous empty grey margin around the full body."
+      : attempt === 1
+        ? "Zoom out slightly and keep the figure smaller inside the frame."
+        : "Use one centered production-sheet figure on plain grey background, no crop, no extra elements.";
+  return `${baseInstruction} ${retryInstruction}`;
 }
 
 function resolveManualCharacterAnchor(frontPath: string, filePath: string): string {
@@ -713,6 +761,7 @@ export function AssetPanel() {
                     CHAR1_PRIMARY_PATH: frontAnchorPath,
                     STORYBOARD_IMAGE_MODEL:
                       comfySettings.storyboardImageModelName?.trim() || "Qwen-Rapid-AIO-SFW-v5.safetensors",
+                    CHARACTER_VIEW_EDIT_INSTRUCTION: buildCharacterViewEditInstruction(view, attempt),
                     NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, baseNegativePrompt)
                   }
                 }
