@@ -638,6 +638,7 @@ type ProvisionPreviewItem = {
 type ProvisionCreateResult = {
   assetId: string;
   previewPaths: string[];
+  reused: boolean;
 };
 
 type ShotReferencePreview = {
@@ -2521,6 +2522,42 @@ function mergeImportedCharacterProfiles(
   return [...merged.values()];
 }
 
+function enrichImportedShotCharacterNames(
+  items: NormalizedImportedShot[],
+  profiles: NormalizedImportedCharacterProfile[]
+): NormalizedImportedShot[] {
+  if (items.length === 0 || profiles.length === 0) return items;
+  const profileNames = uniqueEntities(profiles.map((profile) => profile.name).filter(Boolean));
+  if (profileNames.length === 0) return items;
+  const multiCharacterCue = /(两人|二人|双人|两位|二位|对视|对峙|并肩|同行|二者|彼此)/;
+  return items.map((item) => {
+    if (item.characterNames.length > 0 || item.characterRefs.length > 0) return item;
+    const context = [item.title, item.prompt, item.dialogue, item.notes, item.tags.join("、")].filter(Boolean).join("\n");
+    let nextCharacterNames = uniqueEntities(profileNames.filter((name) => context.includes(name)));
+    if (nextCharacterNames.length === 0 && profileNames.length === 1) {
+      nextCharacterNames = profileNames;
+    } else if (nextCharacterNames.length === 0 && profileNames.length > 1 && multiCharacterCue.test(context)) {
+      nextCharacterNames = profileNames;
+    }
+    if (nextCharacterNames.length === 0) return item;
+    return {
+      ...item,
+      characterNames: nextCharacterNames
+    };
+  });
+}
+
+function normalizeImportedShotsWithProfiles(parsed: {
+  shots?: Array<Record<string, unknown>>;
+  characters?: Array<Record<string, unknown>>;
+}): NormalizedImportedShot[] {
+  const profiles = mergeImportedCharacterProfiles(
+    normalizeImportedCharacterProfiles(parsed),
+    normalizeImportedCharacterProfilesFromShots(parsed)
+  );
+  return enrichImportedShotCharacterNames(normalizeImportedShots(parsed), profiles);
+}
+
 function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] {
   const list = Array.isArray(parsed.shots) ? parsed.shots : [];
   const parseNumber = (value: unknown): number | undefined => {
@@ -2816,7 +2853,12 @@ export function ComfyPipelinePanel() {
     if (!text) return [] as NormalizedImportedShot[];
     try {
       const parsed = parseStoryToShotScript(text);
-      return normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
+      return normalizeImportedShotsWithProfiles(
+        parsed as unknown as {
+          shots?: Array<Record<string, unknown>>;
+          characters?: Array<Record<string, unknown>>;
+        }
+      );
     } catch {
       return [] as NormalizedImportedShot[];
     }
@@ -2943,8 +2985,11 @@ export function ComfyPipelinePanel() {
     const text = scriptText.trim();
     if (!text) return [] as NormalizedImportedShot[];
     try {
-      const parsed = JSON.parse(text) as { shots?: Array<Record<string, unknown>> };
-      return normalizeImportedShots(parsed);
+      const parsed = JSON.parse(text) as {
+        shots?: Array<Record<string, unknown>>;
+        characters?: Array<Record<string, unknown>>;
+      };
+      return normalizeImportedShotsWithProfiles(parsed);
     } catch {
       return [] as NormalizedImportedShot[];
     }
@@ -5014,6 +5059,27 @@ export function ComfyPipelinePanel() {
     return findMatchingAssetId(useStoryboardStore.getState().assets, type, name);
   };
 
+  const findAssetByName = (type: "character" | "scene" | "skybox", name: string): Asset | null => {
+    const id = findAssetIdByName(type, name);
+    if (!id) return null;
+    return useStoryboardStore.getState().assets.find((asset) => asset.id === id) ?? null;
+  };
+
+  const listCharacterThreeViewPaths = (asset: Asset | null | undefined) =>
+    [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath]
+      .map((value) => value?.trim() ?? "")
+      .filter((value): value is string => Boolean(value));
+
+  const hasProvisionReadyCharacterAsset = (asset: Asset | null | undefined) => {
+    const paths = listCharacterThreeViewPaths(asset);
+    return paths.length >= 3 && new Set(paths).size >= 3;
+  };
+
+  const findProvisionReadyCharacterAssetIdByName = (name: string) => {
+    const asset = findAssetByName("character", name);
+    return asset && hasProvisionReadyCharacterAsset(asset) ? asset.id : "";
+  };
+
   const upsertImportedCharacterAssets = async (
     profiles: NormalizedImportedCharacterProfile[],
     sourceLabel: string,
@@ -5157,7 +5223,7 @@ export function ComfyPipelinePanel() {
           nextCharacterNames.push(name);
           continue;
         }
-        const resolved = override || findAssetIdByName("character", name);
+        const resolved = override || findProvisionReadyCharacterAssetIdByName(name);
         if (resolved) {
           nextCharacterRefs.push(resolved);
         } else {
@@ -5253,7 +5319,8 @@ export function ComfyPipelinePanel() {
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
-            previewPaths: threeViewPaths
+            previewPaths: threeViewPaths,
+            reused: true
           };
         }
         if (hasLowVisualDiversity) {
@@ -5316,7 +5383,8 @@ export function ComfyPipelinePanel() {
           front.localPath || front.previewUrl,
           side.localPath || side.previewUrl,
           back.localPath || back.previewUrl
-        ].filter((value): value is string => Boolean(value))
+        ].filter((value): value is string => Boolean(value)),
+        reused: false
       };
     })();
 
@@ -5370,7 +5438,8 @@ export function ComfyPipelinePanel() {
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
-            previewPaths: primaryPaths
+            previewPaths: primaryPaths,
+            reused: true
           };
         }
         if (!hasCompleteFaces) {
@@ -5475,7 +5544,8 @@ export function ComfyPipelinePanel() {
           result.faces.right,
           result.faces.left,
           result.faces.back
-        ].filter((value): value is string => Boolean(value))
+        ].filter((value): value is string => Boolean(value)),
+        reused: false
       };
     })();
 
@@ -5494,7 +5564,11 @@ export function ComfyPipelinePanel() {
   const provisionAssetsForItems = async (
     items: NormalizedImportedShot[],
     runtimeSettings: ComfySettings,
-    options?: { bindShots?: boolean; onProgress?: (current: number, total: number, message: string) => void }
+    options?: {
+      bindShots?: boolean;
+      onProgress?: (current: number, total: number, message: string) => void;
+      extraCharacterNames?: string[];
+    }
   ) => {
     const characterIdMap = new Map<string, string>();
     const sceneIdMap = new Map<string, string>();
@@ -5505,12 +5579,16 @@ export function ComfyPipelinePanel() {
     const failedCharacterKeys = new Set<string>();
     const failedSkyboxKeys = new Set<string>();
     const tasks: Array<{ kind: "character" | "skybox"; name: string }> = [];
+    const characterTaskNames = uniqueEntities([
+      ...items.flatMap((item) => item.characterNames),
+      ...(options?.extraCharacterNames ?? [])
+    ]);
+    for (const name of characterTaskNames) {
+      const key = normalizeEntityKey(name);
+      if (!key || tasks.some((task) => task.kind === "character" && normalizeEntityKey(task.name) === key)) continue;
+      tasks.push({ kind: "character", name });
+    }
     for (const item of items) {
-      for (const name of item.characterNames) {
-        const key = normalizeEntityKey(name);
-        if (!key || tasks.some((task) => task.kind === "character" && normalizeEntityKey(task.name) === key)) continue;
-        tasks.push({ kind: "character", name });
-      }
       if (item.sceneName) {
         const key = normalizeEntityKey(item.sceneName);
         if (!key || tasks.some((task) => task.kind === "skybox" && normalizeEntityKey(task.name) === key)) continue;
@@ -5529,81 +5607,69 @@ export function ComfyPipelinePanel() {
     }
     let progressIndex = 0;
 
-    for (const item of items) {
-      for (const name of item.characterNames) {
-        const key = normalizeEntityKey(name);
-        if (!key || characterIdMap.has(key)) continue;
-        if (failedCharacterKeys.has(key)) continue;
-        if (isSuspiciousCharacterCandidate(name)) {
-          appendLog(`角色三视图跳过：${name}（名称可疑，已拦截）`, "error");
-          upsertProvisionPreview({
-            key: `character:${key}`,
-            kind: "character",
-            name,
-            status: "skipped",
-            detail: "名称可疑，已跳过角色三视图生成",
-            thumbs: []
-          });
-          continue;
-        }
-        progressIndex += 1;
-        options?.onProgress?.(progressIndex, tasks.length, `角色三视图：${name}`);
+    for (const name of characterTaskNames) {
+      const key = normalizeEntityKey(name);
+      if (!key || characterIdMap.has(key)) continue;
+      if (failedCharacterKeys.has(key)) continue;
+      if (isSuspiciousCharacterCandidate(name)) {
+        appendLog(`角色三视图跳过：${name}（名称可疑，已拦截）`, "error");
         upsertProvisionPreview({
           key: `character:${key}`,
           kind: "character",
           name,
-          status: "running",
-          detail: "正在生成三视图",
+          status: "skipped",
+          detail: "名称可疑，已跳过角色三视图生成",
           thumbs: []
         });
-        try {
-          const reusedId = findAssetIdByName("character", name);
-          if (reusedId) {
-            characterIdMap.set(key, reusedId);
+        continue;
+      }
+      progressIndex += 1;
+      options?.onProgress?.(progressIndex, tasks.length, `角色三视图：${name}`);
+      upsertProvisionPreview({
+        key: `character:${key}`,
+        kind: "character",
+        name,
+        status: "running",
+        detail: "正在生成三视图",
+        thumbs: []
+      });
+      try {
+        const result = await createCharacterAssetIfMissing(runtimeSettings, name);
+        if (result.assetId) {
+          characterIdMap.set(key, result.assetId);
+          if (result.reused) {
             reusedCharacters += 1;
             appendLog(`复用已有角色资产：${name}`);
-            const asset = useStoryboardStore.getState().assets.find((assetItem) => assetItem.id === reusedId);
-            upsertProvisionPreview({
-              key: `character:${key}`,
-              kind: "character",
-              name,
-              status: "reused",
-              detail: "复用已有角色三视图",
-              thumbs: [asset?.characterFrontPath, asset?.characterSidePath, asset?.characterBackPath].filter(
-                (value): value is string => Boolean(value)
-              )
-            });
-            continue;
-          }
-          const result = await createCharacterAssetIfMissing(runtimeSettings, name);
-          if (result.assetId) {
-            characterIdMap.set(key, result.assetId);
+          } else {
             createdCharacters += 1;
-            upsertProvisionPreview({
-              key: `character:${key}`,
-              kind: "character",
-              name,
-              status: "success",
-              detail: "角色三视图生成完成",
-              thumbs: result.previewPaths
-            });
           }
-        } catch (error) {
-          appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
-          failedCharacterKeys.add(key);
           upsertProvisionPreview({
             key: `character:${key}`,
             kind: "character",
             name,
-            status: "failed",
-            detail: `生成失败：${String(error)}`,
-            thumbs: []
+            status: result.reused ? "reused" : "success",
+            detail: result.reused ? "复用已有角色三视图" : "角色三视图生成完成",
+            thumbs: result.previewPaths
           });
-          if (isEnvironmentBlockingAssetError(error)) {
-            throw error;
-          }
+        }
+      } catch (error) {
+        appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
+        failedCharacterKeys.add(key);
+        upsertProvisionPreview({
+          key: `character:${key}`,
+          kind: "character",
+          name,
+          status: "failed",
+          detail: `生成失败：${String(error)}`,
+          thumbs: []
+        });
+        if (isEnvironmentBlockingAssetError(error)) {
+          throw error;
         }
       }
+    }
+
+    for (const item of items) {
       if (item.sceneName) {
         const key = normalizeEntityKey(item.sceneName);
         if (!sceneIdMap.has(key)) {
@@ -5692,7 +5758,7 @@ export function ComfyPipelinePanel() {
           [
             ...item.characterRefs,
             ...item.characterNames
-              .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findAssetIdByName("character", name))
+              .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findProvisionReadyCharacterAssetIdByName(name))
               .filter((value): value is string => Boolean(value))
           ].filter(Boolean)
         );
@@ -5768,7 +5834,11 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const autoProvisionAssetsForImportedShots = async (items: NormalizedImportedShot[], runtimeSettings: ComfySettings) => {
+  const autoProvisionAssetsForImportedShots = async (
+    items: NormalizedImportedShot[],
+    runtimeSettings: ComfySettings,
+    profiles: NormalizedImportedCharacterProfile[] = []
+  ) => {
     if (!autoProvisionAssets || items.length === 0) return;
     if (phase === "running") {
       appendLog("自动资产生成跳过：当前已有任务在运行", "error");
@@ -5781,7 +5851,10 @@ export function ComfyPipelinePanel() {
     setPhase("running");
     setPipelineState("自动资产生成：预生成角色三视图与场景天空盒");
     try {
-      const summary = await provisionAssetsForItems(items, runtimeSettings, { bindShots: true });
+      const summary = await provisionAssetsForItems(items, runtimeSettings, {
+        bindShots: true,
+        extraCharacterNames: uniqueEntities(profiles.map((profile) => profile.name).filter(Boolean))
+      });
       appendLog(
         `自动资产生成与镜头绑定完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
       );
@@ -5882,7 +5955,7 @@ export function ComfyPipelinePanel() {
       normalizeImportedCharacterProfilesFromShots(parsed)
     );
     await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
-    const normalizedItems = normalizeImportedShots(parsed);
+    const normalizedItems = normalizeImportedShotsWithProfiles(parsed);
     return applyImportedShotItems(normalizedItems);
   };
 
@@ -5967,13 +6040,13 @@ export function ComfyPipelinePanel() {
           normalizeImportedCharacterProfilesFromShots(parsed)
         );
         await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
-        const normalized = normalizeImportedShots(parsed);
+        const normalized = normalizeImportedShotsWithProfiles(parsed);
         const items = applyImportedShotItems(
           applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
         );
         pushToast(`已导入 ${items.length} 个镜头`, "success");
         appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
-        await autoProvisionAssetsForImportedShots(items, settings);
+        await autoProvisionAssetsForImportedShots(items, settings, profiles);
         return true;
       } catch (error) {
         pushToast(`导入失败：${String(error)}`, "error");
@@ -6001,13 +6074,18 @@ export function ComfyPipelinePanel() {
               normalizeImportedCharacterProfilesFromShots(casted)
             );
             await upsertImportedCharacterAssets(profiles, "故事解析导入", settings);
-            const normalized = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
+            const normalized = normalizeImportedShotsWithProfiles(
+              parsed as unknown as {
+                shots?: Array<Record<string, unknown>>;
+                characters?: Array<Record<string, unknown>>;
+              }
+            );
             const items = applyImportedShotItems(
               applyProvisionOverrides(normalized, storyCharacterOverrides, storySkyboxOverrides)
             );
             pushToast(`故事已解析并导入 ${items.length} 个镜头`, "success");
             appendLog(`故事解析并导入成功，共 ${items.length} 条`);
-            await autoProvisionAssetsForImportedShots(items, settings);
+            await autoProvisionAssetsForImportedShots(items, settings, profiles);
             return true;
           } catch (error) {
             pushToast(`故事解析导入失败：${String(error)}`, "error");
