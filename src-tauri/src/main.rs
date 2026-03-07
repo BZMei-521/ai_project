@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::Engine as _;
+use image::GenericImageView;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -159,6 +160,14 @@ struct OpenPathResult {
 #[serde(rename_all = "camelCase")]
 struct FileWriteResult {
     file_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreeViewSplitResult {
+    front_path: String,
+    side_path: String,
+    back_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2549,6 +2558,57 @@ fn copy_file_to(source_path: String, target_path: String) -> Result<FileWriteRes
 }
 
 #[tauri::command]
+fn split_threeview_sheet(source_path: String) -> Result<ThreeViewSplitResult, String> {
+    let source = PathBuf::from(source_path.trim());
+    if !source.exists() || !source.is_file() {
+        return Err(format!("Three-view sheet not found: {}", source.to_string_lossy()));
+    }
+
+    let image = image::open(&source).map_err(|err| format!("Failed to open three-view sheet: {err}"))?;
+    let (width, height) = image.dimensions();
+    if width < 3 || height == 0 {
+        return Err(format!(
+            "Three-view sheet has invalid dimensions: {}x{}",
+            width, height
+        ));
+    }
+
+    let panel_width = width / 3;
+    let widths = [panel_width, panel_width, width - panel_width * 2];
+    let starts = [0, panel_width, panel_width * 2];
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("threeview");
+    let parent = source.parent().unwrap_or_else(|| Path::new(""));
+    let front_path = parent.join(format!("{stem}_front.png"));
+    let side_path = parent.join(format!("{stem}_side.png"));
+    let back_path = parent.join(format!("{stem}_back.png"));
+    let targets = [front_path.clone(), side_path.clone(), back_path.clone()];
+
+    for (index, target) in targets.iter().enumerate() {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create split image directory: {err}"))?;
+        }
+        if target.exists() {
+            fs::remove_file(target)
+                .map_err(|err| format!("Failed to overwrite split image: {err}"))?;
+        }
+        let crop = image.crop_imm(starts[index], 0, widths[index], height);
+        crop.save(target)
+            .map_err(|err| format!("Failed to save split image: {err}"))?;
+    }
+
+    Ok(ThreeViewSplitResult {
+        front_path: front_path.to_string_lossy().to_string(),
+        side_path: side_path.to_string_lossy().to_string(),
+        back_path: back_path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
 fn comfy_read_server_log_tail(
     comfy_root_dir: String,
     base_url: String,
@@ -2609,6 +2669,7 @@ fn main() {
             generate_local_video_from_images,
             write_base64_file,
             copy_file_to,
+            split_threeview_sheet,
             comfy_read_server_log_tail,
             comfy_ping,
             comfy_queue_prompt,

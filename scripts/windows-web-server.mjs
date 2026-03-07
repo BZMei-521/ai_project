@@ -594,6 +594,8 @@ async function invokeCommand(cmd, args) {
       return writeBase64File(args?.filePath, args?.base64Data);
     case "copy_file_to":
       return copyFileTo(args?.sourcePath, args?.targetPath);
+    case "split_threeview_sheet":
+      return splitThreeviewSheet(args?.sourcePath);
     case "export_animatic_from_frames":
       return exportAnimaticFromFrames(args);
     case "concat_video_segments":
@@ -828,6 +830,68 @@ async function copyFileTo(sourcePath, targetPath) {
   await ensureDir(path.dirname(target));
   await fs.copyFile(source, target);
   return { filePath: target };
+}
+
+async function splitThreeviewSheet(sourcePath) {
+  const source = path.resolve(String(sourcePath || ""));
+  if (!(await fileExists(source))) {
+    throw new Error(`Three-view sheet not found: ${source}`);
+  }
+  const parsed = path.parse(source);
+  const frontPath = path.join(parsed.dir, `${parsed.name}_front.png`);
+  const sidePath = path.join(parsed.dir, `${parsed.name}_side.png`);
+  const backPath = path.join(parsed.dir, `${parsed.name}_back.png`);
+  const script = `
+Add-Type -AssemblyName System.Drawing
+$source = '${escapePowerShellLiteral(source)}'
+$frontPath = '${escapePowerShellLiteral(frontPath)}'
+$sidePath = '${escapePowerShellLiteral(sidePath)}'
+$backPath = '${escapePowerShellLiteral(backPath)}'
+$image = [System.Drawing.Bitmap]::FromFile($source)
+try {
+  if ($image.Width -lt 3 -or $image.Height -lt 1) {
+    throw "Three-view sheet has invalid dimensions: $($image.Width)x$($image.Height)"
+  }
+  $panelWidth = [int][Math]::Floor($image.Width / 3)
+  $widths = @($panelWidth, $panelWidth, $image.Width - ($panelWidth * 2))
+  $starts = @(0, $panelWidth, $panelWidth * 2)
+  $targets = @($frontPath, $sidePath, $backPath)
+  for ($i = 0; $i -lt 3; $i++) {
+    if (Test-Path -LiteralPath $targets[$i]) {
+      Remove-Item -LiteralPath $targets[$i] -Force
+    }
+    $bitmap = New-Object System.Drawing.Bitmap($widths[$i], $image.Height)
+    try {
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      try {
+        $srcRect = New-Object System.Drawing.Rectangle($starts[$i], 0, $widths[$i], $image.Height)
+        $dstRect = New-Object System.Drawing.Rectangle(0, 0, $widths[$i], $image.Height)
+        $graphics.DrawImage($image, $dstRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
+      } finally {
+        $graphics.Dispose()
+      }
+      $bitmap.Save($targets[$i], [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $bitmap.Dispose()
+    }
+  }
+} finally {
+  $image.Dispose()
+}
+`;
+  await runCommand("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script
+  ]);
+  return {
+    frontPath,
+    sidePath,
+    backPath
+  };
 }
 
 async function exportAnimaticFromFrames(args) {
@@ -1872,6 +1936,10 @@ async function runCommand(command, args, options = {}) {
 
 function escapeFfmpegPath(filePath) {
   return filePath.replace(/'/g, "'\\''");
+}
+
+function escapePowerShellLiteral(value) {
+  return String(value || "").replace(/'/g, "''");
 }
 
 main().catch((error) => {

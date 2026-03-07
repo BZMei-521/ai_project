@@ -193,6 +193,12 @@ type FileWriteResult = {
   filePath: string;
 };
 
+type ThreeViewSplitResult = {
+  frontPath: string;
+  sidePath: string;
+  backPath: string;
+};
+
 type LocalVideoRenderResult = {
   outputPath: string;
 };
@@ -3596,6 +3602,7 @@ const NODE_HINT_MAP: Array<{ pattern: RegExp; plugin: string; repo: string }> = 
   { pattern: /kjnodes|sageattention|modelpatchtorchsettings|intconstant|pathchsageattention/i, plugin: "ComfyUI-KJNodes", repo: "https://github.com/kijai/ComfyUI-KJNodes" },
   { pattern: /wan|wanvideo|wanmoe|wan.*ksampler/i, plugin: "ComfyUI-WanMoeKSampler / ComfyUI-wanBlockswap", repo: "https://github.com/stduhpf/ComfyUI-WanMoeKSampler" },
   { pattern: /impact|detailer|segs/i, plugin: "ComfyUI-Impact-Pack", repo: "https://github.com/ltdrdata/ComfyUI-Impact-Pack" },
+  { pattern: /rmbg|rembg|background remover/i, plugin: "ComfyUI_RMBG", repo: "https://github.com/1038lab/ComfyUI-RMBG" },
   { pattern: /animatediff|motion/i, plugin: "ComfyUI-AnimateDiff-Evolved", repo: "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved" },
   { pattern: /rife|vfi|frame interpolation/i, plugin: "comfyui-frame-interpolation", repo: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation" },
   { pattern: /controlnet|advancedcontrolnet|acn_/i, plugin: "ComfyUI-Advanced-ControlNet", repo: "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet" },
@@ -4381,6 +4388,14 @@ async function materializeOutputAssetPath(settings: ComfySettings, asset: ComfyO
     return materializeVideoAssetPath(settings, asset);
   }
   return materializeImageAssetPath(settings, asset);
+}
+
+export async function splitCharacterThreeViewSheet(sourcePath: string): Promise<ThreeViewSplitResult> {
+  const trimmed = sourcePath.trim();
+  if (!trimmed) throw new Error("三视图整板输出路径为空，无法拆分 front / side / back");
+  return invokeDesktop<ThreeViewSplitResult>("split_threeview_sheet", {
+    sourcePath: trimmed
+  });
 }
 
 async function readComfyServerLogTail(settings: ComfySettings, maxLines = 180): Promise<string | null> {

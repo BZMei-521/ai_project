@@ -4,12 +4,15 @@ import {
   generateShotAsset,
   generateSkyboxFaceUpdate,
   generateSkyboxFaces,
+  splitCharacterThreeViewSheet,
   type ComfySettings
 } from "../comfy-pipeline/comfyService";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-threeview-default.json";
-import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-mvadapter-default.json";
+import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-kontext-threeview-default.json";
+import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.png?inline";
 import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-panorama-default.json";
+import { invokeDesktopCommand } from "../platform/desktopBridge";
 import { useStoryboardStore } from "../storyboard-core/store";
 import type { AssetType, Shot, SkyboxFace } from "../storyboard-core/types";
 import { confirmDialog } from "../ui/dialogStore";
@@ -18,8 +21,13 @@ import { pushToast } from "../ui/toastStore";
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
 const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
-const DEFAULT_CHARACTER_ADVANCED_VAE = "sdxl.vae.safetensors";
-const DEFAULT_CHARACTER_ADVANCED_ADAPTER = "mvadapter_i2mv_sdxl_beta.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_UNET = "flux1-kontext-dev.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_CLIP_L = "clip_l.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_CLIP_T5 = "t5xxl_fp16.safetensors";
+const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
+const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
+const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
+const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes";
@@ -102,28 +110,27 @@ function buildCharacterWorkflowTemplateJson(
 }
 
 function buildCharacterAdvancedWorkflowTemplateJson(
-  checkpointName: string,
   renderPreset: "stable_fullbody" | "clean_reference"
 ): string {
-  const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
-  if (template["1"]?.inputs) {
-    template["1"].inputs.ckpt_name = checkpointName;
-  }
-  if (template["3"]?.inputs) {
-    template["3"].inputs.vae_name = DEFAULT_CHARACTER_ADVANCED_VAE;
-  }
-  if (template["4"]?.inputs) {
-    template["4"].inputs.num_views = 1;
-    template["4"].inputs.adapter_name = DEFAULT_CHARACTER_ADVANCED_ADAPTER;
-  }
-  if (template["7"]?.inputs) {
-    const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
-    template["7"].inputs.num_views = 1;
-    template["7"].inputs.width = 1024;
-    template["7"].inputs.height = 1024;
-    template["7"].inputs.steps = config.steps;
-    template["7"].inputs.cfg = config.cfg;
-  }
+  const template = cloneJson(CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT) as {
+    nodes?: Array<{ id?: number; widgets_values?: unknown[] }>;
+  };
+  const config = CHARACTER_RENDER_PRESET_CONFIG[renderPreset];
+  const setNodeWidgets = (nodeId: number, values: unknown[]) => {
+    const node = template.nodes?.find((item) => item.id === nodeId);
+    if (!node) return;
+    node.widgets_values = values;
+  };
+  setNodeWidgets(133, ["{{FRAME_IMAGE_PATH}}", "image", ""]);
+  setNodeWidgets(152, [`{{${CHARACTER_THREEVIEW_LAYOUT_TOKEN}}}`, "image", ""]);
+  setNodeWidgets(281, [DEFAULT_CHARACTER_ADVANCED_UNET, "fp8_e4m3fn_fast"]);
+  setNodeWidgets(280, [DEFAULT_CHARACTER_ADVANCED_CLIP_L, DEFAULT_CHARACTER_ADVANCED_CLIP_T5, "flux", "default"]);
+  setNodeWidgets(279, [DEFAULT_CHARACTER_ADVANCED_VAE]);
+  setNodeWidgets(286, ["{{PROMPT}}"]);
+  setNodeWidgets(301, ["{{SEED}}", "fixed"]);
+  setNodeWidgets(302, [Math.max(20, config.steps), "fixed"]);
+  setNodeWidgets(294, ["{{SEED}}", "fixed", Math.max(20, config.steps), 1, "euler", "simple", 1]);
+  setNodeWidgets(316, [CHARACTER_THREEVIEW_OUTPUT_PREFIX, ""]);
   return JSON.stringify(template, null, 2);
 }
 
@@ -247,7 +254,49 @@ function buildCharacterViewSelectionTokenOverrides(
 function isGeneratedCharacterViewPath(value: string): boolean {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return false;
-  return trimmed.includes("character_threeview") || trimmed.includes("character_mv_");
+  return (
+    trimmed.includes("character_threeview") ||
+    trimmed.includes("character_mv_") ||
+    trimmed.includes("character_orthoview_")
+  );
+}
+
+function stripInlineDataUrlPrefix(raw: string): string {
+  return raw.replace(/^data:[^,]+,/, "");
+}
+
+async function ensureCharacterThreeViewLayoutReferenceFilename(comfySettings: ComfySettings): Promise<string> {
+  const inputDir = comfySettings.comfyInputDir.trim().replace(/[\\/]+$/, "");
+  if (!inputDir) {
+    throw new Error("角色三视图工作流需要 ComfyUI input 目录，但当前设置里没有 input 路径。");
+  }
+  const targetPath = `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`;
+  await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath: targetPath,
+    base64Data: stripInlineDataUrlPrefix(CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL)
+  });
+  return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
+}
+
+function buildCharacterThreeViewSheetPrompt(name: string, context: string, backgroundPreset: "white" | "gray" | "studio" = "gray"): string {
+  const backgroundText =
+    backgroundPreset === "white"
+      ? "pure white background"
+      : backgroundPreset === "studio"
+        ? "neutral studio background"
+        : "grey background";
+  return [
+    "Recreate the same character from the first image into exactly three full-body orthographic views: front, strict right side profile, and back.",
+    "Match the exact layout, spacing, pose family, framing, and anatomical orientation of the second reference image.",
+    `Character identity: ${name}`,
+    normalizeStoryInput(context),
+    "Preserve the same face, hairstyle, body proportions, costume structure, accessories, and silhouette from the first image.",
+    "One character only, one front view, one side view, one back view, full body, head and feet visible, no crop, no extra panels, no text, no watermark.",
+    "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
+    `${backgroundText}, clean character turnaround sheet, production-ready reference board`
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(" ");
 }
 
 function resolveManualCharacterAnchor(frontPath: string, filePath: string): string {
@@ -291,7 +340,7 @@ function loadComfySettingsFromLocalStorage(): ComfySettings | null {
     const characterWorkflowJson =
       typeof parsed.characterWorkflowJson === "string" && parsed.characterWorkflowJson.trim()
         ? parsed.characterWorkflowJson
-        : buildCharacterAdvancedWorkflowTemplateJson(characterAssetModelName, characterRenderPreset);
+        : buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
     const skyboxWorkflowJson =
       typeof parsed.skyboxWorkflowJson === "string" && parsed.skyboxWorkflowJson.trim()
         ? parsed.skyboxWorkflowJson
@@ -448,7 +497,8 @@ export function AssetPanel() {
         characterRenderPreset
       );
       const advancedWorkflow =
-        comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterModel, characterRenderPreset);
+        comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
+      const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(comfySettings);
       const manualAnchorPath = resolveManualCharacterAnchor(frontPath, filePath);
       const front =
         manualAnchorPath.length > 0
@@ -481,14 +531,14 @@ export function AssetPanel() {
       if (!frontAnchorPath) {
         throw new Error("角色正视参考图生成成功，但没有可用输出路径");
       }
-      const side = await generateShotAsset(
+      const sheet = await generateShotAsset(
         comfySettings,
         makeAssetGenerationShot(
           currentSequenceId,
-          `asset_panel_char_${batchId}_side`,
-          `${trimmedName} 侧视图`,
-          buildCharacterViewPrompt(trimmedName, context, "side"),
-          buildCharacterViewNegativePrompt("side", baseNegativePrompt),
+          `asset_panel_char_${batchId}_threeview_sheet`,
+          `${trimmedName} 三视图整板`,
+          buildCharacterThreeViewSheetPrompt(trimmedName, context, comfySettings.characterBackgroundPreset ?? "gray"),
+          "",
           batchId + 101
         ),
         0,
@@ -497,44 +547,25 @@ export function AssetPanel() {
         [],
         {
           workflowJsonOverride: advancedWorkflow,
-          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
-            "side",
-            frontAnchorPath,
-            buildCharacterViewNegativePrompt("side", baseNegativePrompt)
-          )
+          tokenOverrides: {
+            FRAME_IMAGE_PATH: frontAnchorPath,
+            [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename
+          }
         }
       );
-      const back = await generateShotAsset(
-        comfySettings,
-        makeAssetGenerationShot(
-          currentSequenceId,
-          `asset_panel_char_${batchId}_back`,
-          `${trimmedName} 背视图`,
-          buildCharacterViewPrompt(trimmedName, context, "back"),
-          buildCharacterViewNegativePrompt("back", baseNegativePrompt),
-          batchId + 202
-        ),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: advancedWorkflow,
-          tokenOverrides: buildCharacterViewSelectionTokenOverrides(
-            "back",
-            frontAnchorPath,
-            buildCharacterViewNegativePrompt("back", baseNegativePrompt)
-          )
-        }
-      );
-      setFrontPath(front.localPath || front.previewUrl);
-      setSidePath(side.localPath || side.previewUrl);
-      setBackPath(back.localPath || back.previewUrl);
-      setFilePath(front.localPath || front.previewUrl);
+      const sheetPath = sheet.localPath || sheet.previewUrl;
+      if (!sheetPath) {
+        throw new Error("角色三视图整板生成成功，但没有可用输出路径");
+      }
+      const split = await splitCharacterThreeViewSheet(sheetPath);
+      setFrontPath(split.frontPath);
+      setSidePath(split.sidePath);
+      setBackPath(split.backPath);
+      setFilePath(split.frontPath);
       pushToast(
         manualAnchorPath.length > 0
-          ? "角色三视图生成完成，已使用现有人物正视图作为锚点"
-          : "角色三视图生成完成，已按参考正视图约束侧视图和背视图",
+          ? "角色三视图生成完成，已使用现有人物正视图和固定版式参考"
+          : "角色三视图生成完成，已按正视锚点和固定版式参考生成并拆图",
         "success"
       );
     } catch (error) {
