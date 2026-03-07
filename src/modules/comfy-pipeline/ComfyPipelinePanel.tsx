@@ -429,6 +429,11 @@ function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait"
   return isSdxl ? { width: 1024, height: 1536 } : { width: 832, height: 1344 };
 }
 
+function resolveCharacterFallbackSheetSize(checkpointName: string): { width: number; height: number } {
+  const isSdxl = looksLikeSdxlModelName(checkpointName);
+  return isSdxl ? { width: 1536, height: 1024 } : { width: 1344, height: 896 };
+}
+
 function buildCharacterWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
@@ -497,7 +502,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName: string): string {
   const fallbackModel = resolveMvAdapterFallbackModel(checkpointName);
-  const { width, height } = resolveCharacterTemplateSize(fallbackModel, "portrait");
+  const { width, height } = resolveCharacterFallbackSheetSize(fallbackModel);
   const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
     "1": {
       inputs: { ckpt_name: fallbackModel },
@@ -513,7 +518,7 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
         upscale_method: "lanczos",
         width,
         height,
-        crop: "center"
+        crop: "disabled"
       },
       class_type: "ImageScale"
     },
@@ -533,10 +538,10 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
       inputs: {
         seed: "{{SEED}}",
         steps: 32,
-        cfg: 6,
+        cfg: 5.6,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.72,
+        denoise: 0.56,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -3869,6 +3874,7 @@ export function ComfyPipelinePanel() {
       const queue = new Int32Array(size * size);
       const minComponentArea = Math.round(size * size * 0.05);
       let significantComponents = 0;
+      const components: Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> = [];
       for (let start = 0; start < mask.length; start += 1) {
         if (mask[start] === 0 || visited[start] === 1) continue;
         let area = 0;
@@ -3893,7 +3899,40 @@ export function ComfyPipelinePanel() {
             queue[tail++] = neighbor;
           });
         }
+        components.push({ area, minX, minY, maxX, maxY });
         if (area >= minComponentArea) significantComponents += 1;
+      }
+
+      components.sort((left, right) => right.area - left.area);
+      const primaryComponent = components[0] ?? null;
+      const edgeBand = Math.max(3, Math.round(size * 0.12));
+      let edgeForegroundPixels = 0;
+      let detachedForegroundPixels = 0;
+      const expandedPrimaryBounds = primaryComponent
+        ? {
+            minX: Math.max(0, primaryComponent.minX - 3),
+            minY: Math.max(0, primaryComponent.minY - 3),
+            maxX: Math.min(size - 1, primaryComponent.maxX + 3),
+            maxY: Math.min(size - 1, primaryComponent.maxY + 3)
+          }
+        : null;
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const idx = y * size + x;
+          if (mask[idx] === 0) continue;
+          if (x < edgeBand || x >= size - edgeBand || y < edgeBand || y >= size - edgeBand) {
+            edgeForegroundPixels += 1;
+          }
+          if (
+            expandedPrimaryBounds &&
+            (x < expandedPrimaryBounds.minX ||
+              x > expandedPrimaryBounds.maxX ||
+              y < expandedPrimaryBounds.minY ||
+              y > expandedPrimaryBounds.maxY)
+          ) {
+            detachedForegroundPixels += 1;
+          }
+        }
       }
 
       const widthRatio = (maxX - minX + 1) / size;
@@ -3909,7 +3948,10 @@ export function ComfyPipelinePanel() {
           widthRatio,
           heightRatio
         },
-        foregroundRatio: foregroundPixels / (size * size)
+        foregroundRatio: foregroundPixels / (size * size),
+        primaryComponentRatio: primaryComponent ? primaryComponent.area / foregroundPixels : 0,
+        detachedForegroundRatio: foregroundPixels > 0 ? detachedForegroundPixels / foregroundPixels : 0,
+        edgeForegroundRatio: foregroundPixels > 0 ? edgeForegroundPixels / foregroundPixels : 0
       };
     } catch {
       return null;
@@ -3974,6 +4016,12 @@ export function ComfyPipelinePanel() {
       if (layout.significantComponents > 1) {
         layoutAlerts.push(`${label}_multi_blob=${layout.significantComponents}`);
       }
+      if (layout.detachedForegroundRatio > 0.18) {
+        layoutAlerts.push(`${label}_detached_fg=${layout.detachedForegroundRatio.toFixed(2)}`);
+      }
+      if (layout.edgeForegroundRatio > 0.26) {
+        layoutAlerts.push(`${label}_edge_clutter=${layout.edgeForegroundRatio.toFixed(2)}`);
+      }
       if (isLayoutTooTight(layout, label)) {
         layoutAlerts.push(`${label}_touching_edge`);
       }
@@ -4032,6 +4080,12 @@ export function ComfyPipelinePanel() {
     if (layout) {
       if (layout.significantComponents > 1) {
         issues.push(`multi_blob=${layout.significantComponents}`);
+      }
+      if (layout.detachedForegroundRatio > 0.18) {
+        issues.push(`detached_fg=${layout.detachedForegroundRatio.toFixed(2)}`);
+      }
+      if (layout.edgeForegroundRatio > 0.26) {
+        issues.push(`edge_clutter=${layout.edgeForegroundRatio.toFixed(2)}`);
       }
       if (isLayoutTooTight(layout, view)) {
         issues.push("touching_edge");
@@ -4098,6 +4152,12 @@ export function ComfyPipelinePanel() {
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
+      layout && layout.detachedForegroundRatio > 0.16
+        ? `画面含有额外设定页元素(detached=${layout.detachedForegroundRatio.toFixed(2)})`
+        : "",
+      layout && layout.edgeForegroundRatio > 0.24
+        ? `边缘存在文字或装饰杂项(edge=${layout.edgeForegroundRatio.toFixed(2)})`
+        : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
       layout && layout.bbox.heightRatio < 0.64 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       abnormalFullBodySilhouette && layout
@@ -4136,6 +4196,12 @@ export function ComfyPipelinePanel() {
     const trimmed = sourcePath.trim();
     if (!trimmed) return "";
     return trimmed.replace(/(\.[^.\\/]+)?$/, `_panel${panelIndex}.png`);
+  };
+
+  const buildCharacterFallbackTriptychInputPath = (sourcePath: string, attempt: number) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, `_triptych_input_${attempt + 1}.png`);
   };
 
   const normalizeCharacterAnchorBackground = async (pathOrUrl: string) => {
@@ -4311,6 +4377,52 @@ export function ComfyPipelinePanel() {
       if (result.filePath) createdPaths.push(result.filePath);
     }
     return createdPaths.length > 0 ? createdPaths : [pathOrUrl];
+  };
+
+  const buildCharacterFallbackTriptychInput = async (
+    pathOrUrl: string,
+    checkpointName: string,
+    attempt: number
+  ) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return pathOrUrl;
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return pathOrUrl;
+    const source = toDesktopMediaSource(trimmed);
+    if (!source) return pathOrUrl;
+    const image = await loadImageForHash(source);
+    const { width, height } = resolveCharacterFallbackSheetSize(checkpointName);
+    const panelWidth = Math.floor(width / 3);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return pathOrUrl;
+    context.fillStyle = "rgb(236,236,236)";
+    context.fillRect(0, 0, width, height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return pathOrUrl;
+    const targetHeightRatios = [0.78, 0.74, 0.7, 0.66, 0.62];
+    const targetHeightRatio = targetHeightRatios[Math.max(0, Math.min(targetHeightRatios.length - 1, attempt))] ?? 0.7;
+    const scale = Math.min((panelWidth * 0.72) / sourceWidth, (height * targetHeightRatio) / sourceHeight);
+    if (!Number.isFinite(scale) || scale <= 0) return pathOrUrl;
+    const drawWidth = sourceWidth * scale;
+    const drawHeight = sourceHeight * scale;
+    const y = Math.round((height - drawHeight) / 2);
+    for (let panelIndex = 0; panelIndex < 3; panelIndex += 1) {
+      const x = Math.round(panelIndex * panelWidth + (panelWidth - drawWidth) / 2);
+      context.drawImage(image, x, y, drawWidth, drawHeight);
+    }
+    const filePath = buildCharacterFallbackTriptychInputPath(trimmed, attempt);
+    if (!filePath) return pathOrUrl;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath || pathOrUrl;
   };
 
   const makeAssetGenerationShot = (id: string, title: string, prompt: string, negativePrompt = "", seed?: number): Shot => ({
@@ -4531,6 +4643,75 @@ export function ComfyPipelinePanel() {
               : "Minimal production-sheet composition. One isolated figure, smaller in frame, clean flat grey background, no poster styling.";
     return mergePromptFragments([basePrompt, identityInstruction, sheetConstraint, retryTuning]);
   };
+
+  const buildCharacterFallbackSheetPrompt = (name: string, context: string, attempt: number) => {
+    const sanitizedContext = sanitizeCharacterViewContext(context);
+    const styleHint = resolvePipelineVisualStyleHint();
+    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const retryTuning =
+      attempt <= 0
+        ? "Three figures must be evenly spaced in three equal vertical panels. Each full body stays entirely inside its own panel."
+        : attempt === 1
+          ? "Zoom out slightly so all three bodies have larger blank margins. Keep all heads and feet comfortably inside the canvas."
+          : attempt === 2
+            ? "Use a clean production turnaround sheet layout. Left panel: front view. Middle panel: strict right side profile. Right panel: back view."
+            : attempt === 3
+              ? "No overlap between panels. No cropped side figures. Remove all decorative motifs, inset portraits, icons, flowers, circles, and annotations."
+              : "Minimal grey-background turnaround sheet only. Keep exactly three isolated full-body figures and nothing else.";
+    return mergePromptFragments([
+      "masterpiece, best quality, high detail",
+      "clean character turnaround sheet",
+      "three equal vertical panels on a plain light grey background",
+      "exactly three full-body figures only",
+      "left panel front view, middle panel strict right side profile, right panel back view",
+      "orthographic character reference sheet",
+      "one consistent human character identity repeated across all three panels",
+      `角色：${name}`,
+      sanitizedContext,
+      `风格倾向：${styleHint}`,
+      styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
+      "Preserve the exact same face, hairstyle, body proportions, costume structure, accessories, silhouette, and colors from the reference image.",
+      "All three figures must be fully clothed, anatomically correct, full body, centered within their own panel, and fully visible from head to toe.",
+      "Front panel faces camera. Side panel is a strict right profile with one-eye silhouette only. Back panel shows no face.",
+      "No text, no watermark, no icons, no extra portrait insets, no decorative border, no scenery, no flowers, no magic circle, no extra fourth figure.",
+      retryTuning
+    ]);
+  };
+
+  const buildCharacterFallbackSheetNegativePrompt = (baseNegativePrompt: string) =>
+    mergePromptFragments([
+      baseNegativePrompt,
+      "single centered figure only",
+      "two figures only",
+      "four figures",
+      "five figures",
+      "crowd",
+      "lineup with many tiny characters",
+      "character poster",
+      "fashion poster",
+      "decorative border",
+      "flower border",
+      "magic circle",
+      "text",
+      "annotation",
+      "watermark",
+      "logo",
+      "inset portrait",
+      "extra face icon",
+      "cropped side figure",
+      "overlapping figures",
+      "merged bodies",
+      "duplicate front view",
+      "three quarter view",
+      "dramatic perspective",
+      "robot armor mannequin",
+      "faceless mannequin",
+      "wireframe body",
+      "silhouette only",
+      "statue",
+      "vehicle",
+      "building"
+    ]);
 
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
     const viewConstraint =
@@ -4844,7 +5025,7 @@ export function ComfyPipelinePanel() {
     const referenceEditModel = resolveMvAdapterFallbackModel(characterModelForWorkflow);
     const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson(referenceEditModel);
     if (referenceEditModel !== characterModelForWorkflow) {
-      appendLog(`角色三视图单视角补全固定使用角色图生图模型：${characterModelForWorkflow} -> ${referenceEditModel}`, "info");
+      appendLog(`角色三视图简化整板补全固定使用角色图生图模型：${characterModelForWorkflow} -> ${referenceEditModel}`, "info");
     }
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
@@ -4879,121 +5060,140 @@ export function ComfyPipelinePanel() {
     const runReferenceEditFallbackThreeViews = async (seedBase: number) => {
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (!reusableFrontReferencePath) {
-        throw new Error("角色单视角补全失败：缺少可复用的正视锚点图");
+        throw new Error("角色简化三视图补全失败：缺少可复用的正视锚点图");
       }
       const normalizedFrontPath = (await normalizeCharacterAnchorBackground(reusableFrontReferencePath)) || reusableFrontReferencePath;
-      const generateSingleFallbackView = async (view: "side" | "back", seedOffset: number) => {
-        let bestPath = "";
-        let bestScore = Number.NEGATIVE_INFINITY;
-        let bestIssues: string[] = [];
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          let attemptBestIssues: string[] = [];
-          let attemptBestScore = Number.NEGATIVE_INFINITY;
-          const generatedOutputs = await generateShotAssetOutputs(
-            runtimeSettings,
-            makeAssetGenerationShot(
-              `asset_char_${name}_fallback_${view}_${attempt + 1}`,
-              `${name} ${view === "side" ? "侧视图" : "背视图"}`,
-              buildCharacterViewEditRetryPrompt(name, context, view, attempt),
-              "",
-              seedBase + seedOffset + attempt * 997
-            ),
-            0,
-            "image",
-            [],
-            [],
-                {
-                  workflowJsonOverride: referenceEditWorkflow,
-                  tokenOverrides: {
-                    STORYBOARD_IMAGE_MODEL: referenceEditModel,
-                    PROMPT: buildCharacterViewEditRetryPrompt(name, context, view, attempt),
-                    ...buildCharacterViewSelectionTokenOverrides(
-                      view,
-                      normalizedFrontPath,
-                      buildCharacterViewNegativePrompt(view, negativePrompt)
-                    )
-                  }
-                }
-          );
-          const rawCandidatePaths: string[] = [];
-          for (const generated of generatedOutputs) {
-            const candidatePathRaw = generated.localPath || generated.previewUrl;
-            if (!candidatePathRaw) continue;
+      const fallbackNegativePrompt = buildCharacterFallbackSheetNegativePrompt(negativePrompt);
+      let bestCandidate:
+        | {
+            sidePath: string;
+            backPath: string;
+            score: number;
+            issues: string[];
+            minSharpness: number | null;
+          }
+        | null = null;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const fallbackInputPath = await buildCharacterFallbackTriptychInput(normalizedFrontPath, referenceEditModel, attempt);
+        const prompt = buildCharacterFallbackSheetPrompt(name, context, attempt);
+        let attemptBestScore = Number.NEGATIVE_INFINITY;
+        let attemptBestIssues: string[] = [];
+        const generatedOutputs = await generateShotAssetOutputs(
+          runtimeSettings,
+          makeAssetGenerationShot(
+            `asset_char_${name}_fallback_sheet_${attempt + 1}`,
+            `${name} 简化三视图整板`,
+            prompt,
+            "",
+            seedBase + 9000 + attempt * 997
+          ),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: referenceEditWorkflow,
+            tokenOverrides: {
+              STORYBOARD_IMAGE_MODEL: referenceEditModel,
+              PROMPT: prompt,
+              FRAME_IMAGE_PATH: fallbackInputPath,
+              NEGATIVE_PROMPT: fallbackNegativePrompt
+            }
+          }
+        );
+        for (const generated of generatedOutputs) {
+          const candidatePathRaw = generated.localPath || generated.previewUrl;
+          if (!candidatePathRaw) continue;
+          let split = null as Awaited<ReturnType<typeof splitCharacterThreeViewSheet>> | null;
+          try {
+            split = await splitCharacterThreeViewSheet(candidatePathRaw);
+          } catch {
+            split = null;
+          }
+          if (!split) {
             const expandedPaths = await expandCharacterViewCandidatePanels(candidatePathRaw);
-            rawCandidatePaths.push(...expandedPaths);
-          }
-          const uniqueCandidatePaths = [...new Set(rawCandidatePaths.map((item) => item.trim()).filter(Boolean))];
-          if (uniqueCandidatePaths.length > 1) {
-            appendLog(`单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 检测到多面板输出，已自动拆分单图：${name}`, "info");
-          }
-          for (const rawCandidatePath of uniqueCandidatePaths) {
-            const normalizedCandidatePath = await normalizeCharacterAnchorBackground(rawCandidatePath);
-            const candidatePath = normalizedCandidatePath
-              ? await fitCharacterViewWithinCanvas(normalizedCandidatePath, view)
-              : "";
-            if (!candidatePath) continue;
-            const quality = await evaluateSingleCharacterViewQuality(candidatePath, view);
-            if (quality.score > attemptBestScore) {
-              attemptBestScore = quality.score;
-              attemptBestIssues = quality.issues;
+            if (expandedPaths.length >= 3) {
+              appendLog(`简化三视图候选 ${attempt + 1}/5 检测到多面板输出，已自动拆分单图：${name}`, "info");
+              split = {
+                frontPath: expandedPaths[0],
+                sidePath: expandedPaths[1],
+                backPath: expandedPaths[2]
+              };
             }
-            if (quality.score > bestScore) {
-              bestPath = candidatePath;
-              bestScore = quality.score;
-              bestIssues = quality.issues;
+          }
+          if (!split) continue;
+          const normalizedSideRaw = await normalizeCharacterAnchorBackground(split.sidePath);
+          const normalizedBackRaw = await normalizeCharacterAnchorBackground(split.backPath);
+          const sidePath = normalizedSideRaw ? await fitCharacterViewWithinCanvas(normalizedSideRaw, "side") : "";
+          const backPath = normalizedBackRaw ? await fitCharacterViewWithinCanvas(normalizedBackRaw, "back") : "";
+          if (!sidePath || !backPath) continue;
+          const [sideQuality, backQuality, combinedQuality] = await Promise.all([
+            evaluateSingleCharacterViewQuality(sidePath, "side"),
+            evaluateSingleCharacterViewQuality(backPath, "back"),
+            evaluateThreeViewQuality([normalizedFrontPath, sidePath, backPath])
+          ]);
+          const issues = [
+            ...sideQuality.issues.map((issue) => `side:${issue}`),
+            ...backQuality.issues.map((issue) => `back:${issue}`),
+            ...(combinedQuality.lowDiversity ? ["views:视角过近"] : []),
+            ...combinedQuality.orientationAlerts.map((issue) => `views:${issue}`),
+            ...(combinedQuality.lowSharpness && typeof combinedQuality.minSharpness === "number"
+              ? [`views:sharpness_low=${combinedQuality.minSharpness.toFixed(1)}`]
+              : [])
+          ];
+          const score = sideQuality.score + backQuality.score + combinedQuality.score;
+          if (score > attemptBestScore) {
+            attemptBestScore = score;
+            attemptBestIssues = issues;
+          }
+          if (!bestCandidate || score > bestCandidate.score) {
+            bestCandidate = {
+              sidePath,
+              backPath,
+              score,
+              issues,
+              minSharpness: combinedQuality.minSharpness
+            };
+          }
+          const acceptable =
+            sideQuality.acceptable &&
+            backQuality.acceptable &&
+            !combinedQuality.lowDiversity &&
+            !combinedQuality.lowOrientation;
+          if (acceptable) {
+            if (attempt > 0) {
+              appendLog(`简化三视图整板补全经第 ${attempt + 1} 次重试后达标：${name}`, "info");
             }
-            if (quality.acceptable) {
-              if (attempt > 0) {
-                appendLog(`单视角${view === "side" ? "侧视" : "背视"}补全经第 ${attempt + 1} 次重试后达标：${name}`, "info");
+            if (combinedQuality.lowSharpness && typeof combinedQuality.minSharpness === "number") {
+              appendLog(`简化三视图补全完成，但清晰度偏低（min=${combinedQuality.minSharpness.toFixed(1)}）：${name}`, "info");
+            }
+            return {
+              front: {
+                localPath: normalizedFrontPath,
+                previewUrl: normalizedFrontPath
+              },
+              side: {
+                localPath: sidePath,
+                previewUrl: sidePath
+              },
+              back: {
+                localPath: backPath,
+                previewUrl: backPath
               }
-              return candidatePath;
-            }
-          }
-          if (attempt < 4) {
-            appendLog(
-              `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 未达标（${attemptBestIssues.join(" / ") || "视角不稳定"}），继续重试：${name}`,
-              "info"
-            );
+            };
           }
         }
-        if (!bestPath) {
-          throw new Error(`单视角${view === "side" ? "侧视" : "背视"}补全失败：未获得有效输出`);
+        if (attempt < 4) {
+          appendLog(
+            `简化三视图候选 ${attempt + 1}/5 未达标（${attemptBestIssues.join(" / ") || "三视图不稳定"}），继续重试：${name}`,
+            "info"
+          );
         }
-        throw new Error(
-          `单视角${view === "side" ? "侧视" : "背视"}多轮生成仍未达标（${bestIssues.join(" / ") || "视角不稳定"}）`
-        );
-      };
-      const sidePath = await generateSingleFallbackView("side", 3000);
-      const backPath = await generateSingleFallbackView("back", 6000);
-      const combinedQuality = await evaluateThreeViewQuality([normalizedFrontPath, sidePath, backPath]);
-      if (combinedQuality.lowDiversity || combinedQuality.lowOrientation) {
-        throw new Error(
-          `单视角补全后的三视图仍未达标（${[
-            combinedQuality.lowDiversity ? "视角过近" : "",
-            combinedQuality.lowOrientation ? `视角异常(${combinedQuality.orientationAlerts.join("|")})` : "",
-            combinedQuality.lowSharpness ? `清晰度偏低(min=${(combinedQuality.minSharpness ?? 0).toFixed(1)})` : ""
-          ]
-            .filter(Boolean)
-            .join(" / ")}）`
-        );
       }
-      if (combinedQuality.lowSharpness) {
-        appendLog(`单视角补全完成，但清晰度偏低（min=${(combinedQuality.minSharpness ?? 0).toFixed(1)}）：${name}`, "info");
+      if (!bestCandidate) {
+        throw new Error("简化三视图补全失败：未获得有效输出");
       }
-      return {
-        front: {
-          localPath: normalizedFrontPath,
-          previewUrl: normalizedFrontPath
-        },
-        side: {
-          localPath: sidePath,
-          previewUrl: sidePath
-        },
-        back: {
-          localPath: backPath,
-          previewUrl: backPath
-        }
-      };
+      throw new Error(`简化三视图多轮生成仍未达标（${bestCandidate.issues.join(" / ") || "三视图不稳定"}）`);
     };
     const runAdvancedThreeViews = async (seedBase: number) => {
       const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(runtimeSettings);
@@ -5158,8 +5358,8 @@ export function ComfyPipelinePanel() {
     } catch (error) {
       appendLog(
         shouldFallbackAssetWorkflow(error)
-          ? `双参考三视图工作流不可用，已切换单视角参考补全：${name}`
-          : `双参考三视图多轮未达标，已切换单视角参考补全：${name}`,
+          ? `双参考三视图工作流不可用，已切换简化整板补全：${name}`
+          : `双参考三视图多轮未达标，已切换简化整板补全：${name}`,
         "info"
       );
       try {
@@ -5167,11 +5367,11 @@ export function ComfyPipelinePanel() {
       } catch (fallbackError) {
         if (shouldFallbackAssetWorkflow(error)) {
           throw new Error(
-            `角色双参考三视图工作流不可用，且单视角参考补全也失败：${String(fallbackError)}。` +
+            `角色双参考三视图工作流不可用，且简化整板补全也失败：${String(fallbackError)}。` +
               `原始高级工作流错误：${String(error)}。请确认本地 three_view / Qwen 图像编辑工作流依赖已在 ComfyUI 中正确加载。`
           );
         }
-        throw new Error(`双参考三视图未达标，且单视角参考补全也失败：${String(fallbackError)}。原始错误：${String(error)}`);
+        throw new Error(`双参考三视图未达标，且简化整板补全也失败：${String(fallbackError)}。原始错误：${String(error)}`);
       }
     }
   };

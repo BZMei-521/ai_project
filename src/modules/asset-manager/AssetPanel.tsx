@@ -12,7 +12,7 @@ import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/prese
 import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.png?inline";
 import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-panorama-default.json";
-import { invokeDesktopCommand } from "../platform/desktopBridge";
+import { invokeDesktopCommand, toDesktopMediaSource } from "../platform/desktopBridge";
 import { useStoryboardStore } from "../storyboard-core/store";
 import type { AssetType, Shot, SkyboxFace } from "../storyboard-core/types";
 import { confirmDialog } from "../ui/dialogStore";
@@ -88,6 +88,11 @@ function resolveCharacterTemplateSize(
   return isSdxl ? { width: 896, height: 1344 } : { width: 768, height: 1152 };
 }
 
+function resolveCharacterFallbackSheetSize(checkpointName: string): { width: number; height: number } {
+  const isSdxl = looksLikeSdxlCheckpoint(checkpointName);
+  return isSdxl ? { width: 1536, height: 1024 } : { width: 1344, height: 896 };
+}
+
 function buildCharacterWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
@@ -142,7 +147,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName: string): string {
   const fallbackModel = resolveMvAdapterFallbackModel(checkpointName);
-  const { width, height } = resolveCharacterTemplateSize(fallbackModel, "portrait");
+  const { width, height } = resolveCharacterFallbackSheetSize(fallbackModel);
   const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
     "1": {
       inputs: { ckpt_name: fallbackModel },
@@ -158,7 +163,7 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
         upscale_method: "lanczos",
         width,
         height,
-        crop: "center"
+        crop: "disabled"
       },
       class_type: "ImageScale"
     },
@@ -178,10 +183,10 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
       inputs: {
         seed: "{{SEED}}",
         steps: 32,
-        cfg: 6,
+        cfg: 5.6,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.72,
+        denoise: 0.56,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -439,6 +444,91 @@ function buildCharacterViewEditRetryPrompt(name: string, context: string, view: 
   ]
     .filter((item) => item.trim().length > 0)
     .join(" ");
+}
+
+function buildCharacterFallbackSheetPrompt(name: string, context: string, attempt: number): string {
+  const retryTuning =
+    attempt <= 0
+      ? "Three figures must be evenly spaced in three equal vertical panels. Each full body stays entirely inside its own panel."
+      : attempt === 1
+        ? "Zoom out slightly so all three bodies have larger blank margins. Keep all heads and feet comfortably inside the canvas."
+        : "Minimal grey-background turnaround sheet only. Keep exactly three isolated full-body figures and nothing else.";
+  return [
+    "masterpiece, best quality, high detail, clean character turnaround sheet",
+    `Character identity: ${name}`,
+    normalizeStoryInput(context),
+    "exactly three equal vertical panels on a plain light grey background",
+    "left panel front view, middle panel strict right side profile, right panel back view",
+    "preserve the exact same face, hairstyle, body proportions, costume structure, accessories, silhouette, and colors from the reference image",
+    "all three figures fully visible from head to toe, no crop, no text, no watermark, no icons, no decorative border, no scenery",
+    retryTuning
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(" ");
+}
+
+function buildCharacterFallbackSheetNegativePrompt(baseNegativePrompt: string): string {
+  return [
+    baseNegativePrompt,
+    "single centered figure only, two figures only, four figures, five figures, crowd, lineup with many tiny characters",
+    "character poster, fashion poster, decorative border, flower border, magic circle, text, annotation, watermark, logo, inset portrait, extra face icon",
+    "cropped side figure, overlapping figures, merged bodies, duplicate front view, three quarter view, dramatic perspective",
+    "robot armor mannequin, faceless mannequin, wireframe body, silhouette only, statue, vehicle, building"
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(", ");
+}
+
+function buildCharacterFallbackTriptychInputPath(sourcePath: string, attempt: number): string {
+  const trimmed = sourcePath.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/(\.[^.\\/]+)?$/, `_triptych_input_${attempt + 1}.png`);
+}
+
+async function buildCharacterFallbackTriptychInput(
+  sourcePath: string,
+  checkpointName: string,
+  attempt: number
+): Promise<string> {
+  const trimmed = sourcePath.trim();
+  if (!trimmed || typeof document === "undefined") return sourcePath;
+  const sourceUrl = /^data:/.test(trimmed) ? trimmed : toDesktopMediaSource(trimmed);
+  if (!sourceUrl) return sourcePath;
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("加载角色正视锚点失败"));
+    element.src = sourceUrl;
+  });
+  const { width, height } = resolveCharacterFallbackSheetSize(checkpointName);
+  const panelWidth = Math.floor(width / 3);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return sourcePath;
+  context.fillStyle = "rgb(236,236,236)";
+  context.fillRect(0, 0, width, height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  const targetHeightRatios = [0.78, 0.74, 0.7];
+  const targetHeightRatio = targetHeightRatios[Math.max(0, Math.min(targetHeightRatios.length - 1, attempt))] ?? 0.7;
+  const scale = Math.min((panelWidth * 0.72) / image.width, (height * targetHeightRatio) / image.height);
+  if (!Number.isFinite(scale) || scale <= 0) return sourcePath;
+  const drawWidth = image.width * scale;
+  const drawHeight = image.height * scale;
+  const y = Math.round((height - drawHeight) / 2);
+  for (let panelIndex = 0; panelIndex < 3; panelIndex += 1) {
+    const x = Math.round(panelIndex * panelWidth + (panelWidth - drawWidth) / 2);
+    context.drawImage(image, x, y, drawWidth, drawHeight);
+  }
+  const filePath = buildCharacterFallbackTriptychInputPath(trimmed, attempt);
+  if (!filePath) return sourcePath;
+  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath,
+    base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  });
+  return result.filePath || sourcePath;
 }
 
 function resolveManualCharacterAnchor(frontPath: string, filePath: string): string {
@@ -719,52 +809,54 @@ export function AssetPanel() {
           "success"
         );
       } catch (advancedError) {
-        const generateFallbackView = async (view: "side" | "back") => {
-          let lastError: unknown = null;
-          for (let attempt = 0; attempt < 3; attempt += 1) {
-            try {
-              const generated = await generateShotAsset(
-                comfySettings,
-                makeAssetGenerationShot(
-                  currentSequenceId,
-                  `asset_panel_char_${batchId}_${view}_${attempt + 1}`,
-                  `${trimmedName} ${view === "side" ? "侧视图" : "背视图"}`,
-                  buildCharacterViewEditRetryPrompt(trimmedName, context, view, attempt),
-                  "",
-                  batchId + (view === "side" ? 3000 : 6000) + attempt * 997
-                ),
-                0,
-                "image",
-                [],
-                [],
-                {
-                  workflowJsonOverride: referenceEditWorkflow,
-                  tokenOverrides: {
-                    STORYBOARD_IMAGE_MODEL: referenceEditModel,
-                    PROMPT: buildCharacterViewEditRetryPrompt(trimmedName, context, view, attempt),
-                    ...buildCharacterViewSelectionTokenOverrides(
-                      view,
-                      frontAnchorPath,
-                      buildCharacterViewNegativePrompt(view, baseNegativePrompt)
-                    )
-                  }
+        let fallbackError: unknown = null;
+        let resolvedSplit: Awaited<ReturnType<typeof splitCharacterThreeViewSheet>> | null = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            const fallbackInputPath = await buildCharacterFallbackTriptychInput(frontAnchorPath, referenceEditModel, attempt);
+            const prompt = buildCharacterFallbackSheetPrompt(trimmedName, context, attempt);
+            const generated = await generateShotAsset(
+              comfySettings,
+              makeAssetGenerationShot(
+                currentSequenceId,
+                `asset_panel_char_${batchId}_fallback_sheet_${attempt + 1}`,
+                `${trimmedName} 简化三视图整板`,
+                prompt,
+                "",
+                batchId + 9000 + attempt * 997
+              ),
+              0,
+              "image",
+              [],
+              [],
+              {
+                workflowJsonOverride: referenceEditWorkflow,
+                tokenOverrides: {
+                  STORYBOARD_IMAGE_MODEL: referenceEditModel,
+                  PROMPT: prompt,
+                  FRAME_IMAGE_PATH: fallbackInputPath,
+                  NEGATIVE_PROMPT: buildCharacterFallbackSheetNegativePrompt(baseNegativePrompt)
                 }
-              );
-              const candidatePath = generated.localPath || generated.previewUrl;
-              if (candidatePath) return candidatePath;
-            } catch (error) {
-              lastError = error;
+              }
+            );
+            const sheetPath = generated.localPath || generated.previewUrl;
+            if (!sheetPath) {
+              throw new Error("简化三视图整板生成成功，但没有可用输出路径");
             }
+            resolvedSplit = await splitCharacterThreeViewSheet(sheetPath);
+            break;
+          } catch (error) {
+            fallbackError = error;
           }
-          throw lastError instanceof Error ? lastError : new Error(`角色${view === "side" ? "侧视" : "背视"}补全失败`);
-        };
-        const sideViewPath = await generateFallbackView("side");
-        const backViewPath = await generateFallbackView("back");
+        }
+        if (!resolvedSplit) {
+          throw (fallbackError instanceof Error ? fallbackError : new Error("简化三视图整板补全失败"));
+        }
         setFrontPath(frontAnchorPath);
-        setSidePath(sideViewPath);
-        setBackPath(backViewPath);
+        setSidePath(resolvedSplit.sidePath);
+        setBackPath(resolvedSplit.backPath);
         setFilePath(frontAnchorPath);
-        pushToast(`高级整板失败，已切换单视角补全：${String(advancedError)}`, "warning");
+        pushToast(`高级整板失败，已切换简化整板补全：${String(advancedError)}`, "warning");
       }
     } catch (error) {
       pushToast(`角色三视图生成失败：${String(error)}`, "error");
