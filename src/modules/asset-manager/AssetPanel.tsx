@@ -7,6 +7,7 @@ import {
   splitCharacterThreeViewSheet,
   type ComfySettings
 } from "../comfy-pipeline/comfyService";
+import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "../comfy-pipeline/presets/storyboard-image-fisher-light-v1.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-threeview-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-kontext-threeview-default.json";
 import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.png?inline";
@@ -133,6 +134,42 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(302, [Math.max(20, config.steps), "fixed"]);
   setNodeWidgets(294, ["{{SEED}}", "fixed", Math.max(20, config.steps), 1, "euler", "simple", 1]);
   setNodeWidgets(316, [CHARACTER_THREEVIEW_OUTPUT_PREFIX, ""]);
+  return JSON.stringify(template, null, 2);
+}
+
+function buildCharacterReferenceEditFallbackWorkflowTemplateJson(): string {
+  const template = cloneJson(STORYBOARD_IMAGE_WORKFLOW_OBJECT) as {
+    nodes?: Array<{ id?: number; widgets_values?: unknown[] }>;
+  };
+  const setNodeWidgets = (nodeId: number, values: unknown[]) => {
+    const node = template.nodes?.find((item) => item.id === nodeId);
+    if (!node) return;
+    node.widgets_values = values;
+  };
+  setNodeWidgets(13, ["{{CHAR1_PRIMARY_PATH}}", "image"]);
+  setNodeWidgets(49, ["{{STORYBOARD_IMAGE_MODEL}}"]);
+  setNodeWidgets(89, [CHARACTER_THREEVIEW_OUTPUT_PREFIX, ""]);
+  setNodeWidgets(123, ["{{PROMPT}}", 0, 1, ""]);
+  setNodeWidgets(139, ["{{NEGATIVE_PROMPT}}"]);
+  setNodeWidgets(10, ["{{SEED}}", "fixed", 28, 4, "euler_ancestral", "normal", 0.82]);
+  setNodeWidgets(21, [
+    "",
+    1024,
+    384,
+    "lanczos",
+    "center",
+    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. No extra panels, no duplicate figures, no scenery, no text."
+  ]);
+  const loraNode = template.nodes?.find((item) => item.id === 216);
+  if (loraNode && Array.isArray(loraNode.widgets_values)) {
+    loraNode.widgets_values = loraNode.widgets_values.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value) || !("on" in value)) return value;
+      return {
+        ...(value as Record<string, unknown>),
+        on: false
+      };
+    });
+  }
   return JSON.stringify(template, null, 2);
 }
 
@@ -359,6 +396,23 @@ function buildCharacterThreeViewSheetPrompt(name: string, context: string, backg
     .join(" ");
 }
 
+function buildCharacterViewEditRetryPrompt(name: string, context: string, view: "side" | "back", attempt: number): string {
+  const retryTuning =
+    attempt <= 0
+      ? "Keep generous blank margin around the whole body. Full body must be entirely inside frame."
+      : attempt === 1
+        ? "Zoom out slightly. Character should occupy less frame area. Keep one clean silhouette only and remove any duplicate limbs or duplicate figure."
+        : "Strict orthographic reference image, one angle only, one person only, plain studio sheet, full body centered, no crop, no decorative effects.";
+  return [
+    buildCharacterViewPrompt(name, context, view),
+    "Use the reference image as the exact identity source. Keep the same face, hairstyle, body proportions, clothing structure, accessories, colors, and silhouette. Do not redesign the character.",
+    "Render exactly one isolated human character on a plain light grey background. No lineup, no character sheet, no extra panel, no annotation, no frame, no scenery.",
+    retryTuning
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(" ");
+}
+
 function resolveManualCharacterAnchor(frontPath: string, filePath: string): string {
   const front = frontPath.trim();
   if (front && !isGeneratedCharacterViewPath(front)) return front;
@@ -557,6 +611,7 @@ export function AssetPanel() {
         characterTemplatePreset,
         characterRenderPreset
       );
+      const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson();
       const advancedWorkflow =
         comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
       const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(comfySettings);
@@ -592,43 +647,89 @@ export function AssetPanel() {
       if (!frontAnchorPath) {
         throw new Error("角色正视参考图生成成功，但没有可用输出路径");
       }
-      const sheet = await generateShotAsset(
-        comfySettings,
-        makeAssetGenerationShot(
-          currentSequenceId,
-          `asset_panel_char_${batchId}_threeview_sheet`,
-          `${trimmedName} 三视图整板`,
-          buildCharacterThreeViewSheetPrompt(trimmedName, context, comfySettings.characterBackgroundPreset ?? "gray"),
-          "",
-          batchId + 101
-        ),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: advancedWorkflow,
-          tokenOverrides: {
-            FRAME_IMAGE_PATH: frontAnchorPath,
-            [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename
+      try {
+        const sheet = await generateShotAsset(
+          comfySettings,
+          makeAssetGenerationShot(
+            currentSequenceId,
+            `asset_panel_char_${batchId}_threeview_sheet`,
+            `${trimmedName} 三视图整板`,
+            buildCharacterThreeViewSheetPrompt(trimmedName, context, comfySettings.characterBackgroundPreset ?? "gray"),
+            "",
+            batchId + 101
+          ),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: advancedWorkflow,
+            tokenOverrides: {
+              FRAME_IMAGE_PATH: frontAnchorPath,
+              [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename
+            }
           }
+        );
+        const sheetPath = sheet.localPath || sheet.previewUrl;
+        if (!sheetPath) {
+          throw new Error("角色三视图整板生成成功，但没有可用输出路径");
         }
-      );
-      const sheetPath = sheet.localPath || sheet.previewUrl;
-      if (!sheetPath) {
-        throw new Error("角色三视图整板生成成功，但没有可用输出路径");
+        const split = await splitCharacterThreeViewSheet(sheetPath);
+        setFrontPath(split.frontPath);
+        setSidePath(split.sidePath);
+        setBackPath(split.backPath);
+        setFilePath(split.frontPath);
+        pushToast(
+          manualAnchorPath.length > 0
+            ? "角色三视图生成完成，已使用现有人物正视图和固定版式参考"
+            : "角色三视图生成完成，已按正视锚点和固定版式参考生成并拆图",
+          "success"
+        );
+      } catch (advancedError) {
+        const generateFallbackView = async (view: "side" | "back") => {
+          let lastError: unknown = null;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              const generated = await generateShotAsset(
+                comfySettings,
+                makeAssetGenerationShot(
+                  currentSequenceId,
+                  `asset_panel_char_${batchId}_${view}_${attempt + 1}`,
+                  `${trimmedName} ${view === "side" ? "侧视图" : "背视图"}`,
+                  buildCharacterViewEditRetryPrompt(trimmedName, context, view, attempt),
+                  "",
+                  batchId + (view === "side" ? 3000 : 6000) + attempt * 997
+                ),
+                0,
+                "image",
+                [],
+                [],
+                {
+                  workflowJsonOverride: referenceEditWorkflow,
+                  tokenOverrides: {
+                    CHAR1_PRIMARY_PATH: frontAnchorPath,
+                    STORYBOARD_IMAGE_MODEL:
+                      comfySettings.storyboardImageModelName?.trim() || "Qwen-Rapid-AIO-SFW-v5.safetensors",
+                    NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, baseNegativePrompt)
+                  }
+                }
+              );
+              const candidatePath = generated.localPath || generated.previewUrl;
+              if (candidatePath) return candidatePath;
+            } catch (error) {
+              lastError = error;
+            }
+          }
+          throw lastError instanceof Error ? lastError : new Error(`角色${view === "side" ? "侧视" : "背视"}补全失败`);
+        };
+        const sideViewPath = await generateFallbackView("side");
+        const backViewPath = await generateFallbackView("back");
+        setFrontPath(frontAnchorPath);
+        setSidePath(sideViewPath);
+        setBackPath(backViewPath);
+        setFilePath(frontAnchorPath);
+        pushToast(`高级整板失败，已切换单视角补全：${String(advancedError)}`, "warning");
       }
-      const split = await splitCharacterThreeViewSheet(sheetPath);
-      setFrontPath(split.frontPath);
-      setSidePath(split.sidePath);
-      setBackPath(split.backPath);
-      setFilePath(split.frontPath);
-      pushToast(
-        manualAnchorPath.length > 0
-          ? "角色三视图生成完成，已使用现有人物正视图和固定版式参考"
-          : "角色三视图生成完成，已按正视锚点和固定版式参考生成并拆图",
-        "success"
-      );
     } catch (error) {
       pushToast(`角色三视图生成失败：${String(error)}`, "error");
     } finally {
