@@ -3243,6 +3243,17 @@ function resolveBestModelOption(
     return options.find((option) => option.trim().toLowerCase() === "alpha") ?? options[0]!;
   }
 
+  if (classType === "PatchModelPatcherOrder" && inputName === "full_load") {
+    const normalizedDesired = desiredValue.trim().toLowerCase();
+    if (/disable/.test(normalizedDesired)) {
+      return options.find((option) => option.trim().toLowerCase() === "disabled") ?? options[0]!;
+    }
+    if (/enable/.test(normalizedDesired)) {
+      return options.find((option) => option.trim().toLowerCase() === "enabled") ?? options[0]!;
+    }
+    return options.find((option) => option.trim().toLowerCase() === "auto") ?? options[0]!;
+  }
+
   if (/^(default|auto)$/i.test(desiredValue.trim())) {
     return options[0]!;
   }
@@ -3929,6 +3940,10 @@ function buildWidgetFallbackNames(
   objectInfo?: Record<string, unknown>
 ): string[] {
   const nodeType = typeof node.type === "string" ? node.type.trim() : "";
+  const explicitFallback = WIDGET_ONLY_INPUT_FALLBACKS[nodeType];
+  if (explicitFallback && explicitFallback.length > 0) {
+    return explicitFallback;
+  }
   if (objectInfo && nodeType) {
     const orderedNames = objectInfoInputOrderNames(objectInfo, nodeType);
     if (orderedNames.length > 0) {
@@ -3953,7 +3968,7 @@ function buildWidgetFallbackNames(
       if (derived.length > 0) return derived;
     }
   }
-  return WIDGET_ONLY_INPUT_FALLBACKS[nodeType] ?? [];
+  return [];
 }
 
 function getWorkflowVariableNodeName(node: WorkflowNode): string {

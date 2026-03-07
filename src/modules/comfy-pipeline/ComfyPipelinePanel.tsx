@@ -480,6 +480,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(281, [DEFAULT_CHARACTER_ADVANCED_UNET, "fp8_e4m3fn_fast"]);
   setNodeWidgets(280, [DEFAULT_CHARACTER_ADVANCED_CLIP_L, DEFAULT_CHARACTER_ADVANCED_CLIP_T5, "flux", "default"]);
   setNodeWidgets(279, [DEFAULT_CHARACTER_ADVANCED_VAE]);
+  setNodeWidgets(315, ["weight_patch_first", "auto"]);
   setNodeWidgets(335, ["RMBG-2.0", 1, 1024, 0, 0, "gray", false, "Color", false]);
   setNodeWidgets(286, ["{{PROMPT}}"]);
   setNodeWidgets(301, ["{{SEED}}", "fixed"]);
@@ -487,6 +488,40 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(294, ["{{SEED}}", "fixed", Math.max(20, config.steps), 1, "euler", "simple", 1]);
   setNodeWidgets(316, [CHARACTER_THREEVIEW_OUTPUT_PREFIX, ""]);
   return JSON.stringify(template, null, 2);
+}
+
+function workflowGraphNodes(workflowJson: string): Array<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(workflowJson) as { nodes?: unknown };
+    return Array.isArray(parsed.nodes) ? (parsed.nodes as Array<Record<string, unknown>>) : [];
+  } catch {
+    return [];
+  }
+}
+
+function workflowHasKnownBrokenCharacterAdvancedDefaults(workflowJson: string): boolean {
+  const trimmed = workflowJson.trim();
+  if (!trimmed) return false;
+  if (!trimmed.includes(`{{${CHARACTER_THREEVIEW_LAYOUT_TOKEN}}}`) || !trimmed.includes(CHARACTER_THREEVIEW_OUTPUT_PREFIX)) {
+    return false;
+  }
+  const nodes = workflowGraphNodes(trimmed);
+  if (nodes.length <= 0) return false;
+  const rmbgNode = nodes.find((node) => node.id === 335 || node.type === "RMBG");
+  if (Array.isArray(rmbgNode?.widgets_values)) {
+    const background = rmbgNode.widgets_values[7];
+    if (typeof background === "string" && !/^(Color|Alpha)$/i.test(background.trim())) {
+      return true;
+    }
+  }
+  const patchNode = nodes.find((node) => node.id === 315 || node.type === "PatchModelPatcherOrder");
+  if (Array.isArray(patchNode?.widgets_values)) {
+    const fullLoad = patchNode.widgets_values[1];
+    if (typeof fullLoad === "string" && !/^(enabled|disabled|auto)$/i.test(fullLoad.trim())) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
@@ -1485,6 +1520,7 @@ function shouldAutoRewriteAssetWorkflow(
   const trimmed = workflowJson.trim();
   if (!trimmed) return true;
   if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
+  if (kind === "character" && workflowHasKnownBrokenCharacterAdvancedDefaults(trimmed)) return true;
   const nodeTypes = new Set(collectWorkflowNodeTypesForHeuristics(trimmed));
   const hasBasicImageCore =
     nodeTypes.has("CheckpointLoaderSimple") &&
@@ -1673,7 +1709,8 @@ function loadSettings(): ComfySettings {
       typeof parsed.videoWorkflowJson === "string" && parsed.videoWorkflowJson.trim().length > 0
         ? parsed.videoWorkflowJson
         : FISHER_WORKFLOW_JSON;
-    const shouldResetCharacterWorkflowJson = shouldUpgradeCharacterMode;
+    const shouldResetCharacterWorkflowJson =
+      shouldUpgradeCharacterMode || workflowHasKnownBrokenCharacterAdvancedDefaults(parsedCharacterWorkflowJson);
     return {
       baseUrl: parsed.baseUrl ?? "http://127.0.0.1:8188",
       outputDir: parsed.outputDir ?? "",
