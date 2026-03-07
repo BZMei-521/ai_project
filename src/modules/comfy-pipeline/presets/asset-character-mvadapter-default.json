@@ -58,7 +58,7 @@
   },
   "9": {
     "inputs": {
-      "model_name": "ZhengPeng7/BiRefNet"
+      "ckpt_name": "ZhengPeng7/BiRefNet"
     },
     "class_type": "BiRefNet"
   },
@@ -72,8 +72,8 @@
         "5",
         0
       ],
-      "max_side_len": 768,
-      "image_size": 768
+      "width": 1024,
+      "height": 1024
     },
     "class_type": "ImagePreprocessor"
   },

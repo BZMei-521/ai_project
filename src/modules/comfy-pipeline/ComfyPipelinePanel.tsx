@@ -500,6 +500,9 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
   if (template["1"]?.inputs) {
     template["1"].inputs.ckpt_name = resolveMvAdapterFallbackModel(checkpointName);
   }
+  if (template["9"]?.inputs) {
+    template["9"].inputs.ckpt_name = "ZhengPeng7/BiRefNet";
+  }
   if (template["7"]?.inputs) {
     const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterFallbackModel(checkpointName), "square");
     template["7"].inputs.prompt = "{{PROMPT}}";
@@ -507,6 +510,10 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
     template["7"].inputs.width = width;
     template["7"].inputs.height = height;
     template["7"].inputs.seed = "{{SEED}}";
+    if (template["10"]?.inputs) {
+      template["10"].inputs.width = width;
+      template["10"].inputs.height = height;
+    }
   }
   if (template["8"]?.inputs) {
     template["8"].inputs.filename_prefix = CHARACTER_THREEVIEW_OUTPUT_PREFIX;
