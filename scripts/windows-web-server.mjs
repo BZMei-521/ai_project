@@ -852,9 +852,10 @@ try {
   if ($image.Width -lt 3 -or $image.Height -lt 1) {
     throw "Three-view sheet has invalid dimensions: $($image.Width)x$($image.Height)"
   }
-  $panelWidth = [int][Math]::Floor($image.Width / 3)
-  $widths = @($panelWidth, $panelWidth, $image.Width - ($panelWidth * 2))
-  $starts = @(0, $panelWidth, $panelWidth * 2)
+  $panelWidth = [int][Math]::Floor([double]$image.Width / 3.0)
+  $lastWidth = [int]($image.Width - ($panelWidth * 2))
+  $widths = @([int]$panelWidth, [int]$panelWidth, [int]$lastWidth)
+  $starts = @([int]0, [int]$panelWidth, [int]($panelWidth * 2))
   $targets = @($frontPath, $sidePath, $backPath)
   for ($i = 0; $i -lt 3; $i++) {
     if (Test-Path -LiteralPath $targets[$i]) {
