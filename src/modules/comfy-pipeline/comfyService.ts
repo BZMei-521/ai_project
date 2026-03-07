@@ -4825,6 +4825,16 @@ function shouldFallbackToLocalVideo(errorText: string): boolean {
   );
 }
 
+function isRequestTimeoutError(errorText: string): boolean {
+  const normalized = String(errorText || "").toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes("请求超时") ||
+    normalized.includes("operation was aborted") ||
+    normalized.includes("aborterror")
+  );
+}
+
 export async function generateShotAsset(
   settings: ComfySettings,
   shot: Shot,
@@ -4929,6 +4939,9 @@ export async function generateShotAsset(
     };
   } catch (error) {
     const baseMessage = String(error);
+    if (isRequestTimeoutError(baseMessage)) {
+      throw new Error(`${baseMessage}。ComfyUI 请求超时，当前会话未拿到有效响应；请等待 Comfy 空闲后重试。`);
+    }
     if (kind === "video" && settings.videoGenerationMode !== "local_motion" && shouldFallbackToLocalVideo(baseMessage)) {
       options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
       return await generateLocalCompatibleVideo(settings, shot, index, allShots);
@@ -5040,6 +5053,9 @@ export async function generateShotAssetOutputs(
     );
   } catch (error) {
     const baseMessage = String(error);
+    if (isRequestTimeoutError(baseMessage)) {
+      throw new Error(`${baseMessage}。ComfyUI 请求超时，当前会话未拿到有效响应；请等待 Comfy 空闲后重试。`);
+    }
     if (kind === "video" && settings.videoGenerationMode !== "local_motion" && shouldFallbackToLocalVideo(baseMessage)) {
       options?.onProgress?.(0.05, "Comfy 视频节点缺失，已自动回退到本地视频模式");
       return [await generateLocalCompatibleVideo(settings, shot, index, allShots)];

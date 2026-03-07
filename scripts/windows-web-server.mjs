@@ -1300,7 +1300,7 @@ async function comfyQueuePrompt(baseUrl, prompt, clientId) {
       prompt: sanitizedPrompt,
       client_id: String(clientId || "")
     })
-  }, 15000);
+  }, 60000);
   if (!response.ok) {
     throw new Error(`提交 Comfy 任务失败: HTTP ${response.status} ${await response.text()}`);
   }
@@ -1390,7 +1390,7 @@ function extractScalarNodeValue(node) {
 }
 
 async function comfyGetHistory(baseUrl, promptId) {
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(baseUrl)}/history/${encodeURIComponent(String(promptId || ""))}`, {}, 12000);
+  const response = await fetchWithTimeout(`${normalizeBaseUrl(baseUrl)}/history/${encodeURIComponent(String(promptId || ""))}`, {}, 60000);
   if (!response.ok) {
     throw new Error(`读取 Comfy history 失败: HTTP ${response.status}`);
   }
@@ -1399,7 +1399,7 @@ async function comfyGetHistory(baseUrl, promptId) {
 
 async function comfyFetchViewBase64(url) {
   if (!String(url || "").trim()) throw new Error("url 不能为空");
-  const response = await fetchWithTimeout(String(url), {}, 30000);
+  const response = await fetchWithTimeout(String(url), {}, 60000);
   if (!response.ok) {
     throw new Error(`下载 Comfy 图像失败: HTTP ${response.status}`);
   }
@@ -1463,7 +1463,7 @@ async function comfyDiscoverLocalDirs() {
 }
 
 async function comfyGetObjectInfo(baseUrl) {
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(baseUrl)}/object_info`, {}, 12000);
+  const response = await fetchWithTimeout(`${normalizeBaseUrl(baseUrl)}/object_info`, {}, 30000);
   if (!response.ok) {
     throw new Error(`读取 Comfy object_info 失败: HTTP ${response.status}`);
   }
@@ -1677,6 +1677,11 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 10000) {
       ...init,
       signal: controller.signal
     });
+  } catch (error) {
+    if (error && typeof error === "object" && error.name === "AbortError") {
+      throw new Error(`请求超时（${timeoutMs}ms）: ${url}`);
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
