@@ -1892,10 +1892,16 @@ function workflowNodes(workflow: Record<string, unknown>): WorkflowNode[] {
   return Array.isArray(workflow.nodes) ? (workflow.nodes as WorkflowNode[]) : [];
 }
 
+const VIRTUAL_GRAPH_ONLY_NODE_TYPES = new Set(["SetNode", "GetNode"]);
+
+function isVirtualGraphOnlyNodeType(type: string): boolean {
+  return VIRTUAL_GRAPH_ONLY_NODE_TYPES.has(type.trim());
+}
+
 function extractWorkflowNodeTypes(workflow: Record<string, unknown>): string[] {
   const nodeTypes = workflowNodes(workflow)
     .map((node) => (typeof node.type === "string" ? node.type.trim() : ""))
-    .filter((type) => type.length > 0);
+    .filter((type) => type.length > 0 && !isVirtualGraphOnlyNodeType(type));
   return uniquePreserveOrder(nodeTypes);
 }
 
@@ -4081,7 +4087,7 @@ function graphWorkflowToApiPrompt(
     const nodeIdRaw = (node as { id?: unknown }).id;
     const nodeType = typeof node.type === "string" ? node.type.trim() : "";
     if (!nodeType) continue;
-    if (nodeType === "SetNode" || nodeType === "GetNode") continue;
+    if (isVirtualGraphOnlyNodeType(nodeType)) continue;
     const nodeId =
       typeof nodeIdRaw === "number" || typeof nodeIdRaw === "string"
         ? String(nodeIdRaw)
