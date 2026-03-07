@@ -8,6 +8,7 @@ import {
   type ComfySettings
 } from "../comfy-pipeline/comfyService";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-threeview-default.json";
+import CHARACTER_MVADAPTER_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-mvadapter-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-kontext-threeview-default.json";
 import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.png?inline";
 import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
@@ -28,9 +29,6 @@ const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
 const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
 const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
 const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
-const CHARACTER_REFERENCE_EDIT_TARGET_SIZE = 1344;
-const CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE = 384;
-const CHARACTER_REFERENCE_EDIT_CROP_MODE = "disabled";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes";
@@ -139,75 +137,23 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   return JSON.stringify(template, null, 2);
 }
 
-function buildCharacterReferenceEditFallbackWorkflowTemplateJson(): string {
-  return JSON.stringify(
-    {
-      "13": {
-        class_type: "LoadImage",
-        inputs: {
-          image: "{{CHAR1_PRIMARY_PATH}}",
-          upload: "image"
-        }
-      },
-      "49": {
-        class_type: "CheckpointLoaderSimple",
-        inputs: {
-          ckpt_name: "{{STORYBOARD_IMAGE_MODEL}}"
-        }
-      },
-      "21": {
-        class_type: "TextEncodeQwenImageEditPlusAdvance_lrzjason",
-        inputs: {
-          clip: ["49", 1],
-          vae: ["49", 2],
-          vl_resize_image1: ["13", 0],
-          prompt: "{{PROMPT}}",
-          target_size: CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
-          target_vl_size: CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
-          upscale_method: "lanczos",
-          crop: CHARACTER_REFERENCE_EDIT_CROP_MODE,
-          instruction: "{{CHARACTER_VIEW_EDIT_INSTRUCTION}}"
-        }
-      },
-      "7": {
-        class_type: "ConditioningZeroOut",
-        inputs: {
-          conditioning: ["21", 0]
-        }
-      },
-      "10": {
-        class_type: "KSampler",
-        inputs: {
-          model: ["49", 0],
-          positive: ["21", 0],
-          negative: ["7", 0],
-          latent_image: ["21", 1],
-          seed: "{{SEED}}",
-          steps: 28,
-          cfg: 4,
-          sampler_name: "euler_ancestral",
-          scheduler: "normal",
-          denoise: 0.82
-        }
-      },
-      "8": {
-        class_type: "VAEDecode",
-        inputs: {
-          samples: ["10", 0],
-          vae: ["49", 2]
-        }
-      },
-      "89": {
-        class_type: "SaveImage",
-        inputs: {
-          images: ["8", 0],
-          filename_prefix: CHARACTER_THREEVIEW_OUTPUT_PREFIX
-        }
-      }
-    },
-    null,
-    2
-  );
+function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName: string): string {
+  const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
+  if (template["1"]?.inputs) {
+    template["1"].inputs.ckpt_name = resolveMvAdapterCharacterModel(checkpointName);
+  }
+  if (template["7"]?.inputs) {
+    const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterCharacterModel(checkpointName), "portrait");
+    template["7"].inputs.prompt = "{{PROMPT}}";
+    template["7"].inputs.negative_prompt = "{{NEGATIVE_PROMPT}}";
+    template["7"].inputs.width = width;
+    template["7"].inputs.height = height;
+    template["7"].inputs.seed = "{{SEED}}";
+  }
+  if (template["8"]?.inputs) {
+    template["8"].inputs.filename_prefix = CHARACTER_THREEVIEW_OUTPUT_PREFIX;
+  }
+  return JSON.stringify(template, null, 2);
 }
 
 function workflowGraphNodes(workflowJson: string): Array<Record<string, unknown>> {
@@ -450,20 +396,6 @@ function buildCharacterViewEditRetryPrompt(name: string, context: string, view: 
     .join(" ");
 }
 
-function buildCharacterViewEditInstruction(view: "side" | "back", attempt: number): string {
-  const baseInstruction =
-    view === "side"
-      ? "Transform the reference into exactly one strict right-facing orthographic full-body side profile. Keep the same person, same hairstyle, same costume, same body proportions, and same colors. No front view, no back view, no three-quarter view."
-      : "Transform the reference into exactly one strict orthographic full-body back view. Keep the same person, same hairstyle from behind, same costume back details, same body proportions, and same colors. The face must not be visible.";
-  const retryInstruction =
-    attempt <= 0
-      ? "Keep generous empty grey margin around the full body."
-      : attempt === 1
-        ? "Zoom out slightly and keep the figure smaller inside the frame."
-        : "Use one centered production-sheet figure on plain grey background, no crop, no extra elements.";
-  return `${baseInstruction} ${retryInstruction}`;
-}
-
 function resolveManualCharacterAnchor(frontPath: string, filePath: string): string {
   const front = frontPath.trim();
   if (front && !isGeneratedCharacterViewPath(front)) return front;
@@ -662,7 +594,9 @@ export function AssetPanel() {
         characterTemplatePreset,
         characterRenderPreset
       );
-      const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson();
+      const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson(
+        comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+      );
       const advancedWorkflow =
         comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
       const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(comfySettings);
@@ -758,11 +692,14 @@ export function AssetPanel() {
                 {
                   workflowJsonOverride: referenceEditWorkflow,
                   tokenOverrides: {
-                    CHAR1_PRIMARY_PATH: frontAnchorPath,
                     STORYBOARD_IMAGE_MODEL:
-                      comfySettings.storyboardImageModelName?.trim() || "Qwen-Rapid-AIO-SFW-v5.safetensors",
-                    CHARACTER_VIEW_EDIT_INSTRUCTION: buildCharacterViewEditInstruction(view, attempt),
-                    NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, baseNegativePrompt)
+                      resolveMvAdapterCharacterModel(comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL),
+                    PROMPT: buildCharacterViewEditRetryPrompt(trimmedName, context, view, attempt),
+                    ...buildCharacterViewSelectionTokenOverrides(
+                      view,
+                      frontAnchorPath,
+                      buildCharacterViewNegativePrompt(view, baseNegativePrompt)
+                    )
                   }
                 }
               );
