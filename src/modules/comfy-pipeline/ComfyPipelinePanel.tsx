@@ -2436,6 +2436,71 @@ type NormalizedImportedCharacterProfile = {
   seed?: number;
 };
 
+function parseImportedNumericSeed(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+  return undefined;
+}
+
+function normalizeImportedCharacterProfileItem(item: Record<string, unknown>): NormalizedImportedCharacterProfile | null {
+  const name = sanitizeCharacterCandidate(String(item.name ?? item.character_name ?? item.characterName ?? "").trim());
+  if (!name) return null;
+  const frontPath = String(
+    item.front_path ?? item.frontPath ?? item.anchor_image ?? item.anchorImage ?? item.reference_image ?? item.referenceImage ?? ""
+  ).trim();
+  const anchorImagePath = String(
+    item.anchor_image ?? item.anchorImage ?? item.reference_image ?? item.referenceImage ?? item.image ?? item.file_path ?? item.filePath ?? frontPath
+  ).trim();
+  const sidePath = String(item.side_path ?? item.sidePath ?? "").trim();
+  const backPath = String(item.back_path ?? item.backPath ?? "").trim();
+  const description = String(
+    item.description ?? item.prompt ?? item.character_prompt ?? item.characterPrompt ?? item.reference_prompt ?? item.referencePrompt ?? ""
+  ).trim();
+  const voiceProfile = String(item.voice_profile ?? item.voiceProfile ?? "").trim();
+  const seed = parseImportedNumericSeed(item.seed);
+  return {
+    name,
+    anchorImagePath,
+    frontPath: frontPath || anchorImagePath,
+    sidePath,
+    backPath,
+    description,
+    voiceProfile,
+    seed
+  };
+}
+
+function mergeImportedCharacterProfiles(
+  primary: NormalizedImportedCharacterProfile[],
+  secondary: NormalizedImportedCharacterProfile[]
+): NormalizedImportedCharacterProfile[] {
+  const merged = new Map<string, NormalizedImportedCharacterProfile>();
+  const apply = (profile: NormalizedImportedCharacterProfile) => {
+    const key = normalizeEntityKey(profile.name);
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, profile);
+      return;
+    }
+    merged.set(key, {
+      name: previous.name || profile.name,
+      anchorImagePath: previous.anchorImagePath || profile.anchorImagePath,
+      frontPath: previous.frontPath || profile.frontPath,
+      sidePath: previous.sidePath || profile.sidePath,
+      backPath: previous.backPath || profile.backPath,
+      description: previous.description || profile.description,
+      voiceProfile: previous.voiceProfile || profile.voiceProfile,
+      seed: previous.seed ?? profile.seed
+    });
+  };
+  primary.forEach(apply);
+  secondary.forEach(apply);
+  return [...merged.values()];
+}
+
 function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>> }): NormalizedImportedShot[] {
   const list = Array.isArray(parsed.shots) ? parsed.shots : [];
   const parseNumber = (value: unknown): number | undefined => {
@@ -2544,42 +2609,45 @@ function normalizeImportedCharacterProfiles(parsed: {
   characters?: Array<Record<string, unknown>>;
 }): NormalizedImportedCharacterProfile[] {
   const list = Array.isArray(parsed.characters) ? parsed.characters : [];
-  const parseNumber = (value: unknown): number | undefined => {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim()) {
-      const numeric = Number(value);
-      return Number.isFinite(numeric) ? numeric : undefined;
-    }
-    return undefined;
-  };
   return list
-    .map((item) => {
-      const name = sanitizeCharacterCandidate(String(item.name ?? item.character_name ?? item.characterName ?? "").trim());
-      const frontPath = String(
-        item.front_path ?? item.frontPath ?? item.anchor_image ?? item.anchorImage ?? item.reference_image ?? item.referenceImage ?? ""
-      ).trim();
-      const anchorImagePath = String(
-        item.anchor_image ?? item.anchorImage ?? item.reference_image ?? item.referenceImage ?? item.image ?? item.file_path ?? item.filePath ?? frontPath
-      ).trim();
-      const sidePath = String(item.side_path ?? item.sidePath ?? "").trim();
-      const backPath = String(item.back_path ?? item.backPath ?? "").trim();
-      const description = String(
-        item.description ?? item.prompt ?? item.character_prompt ?? item.characterPrompt ?? item.reference_prompt ?? item.referencePrompt ?? ""
-      ).trim();
-      const voiceProfile = String(item.voice_profile ?? item.voiceProfile ?? "").trim();
-      const seed = parseNumber(item.seed);
-      return {
-        name,
-        anchorImagePath,
-        frontPath: frontPath || anchorImagePath,
-        sidePath,
-        backPath,
-        description,
-        voiceProfile,
-        seed
-      };
-    })
-    .filter((item) => item.name.length > 0);
+    .map((item) => normalizeImportedCharacterProfileItem(item))
+    .filter((item): item is NormalizedImportedCharacterProfile => Boolean(item));
+}
+
+function normalizeImportedCharacterProfilesFromShots(parsed: {
+  shots?: Array<Record<string, unknown>>;
+}): NormalizedImportedCharacterProfile[] {
+  const shots = Array.isArray(parsed.shots) ? parsed.shots : [];
+  const collected: NormalizedImportedCharacterProfile[] = [];
+  for (const shot of shots) {
+    const buckets: unknown[] = [
+      shot.characters,
+      shot.character_profiles,
+      shot.characterProfiles,
+      shot.character_details,
+      shot.characterDetails
+    ];
+    for (const bucket of buckets) {
+      if (Array.isArray(bucket)) {
+        for (const item of bucket) {
+          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+          const normalized = normalizeImportedCharacterProfileItem(item as Record<string, unknown>);
+          if (normalized) collected.push(normalized);
+        }
+        continue;
+      }
+      if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
+      for (const [name, value] of Object.entries(bucket as Record<string, unknown>)) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const normalized = normalizeImportedCharacterProfileItem({
+          name,
+          ...(value as Record<string, unknown>)
+        });
+        if (normalized) collected.push(normalized);
+      }
+    }
+  }
+  return collected;
 }
 
 export function ComfyPipelinePanel() {
@@ -2616,6 +2684,8 @@ export function ComfyPipelinePanel() {
   const characterProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const skyboxProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const scriptImportInFlightRef = useRef(false);
+  const scriptImportPromiseRef = useRef<Promise<boolean> | null>(null);
+  const [scriptImportActive, setScriptImportActive] = useState(false);
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
   const [imageStatusByShot, setImageStatusByShot] = useState<Record<string, AssetStatus>>({});
@@ -5553,6 +5623,7 @@ export function ComfyPipelinePanel() {
       appendLog(`${sourceLabel}预生成被跳过：当前已有任务在运行`, "error");
       return;
     }
+    await waitForScriptImportCompletion(sourceLabel);
     if (items.length === 0) {
       appendLog(`${sourceLabel}预生成被跳过：当前没有可处理的镜头`, "error");
       return;
@@ -5624,7 +5695,10 @@ export function ComfyPipelinePanel() {
     shots?: Array<Record<string, unknown>>;
     characters?: Array<Record<string, unknown>>;
   }) => {
-    const profiles = normalizeImportedCharacterProfiles(parsed);
+    const profiles = mergeImportedCharacterProfiles(
+      normalizeImportedCharacterProfiles(parsed),
+      normalizeImportedCharacterProfilesFromShots(parsed)
+    );
     await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
     const normalizedItems = normalizeImportedShots(parsed);
     return applyImportedShotItems(normalizedItems);
@@ -5666,32 +5740,65 @@ export function ComfyPipelinePanel() {
     return normalizedItems;
   };
 
-  const onImportScript = async () => {
-    if (scriptImportInFlightRef.current) {
-      appendLog("导入镜头脚本跳过：上一次导入仍在执行", "error");
-      return;
+  const runScriptImportTask = async (sourceLabel: string, task: () => Promise<boolean>) => {
+    if (scriptImportPromiseRef.current) {
+      appendLog(`${sourceLabel}跳过：上一次导入仍在执行`, "error");
+      return false;
     }
     scriptImportInFlightRef.current = true;
+    setScriptImportActive(true);
+    const lockedPromise = (async () => {
+      try {
+        return await task();
+      } finally {
+        scriptImportInFlightRef.current = false;
+        setScriptImportActive(false);
+      }
+    })();
+    scriptImportPromiseRef.current = lockedPromise;
     try {
-      const parsed = JSON.parse(scriptText) as {
-        shots?: Array<Record<string, unknown>>;
-        characters?: Array<Record<string, unknown>>;
-      };
-      const profiles = normalizeImportedCharacterProfiles(parsed);
-      await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
-      const normalized = normalizeImportedShots(parsed);
-      const items = applyImportedShotItems(
-        applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
-      );
-      pushToast(`已导入 ${items.length} 个镜头`, "success");
-      appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
-      await autoProvisionAssetsForImportedShots(items, settings);
-    } catch (error) {
-      pushToast(`导入失败：${String(error)}`, "error");
-      appendLog(`导入镜头脚本失败：${String(error)}`, "error");
+      return await lockedPromise;
     } finally {
-      scriptImportInFlightRef.current = false;
+      if (scriptImportPromiseRef.current === lockedPromise) {
+        scriptImportPromiseRef.current = null;
+      }
     }
+  };
+
+  const waitForScriptImportCompletion = async (sourceLabel: string) => {
+    const pending = scriptImportPromiseRef.current;
+    if (!pending) return;
+    appendLog(`${sourceLabel}等待：镜头脚本导入仍在执行，先等待角色锚点与资产入库完成`);
+    setPipelineState(`${sourceLabel}等待：镜头脚本导入仍在执行`);
+    await pending;
+  };
+
+  const onImportScript = async () => {
+    await runScriptImportTask("导入镜头脚本", async () => {
+      try {
+        const parsed = JSON.parse(scriptText) as {
+          shots?: Array<Record<string, unknown>>;
+          characters?: Array<Record<string, unknown>>;
+        };
+        const profiles = mergeImportedCharacterProfiles(
+          normalizeImportedCharacterProfiles(parsed),
+          normalizeImportedCharacterProfilesFromShots(parsed)
+        );
+        await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
+        const normalized = normalizeImportedShots(parsed);
+        const items = applyImportedShotItems(
+          applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
+        );
+        pushToast(`已导入 ${items.length} 个镜头`, "success");
+        appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
+        await autoProvisionAssetsForImportedShots(items, settings);
+        return true;
+      } catch (error) {
+        pushToast(`导入失败：${String(error)}`, "error");
+        appendLog(`导入镜头脚本失败：${String(error)}`, "error");
+        return false;
+      }
+    });
   };
 
   const onParseStory = async (shouldImport = false) => {
@@ -5701,17 +5808,31 @@ export function ComfyPipelinePanel() {
       setScriptText(formatted);
       appendLog(`故事解析成功，共生成 ${parsed.shots.length} 条镜头脚本`);
       if (shouldImport) {
-        const profiles = normalizeImportedCharacterProfiles(parsed as unknown as {
-          characters?: Array<Record<string, unknown>>;
+        await runScriptImportTask("故事解析导入", async () => {
+          try {
+            const casted = parsed as unknown as {
+              shots?: Array<Record<string, unknown>>;
+              characters?: Array<Record<string, unknown>>;
+            };
+            const profiles = mergeImportedCharacterProfiles(
+              normalizeImportedCharacterProfiles(casted),
+              normalizeImportedCharacterProfilesFromShots(casted)
+            );
+            await upsertImportedCharacterAssets(profiles, "故事解析导入", settings);
+            const normalized = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
+            const items = applyImportedShotItems(
+              applyProvisionOverrides(normalized, storyCharacterOverrides, storySkyboxOverrides)
+            );
+            pushToast(`故事已解析并导入 ${items.length} 个镜头`, "success");
+            appendLog(`故事解析并导入成功，共 ${items.length} 条`);
+            await autoProvisionAssetsForImportedShots(items, settings);
+            return true;
+          } catch (error) {
+            pushToast(`故事解析导入失败：${String(error)}`, "error");
+            appendLog(`故事解析导入失败：${String(error)}`, "error");
+            return false;
+          }
         });
-        await upsertImportedCharacterAssets(profiles, "故事解析导入", settings);
-        const normalized = normalizeImportedShots(parsed as unknown as { shots?: Array<Record<string, unknown>> });
-        const items = applyImportedShotItems(
-          applyProvisionOverrides(normalized, storyCharacterOverrides, storySkyboxOverrides)
-        );
-        pushToast(`故事已解析并导入 ${items.length} 个镜头`, "success");
-        appendLog(`故事解析并导入成功，共 ${items.length} 条`);
-        await autoProvisionAssetsForImportedShots(items, settings);
       } else {
         pushToast(`故事解析成功，共 ${parsed.shots.length} 个镜头`, "success");
       }
@@ -6656,6 +6777,7 @@ export function ComfyPipelinePanel() {
         appendLog("分镜图生成被跳过：当前已有任务在运行", "error");
         return false;
       }
+      await waitForScriptImportCompletion("分镜图生成");
       if (scopedShots.length === 0) {
         appendLog("分镜图生成被跳过：当前没有镜头", "error");
         return false;
@@ -7185,6 +7307,7 @@ export function ComfyPipelinePanel() {
       appendLog("一键生成整片被忽略：已有任务在运行中", "error");
       return;
     }
+    await waitForScriptImportCompletion("一键生成整片");
     const shotsForRun = getScopedShotsSnapshot();
     if (shotsForRun.length === 0) {
       pushToast("请先导入分镜脚本", "warning");
@@ -9023,10 +9146,10 @@ export function ComfyPipelinePanel() {
           />
         </label>
         <div className="comfy-primary-actions">
-          <button className="btn-ghost" onClick={() => void onParseStory(false)} type="button">
+          <button className="btn-ghost" disabled={scriptImportActive} onClick={() => void onParseStory(false)} type="button">
             解析故事为镜头脚本
           </button>
-          <button className="btn-ghost" onClick={() => void onParseStory(true)} type="button">
+          <button className="btn-ghost" disabled={scriptImportActive} onClick={() => void onParseStory(true)} type="button">
             解析并直接导入
           </button>
           <label className="timeline-snap-toggle">
@@ -9783,8 +9906,8 @@ export function ComfyPipelinePanel() {
           </div>
         )}
         <div className="comfy-primary-actions">
-          <button className="btn-ghost" onClick={() => void onImportScript()} type="button">导入镜头脚本</button>
-          <button className="btn-primary comfy-action-main" disabled={phase === "running" || runAllActive} onClick={() => void onGenerateAll()} type="button">
+          <button className="btn-ghost" disabled={scriptImportActive} onClick={() => void onImportScript()} type="button">导入镜头脚本</button>
+          <button className="btn-primary comfy-action-main" disabled={phase === "running" || runAllActive || scriptImportActive} onClick={() => void onGenerateAll()} type="button">
             一键生成整片
           </button>
           <label className="timeline-snap-toggle">
@@ -9799,13 +9922,13 @@ export function ComfyPipelinePanel() {
         <details className="export-panel comfy-advanced-tools">
           <summary>高级动作（单步生成 / 重试 / 环境体检）</summary>
           <div className="timeline-actions comfy-main-actions">
-            <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateImages()} type="button">
+            <button className="btn-ghost" disabled={phase === "running" || scriptImportActive} onClick={() => void onGenerateImages()} type="button">
               生成分镜图
             </button>
-            <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateVideos()} type="button">
+            <button className="btn-ghost" disabled={phase === "running" || scriptImportActive} onClick={() => void onGenerateVideos()} type="button">
               生成镜头视频
             </button>
-            <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateAudios()} type="button">
+            <button className="btn-ghost" disabled={phase === "running" || scriptImportActive} onClick={() => void onGenerateAudios()} type="button">
               生成镜头配音
             </button>
             <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateSoundDesign()} type="button">
