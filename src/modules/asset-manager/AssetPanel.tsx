@@ -29,6 +29,9 @@ const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
 const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
 const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
 const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
+const CHARACTER_REFERENCE_EDIT_TARGET_SIZE = 1344;
+const CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE = 384;
+const CHARACTER_REFERENCE_EDIT_CROP_MODE = "disabled";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes";
@@ -154,11 +157,11 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(): string {
   setNodeWidgets(10, ["{{SEED}}", "fixed", 28, 4, "euler_ancestral", "normal", 0.82]);
   setNodeWidgets(21, [
     "",
-    1024,
-    384,
+    CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
+    CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
     "lanczos",
-    "center",
-    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. No extra panels, no duplicate figures, no scenery, no text."
+    CHARACTER_REFERENCE_EDIT_CROP_MODE,
+    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. Keep generous blank margin around the full body. No extra panels, no duplicate figures, no scenery, no text."
   ]);
   const loraNode = template.nodes?.find((item) => item.id === 216);
   if (loraNode && Array.isArray(loraNode.widgets_values)) {

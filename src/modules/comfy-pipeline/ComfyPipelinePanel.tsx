@@ -100,6 +100,9 @@ const CHARACTER_REFERENCE_EDIT_MODEL_RECOMMEND_ORDER = [
   "juggernautXL_v8Rundiffusion.safetensors",
   "sd_xl_base_1.0.safetensors"
 ] as const;
+const CHARACTER_REFERENCE_EDIT_TARGET_SIZE = 1344;
+const CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE = 384;
+const CHARACTER_REFERENCE_EDIT_CROP_MODE = "disabled";
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
 const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
 const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
@@ -515,11 +518,11 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(): string {
   setNodeWidgets(10, ["{{SEED}}", "fixed", 28, 4, "euler_ancestral", "normal", 0.82]);
   setNodeWidgets(21, [
     "",
-    1024,
-    384,
+    CHARACTER_REFERENCE_EDIT_TARGET_SIZE,
+    CHARACTER_REFERENCE_EDIT_VL_TARGET_SIZE,
     "lanczos",
-    "center",
-    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. No extra panels, no duplicate figures, no scenery, no text."
+    CHARACTER_REFERENCE_EDIT_CROP_MODE,
+    "Preserve the same person, face, hairstyle, outfit, colors, and silhouette from the reference image. Edit only the viewing angle into one clean full-body orthographic character reference on a plain light grey background. Keep generous blank margin around the full body. No extra panels, no duplicate figures, no scenery, no text."
   ]);
   const loraNode = template.nodes?.find((item) => item.id === 216);
   if (loraNode && Array.isArray(loraNode.widgets_values)) {
@@ -4104,6 +4107,12 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, "_flatbg.png");
   };
 
+  const buildFramedCharacterViewOutputPath = (sourcePath: string) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, "_framed.png");
+  };
+
   const normalizeCharacterAnchorBackground = async (pathOrUrl: string) => {
     if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
     const trimmed = pathOrUrl.trim();
@@ -4165,6 +4174,69 @@ export function ComfyPipelinePanel() {
     context.putImageData(frame, 0, 0);
     const dataUrl = canvas.toDataURL("image/png");
     const filePath = buildNormalizedAnchorOutputPath(trimmed);
+    if (!filePath) return pathOrUrl;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: dataUrl.replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath || pathOrUrl;
+  };
+
+  const fitCharacterViewWithinCanvas = async (pathOrUrl: string, view: "front" | "side" | "back") => {
+    if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return pathOrUrl;
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return pathOrUrl;
+    const layout = await analyzeForegroundLayout(trimmed);
+    if (!layout) return pathOrUrl;
+    const source = toDesktopMediaSource(trimmed);
+    if (!source) return pathOrUrl;
+    const image = await loadImageForHash(source);
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return pathOrUrl;
+    const portraitTargetHeight =
+      sourceHeight > sourceWidth ? sourceHeight : Math.max(sourceHeight, Math.round(sourceWidth * 1.3125));
+    const outputWidth = sourceWidth;
+    const outputHeight = portraitTargetHeight;
+    const requiresRefit = isLayoutTooTight(layout, view) || sourceHeight <= sourceWidth;
+    if (!requiresRefit) return pathOrUrl;
+    const bboxWidthPx = Math.max(1, layout.bbox.widthRatio * sourceWidth);
+    const bboxHeightPx = Math.max(1, layout.bbox.heightRatio * sourceHeight);
+    const analysisSize = 128;
+    const bboxCenterX = (((layout.bbox.minX + layout.bbox.maxX + 1) / 2) / analysisSize) * sourceWidth;
+    const bboxCenterY = (((layout.bbox.minY + layout.bbox.maxY + 1) / 2) / analysisSize) * sourceHeight;
+    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.6 : 0.62;
+    const targetWidthRatio = view === "side" ? 0.28 : view === "back" ? 0.36 : 0.42;
+    const scale = Math.min(
+      1,
+      (outputHeight * targetHeightRatio) / bboxHeightPx,
+      (outputWidth * targetWidthRatio) / bboxWidthPx
+    );
+    if (!Number.isFinite(scale) || scale <= 0) return pathOrUrl;
+    if (scale >= 0.995 && outputHeight === sourceHeight) return pathOrUrl;
+    const canvas = document.createElement("canvas");
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return pathOrUrl;
+    context.fillStyle = "rgb(236,236,236)";
+    context.fillRect(0, 0, outputWidth, outputHeight);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
+    let drawX = outputWidth / 2 - bboxCenterX * scale;
+    let drawY = outputHeight / 2 - bboxCenterY * scale;
+    if (scaledWidth <= outputWidth) {
+      drawX = Math.min(outputWidth - scaledWidth, Math.max(0, drawX));
+    }
+    if (scaledHeight <= outputHeight) {
+      drawY = Math.min(outputHeight - scaledHeight, Math.max(0, drawY));
+    }
+    context.drawImage(image, drawX, drawY, scaledWidth, scaledHeight);
+    const dataUrl = canvas.toDataURL("image/png");
+    const filePath = buildFramedCharacterViewOutputPath(trimmed);
     if (!filePath) return pathOrUrl;
     const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
       filePath,
@@ -4792,7 +4864,10 @@ export function ComfyPipelinePanel() {
             }
           );
           const candidatePathRaw = generated.localPath || generated.previewUrl;
-          const candidatePath = candidatePathRaw ? await normalizeCharacterAnchorBackground(candidatePathRaw) : "";
+          const normalizedCandidatePath = candidatePathRaw ? await normalizeCharacterAnchorBackground(candidatePathRaw) : "";
+          const candidatePath = normalizedCandidatePath
+            ? await fitCharacterViewWithinCanvas(normalizedCandidatePath, view)
+            : "";
           if (!candidatePath) continue;
           const quality = await evaluateSingleCharacterViewQuality(candidatePath, view);
           if (quality.score > bestScore) {
@@ -4949,18 +5024,21 @@ export function ComfyPipelinePanel() {
         throw new Error("角色三视图整板生成成功，但没有可用输出路径");
       }
       const split = await splitCharacterThreeViewSheet(sheetPath);
+      const frontPath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.frontPath), "front");
+      const sidePath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.sidePath), "side");
+      const backPath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.backPath), "back");
       return {
         front: {
-          localPath: split.frontPath,
-          previewUrl: split.frontPath
+          localPath: frontPath,
+          previewUrl: frontPath
         },
         side: {
-          localPath: split.sidePath,
-          previewUrl: split.sidePath
+          localPath: sidePath,
+          previewUrl: sidePath
         },
         back: {
-          localPath: split.backPath,
-          previewUrl: split.backPath
+          localPath: backPath,
+          previewUrl: backPath
         }
       };
     };
