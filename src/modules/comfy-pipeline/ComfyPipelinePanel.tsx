@@ -65,15 +65,16 @@ const ONE_CLICK_SD15_STORYBOARD_MODEL = "v1-5-pruned-emaonly-fp16.safetensors";
 const ONE_CLICK_SD15_CHARACTER_MODEL = "v1-5-pruned-emaonly-fp16.safetensors";
 const ONE_CLICK_SD15_SKYBOX_MODEL = "dreamshaper_8.safetensors";
 const ONE_CLICK_SDXL_STORYBOARD_MODEL = "animagine-xl-4.0.safetensors";
-const ONE_CLICK_SDXL_CHARACTER_MODEL = "sd_xl_base_1.0.safetensors";
+const ONE_CLICK_SDXL_CHARACTER_MODEL = "animagine-xl-4.0.safetensors";
 const ONE_CLICK_SDXL_SKYBOX_MODEL = "sd_xl_base_1.0.safetensors";
 const CHARACTER_ASSET_MODEL_OPTIONS = [
-  "v1-5-pruned-emaonly-fp16.safetensors",
-  "sd_xl_base_1.0.safetensors",
-  "juggernautXL_v8Rundiffusion.safetensors",
-  "realisticVisionV60B1_v51VAE.safetensors",
   "animagine-xl-4.0.safetensors",
-  "Qwen-Rapid-AIO-SFW-v5.safetensors"
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "dreamshaper_8.safetensors",
+  "sd_xl_base_1.0.safetensors"
 ] as const;
 const SKYBOX_ASSET_MODEL_OPTIONS = [
   "sd_xl_base_1.0.safetensors",
@@ -82,7 +83,15 @@ const SKYBOX_ASSET_MODEL_OPTIONS = [
   "dreamshaper_8.safetensors",
   "Qwen-Rapid-AIO-SFW-v5.safetensors"
 ] as const;
-const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [...CHARACTER_ASSET_MODEL_OPTIONS];
+const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [
+  "animagine-xl-4.0.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "dreamshaper_8.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors"
+] as const;
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
 const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
 const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
@@ -378,6 +387,18 @@ function pickFirstAvailableModel(preferred: readonly string[], available: string
     if (available.includes(name)) return name;
   }
   return available[0] ?? null;
+}
+
+function shouldAutoUpgradeCharacterAnchorModel(selectedModel: string): boolean {
+  const normalized = selectedModel.trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized === DEFAULT_CHARACTER_ASSET_MODEL.toLowerCase() ||
+    normalized.includes("sd_xl_base") ||
+    normalized.includes("architecturerealmix") ||
+    normalized.includes("interiordesign") ||
+    normalized.includes("inpainting")
+  );
 }
 
 function looksLikeSdxlModelName(name: string): boolean {
@@ -3847,12 +3868,26 @@ export function ComfyPipelinePanel() {
       typeof sharpness === "number" && sharpness < CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE;
     const lowSymmetry =
       typeof symmetry === "number" && symmetry < CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY;
+    const bboxAspect =
+      layout && layout.bbox.heightRatio > 0 ? layout.bbox.widthRatio / layout.bbox.heightRatio : null;
+    const abnormalFullBodySilhouette =
+      layout
+        ? layout.bbox.widthRatio > 0.58 ||
+          layout.bbox.widthRatio < 0.12 ||
+          layout.foregroundRatio > 0.24 ||
+          layout.foregroundRatio < 0.05 ||
+          layout.bbox.heightRatio < 0.68 ||
+          (typeof bboxAspect === "number" && (bboxAspect > 0.72 || bboxAspect < 0.14))
+        : false;
     const layoutIssues = [
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.6 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : ""
+      layout && layout.bbox.heightRatio < 0.68 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      abnormalFullBodySilhouette && layout
+        ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
+        : ""
     ].filter(Boolean);
     const issues = [
       lowSharpness && typeof sharpness === "number" ? `清晰度偏低(min=${sharpness.toFixed(1)})` : "",
@@ -4184,6 +4219,28 @@ export function ComfyPipelinePanel() {
     return "";
   };
 
+  const resolveRuntimeCharacterAnchorModel = async (runtimeSettings: ComfySettings, sourceLabel: string) => {
+    const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+    let options = availableCheckpointOptions;
+    if (options.length === 0) {
+      try {
+        options = await listComfyCheckpointOptions(runtimeSettings.baseUrl);
+        setAvailableCheckpointOptions(options);
+      } catch {
+        return selectedModel;
+      }
+    }
+    if (options.includes(selectedModel) && !shouldAutoUpgradeCharacterAnchorModel(selectedModel)) {
+      return selectedModel;
+    }
+    const recommended = pickFirstAvailableModel(CHARACTER_ASSET_MODEL_RECOMMEND_ORDER, options);
+    if (!recommended) return selectedModel;
+    if (recommended !== selectedModel) {
+      appendLog(`${sourceLabel}自动切换角色正视锚点模型：${selectedModel} -> ${recommended}`, "info");
+    }
+    return recommended;
+  };
+
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
     if (!text) return false;
@@ -4313,7 +4370,7 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
-    const requestedCharacterModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+    const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图");
     const characterModelForWorkflow = requestedCharacterModel;
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
@@ -4877,7 +4934,7 @@ export function ComfyPipelinePanel() {
         : null;
       if (!anchorPath && profile.description.trim().length > 0) {
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
-        const requestedCharacterModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+        const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, sourceLabel);
         const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModel);
         const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
           characterModel,
@@ -4894,6 +4951,7 @@ export function ComfyPipelinePanel() {
           stableAssetSeed(`${profile.name}|character_anchor|${profile.description}|${styleAnchor || "default"}`);
         let bestAnchorPath = "";
         let bestAnchorScore = Number.NEGATIVE_INFINITY;
+        let bestAnchorIssues: string[] = [];
         for (let attempt = 0; attempt < 4; attempt += 1) {
           const generated = await generateShotAsset(
             runtimeSettings,
@@ -4921,6 +4979,7 @@ export function ComfyPipelinePanel() {
           if (quality.score > bestAnchorScore) {
             bestAnchorPath = candidatePath;
             bestAnchorScore = quality.score;
+            bestAnchorIssues = quality.issues;
           }
           if (quality.acceptable) {
             if (attempt > 0) {
@@ -4932,6 +4991,15 @@ export function ComfyPipelinePanel() {
           if (attempt < 3) {
             appendLog(`${sourceLabel}角色正视锚点未达标（${quality.issues.join(" / ")}），继续重试：${profile.name}`, "info");
           }
+        }
+        if (!bestAnchorPath.trim()) {
+          throw new Error(`${sourceLabel}角色正视锚点生成失败：${profile.name} 未获得可用输出`);
+        }
+        const finalAnchorQuality = await evaluateFrontReferenceQuality(bestAnchorPath);
+        if (!finalAnchorQuality.acceptable) {
+          throw new Error(
+            `${sourceLabel}角色正视锚点未通过质检：${profile.name}（${(finalAnchorQuality.issues.length > 0 ? finalAnchorQuality.issues : bestAnchorIssues).join(" / ") || "非标准单人全身设定图"}）`
+          );
         }
         anchorPath = bestAnchorPath.trim();
         if (anchorPath) {
