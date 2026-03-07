@@ -417,6 +417,10 @@ function resolveMvAdapterCharacterModel(requestedModel: string): string {
   return normalized;
 }
 
+function resolveMvAdapterFallbackModel(requestedModel: string): string {
+  return DEFAULT_CHARACTER_ASSET_MODEL;
+}
+
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
   const isSdxl = looksLikeSdxlModelName(checkpointName);
   if (preset === "square") {
@@ -494,10 +498,10 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName: string): string {
   const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
-    template["1"].inputs.ckpt_name = resolveMvAdapterCharacterModel(checkpointName);
+    template["1"].inputs.ckpt_name = resolveMvAdapterFallbackModel(checkpointName);
   }
   if (template["7"]?.inputs) {
-    const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterCharacterModel(checkpointName), "portrait");
+    const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterFallbackModel(checkpointName), "square");
     template["7"].inputs.prompt = "{{PROMPT}}";
     template["7"].inputs.negative_prompt = "{{NEGATIVE_PROMPT}}";
     template["7"].inputs.width = width;
@@ -4747,8 +4751,11 @@ export function ComfyPipelinePanel() {
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
     const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图");
     const characterModelForWorkflow = requestedCharacterModel;
-    const referenceEditModel = resolveMvAdapterCharacterModel(characterModelForWorkflow);
+    const referenceEditModel = resolveMvAdapterFallbackModel(characterModelForWorkflow);
     const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson(referenceEditModel);
+    if (referenceEditModel !== characterModelForWorkflow) {
+      appendLog(`角色三视图单视角补全固定使用 MVAdapter 基础模型：${characterModelForWorkflow} -> ${referenceEditModel}`, "info");
+    }
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       [

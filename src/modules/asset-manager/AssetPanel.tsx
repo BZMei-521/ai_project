@@ -74,6 +74,10 @@ function resolveMvAdapterCharacterModel(name: string): string {
   return looksLikeSdxlCheckpoint(name) ? name : DEFAULT_CHARACTER_ASSET_MODEL;
 }
 
+function resolveMvAdapterFallbackModel(_name: string): string {
+  return DEFAULT_CHARACTER_ASSET_MODEL;
+}
+
 function resolveCharacterTemplateSize(
   checkpointName: string,
   preset: "portrait" | "square"
@@ -140,10 +144,10 @@ function buildCharacterAdvancedWorkflowTemplateJson(
 function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName: string): string {
   const template = cloneJson(CHARACTER_MVADAPTER_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
-    template["1"].inputs.ckpt_name = resolveMvAdapterCharacterModel(checkpointName);
+    template["1"].inputs.ckpt_name = resolveMvAdapterFallbackModel(checkpointName);
   }
   if (template["7"]?.inputs) {
-    const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterCharacterModel(checkpointName), "portrait");
+    const { width, height } = resolveCharacterTemplateSize(resolveMvAdapterFallbackModel(checkpointName), "square");
     template["7"].inputs.prompt = "{{PROMPT}}";
     template["7"].inputs.negative_prompt = "{{NEGATIVE_PROMPT}}";
     template["7"].inputs.width = width;
@@ -597,6 +601,9 @@ export function AssetPanel() {
       const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson(
         comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
       );
+      const referenceEditModel = resolveMvAdapterFallbackModel(
+        comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+      );
       const advancedWorkflow =
         comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
       const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(comfySettings);
@@ -692,8 +699,7 @@ export function AssetPanel() {
                 {
                   workflowJsonOverride: referenceEditWorkflow,
                   tokenOverrides: {
-                    STORYBOARD_IMAGE_MODEL:
-                      resolveMvAdapterCharacterModel(comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL),
+                    STORYBOARD_IMAGE_MODEL: referenceEditModel,
                     PROMPT: buildCharacterViewEditRetryPrompt(trimmedName, context, view, attempt),
                     ...buildCharacterViewSelectionTokenOverrides(
                       view,
