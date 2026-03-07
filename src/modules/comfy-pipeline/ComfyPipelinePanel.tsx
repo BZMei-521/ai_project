@@ -117,7 +117,7 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
   "SaveImage"
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
-  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
+  "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, vehicle, train, locomotive, car, bus, aircraft, tank, mech, robot, machinery, technical drawing, manuscript page, calligraphy page, sepia sketch page, ancient painting scan, old paper illustration, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
@@ -390,10 +390,9 @@ function looksLikeSdxlModelName(name: string): boolean {
 }
 
 function resolveMvAdapterCharacterModel(requestedModel: string): string {
-  const normalized = requestedModel.trim().toLowerCase();
+  const normalized = requestedModel.trim();
   if (!normalized) return DEFAULT_CHARACTER_ASSET_MODEL;
-  if (normalized === DEFAULT_CHARACTER_ASSET_MODEL.toLowerCase()) return DEFAULT_CHARACTER_ASSET_MODEL;
-  return DEFAULT_CHARACTER_ASSET_MODEL;
+  return normalized;
 }
 
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
@@ -3945,6 +3944,7 @@ export function ComfyPipelinePanel() {
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const sanitizedContext = sanitizeCharacterViewContext(context);
     const styleHint = resolvePipelineVisualStyleHint();
+    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     const framingInstruction =
       view === "front"
         ? "character occupies about 56% to 68% of frame height, centered with generous left right top bottom margins"
@@ -3963,6 +3963,8 @@ export function ComfyPipelinePanel() {
       "single panel costume reference",
       "production-ready character anchor image",
       "clean studio character reference",
+      "human character design reference only",
+      "exactly one human character, not an object, not a vehicle, not a statue, not an animal",
       "no perspective exaggeration",
       "flat camera, eye-level camera, centered framing",
       "single panel character reference, no sheet layout, no split layout",
@@ -3984,6 +3986,7 @@ export function ComfyPipelinePanel() {
       viewLabel,
       `角色：${name}`,
       `风格倾向：${styleHint}`,
+      styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
       angleInstruction,
       "只保留角色设定信息与服装设计",
       "不要叙事场景",
@@ -4005,6 +4008,8 @@ export function ComfyPipelinePanel() {
       "禁止 front+back 同画面、side+back 同画面、left+right 同画面",
       "禁止多视图拼版、转面设定板、拼图排版、分屏",
       "必须为标准角色设定三视图中的单视角，不允许生成组合视角",
+      "必须是人类角色设定图，不是车辆，不是火车，不是建筑，不是佛像，不是雕像，不是机械物体，不是古画扫描页",
+      "must depict one human character only, not a train, not a vehicle, not a building, not a statue, not a manuscript page",
       "无第二人物",
       "无群像",
       "无场景叙事",
@@ -4090,9 +4095,12 @@ export function ComfyPipelinePanel() {
     const sanitizedContext = sanitizeCharacterViewContext(context);
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const styleHint = resolvePipelineVisualStyleHint();
+    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     return mergePromptFragments([
       "Recreate the same character from the first image into exactly three full-body orthographic views: front, strict right side profile, and back.",
-      "Match the exact layout, spacing, pose family, framing, and anatomical orientation of the second reference image.",
+      "Use the first reference image as the identity and costume source.",
+      "Use the second reference image as the exact style, background, layout, spacing, framing, and orthographic presentation target.",
+      "Match the exact rendering style, grey background tone, silhouette clarity, and production-sheet cleanliness of the second reference image.",
       `Character identity: ${name}`,
       sanitizedContext,
       "Preserve the same face, hairstyle, body proportions, costume structure, accessories, and silhouette from the first image.",
@@ -4100,6 +4108,8 @@ export function ComfyPipelinePanel() {
       "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
       `${backgroundPrompt}，grey background，clean character turnaround sheet，studio reference board`,
       `Style hint: ${styleHint}`,
+      styleAnchor ? `Global style anchor: ${styleAnchor}` : "",
+      "Do not invent a different art medium, genre, era, or costume from the first image.",
       "High detail, stable anatomy, consistent clothing folds and placement, production-ready character turnaround."
     ]);
   };
