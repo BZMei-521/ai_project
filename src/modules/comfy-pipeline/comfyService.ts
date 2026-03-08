@@ -4306,6 +4306,18 @@ function collectOutputAssets(raw: unknown): ComfyOutputAsset[] {
   return assets;
 }
 
+function workflowHasNodeType(workflow: Record<string, unknown>, targetType: string): boolean {
+  const normalizedTarget = targetType.trim();
+  if (!normalizedTarget) return false;
+  if (Array.isArray(workflow.nodes)) {
+    return extractWorkflowNodeTypes(workflow).includes(normalizedTarget);
+  }
+  return Object.values(workflow).some((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    return String((entry as Record<string, unknown>).class_type ?? "").trim() === normalizedTarget;
+  });
+}
+
 function getPromptStatus(raw: unknown): ComfyPromptStatus | null {
   if (!raw || typeof raw !== "object") return null;
   const status = (raw as Record<string, unknown>).status;
@@ -4394,7 +4406,10 @@ function isPromptCompleted(raw: unknown): boolean {
 async function waitForComfyOutput(
   baseUrl: string,
   promptId: string,
-  onProgress?: (progress: number, message: string) => void
+  onProgress?: (progress: number, message: string) => void,
+  options?: {
+    requirePersistentImageOutput?: boolean;
+  }
 ): Promise<ComfyOutputAsset[]> {
   const notify = (progress: number, message: string) => {
     if (!onProgress) return;
@@ -4424,11 +4439,25 @@ async function waitForComfyOutput(
         throw new Error(`ComfyUI 执行失败：${promptError}`);
       }
       const assets = collectOutputAssets(promptHistory);
-      if (assets.length > 0) {
+      const persistentImageOutputs =
+        options?.requirePersistentImageOutput
+          ? filterOutputAssetsByKind(assets, "image").filter(
+              (asset) => String(asset.type ?? "").trim().toLowerCase() === "output"
+            )
+          : [];
+      if (
+        assets.length > 0 &&
+        (!options?.requirePersistentImageOutput || persistentImageOutputs.length > 0)
+      ) {
         notify(1, "输出已生成");
         return assets;
       }
       if (promptHistory && isPromptCompleted(promptHistory)) {
+        if (options?.requirePersistentImageOutput && assets.length > 0 && persistentImageOutputs.length === 0) {
+          throw new Error(
+            `ComfyUI 任务已完成，但只检测到 Preview/临时图片，没有检测到 SaveImage 正式输出文件。${summarizePromptHistory(promptHistory)}`
+          );
+        }
         throw new Error(`ComfyUI 任务已完成但未检测到输出文件，请检查工作流输出节点。${summarizePromptHistory(promptHistory)}`);
       }
       const status = getPromptStatus(promptHistory);
@@ -4893,6 +4922,7 @@ export async function generateShotAsset(
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
+    const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(workflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
@@ -4911,7 +4941,9 @@ export async function generateShotAsset(
       // Keep queueing with the original values if object_info is unavailable.
     }
     const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
-    const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress);
+    const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress, {
+      requirePersistentImageOutput
+    });
     const chosen = selectOutputAsset(outputs, kind);
     if (!chosen) {
       if (kind === "video") {
@@ -5013,6 +5045,7 @@ export async function generateShotAssetOutputs(
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
+    const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(workflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
@@ -5030,7 +5063,9 @@ export async function generateShotAssetOutputs(
       // Keep queueing with the original values if object_info is unavailable.
     }
     const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
-    const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress);
+    const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress, {
+      requirePersistentImageOutput
+    });
     const filtered = filterOutputAssetsByKind(outputs, kind);
     const candidates = filtered.length > 0 ? filtered : outputs;
     if (candidates.length === 0) {
