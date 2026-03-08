@@ -348,14 +348,27 @@ function makeAssetGenerationShot(
 }
 
 function buildCharacterViewPrompt(name: string, context: string, view: "front" | "side" | "back") {
-  const sanitizedContext = view === "front" ? sanitizeCharacterAnchorContext(context) : sanitizeCharacterViewContext(context);
-  const viewLabel = view === "front" ? "正视图" : view === "side" ? "标准右侧视图" : "背视图";
+  if (view === "front") {
+    const sanitizedContext = sanitizeCharacterAnchorContext(context);
+    return [
+      `单张角色正视图，角色：${name}。`,
+      sanitizedContext,
+      "单人全身，正面朝向镜头，头顶到脚底完整入镜，双手双脚完整可见。",
+      "纯白纯净背景，无渐变，无地面杂物，无环境叙事元素，无版式边框。",
+      "单张图里只能有一个人体，禁止第二人物、禁止克隆分身、禁止镜像双人。",
+      "禁止设定页、禁止角色表、禁止小人排表、禁止分屏、禁止拼版、禁止三视图、禁止 turnaround chart。",
+      "禁止说明文字、头像小窗、标注引线、局部放大框、图标、徽记、贴纸、UI 元素。",
+      "禁止漂浮宠物、悬浮武器、伴生物、额外道具、漂浮挂件。",
+      "中性站姿，双臂自然下垂，双腿自然站立，完整服装和鞋靴清楚可见。",
+      "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人。"
+    ].join(" ");
+  }
+  const sanitizedContext = sanitizeCharacterViewContext(context);
+  const viewLabel = view === "side" ? "标准右侧视图" : "背视图";
   const viewConstraint =
-    view === "front"
-      ? "strict front orthographic view, facing camera, shoulders level, feet parallel"
-      : view === "side"
-        ? "strict right profile orthographic view, nose points right, only one eye visible, shoulders and hips stacked in profile"
-        : "strict back orthographic view, facing away from camera, no visible face, shoulders level";
+    view === "side"
+      ? "strict right profile orthographic view, nose points right, only one eye visible, shoulders and hips stacked in profile"
+      : "strict back orthographic view, facing away from camera, no visible face, shoulders level";
   return [
     `单张角色${viewLabel}，单人全身，角色：${name}。`,
     sanitizedContext,

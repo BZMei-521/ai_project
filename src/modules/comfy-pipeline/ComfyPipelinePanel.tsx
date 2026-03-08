@@ -130,10 +130,12 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, lineup sheet, sprite sheet, costume lineup, many tiny characters, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, magic circle, petals, floral background, ornate background, poster background, decorative frame, vehicle, train, locomotive, car, bus, aircraft, tank, mech, robot, machinery, technical drawing, manuscript page, calligraphy page, sepia sketch page, ancient painting scan, old paper illustration, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
-  white: "纯白背景，无地面杂物，无环境叙事元素，标准设定板展示",
-  gray: "中性浅灰背景，无地面杂物，无环境叙事元素，标准设定板展示",
+  white: "纯白背景，无地面杂物，无环境叙事元素，单张角色展示",
+  gray: "中性浅灰背景，无地面杂物，无环境叙事元素，单张角色展示",
   studio: "中性影棚背景，柔和棚拍补光，干净地面，无环境叙事元素"
 };
+const CHARACTER_FRONT_ANCHOR_BACKGROUND_PROMPT =
+  "纯白纯净背景，无渐变，无地面杂物，无环境叙事元素，无版式边框，单张角色展示";
 const SKYBOX_PROMPT_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "interior", string> = {
   day_exterior: "日景外景，空间开阔，自然光明确，远中近层次清晰，适合建立镜头和动作调度",
   night_exterior: "夜景外景，夜间环境光与主光方向清晰，暗部稳定，适合夜戏镜头复用",
@@ -4489,7 +4491,7 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, `_triptych_input_${attempt + 1}.png`);
   };
 
-  const normalizeCharacterAnchorBackground = async (pathOrUrl: string) => {
+  const normalizeCharacterAnchorBackground = async (pathOrUrl: string, tone: "white" | "gray" = "gray") => {
     if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
     const trimmed = pathOrUrl.trim();
     if (!trimmed) return pathOrUrl;
@@ -4529,9 +4531,10 @@ export function ComfyPipelinePanel() {
     const bgR = sumR / count;
     const bgG = sumG / count;
     const bgB = sumB / count;
-    const targetR = 236;
-    const targetG = 236;
-    const targetB = 236;
+    const targetValue = tone === "white" ? 250 : 236;
+    const targetR = targetValue;
+    const targetG = targetValue;
+    const targetB = targetValue;
     let replaced = 0;
     for (let index = 0; index < data.length; index += 4) {
       const dr = (data[index] ?? 0) - bgR;
@@ -4744,7 +4747,7 @@ export function ComfyPipelinePanel() {
   };
 
   const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string) => {
-    const normalized = await normalizeCharacterAnchorBackground(pathOrUrl);
+    const normalized = await normalizeCharacterAnchorBackground(pathOrUrl, "white");
     const isolated = await isolateCharacterPrimarySubject(normalized);
     return fitCharacterViewWithinCanvas(isolated, "front");
   };
@@ -4991,21 +4994,52 @@ export function ComfyPipelinePanel() {
   };
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
-    const viewLabel = view === "front" ? "正视图" : view === "side" ? "右侧正交侧视图" : "正后方背视图";
+    if (view === "front") {
+      const sanitizedContext = sanitizeCharacterAnchorContext(context);
+      const styleHint = resolvePipelineVisualStyleHint();
+      const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+      const core = mergePromptFragments([
+        "masterpiece, best quality, high detail",
+        "single character, solo, exactly one human character",
+        "front-facing full-body character image",
+        "single isolated character on a pure white background",
+        "clean studio full-body character portrait",
+        "character catalog photo illustration",
+        "one person only, one body only, one angle only",
+        "centered composition, head-to-toe fully visible, generous blank margin on all sides",
+        "plain white seamless backdrop only, no floor props, no scenery, no layout board",
+        "neutral standing pose, arms relaxed down, hands visible, feet parallel, complete shoes visible",
+        "fully clothed, complete outfit, hairstyle and costume clearly visible",
+        `角色：${name}`,
+        `风格倾向：${styleHint}`,
+        styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
+        sanitizedContext
+      ]);
+      const constraints = mergePromptFragments([
+        CHARACTER_FRONT_ANCHOR_BACKGROUND_PROMPT,
+        "只能出现一个完整人体，禁止第二人物、禁止克隆分身、禁止镜像双人",
+        "禁止设定页、禁止角色表、禁止多人小人排表、禁止分屏、禁止拼版、禁止三视图、禁止 turnaround chart",
+        "禁止说明文字、头像小窗、标注引线、局部放大框、图标、徽记、贴纸、UI 元素",
+        "禁止漂浮宠物、悬浮武器、伴生物、额外道具、漂浮挂件",
+        "禁止场景背景、建筑背景、花纹背景、魔法阵背景、海报背景、光效背景",
+        "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
+        "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
+        "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人",
+        "不是设定板，不是人设页，不是 collage，不是 lineup，不是 triptych"
+      ]);
+      return `${core}。严格要求：${constraints}。`;
+    }
+    const viewLabel = view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
-    const sanitizedContext = view === "front" ? sanitizeCharacterAnchorContext(context) : sanitizeCharacterViewContext(context);
+    const sanitizedContext = sanitizeCharacterViewContext(context);
     const styleHint = resolvePipelineVisualStyleHint();
     const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     const framingInstruction =
-      view === "front"
-        ? "character occupies about 56% to 68% of frame height, centered with generous left right top bottom margins"
-        : "character occupies about 50% to 62% of frame height, centered with extra blank margin on both sides and above the head";
+      "character occupies about 50% to 62% of frame height, centered with extra blank margin on both sides and above the head";
     const angleInstruction =
-      view === "front"
-        ? "正面 0 度，身体朝向镜头，双脚完整落地，只允许正面单角度。头部摆正，肩线水平，骨盆水平，双臂自然垂直下放，双腿平行站立，不允许任何扭身。front view, body yaw 0 degree, facing camera, single-view only, head straight, shoulders level, hips level, arms down, legs parallel."
-        : view === "side"
-          ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度，鼻尖朝右，只保留一只眼睛轮廓。严格轮廓侧面图，肩线与髋线侧向重合，胸腔和骨盆都以侧面轮廓表现，远侧手臂与远侧腿不可前露。strict right profile, body yaw 90 degree, side view only, no front-facing, no back-facing, silhouette profile only."
-          : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度，面部特征不可见。strict back view, body yaw 180 degree, back-facing only, face not visible.";
+      view === "side"
+        ? "右侧 90 度正交侧视，人物严格侧身，头部和身体朝向画面右侧，只允许右侧单角度，鼻尖朝右，只保留一只眼睛轮廓。严格轮廓侧面图，肩线与髋线侧向重合，胸腔和骨盆都以侧面轮廓表现，远侧手臂与远侧腿不可前露。strict right profile, body yaw 90 degree, side view only, no front-facing, no back-facing, silhouette profile only."
+        : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度，面部特征不可见。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
       "masterpiece, best quality, high detail",
       "single character, solo",
@@ -5093,7 +5127,6 @@ export function ComfyPipelinePanel() {
       "禁止镜头仰拍、俯拍、广角透视、近大远小",
       "服装统一且前后侧一致",
       "面部与体型一致",
-      view === "front" ? "front-only, not side, not back" : "",
       view === "side"
         ? "strict side-only, not front, not back, not looking at camera, one-eye profile only, nose points right, only one eyebrow visible, only one sleeve silhouette visible, only one shoe silhouette clearly dominant, arms close to torso, legs vertically stacked in profile"
         : "",
@@ -5126,14 +5159,14 @@ export function ComfyPipelinePanel() {
         ? "Use the input image as the identity source and clean it into one centered full-body front-view character."
         : attempt === 1
           ? "Remove all extra icons, pets, floating objects, callouts, and duplicate figure fragments. Keep one single clean full-body character only."
-          : "Strict front orthographic character anchor, plain light grey background, one isolated figure only, no sheet elements.";
+          : "Strict front-facing single-character image, pure white background, one isolated figure only, no sheet elements.";
     return mergePromptFragments([
       buildCharacterViewPrompt(name, sanitizedContext, "front"),
       "Use the input image as the exact identity and costume source. Do not redesign the character.",
       "Preserve the original outfit layers, trims, colors, hairstyle silhouette, and accessories from the source image.",
       "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
       "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
-      "Keep exactly one centered full-body human character, front-facing, head-to-toe visible, plain light grey background.",
+      "Keep exactly one centered full-body human character, front-facing, head-to-toe visible, pure white background.",
       retryTuning
     ]);
   };
@@ -5677,7 +5710,7 @@ export function ComfyPipelinePanel() {
       if (!reusableFrontReferencePath) {
         throw new Error("角色简化三视图补全失败：缺少可复用的正视锚点图");
       }
-      const normalizedFrontPath = (await normalizeCharacterAnchorBackground(reusableFrontReferencePath)) || reusableFrontReferencePath;
+      const normalizedFrontPath = (await normalizeCharacterAnchorBackground(reusableFrontReferencePath, "white")) || reusableFrontReferencePath;
       const runSingleViewFallback = async (view: "side" | "back", viewSeedBase: number) => {
         let bestCandidate:
           | {
@@ -6533,7 +6566,7 @@ export function ComfyPipelinePanel() {
         }
         anchorPath = finalAnchorPath;
         if (anchorPath) {
-          anchorPath = await normalizeCharacterAnchorBackground(anchorPath);
+          anchorPath = await normalizeCharacterAnchorBackground(anchorPath, "white");
           appendLog(`${sourceLabel}角色正视锚点生成成功：${profile.name}`);
         }
       }
