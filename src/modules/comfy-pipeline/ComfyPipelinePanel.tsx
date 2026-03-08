@@ -94,10 +94,11 @@ const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [
   "sd_xl_base_1.0.safetensors"
 ] as const;
 const CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER = [
-  "realisticVisionV60B1_v51VAE.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
   "dreamshaper_8.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
   "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
   "sd_xl_base_1.0.safetensors",
   "animagine-xl-4.0.safetensors"
 ] as const;
@@ -5546,6 +5547,38 @@ export function ComfyPipelinePanel() {
     return recommended;
   };
 
+  const resolveRuntimeCharacterAnchorModelCandidates = async (
+    runtimeSettings: ComfySettings,
+    sourceLabel: string,
+    context = ""
+  ) => {
+    const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
+    let options = availableCheckpointOptions;
+    if (options.length === 0) {
+      try {
+        options = await listComfyCheckpointOptions(runtimeSettings.baseUrl);
+        setAvailableCheckpointOptions(options);
+      } catch {
+        return [selectedModel];
+      }
+    }
+    if (options.includes(selectedModel) && !shouldAutoUpgradeCharacterAnchorModel(selectedModel)) {
+      return [selectedModel];
+    }
+    const recommendOrder = prefersRealisticCharacterAnchorModel(context)
+      ? CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER
+      : CHARACTER_ASSET_MODEL_RECOMMEND_ORDER;
+    const ordered = recommendOrder.filter((name, index) => options.includes(name) && recommendOrder.indexOf(name) === index);
+    if (ordered.length <= 0) {
+      return [selectedModel];
+    }
+    const primary = ordered[0] ?? selectedModel;
+    if (primary !== selectedModel) {
+      appendLog(`${sourceLabel}自动切换角色正视锚点模型：${selectedModel} -> ${primary}`, "info");
+    }
+    return ordered.slice(0, 2);
+  };
+
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
     if (!text) return false;
@@ -6487,16 +6520,10 @@ export function ComfyPipelinePanel() {
         : null;
       if (!anchorPath && profile.description.trim().length > 0) {
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
-        const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(
+        const requestedCharacterModels = await resolveRuntimeCharacterAnchorModelCandidates(
           runtimeSettings,
           sourceLabel,
           profile.description
-        );
-        const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModel);
-        const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
-          characterModel,
-          runtimeSettings.characterTemplatePreset ?? "portrait",
-          runtimeSettings.characterRenderPreset ?? "clean_reference"
         );
         const negativePrompt = buildCharacterViewNegativePrompt(
           "front",
@@ -6509,46 +6536,66 @@ export function ComfyPipelinePanel() {
         let bestAnchorPath = "";
         let bestAnchorScore = Number.NEGATIVE_INFINITY;
         let bestAnchorIssues: string[] = [];
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          const generated = await generateShotAsset(
-            runtimeSettings,
-            makeAssetGenerationShot(
-              `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}_${attempt + 1}`,
-              `${profile.name} 正视锚点`,
-              buildFrontAnchorRetryPrompt(profile.name, profile.description, attempt),
-              "",
-              baseSeed
-            ),
-            0,
-            "image",
-            [],
-            [],
-            {
-              workflowJsonOverride: referenceWorkflow,
-              tokenOverrides: {
-                NEGATIVE_PROMPT: negativePrompt
-              }
-            }
+        let bestAnchorModel = resolveMvAdapterCharacterModel(requestedCharacterModels[0] || DEFAULT_CHARACTER_ASSET_MODEL);
+        let acceptedAnchor = false;
+        for (let modelIndex = 0; modelIndex < requestedCharacterModels.length; modelIndex += 1) {
+          const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModels[modelIndex] || DEFAULT_CHARACTER_ASSET_MODEL);
+          if (modelIndex > 0) {
+            appendLog(
+              `${sourceLabel}角色正视锚点切换备用模型：${requestedCharacterModels[modelIndex - 1]} -> ${characterModel}`,
+              "info"
+            );
+          }
+          const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
+            characterModel,
+            runtimeSettings.characterTemplatePreset ?? "portrait",
+            runtimeSettings.characterRenderPreset ?? "clean_reference"
           );
-          const candidatePathRaw = (generated.localPath || generated.previewUrl || "").trim();
-          if (!candidatePathRaw) continue;
-          const candidatePath = await prepareCharacterFrontReferenceCandidate(candidatePathRaw);
-          const quality = await evaluateFrontReferenceQuality(candidatePath);
-          if (quality.score > bestAnchorScore) {
-            bestAnchorPath = candidatePath;
-            bestAnchorScore = quality.score;
-            bestAnchorIssues = quality.issues;
-          }
-          if (quality.acceptable) {
-            if (attempt > 0) {
-              appendLog(`${sourceLabel}角色正视锚点经第 ${attempt + 1} 次重试后达标：${profile.name}`, "info");
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            const generated = await generateShotAsset(
+              runtimeSettings,
+              makeAssetGenerationShot(
+                `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}_${modelIndex + 1}_${attempt + 1}`,
+                `${profile.name} 正视锚点`,
+                buildFrontAnchorRetryPrompt(profile.name, profile.description, attempt),
+                "",
+                baseSeed
+              ),
+              0,
+              "image",
+              [],
+              [],
+              {
+                workflowJsonOverride: referenceWorkflow,
+                tokenOverrides: {
+                  NEGATIVE_PROMPT: negativePrompt
+                }
+              }
+            );
+            const candidatePathRaw = (generated.localPath || generated.previewUrl || "").trim();
+            if (!candidatePathRaw) continue;
+            const candidatePath = await prepareCharacterFrontReferenceCandidate(candidatePathRaw);
+            const quality = await evaluateFrontReferenceQuality(candidatePath);
+            if (quality.score > bestAnchorScore) {
+              bestAnchorPath = candidatePath;
+              bestAnchorScore = quality.score;
+              bestAnchorIssues = quality.issues;
+              bestAnchorModel = characterModel;
             }
-            bestAnchorPath = candidatePath;
-            break;
+            if (quality.acceptable) {
+              if (attempt > 0 || modelIndex > 0) {
+                appendLog(`${sourceLabel}角色正视锚点经第 ${attempt + 1} 次重试后达标：${profile.name}`, "info");
+              }
+              bestAnchorPath = candidatePath;
+              bestAnchorModel = characterModel;
+              acceptedAnchor = true;
+              break;
+            }
+            if (attempt < 4) {
+              appendLog(`${sourceLabel}角色正视锚点未达标（${quality.issues.join(" / ")}），继续重试：${profile.name}`, "info");
+            }
           }
-          if (attempt < 4) {
-            appendLog(`${sourceLabel}角色正视锚点未达标（${quality.issues.join(" / ")}），继续重试：${profile.name}`, "info");
-          }
+          if (acceptedAnchor) break;
         }
         if (!bestAnchorPath.trim()) {
           throw new Error(`${sourceLabel}角色正视锚点生成失败：${profile.name} 未获得可用输出`);
@@ -6561,7 +6608,7 @@ export function ComfyPipelinePanel() {
             profile.name,
             profile.description,
             finalAnchorPath,
-            characterModel,
+            bestAnchorModel,
             negativePrompt,
             baseSeed + 4000,
             `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}`,
