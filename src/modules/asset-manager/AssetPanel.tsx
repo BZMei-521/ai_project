@@ -59,6 +59,48 @@ function normalizeStoryInput(raw: string): string {
   return raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, " ").trim();
 }
 
+function sanitizeCharacterViewContext(context: string): string {
+  const cleaned = normalizeStoryInput(context)
+    .replace(
+      /(三视图|三面图|多视图|多角度|设定板|角色设定板|角色表|转面设定板|front[\s_-]*view|side[\s_-]*view|back[\s_-]*view|turnaround|character sheet|model sheet|multi[\s_-]*view|split[\s_-]*screen|diptych|triptych|collage)/gi,
+      " "
+    )
+    .replace(/[“"'][^“”"']{1,80}[”"']/g, " ")
+    .replace(
+      /(说话|对白|台词|看向|凝视|回头|转身|走向|跑向|冲向|奔跑|跳起|挥手|抬手|举手|握拳|出拳|踢腿|打斗|战斗|拥抱|牵手|坐下|下跪|跪地|哭泣|大笑|惊讶|怒吼|亲吻|拥吻|追逐|镜头|分镜|场景|环境|背景|构图|光线|光照|天空盒|河边|街道|房间|走廊|天空|夜景|白天|傍晚|建筑|宫殿|庭院|桥|河|山|海|森林|树林|房屋|楼阁|室内|室外)/gi,
+      " "
+    )
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  const appearanceTokens = cleaned
+    .split(/[，,。；;、\n]/)
+    .map((fragment) => fragment.trim())
+    .filter(Boolean)
+    .filter(
+      (fragment) =>
+        /(发|发型|眼|瞳|脸|五官|肤|妆|年龄|少年|少女|青年|成年|男|女|身高|体型|瘦|高挑|服装|上衣|下装|长袍|外套|披风|裙|裤|鞋|靴|帽|饰品|耳环|项链|手套|发饰|长袜|hair|hairstyle|eye|face|skin|makeup|male|female|young|adult|height|body|slim|tall|outfit|robe|coat|cloak|dress|skirt|pants|shoes|boots|hat|accessory|gloves|stockings|ribbon|bow|color|palette)/i.test(
+          fragment
+        )
+    )
+    .slice(0, 6);
+  return appearanceTokens.join(", ");
+}
+
+function sanitizeCharacterAnchorContext(context: string): string {
+  const cleaned = sanitizeCharacterViewContext(context);
+  if (!cleaned) return "";
+  const excludedPattern =
+    /(宠物|伙伴|伴生|使魔|召唤物|漂浮|悬浮|武器|长剑|短剑|刀|枪|弓|盾|法杖|法器|卷轴|书本|道具|图标|标志|徽记|贴纸|头像|小窗|说明|标注|文字|眼睛特写|局部特写|q版|q 版|chibi|pet|mascot|familiar|companion|weapon|sword|blade|spear|bow|shield|staff|wand|scroll|book|icon|sticker|inset|callout|annotation|text)/i;
+  const anchorTokens = cleaned
+    .split(/[，,。；;、\n]/)
+    .map((fragment) => fragment.trim())
+    .filter(Boolean)
+    .filter((fragment) => !excludedPattern.test(fragment))
+    .slice(0, 5);
+  return anchorTokens.join(", ") || cleaned;
+}
+
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -306,6 +348,7 @@ function makeAssetGenerationShot(
 }
 
 function buildCharacterViewPrompt(name: string, context: string, view: "front" | "side" | "back") {
+  const sanitizedContext = view === "front" ? sanitizeCharacterAnchorContext(context) : sanitizeCharacterViewContext(context);
   const viewLabel = view === "front" ? "正视图" : view === "side" ? "标准右侧视图" : "背视图";
   const viewConstraint =
     view === "front"
@@ -315,7 +358,7 @@ function buildCharacterViewPrompt(name: string, context: string, view: "front" |
         : "strict back orthographic view, facing away from camera, no visible face, shoulders level";
   return [
     `角色设定三视图，${viewLabel}，单人全身，角色：${name}。`,
-    normalizeStoryInput(context),
+    sanitizedContext,
     "设定板用途，标准正交视角，完整服装，完整鞋靴，头顶到脚底完整入镜。",
     "中性站姿，双臂自然下垂且略微离开身体，双腿自然站立，禁止剧情动作和时装摆拍。",
     "纯净中性背景，无道具，无环境叙事，无其他人物，无拼版，无分屏。",

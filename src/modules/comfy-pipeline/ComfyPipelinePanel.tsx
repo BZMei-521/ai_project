@@ -4679,6 +4679,20 @@ export function ComfyPipelinePanel() {
     return appearanceTokens.join(", ");
   };
 
+  const sanitizeCharacterAnchorContext = (context: string) => {
+    const cleaned = sanitizeCharacterViewContext(context);
+    if (!cleaned) return "";
+    const excludedPattern =
+      /(宠物|伙伴|伴生|使魔|召唤物|漂浮|悬浮|武器|长剑|短剑|刀|枪|弓|盾|法杖|法器|卷轴|书本|道具|图标|标志|徽记|贴纸|头像|小窗|说明|标注|文字|眼睛特写|局部特写|q版|q 版|chibi|pet|mascot|familiar|companion|weapon|sword|blade|spear|bow|shield|staff|wand|scroll|book|icon|sticker|inset|callout|annotation|text)/i;
+    const anchorTokens = cleaned
+      .split(/[，,。；;、\n]/)
+      .map((fragment) => fragment.trim())
+      .filter(Boolean)
+      .filter((fragment) => !excludedPattern.test(fragment))
+      .slice(0, 5);
+    return anchorTokens.join(", ") || cleaned;
+  };
+
   const normalizeStyleAnchor = (value: string) =>
     normalizeStoryInput(value)
       .replace(/\s{2,}/g, " ")
@@ -4705,7 +4719,7 @@ export function ComfyPipelinePanel() {
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     const viewLabel = view === "front" ? "正视图" : view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
-    const sanitizedContext = sanitizeCharacterViewContext(context);
+    const sanitizedContext = view === "front" ? sanitizeCharacterAnchorContext(context) : sanitizeCharacterViewContext(context);
     const styleHint = resolvePipelineVisualStyleHint();
     const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     const framingInstruction =
@@ -4817,7 +4831,7 @@ export function ComfyPipelinePanel() {
   };
 
   const buildFrontAnchorRetryPrompt = (name: string, context: string, attempt: number) => {
-    const basePrompt = buildCharacterViewPrompt(name, context, "front");
+    const basePrompt = buildCharacterViewPrompt(name, sanitizeCharacterAnchorContext(context), "front");
     const retryTuning =
       attempt <= 0
         ? ""
@@ -5429,7 +5443,7 @@ export function ComfyPipelinePanel() {
         appendLog(`检测到已有角色正视锚点，直接复用：${name}`, "info");
       } else {
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          const referenceSeed = seedBase + attempt * 997;
+          const referenceSeed = seedBase;
           const currentReference = await generateShotAsset(
             runtimeSettings,
             makeAssetGenerationShot(
@@ -6020,7 +6034,7 @@ export function ComfyPipelinePanel() {
               `${profile.name} 正视锚点`,
               buildFrontAnchorRetryPrompt(profile.name, profile.description, attempt),
               "",
-              baseSeed + attempt * 997
+              baseSeed
             ),
             0,
             "image",
