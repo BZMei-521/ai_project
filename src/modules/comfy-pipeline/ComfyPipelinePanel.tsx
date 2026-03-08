@@ -103,6 +103,7 @@ const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
 const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
 const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
 const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
+const CHARACTER_ANCHOR_CLEANUP_OUTPUT_PREFIX = "Storyboard/character_anchor_cleanup_{{SHOT_ID}}";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const CHARACTER_ADVANCED_NODE_TYPES = [
   "UNETLoader",
@@ -555,6 +556,67 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
     },
     "9": {
       inputs: { filename_prefix: CHARACTER_THREEVIEW_OUTPUT_PREFIX, images: ["8", 0] },
+      class_type: "SaveImage"
+    }
+  };
+  return JSON.stringify(template, null, 2);
+}
+
+function buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName: string): string {
+  const modelName = resolveMvAdapterCharacterModel(checkpointName);
+  const { width, height } = resolveCharacterTemplateSize(modelName, "portrait");
+  const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
+    "1": {
+      inputs: { ckpt_name: modelName },
+      class_type: "CheckpointLoaderSimple"
+    },
+    "2": {
+      inputs: { image: "{{FRAME_IMAGE_PATH}}", upload: "image" },
+      class_type: "LoadImage"
+    },
+    "3": {
+      inputs: {
+        image: ["2", 0],
+        upscale_method: "lanczos",
+        width,
+        height,
+        crop: "disabled"
+      },
+      class_type: "ImageScale"
+    },
+    "4": {
+      inputs: { pixels: ["3", 0], vae: ["1", 2] },
+      class_type: "VAEEncode"
+    },
+    "5": {
+      inputs: { text: "{{PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "6": {
+      inputs: { text: "{{NEGATIVE_PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "7": {
+      inputs: {
+        seed: "{{SEED}}",
+        steps: 26,
+        cfg: 6.2,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        denoise: 0.38,
+        model: ["1", 0],
+        positive: ["5", 0],
+        negative: ["6", 0],
+        latent_image: ["4", 0]
+      },
+      class_type: "KSampler"
+    },
+    "8": {
+      inputs: { samples: ["7", 0], vae: ["1", 2] },
+      class_type: "VAEDecode"
+    },
+    "9": {
+      inputs: { filename_prefix: CHARACTER_ANCHOR_CLEANUP_OUTPUT_PREFIX, images: ["8", 0] },
       class_type: "SaveImage"
     }
   };
@@ -4845,6 +4907,23 @@ export function ComfyPipelinePanel() {
     return mergePromptFragments([basePrompt, retryTuning, cleanupInstruction]);
   };
 
+  const buildFrontAnchorCleanupPrompt = (name: string, context: string, attempt: number) => {
+    const sanitizedContext = sanitizeCharacterAnchorContext(context);
+    const retryTuning =
+      attempt <= 0
+        ? "Use the input image as the identity source and clean it into one centered full-body front-view character."
+        : attempt === 1
+          ? "Remove all extra icons, pets, floating objects, callouts, and duplicate figure fragments. Keep one single clean full-body character only."
+          : "Strict front orthographic character anchor, plain light grey background, one isolated figure only, no sheet elements.";
+    return mergePromptFragments([
+      buildCharacterViewPrompt(name, sanitizedContext, "front"),
+      "Use the input image as the exact identity and costume source. Do not redesign the character.",
+      "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
+      "Keep exactly one centered full-body human character, front-facing, head-to-toe visible, plain light grey background.",
+      retryTuning
+    ]);
+  };
+
   const buildCharacterViewEditRetryPrompt = (
     name: string,
     context: string,
@@ -4867,6 +4946,67 @@ export function ComfyPipelinePanel() {
               ? "Keep the body rigidly aligned to the requested angle. Avoid frontal shoulder reveal, avoid face turn, avoid second arm appearing in front."
               : "Minimal production-sheet composition. One isolated figure, smaller in frame, clean flat grey background, no poster styling.";
     return mergePromptFragments([basePrompt, identityInstruction, sheetConstraint, retryTuning]);
+  };
+
+  const repairCharacterFrontReferenceCandidate = async (
+    runtimeSettings: ComfySettings,
+    name: string,
+    context: string,
+    candidatePath: string,
+    checkpointName: string,
+    negativePrompt: string,
+    seedBase: number,
+    shotPrefix: string,
+    logPrefix: string
+  ) => {
+    const cleanupWorkflow = buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName);
+    let bestPath = candidatePath;
+    let bestQuality = await evaluateFrontReferenceQuality(candidatePath);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const generated = await generateShotAsset(
+        runtimeSettings,
+        makeAssetGenerationShot(
+          `${shotPrefix}_cleanup_${attempt + 1}`,
+          `${name} 正视锚点修复`,
+          buildFrontAnchorCleanupPrompt(name, context, attempt),
+          "",
+          seedBase + attempt * 131
+        ),
+        0,
+        "image",
+        [],
+        [],
+        {
+          workflowJsonOverride: cleanupWorkflow,
+          tokenOverrides: {
+            FRAME_IMAGE_PATH: candidatePath,
+            NEGATIVE_PROMPT: negativePrompt
+          }
+        }
+      );
+      const repairedRaw = (generated.localPath || generated.previewUrl || "").trim();
+      if (!repairedRaw) continue;
+      const repairedPath = await prepareCharacterFrontReferenceCandidate(repairedRaw);
+      const repairedQuality = await evaluateFrontReferenceQuality(repairedPath);
+      if (repairedQuality.score > bestQuality.score) {
+        bestPath = repairedPath;
+        bestQuality = repairedQuality;
+      }
+      if (repairedQuality.acceptable) {
+        appendLog(`${logPrefix}经清理修复后达标：${name}`, "info");
+        return {
+          path: repairedPath,
+          quality: repairedQuality
+        };
+      }
+      if (attempt < 2) {
+        appendLog(`${logPrefix}未达标（${repairedQuality.issues.join(" / ")}），继续修复：${name}`, "info");
+      }
+    }
+    return {
+      path: bestPath,
+      quality: bestQuality
+    };
   };
 
   const buildCharacterFallbackSheetPrompt = (name: string, context: string, attempt: number) => {
@@ -5495,9 +5635,29 @@ export function ComfyPipelinePanel() {
       if (!bestReference) {
         throw new Error("角色参考正视图生成失败：未获得有效输出");
       }
-      const referencePath = bestReference.localPath || bestReference.previewUrl;
+      let referencePath = bestReference.localPath || bestReference.previewUrl;
       if (!referencePath) {
         throw new Error("角色参考正视图生成失败：输出路径为空");
+      }
+      const bestReferenceQuality = await evaluateFrontReferenceQuality(referencePath);
+      if (!bestReferenceQuality.acceptable) {
+        const repairedReference = await repairCharacterFrontReferenceCandidate(
+          runtimeSettings,
+          name,
+          context,
+          referencePath,
+          characterModelForWorkflow,
+          buildCharacterViewNegativePrompt("front", negativePrompt),
+          seedBase + 4000,
+          `asset_char_${name}_reference`,
+          "正视参考图修复"
+        );
+        referencePath = repairedReference.path;
+        if (!repairedReference.quality.acceptable) {
+          throw new Error(
+            `角色参考正视图未通过质检：${(repairedReference.quality.issues.length > 0 ? repairedReference.quality.issues : bestReferenceQuality.issues).join(" / ") || "非标准单人全身设定图"}`
+          );
+        }
       }
       const frontAnchorPath = referencePath;
       const sheet = await generateShotAsset(
@@ -6070,13 +6230,29 @@ export function ComfyPipelinePanel() {
         if (!bestAnchorPath.trim()) {
           throw new Error(`${sourceLabel}角色正视锚点生成失败：${profile.name} 未获得可用输出`);
         }
-        const finalAnchorQuality = await evaluateFrontReferenceQuality(bestAnchorPath);
+        let finalAnchorPath = bestAnchorPath.trim();
+        let finalAnchorQuality = await evaluateFrontReferenceQuality(finalAnchorPath);
+        if (!finalAnchorQuality.acceptable) {
+          const repairedAnchor = await repairCharacterFrontReferenceCandidate(
+            runtimeSettings,
+            profile.name,
+            profile.description,
+            finalAnchorPath,
+            characterModel,
+            negativePrompt,
+            baseSeed + 4000,
+            `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}`,
+            `${sourceLabel}角色正视锚点修复`
+          );
+          finalAnchorPath = repairedAnchor.path.trim();
+          finalAnchorQuality = repairedAnchor.quality;
+        }
         if (!finalAnchorQuality.acceptable) {
           throw new Error(
             `${sourceLabel}角色正视锚点未通过质检：${profile.name}（${(finalAnchorQuality.issues.length > 0 ? finalAnchorQuality.issues : bestAnchorIssues).join(" / ") || "非标准单人全身设定图"}）`
           );
         }
-        anchorPath = bestAnchorPath.trim();
+        anchorPath = finalAnchorPath;
         if (anchorPath) {
           anchorPath = await normalizeCharacterAnchorBackground(anchorPath);
           appendLog(`${sourceLabel}角色正视锚点生成成功：${profile.name}`);
