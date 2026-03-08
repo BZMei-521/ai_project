@@ -4777,10 +4777,11 @@ export function ComfyPipelinePanel() {
     const analysisSize = 128;
     const bboxCenterX = (((layout.bbox.minX + layout.bbox.maxX + 1) / 2) / analysisSize) * sourceWidth;
     const bboxCenterY = (((layout.bbox.minY + layout.bbox.maxY + 1) / 2) / analysisSize) * sourceHeight;
-    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.6 : 0.72;
-    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.4 : 0.52;
+    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.62 : 0.78;
+    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.42 : 0.58;
+    const maxScale = view === "front" ? 4.6 : view === "back" ? 2.6 : 2.4;
     const scale = Math.min(
-      1.8,
+      maxScale,
       (outputHeight * targetHeightRatio) / bboxHeightPx,
       (outputWidth * targetWidthRatio) / bboxWidthPx
     );
@@ -4791,7 +4792,7 @@ export function ComfyPipelinePanel() {
     canvas.height = outputHeight;
     const context = canvas.getContext("2d");
     if (!context) return pathOrUrl;
-    context.fillStyle = "rgb(236,236,236)";
+    context.fillStyle = view === "front" ? "rgb(250,250,250)" : "rgb(236,236,236)";
     context.fillRect(0, 0, outputWidth, outputHeight);
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
@@ -5143,10 +5144,10 @@ export function ComfyPipelinePanel() {
       attempt <= 0
         ? ""
         : attempt === 1
-          ? "补充要求：镜头再拉远一档，人物仅占画面高度约 50% 到 58%，头顶、脚底、左右两侧都保留明显空白。full body long shot, zoomed out, generous empty margin on all sides."
+          ? "补充要求：镜头略微拉近，人物占画面高度约 64% 到 72%，头顶、脚底和左右两侧保留清晰但不过大的留白。medium long shot, centered full body, clear margins, subject larger in frame."
           : attempt === 2
-          ? "补充要求：必须是标准单人摄影棚参照图，人物完整站在画面中央，绝不允许贴边，绝不允许顶到头顶和鞋底。camera farther away, full body entirely inside frame, substantial blank space above head and below feet."
-          : "补充要求：严格远机位单人全身参照图，主体只占画面高度约 45% 到 55%，四周大留白，像纯背景人物参照图而不是设定页或人物海报。very zoomed out studio full-body reference, subject smaller in frame, large negative space, not a character sheet, not a poster close-up.";
+          ? "补充要求：必须是标准单人摄影棚参照图，人物完整站在画面中央，主体占画面高度约 68% 到 76%，头顶和鞋底留白适中，绝不允许贴边。camera slightly closer, full body entirely inside frame, balanced white margin, larger subject."
+          : "补充要求：严格单人全身白底参照图，主体占画面高度约 70% 到 78%，角色居中，边距均匀，不是设定页，不是海报，不是多人排表。single centered full-body character on pure white background, subject large in frame, even margins, not a character sheet.";
     const cleanupInstruction =
       "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout.";
     return mergePromptFragments([basePrompt, retryTuning, cleanupInstruction]);
