@@ -174,7 +174,7 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
-const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 18;
+const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 12;
 const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
@@ -4398,8 +4398,8 @@ export function ComfyPipelinePanel() {
       layout
         ? layout.bbox.widthRatio < 0.08 ||
           layout.foregroundRatio > 0.42 ||
-          layout.foregroundRatio < 0.04 ||
-          layout.bbox.heightRatio < 0.58 ||
+          layout.foregroundRatio < 0.03 ||
+          layout.bbox.heightRatio < 0.48 ||
           (layout.bbox.widthRatio > 0.94 && layout.foregroundRatio > 0.26) ||
           (typeof bboxAspect === "number" && (bboxAspect > 1.4 || bboxAspect < 0.1))
         : false;
@@ -4420,7 +4420,7 @@ export function ComfyPipelinePanel() {
         ? `边缘存在文字或装饰杂项(edge=${layout.edgeForegroundRatio.toFixed(2)})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.58 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      layout && layout.bbox.heightRatio < 0.48 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       appearance?.likelyTemplateFigure
         ? `角色像灰模或人体模板(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
         : "",
@@ -4442,7 +4442,7 @@ export function ComfyPipelinePanel() {
       (layout ? Math.max(0, layout.detachedForegroundRatio - 0.14) * 170 : 0) +
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.1) * 140 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
-      (layout && layout.bbox.heightRatio < 0.58 ? (0.58 - layout.bbox.heightRatio) * 90 : 0) +
+      (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
@@ -5002,6 +5002,8 @@ export function ComfyPipelinePanel() {
       const core = mergePromptFragments([
         "masterpiece, best quality, high detail",
         "single character, solo, exactly one human character",
+        "one complete human body with head, torso, two arms, two hands, two legs, two feet",
+        "clear human face, visible facial features, visible hairstyle, visible clothing layers",
         "front-facing full-body character image",
         "single isolated character on a pure white background",
         "clean studio full-body character portrait",
@@ -5022,6 +5024,7 @@ export function ComfyPipelinePanel() {
         "禁止设定页、禁止角色表、禁止多人小人排表、禁止分屏、禁止拼版、禁止三视图、禁止 turnaround chart",
         "禁止说明文字、头像小窗、标注引线、局部放大框、图标、徽记、贴纸、UI 元素",
         "禁止漂浮宠物、悬浮武器、伴生物、额外道具、漂浮挂件",
+        "禁止抽象色块、禁止水彩斑点、禁止漂浮符号、禁止独立图标、禁止单独头部、禁止动物头像、禁止吉祥物头像",
         "禁止场景背景、建筑背景、花纹背景、魔法阵背景、海报背景、光效背景",
         "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
@@ -5149,7 +5152,7 @@ export function ComfyPipelinePanel() {
           ? "补充要求：必须是标准单人摄影棚参照图，人物完整站在画面中央，主体占画面高度约 68% 到 76%，头顶和鞋底留白适中，绝不允许贴边。camera slightly closer, full body entirely inside frame, balanced white margin, larger subject."
           : "补充要求：严格单人全身白底参照图，主体占画面高度约 70% 到 78%，角色居中，边距均匀，不是设定页，不是海报，不是多人排表。single centered full-body character on pure white background, subject large in frame, even margins, not a character sheet.";
     const cleanupInstruction =
-      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout.";
+      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons.";
     return mergePromptFragments([basePrompt, retryTuning, cleanupInstruction]);
   };
 
