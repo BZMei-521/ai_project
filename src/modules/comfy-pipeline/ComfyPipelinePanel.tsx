@@ -4171,6 +4171,9 @@ export function ComfyPipelinePanel() {
       let chromaSum = 0;
       let lowColorPixels = 0;
       let nearGrayPixels = 0;
+      let skinPixels = 0;
+      let torsoSkinPixels = 0;
+      let footSkinPixels = 0;
       for (let index = 0; index < data.length; index += 4) {
         const r = data[index] ?? 0;
         const g = data[index + 1] ?? 0;
@@ -4193,24 +4196,56 @@ export function ComfyPipelinePanel() {
         if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && chroma < 18) {
           nearGrayPixels += 1;
         }
+        const pixelIndex = index / 4;
+        const x = pixelIndex % size;
+        const y = Math.floor(pixelIndex / size);
+        const isLikelySkin =
+          r > 50 &&
+          g > 28 &&
+          b > 18 &&
+          r > g &&
+          r > b &&
+          Math.max(r, g, b) - Math.min(r, g, b) > 12 &&
+          Math.abs(r - g) > 6 &&
+          (r - b) > 10;
+        if (isLikelySkin) {
+          skinPixels += 1;
+          if (y > size * 0.18 && y < size * 0.68 && x > size * 0.24 && x < size * 0.76) {
+            torsoSkinPixels += 1;
+          }
+          if (y > size * 0.84) {
+            footSkinPixels += 1;
+          }
+        }
       }
       if (foregroundPixels <= 0) return null;
       const averageSaturation = saturationSum / foregroundPixels;
       const averageChroma = chromaSum / foregroundPixels;
       const lowColorRatio = lowColorPixels / foregroundPixels;
       const nearGrayRatio = nearGrayPixels / foregroundPixels;
+      const skinExposureRatio = skinPixels / foregroundPixels;
+      const torsoSkinRatio = torsoSkinPixels / foregroundPixels;
+      const footSkinRatio = footSkinPixels / foregroundPixels;
       const likelyTemplateFigure =
         foregroundPixels >= 180 &&
         averageSaturation < 0.18 &&
         averageChroma < 30 &&
         lowColorRatio > 0.72 &&
         nearGrayRatio > 0.48;
+      const likelyNudeFigure =
+        skinExposureRatio > 0.58 || torsoSkinRatio > 0.13 || (skinExposureRatio > 0.42 && footSkinRatio > 0.015);
+      const likelyBareFeet = footSkinRatio > 0.018 && skinExposureRatio > 0.08;
       return {
         averageSaturation,
         averageChroma,
         lowColorRatio,
         nearGrayRatio,
-        likelyTemplateFigure
+        skinExposureRatio,
+        torsoSkinRatio,
+        footSkinRatio,
+        likelyTemplateFigure,
+        likelyNudeFigure,
+        likelyBareFeet
       };
     } catch {
       return null;
@@ -4449,6 +4484,10 @@ export function ComfyPipelinePanel() {
       appearance?.likelyTemplateFigure
         ? `角色像灰模或人体模板(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
         : "",
+      appearance?.likelyNudeFigure
+        ? `裸露过多或疑似裸模(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
+        : "",
+      appearance?.likelyBareFeet ? `疑似赤脚(foot=${appearance.footSkinRatio.toFixed(2)})` : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
@@ -4469,6 +4508,8 @@ export function ComfyPipelinePanel() {
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
       (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
+      (appearance?.likelyNudeFigure ? 80 : 0) +
+      (appearance?.likelyBareFeet ? 22 : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
@@ -4996,6 +5037,104 @@ export function ComfyPipelinePanel() {
     return anchorTokens.join(", ") || cleaned;
   };
 
+  const mergeCharacterSemanticContext = (description: string, voiceProfile = "") =>
+    mergePromptFragments([description, voiceProfile]).trim();
+
+  const inferCharacterGenderHint = (context: string): "" | "female" | "male" => {
+    const normalized = normalizeStoryInput(context).toLowerCase();
+    if (!normalized) return "";
+    const femaleHint =
+      /(女声|女性|女子|女孩|姑娘|少女|woman|female|girl|young woman|长裙|裙装|她)/i.test(normalized);
+    const maleHint =
+      /(男声|男性|男子|男孩|少年|青年男子|man|male|boy|young man|他|胡须|络腮胡)/i.test(normalized);
+    if (femaleHint && !maleHint) return "female";
+    if (maleHint && !femaleHint) return "male";
+    return "";
+  };
+
+  const CHARACTER_PROMPT_TRANSLATION_RULES: Array<[RegExp, string]> = [
+    [/(写实电影人物设定|写实电影风|写实影视风|写实影视人物|写实|电影感|影视感|cinematic)/gi, "realistic cinematic character design"],
+    [/(二十出头|二十岁左右|20岁左右|early twenties)/gi, "young adult in early twenties"],
+    [/(二十五岁左右|二十五岁|25岁左右)/gi, "young adult around twenty five"],
+    [/(黑色长发)/gi, "long black hair"],
+    [/(黑色短发)/gi, "short black hair"],
+    [/(白色长发)/gi, "long white hair"],
+    [/(白色短发)/gi, "short white hair"],
+    [/(棕色长发)/gi, "long brown hair"],
+    [/(棕色短发)/gi, "short brown hair"],
+    [/(长发)/gi, "long hair"],
+    [/(短发)/gi, "short hair"],
+    [/(清冷克制|清冷气质)/gi, "calm restrained demeanor"],
+    [/(沉稳克制|沉稳气质)/gi, "composed restrained demeanor"],
+    [/(浅灰长裙)/gi, "light gray long dress"],
+    [/(长裙)/gi, "long dress"],
+    [/(深色短斗篷|深色斗篷)/gi, "short dark cloak"],
+    [/(深色长袍)/gi, "dark long robe"],
+    [/(长袍)/gi, "long robe"],
+    [/(皮靴)/gi, "leather boots"],
+    [/(靴子|鞋靴|长靴|短靴|靴)/gi, "boots"],
+    [/(鞋子|鞋)/gi, "shoes"],
+    [/(身形纤细)/gi, "slender build"],
+    [/(身形修长)/gi, "tall slim build"],
+    [/(高挑)/gi, "tall build"],
+    [/(浅灰)/gi, "light gray"],
+    [/(深色)/gi, "dark colored"],
+    [/(黑色)/gi, "black"],
+    [/(白色)/gi, "white"],
+    [/(灰色)/gi, "gray"],
+    [/(斗篷)/gi, "cloak"],
+    [/(披风)/gi, "cape"],
+    [/(外套)/gi, "coat"],
+    [/(女声)/gi, "female"],
+    [/(男声)/gi, "male"]
+  ];
+
+  const translateCharacterAppearanceFragment = (fragment: string) => {
+    let translated = normalizeStoryInput(fragment);
+    if (!translated) return "";
+    for (const [pattern, replacement] of CHARACTER_PROMPT_TRANSLATION_RULES) {
+      translated = translated.replace(pattern, ` ${replacement} `);
+    }
+    translated = translated
+      .replace(/[，。；、]/g, ", ")
+      .replace(/\s{2,}/g, " ")
+      .replace(/(^[,\s]+|[,\s]+$)/g, "")
+      .trim();
+    return translated;
+  };
+
+  const buildTranslatedCharacterAppearanceContext = (context: string, anchorOnly = false) => {
+    const base = anchorOnly ? sanitizeCharacterAnchorContext(context) : sanitizeCharacterViewContext(context);
+    if (!base) return "";
+    const fragments = base
+      .split(/[，,。；;、\n]/)
+      .map((fragment) => translateCharacterAppearanceFragment(fragment))
+      .filter(Boolean);
+    return [...new Set(fragments)].slice(0, 8).join(", ");
+  };
+
+  const buildContextualCharacterNegativeHints = (context: string) => {
+    const normalized = normalizeStoryInput(context);
+    if (!normalized) return "";
+    const hints: string[] = [];
+    const gender = inferCharacterGenderHint(normalized);
+    if (gender === "female") {
+      hints.push("male, man, masculine face, masculine body, beard, mustache");
+    } else if (gender === "male") {
+      hints.push("female, woman, feminine face, feminine body, breasts, cleavage");
+    }
+    if (/(长裙|长袍|斗篷|披风|古风|仙侠|dress|robe|cloak|cape)/i.test(normalized)) {
+      hints.push("camouflage, camo pattern, military uniform, tactical vest, tactical gear, body armor, combat gear, modern soldier outfit");
+    }
+    if (/(靴|鞋|boots|shoes)/i.test(normalized)) {
+      hints.push("barefoot, exposed toes, naked feet");
+    }
+    if (/(写实|电影|影视|realistic|cinematic)/i.test(normalized)) {
+      hints.push("anime style, chibi, cel shading");
+    }
+    return hints.join(", ");
+  };
+
   const normalizeStyleAnchor = (value: string) =>
     normalizeStoryInput(value)
       .replace(/\s{2,}/g, " ")
@@ -5022,10 +5161,14 @@ export function ComfyPipelinePanel() {
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     if (view === "front") {
       const sanitizedContext = sanitizeCharacterAnchorContext(context);
+      const translatedContext = buildTranslatedCharacterAppearanceContext(context, true);
+      const appearanceContext = translatedContext || sanitizedContext;
+      const genderHint = inferCharacterGenderHint(context);
       const styleHint = resolvePipelineVisualStyleHint();
       const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
       const core = mergePromptFragments([
         "masterpiece, best quality, high detail",
+        genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
         "single character, solo, exactly one human character",
         "one complete human body with head, torso, two arms, two hands, two legs, two feet",
         "clear human face, visible facial features, visible hairstyle, visible clothing layers",
@@ -5041,7 +5184,7 @@ export function ComfyPipelinePanel() {
         `角色：${name}`,
         `风格倾向：${styleHint}`,
         styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
-        sanitizedContext
+        appearanceContext ? `Appearance details: ${appearanceContext}` : ""
       ]);
       const constraints = mergePromptFragments([
         CHARACTER_FRONT_ANCHOR_BACKGROUND_PROMPT,
@@ -5052,6 +5195,7 @@ export function ComfyPipelinePanel() {
         "禁止抽象色块、禁止水彩斑点、禁止漂浮符号、禁止独立图标、禁止单独头部、禁止动物头像、禁止吉祥物头像",
         "禁止场景背景、建筑背景、花纹背景、魔法阵背景、海报背景、光效背景",
         "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
+        "禁止裸体、禁止裸模、禁止赤脚、禁止裸足、禁止露胸、禁止露出躯干、禁止内衣态、禁止泳装态",
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
         "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人",
         "不是设定板，不是人设页，不是 collage，不是 lineup，不是 triptych"
@@ -5061,6 +5205,9 @@ export function ComfyPipelinePanel() {
     const viewLabel = view === "side" ? "右侧正交侧视图" : "正后方背视图";
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const sanitizedContext = sanitizeCharacterViewContext(context);
+    const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
+    const appearanceContext = translatedContext || sanitizedContext;
+    const genderHint = inferCharacterGenderHint(context);
     const styleHint = resolvePipelineVisualStyleHint();
     const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     const framingInstruction =
@@ -5071,6 +5218,7 @@ export function ComfyPipelinePanel() {
         : "背面 180 度，人物背对镜头，完整展示后背、发型后部、服装背面和鞋跟，只允许背面单角度，面部特征不可见。strict back view, body yaw 180 degree, back-facing only, face not visible.";
     const core = mergePromptFragments([
       "masterpiece, best quality, high detail",
+      genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
       "single character, solo",
       "single-view full-body orthographic character reference image",
       "orthographic view",
@@ -5102,11 +5250,12 @@ export function ComfyPipelinePanel() {
       `角色：${name}`,
       `风格倾向：${styleHint}`,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
+      appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       angleInstruction,
       "只保留角色外观与服装本体，不要设定页排版元素",
       "不要叙事场景",
       "不要与他人互动",
-      sanitizedContext
+      ""
     ]);
     const constraints = mergePromptFragments([
       backgroundPrompt,
@@ -5183,6 +5332,8 @@ export function ComfyPipelinePanel() {
 
   const buildFrontAnchorCleanupPrompt = (name: string, context: string, attempt: number) => {
     const sanitizedContext = sanitizeCharacterAnchorContext(context);
+    const translatedContext = buildTranslatedCharacterAppearanceContext(context, true);
+    const appearanceContext = translatedContext || sanitizedContext;
     const retryTuning =
       attempt <= 0
         ? "Use the input image as the identity source and clean it into one centered full-body front-view character."
@@ -5194,6 +5345,8 @@ export function ComfyPipelinePanel() {
       "Use the input image as the exact identity and costume source. Do not redesign the character.",
       "Preserve the original outfit layers, trims, colors, hairstyle silhouette, and accessories from the source image.",
       "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
+      "Do not remove clothing. Do not expose chest, torso, underwear, or feet. Keep shoes or boots visible.",
+      appearanceContext ? `Keep these appearance details: ${appearanceContext}` : "",
       "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
       "Keep exactly one centered full-body human character, front-facing, head-to-toe visible, pure white background.",
       retryTuning
@@ -5207,6 +5360,9 @@ export function ComfyPipelinePanel() {
     attempt: number
   ) => {
     const sanitizedContext = sanitizeCharacterViewContext(context);
+    const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
+    const appearanceContext = translatedContext || sanitizedContext;
+    const genderHint = inferCharacterGenderHint(context);
     const viewInstruction =
       view === "side"
         ? "Render one single full-body human character in a strict right-facing profile. Exactly one body in the entire image."
@@ -5227,7 +5383,8 @@ export function ComfyPipelinePanel() {
               : "Minimal studio figure composition. One isolated figure only, smaller in frame, clean flat grey background, no poster styling, no layout board.";
     return mergePromptFragments([
       `角色：${name}`,
-      sanitizedContext,
+      genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
+      appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       viewInstruction,
       identityInstruction,
       sheetConstraint,
@@ -5366,7 +5523,7 @@ export function ComfyPipelinePanel() {
       "building"
     ]);
 
-  const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string) => {
+  const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string, context = "") => {
     const viewConstraint =
       view === "front"
         ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
@@ -5391,7 +5548,10 @@ export function ComfyPipelinePanel() {
       "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text";
     const templateConstraint =
       "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh, turnaround chart, turnaround sheet, triptych, three figures, three bodies, figure lineup, model lineup, character lineup";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}, ${templateConstraint}`;
+    const nudityConstraint =
+      "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, lingerie, bikini, swimsuit, barefoot, exposed toes";
+    const contextualConstraint = buildContextualCharacterNegativeHints(context);
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}, ${templateConstraint}, ${nudityConstraint}${contextualConstraint ? `, ${contextualConstraint}` : ""}`;
   };
 
   const stripInlineDataUrlPrefix = (raw: string) => raw.replace(/^data:[^,]+,/, "");
@@ -5435,26 +5595,44 @@ export function ComfyPipelinePanel() {
 
   const buildCharacterThreeViewSheetPrompt = (name: string, context: string) => {
     const sanitizedContext = sanitizeCharacterViewContext(context);
+    const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
+    const appearanceContext = translatedContext || sanitizedContext;
+    const genderHint = inferCharacterGenderHint(context);
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const styleHint = resolvePipelineVisualStyleHint();
     const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
     return mergePromptFragments([
-      "Recreate the same character from the first image into exactly three full-body orthographic views: front, strict right side profile, and back.",
-      "Use the first reference image as the identity and costume source.",
-      "Use the second reference image as the exact style, background, layout, spacing, framing, and orthographic presentation target.",
-      "Match the exact rendering style, grey background tone, silhouette clarity, and production-sheet cleanliness of the second reference image.",
+      "Recreate the same clothed character from the first image into exactly three full-body orthographic views arranged left to right as front, strict right side profile, and back.",
+      genderHint === "female" ? "The character is a young adult woman." : genderHint === "male" ? "The character is a young adult man." : "",
+      "Use the first reference image as the exact identity, face, hairstyle, costume, and silhouette source.",
+      "Use the second reference image only as the layout, spacing, panel order, grey background, framing, and orthographic presentation target.",
+      "Match the panel order and spacing of the second reference image: left panel front view, middle panel strict right profile, right panel back view.",
       `Character identity: ${name}`,
-      sanitizedContext,
-      "Preserve the same face, hairstyle, body proportions, costume structure, accessories, and silhouette from the first image.",
+      appearanceContext ? `Appearance details: ${appearanceContext}` : "",
+      "Preserve the same face, hairstyle, body proportions, costume structure, garment layers, sleeve shape, belt placement, accessories, shoes or boots, colors, and silhouette from the first image.",
+      "Do not simplify the costume into a mannequin, base mesh, bodysuit, underwear, grey dummy, tactical uniform, or anatomy template.",
       "One character only, one front view, one side view, one back view, full body, feet visible, head visible, no crop, no extra panels, no text, no watermark.",
       "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
       `${backgroundPrompt}，grey background，clean character turnaround sheet，studio reference board`,
       `Style hint: ${styleHint}`,
       styleAnchor ? `Global style anchor: ${styleAnchor}` : "",
-      "Do not invent a different art medium, genre, era, or costume from the first image.",
-      "High detail, stable anatomy, consistent clothing folds and placement, production-ready character turnaround."
+      "Do not invent a different art medium, genre, era, costume, props, or companion creature from the first image.",
+      "High detail, stable anatomy, strong costume preservation, consistent clothing folds and placement, production-ready character turnaround."
     ]);
   };
+
+  const buildCharacterThreeViewSheetNegativePrompt = (baseNegativePrompt: string, context: string) =>
+    mergePromptFragments([
+      baseNegativePrompt,
+      buildContextualCharacterNegativeHints(context),
+      "text, watermark, logo, annotation, label, callout, decorative border, inset portrait, extra icon",
+      "extra panel, fourth figure, lineup with many tiny characters, collage, poster layout, sprite sheet",
+      "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose",
+      "mannequin, faceless mannequin, wireframe body, anatomy template, croquis, 3d reference doll, grey dummy, base mesh, neutral bodysuit",
+      "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, swimsuit, bikini, lingerie, barefoot, exposed toes",
+      "duplicate character, mirrored twin, merged body, duplicate limbs, extra arms, extra legs",
+      "scene background, architecture, temple, palace, landscape, magic circle, petals, floral background"
+    ]);
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定图`;
@@ -5788,7 +5966,7 @@ export function ComfyPipelinePanel() {
                 STORYBOARD_IMAGE_MODEL: referenceEditModel,
                 PROMPT: prompt,
                 FRAME_IMAGE_PATH: normalizedFrontPath,
-                NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, negativePrompt)
+                NEGATIVE_PROMPT: buildCharacterViewNegativePrompt(view, negativePrompt, context)
               }
             }
           );
@@ -5956,7 +6134,7 @@ export function ComfyPipelinePanel() {
             [],
             {
               workflowJsonOverride: referenceWorkflow,
-              tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt) }
+              tokenOverrides: { NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", negativePrompt, context) }
             }
           );
           const currentReferencePathRaw = currentReference.localPath || currentReference.previewUrl;
@@ -6004,7 +6182,7 @@ export function ComfyPipelinePanel() {
           context,
           referencePath,
           characterModelForWorkflow,
-          buildCharacterViewNegativePrompt("front", negativePrompt),
+          buildCharacterViewNegativePrompt("front", negativePrompt, context),
           seedBase + 4000,
           `asset_char_${name}_reference`,
           "正视参考图修复"
@@ -6034,7 +6212,11 @@ export function ComfyPipelinePanel() {
           workflowJsonOverride: workflowOverride,
           tokenOverrides: {
             FRAME_IMAGE_PATH: frontAnchorPath,
-            [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename
+            [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename,
+            NEGATIVE_PROMPT: buildCharacterThreeViewSheetNegativePrompt(
+              runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+              context
+            )
           }
         }
       );
@@ -6536,20 +6718,22 @@ export function ComfyPipelinePanel() {
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId && item.type === "character")
         : null;
       if (!anchorPath && profile.description.trim().length > 0) {
+        const semanticContext = mergeCharacterSemanticContext(profile.description, profile.voiceProfile);
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
         const requestedCharacterModels = await resolveRuntimeCharacterAnchorModelCandidates(
           runtimeSettings,
           sourceLabel,
-          profile.description
+          semanticContext
         );
         const negativePrompt = buildCharacterViewNegativePrompt(
           "front",
-          runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT
+          runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+          semanticContext
         );
         const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
         const baseSeed =
           profile.seed ??
-          stableAssetSeed(`${profile.name}|character_anchor|${profile.description}|${styleAnchor || "default"}`);
+          stableAssetSeed(`${profile.name}|character_anchor|${semanticContext}|${styleAnchor || "default"}`);
         let bestAnchorPath = "";
         let bestAnchorScore = Number.NEGATIVE_INFINITY;
         let bestAnchorIssues: string[] = [];
@@ -6574,7 +6758,7 @@ export function ComfyPipelinePanel() {
               makeAssetGenerationShot(
                 `import_char_anchor_${normalizeEntityKey(profile.name) || Date.now()}_${modelIndex + 1}_${attempt + 1}`,
                 `${profile.name} 正视锚点`,
-                buildFrontAnchorRetryPrompt(profile.name, profile.description, attempt),
+                buildFrontAnchorRetryPrompt(profile.name, semanticContext, attempt),
                 "",
                 baseSeed
               ),
@@ -6623,7 +6807,7 @@ export function ComfyPipelinePanel() {
           const repairedAnchor = await repairCharacterFrontReferenceCandidate(
             runtimeSettings,
             profile.name,
-            profile.description,
+            semanticContext,
             finalAnchorPath,
             bestAnchorModel,
             negativePrompt,
@@ -7323,7 +7507,13 @@ export function ComfyPipelinePanel() {
         extraCharacterNames: uniqueEntities(profiles.map((profile) => profile.name).filter(Boolean)),
         characterContexts: Object.fromEntries(
           profiles
-            .map((profile) => [normalizeEntityKey(profile.name), profile.description.trim()] as const)
+            .map(
+              (profile) =>
+                [
+                  normalizeEntityKey(profile.name),
+                  mergeCharacterSemanticContext(profile.description, profile.voiceProfile)
+                ] as const
+            )
             .filter((entry) => entry[0] && entry[1])
         )
       });
