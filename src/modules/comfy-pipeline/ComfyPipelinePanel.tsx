@@ -510,6 +510,7 @@ function buildCharacterAdvancedWorkflowTemplateJson(
   setNodeWidgets(281, [DEFAULT_CHARACTER_ADVANCED_UNET, "fp8_e4m3fn_fast"]);
   setNodeWidgets(280, [DEFAULT_CHARACTER_ADVANCED_CLIP_L, DEFAULT_CHARACTER_ADVANCED_CLIP_T5, "flux", "default"]);
   setNodeWidgets(279, [DEFAULT_CHARACTER_ADVANCED_VAE]);
+  setNodeWidgets(314, ["disabled"]);
   setNodeWidgets(315, ["weight_patch_first", "auto"]);
   setNodeWidgets(335, ["RMBG-2.0", 1, 1024, 0, 0, "#808080", false, "Color", false]);
   setNodeWidgets(286, ["{{PROMPT}}"]);
@@ -735,6 +736,13 @@ function workflowHasKnownBrokenCharacterAdvancedDefaults(workflowJson: string): 
   if (Array.isArray(patchNode?.widgets_values)) {
     const fullLoad = patchNode.widgets_values[1];
     if (typeof fullLoad === "string" && !/^(enabled|disabled|auto)$/i.test(fullLoad.trim())) {
+      return true;
+    }
+  }
+  const sageNode = nodes.find((node) => node.id === 314 || node.type === "PathchSageAttentionKJ");
+  if (Array.isArray(sageNode?.widgets_values)) {
+    const sageMode = sageNode.widgets_values[0];
+    if (typeof sageMode === "string" && sageMode.trim().toLowerCase() !== "disabled") {
       return true;
     }
   }
