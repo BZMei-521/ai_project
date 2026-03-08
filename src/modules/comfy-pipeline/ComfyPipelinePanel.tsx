@@ -5710,11 +5710,7 @@ export function ComfyPipelinePanel() {
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
     const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图", context);
     const characterModelForWorkflow = requestedCharacterModel;
-    const referenceEditModel = resolveMvAdapterFallbackModel(characterModelForWorkflow);
-    const referenceEditWorkflow = buildCharacterReferenceEditSingleViewWorkflowTemplateJson(referenceEditModel);
-    if (referenceEditModel !== characterModelForWorkflow) {
-      appendLog(`角色三视图简化整板补全固定使用角色图生图模型：${characterModelForWorkflow} -> ${referenceEditModel}`, "info");
-    }
+    const allowAutomaticFallbackRepair = false;
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       [
@@ -5750,6 +5746,8 @@ export function ComfyPipelinePanel() {
       if (!reusableFrontReferencePath) {
         throw new Error("角色简化三视图补全失败：缺少可复用的正视锚点图");
       }
+      const referenceEditModel = resolveMvAdapterFallbackModel(characterModelForWorkflow);
+      const referenceEditWorkflow = buildCharacterReferenceEditSingleViewWorkflowTemplateJson(referenceEditModel);
       const normalizedFrontPath = (await normalizeCharacterAnchorBackground(reusableFrontReferencePath, "white")) || reusableFrontReferencePath;
       const runSingleViewFallback = async (view: "side" | "back", viewSeedBase: number) => {
         let bestCandidate:
@@ -6101,6 +6099,17 @@ export function ComfyPipelinePanel() {
     try {
       return await runAdvancedThreeViewsWithAutoRetry(baseSeed);
     } catch (error) {
+      if (!allowAutomaticFallbackRepair) {
+        appendLog(`双参考三视图失败，已停止自动 fallback 以避免生成错误三视图：${name}`, "error");
+        if (shouldFallbackAssetWorkflow(error)) {
+          throw new Error(
+            `角色双参考三视图工作流不可用，已保留 front 锚点并停止自动 fallback 以避免生成垃圾图。原始错误：${String(error)}。请先确认本地 three_view 工作流或手动在人物库中生成三视图。`
+          );
+        }
+        throw new Error(
+          `双参考三视图未达标，已保留 front 锚点并停止自动 fallback 以避免生成垃圾图。原始错误：${String(error)}`
+        );
+      }
       appendLog(
         shouldFallbackAssetWorkflow(error)
           ? `双参考三视图工作流不可用，已切换单视角参考补全：${name}`

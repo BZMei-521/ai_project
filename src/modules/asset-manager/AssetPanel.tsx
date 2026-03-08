@@ -807,12 +807,6 @@ export function AssetPanel() {
         characterTemplatePreset,
         characterRenderPreset
       );
-      const referenceEditWorkflow = buildCharacterReferenceEditFallbackWorkflowTemplateJson(
-        comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
-      );
-      const referenceEditModel = resolveMvAdapterFallbackModel(
-        comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
-      );
       const advancedWorkflow =
         comfySettings.characterWorkflowJson?.trim() || buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
       const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(comfySettings);
@@ -887,54 +881,11 @@ export function AssetPanel() {
           "success"
         );
       } catch (advancedError) {
-        let fallbackError: unknown = null;
-        let resolvedSplit: Awaited<ReturnType<typeof splitCharacterThreeViewSheet>> | null = null;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          try {
-            const fallbackInputPath = await buildCharacterFallbackTriptychInput(frontAnchorPath, referenceEditModel, attempt);
-            const prompt = buildCharacterFallbackSheetPrompt(trimmedName, context, attempt);
-            const generated = await generateShotAsset(
-              comfySettings,
-              makeAssetGenerationShot(
-                currentSequenceId,
-                `asset_panel_char_${batchId}_fallback_sheet_${attempt + 1}`,
-                `${trimmedName} 简化三视图整板`,
-                prompt,
-                "",
-                batchId + 9000 + attempt * 997
-              ),
-              0,
-              "image",
-              [],
-              [],
-              {
-                workflowJsonOverride: referenceEditWorkflow,
-                tokenOverrides: {
-                  STORYBOARD_IMAGE_MODEL: referenceEditModel,
-                  PROMPT: prompt,
-                  FRAME_IMAGE_PATH: fallbackInputPath,
-                  NEGATIVE_PROMPT: buildCharacterFallbackSheetNegativePrompt(baseNegativePrompt)
-                }
-              }
-            );
-            const sheetPath = generated.localPath || generated.previewUrl;
-            if (!sheetPath) {
-              throw new Error("简化三视图整板生成成功，但没有可用输出路径");
-            }
-            resolvedSplit = await splitCharacterThreeViewSheet(sheetPath);
-            break;
-          } catch (error) {
-            fallbackError = error;
-          }
-        }
-        if (!resolvedSplit) {
-          throw (fallbackError instanceof Error ? fallbackError : new Error("简化三视图整板补全失败"));
-        }
         setFrontPath(frontAnchorPath);
-        setSidePath(resolvedSplit.sidePath);
-        setBackPath(resolvedSplit.backPath);
+        setSidePath("");
+        setBackPath("");
         setFilePath(frontAnchorPath);
-        pushToast(`高级整板失败，已切换简化整板补全：${String(advancedError)}`, "warning");
+        pushToast(`高级整板失败，已保留正视锚点并停止自动 fallback：${String(advancedError)}`, "warning");
       }
     } catch (error) {
       pushToast(`角色三视图生成失败：${String(error)}`, "error");
