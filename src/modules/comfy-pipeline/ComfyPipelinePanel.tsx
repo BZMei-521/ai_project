@@ -171,7 +171,7 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
-const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 20;
+const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 18;
 const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
@@ -4187,7 +4187,7 @@ export function ComfyPipelinePanel() {
       layout && layout.mediumComponents > 3
         ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
         : "",
-      layout && layout.secondaryForegroundRatio > 0.18
+      layout && layout.secondaryForegroundRatio > 0.22
         ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
         : "",
       layout && layout.detachedForegroundRatio > 0.22
@@ -4212,7 +4212,7 @@ export function ComfyPipelinePanel() {
         ? 40 + (layout.significantComponents - 1) * 16
         : 0) +
       (layout?.mediumComponents && layout.mediumComponents > 3 ? 14 + (layout.mediumComponents - 3) * 10 : 0) +
-      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.12) * 180 : 0) +
+      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.16) * 180 : 0) +
       (layout ? Math.max(0, layout.detachedForegroundRatio - 0.14) * 170 : 0) +
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.1) * 140 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
