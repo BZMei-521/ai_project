@@ -322,7 +322,7 @@ function normalizeStoryboardStillRenderSize(
   if (storyboardMode !== "mature_asset_guided") {
     return { width: snapRenderSize(width), height: snapRenderSize(height) };
   }
-  const modelName = settings.storyboardImageModelName?.trim() || "";
+  const modelName = resolveStoryboardImageModel(settings);
   const isSdxl = looksLikeSdxlCheckpoint(modelName);
   const maxSide = isSdxl ? STORYBOARD_SDXL_MAX_SIDE : STORYBOARD_SD15_MAX_SIDE;
   const minSide = isSdxl ? STORYBOARD_SDXL_MIN_SIDE : STORYBOARD_SD15_MIN_SIDE;
@@ -344,6 +344,21 @@ function normalizeStoryboardStillRenderSize(
   outWidth = snapRenderSize(outWidth * finalScale);
   outHeight = snapRenderSize(outHeight * finalScale);
   return { width: outWidth, height: outHeight };
+}
+
+function resolveStoryboardImageModel(
+  settings: ComfySettings,
+  hasCharacterRefs = false
+): string {
+  const storyboardModel = settings.storyboardImageModelName?.trim() || "";
+  const characterModel = settings.characterAssetModelName?.trim() || "";
+  const hasExplicitStoryboardModel =
+    storyboardModel.length > 0 && storyboardModel.toLowerCase() !== "sd_xl_base_1.0.safetensors";
+  if (hasExplicitStoryboardModel) return storyboardModel;
+  if (hasCharacterRefs && characterModel) return characterModel;
+  if (storyboardModel) return storyboardModel;
+  if (characterModel) return characterModel;
+  return "sd_xl_base_1.0.safetensors";
 }
 
 export function defaultVideoGenerationMode(): "comfy" | "local_motion" {
@@ -2083,61 +2098,61 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Mature baseline: scene-first, then lock both characters with primary views.
-        char1Primary: 0.62,
-        char1Secondary: 0.02,
-        char2Primary: 0.58,
-        denoise: 0.44,
-        steps: 30,
-        cfg: 5.9
+        // Scene-led shot with two characters: keep environment, but lock both identities hard.
+        char1Primary: 0.92,
+        char1Secondary: 0.08,
+        char2Primary: 0.88,
+        denoise: 0.3,
+        steps: 26,
+        cfg: 5
       };
     }
     return {
-      char1Primary: 0.46,
-      char1Secondary: 0.02,
-      char2Primary: 0.42,
-      denoise: 0.46,
-      steps: 28,
-      cfg: 6
+      char1Primary: 0.76,
+      char1Secondary: 0.04,
+      char2Primary: 0.72,
+      denoise: 0.34,
+      steps: 24,
+      cfg: 5.1
     };
   }
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.72,
-        char1Secondary: 0.03,
+        char1Primary: 0.96,
+        char1Secondary: 0.1,
         char2Primary: 0,
-        denoise: 0.44,
-        steps: 30,
-        cfg: 5.9
+        denoise: 0.28,
+        steps: 26,
+        cfg: 4.9
       };
     }
     return {
-      char1Primary: 0.48,
-      char1Secondary: 0.02,
+      char1Primary: 0.78,
+      char1Secondary: 0.04,
       char2Primary: 0,
-      denoise: 0.46,
-      steps: 28,
-      cfg: 6
+      denoise: 0.34,
+      steps: 24,
+      cfg: 5.1
     };
   }
   if (hasSecondCharacter) {
     return {
-      char1Primary: 0.62,
-      char1Secondary: 0.02,
-      char2Primary: 0.58,
-      denoise: 0.56,
-      steps: 32,
-      cfg: 6.3
+      char1Primary: 0.9,
+      char1Secondary: 0.08,
+      char2Primary: 0.86,
+      denoise: 0.34,
+      steps: 28,
+      cfg: 5.2
     };
   }
   return {
-    char1Primary: 0.66,
-    char1Secondary: 0.03,
+    char1Primary: 0.94,
+    char1Secondary: 0.1,
     char2Primary: 0,
-    denoise: 0.56,
-    steps: 32,
-    cfg: 6.3
+    denoise: 0.32,
+    steps: 28,
+    cfg: 5.2
   };
 }
 
@@ -2225,6 +2240,7 @@ function buildShotReferenceDirective(
     }
     lines.push("人物构图硬约束：人物必须在中前景清晰可见，优先完整半身或全身，不得退化成远景小人影、剪影或被场景主体遮挡。");
     lines.push("人物-场景物理约束：人物脚部与地面接触关系自然，接触阴影方向与场景主光一致，不允许漂浮、穿模、比例失真。");
+    lines.push("人物风格硬约束：禁止把角色改成室内写真、自拍、时装摆拍、裸露画面或无关陌生人，必须保持参考角色的身份与服装。");
   }
   if (continuityDirective && !sceneAsset && characterAssets.length === 0) {
     lines.push(continuityDirective);
@@ -3407,9 +3423,9 @@ function inferPromptTokens(
   const normalizedChar1PrimaryPath = char1PrimaryPath.trim();
   const normalizedChar1SecondaryPath = char1SecondaryPath.trim();
   const normalizedChar2PrimaryPath = char2PrimaryPath.trim();
-  const minChar1PrimaryWeight = hasCharacters ? (hasSecondCharacter ? 0.5 : 0.56) : 0;
-  const minChar1SecondaryWeight = useSecondaryCharacterView ? 0.02 : 0;
-  const minChar2PrimaryWeight = hasSecondCharacter ? 0.46 : 0;
+  const minChar1PrimaryWeight = hasCharacters ? (hasSecondCharacter ? 0.82 : 0.88) : 0;
+  const minChar1SecondaryWeight = useSecondaryCharacterView ? 0.08 : 0;
+  const minChar2PrimaryWeight = hasSecondCharacter ? 0.78 : 0;
   const effectiveChar1PrimaryWeight = normalizedChar1PrimaryPath
     ? Math.max(storyboardWeights.char1Primary, minChar1PrimaryWeight)
     : 0;
@@ -3476,6 +3492,18 @@ function inferPromptTokens(
       : "";
   const structureChaosNegativePrompt =
     "surreal abstract texture, warped geometry, twisted architecture, melted buildings, bent horizon, fisheye distortion, random scribble lines, chaotic glitch artifacts, smeared details";
+  const identityDriftNegativePrompt =
+    characterAssets.length > 0
+      ? "unrelated character, wrong character identity, wrong face, wrong hairstyle, changed outfit, changed costume, changed color palette, different person, random passerby, stranger, background extra person"
+      : "";
+  const nsfwNegativePrompt =
+    characterAssets.length > 0
+      ? "nude, nsfw, explicit, erotic, porn, lingerie, bikini, underwear, exposed breasts, exposed nipples, exposed genitals, topless, bare chest, cleavage focus"
+      : "";
+  const portraitDriftNegativePrompt =
+    characterAssets.length > 0
+      ? "indoor selfie, bedroom portrait, glamour photo, fashion editorial, studio portrait crop, sitting on sofa, seated photo pose"
+      : "";
   const sanitizedShotNegativePrompt = sanitizeStoryboardNegativePrompt(
     shot.negativePrompt?.trim() || "",
     characterAssets.length > 0
@@ -3486,10 +3514,14 @@ function inferPromptTokens(
     characterCropNegativePrompt,
     characterChaosNegativePrompt,
     characterVisibilityNegativePrompt,
-    structureChaosNegativePrompt
+    structureChaosNegativePrompt,
+    identityDriftNegativePrompt,
+    nsfwNegativePrompt,
+    portraitDriftNegativePrompt
   ]
     .filter((item) => item.length > 0)
     .join(", ");
+  const effectiveStoryboardModel = resolveStoryboardImageModel(settings, characterAssets.length > 0);
   const baseTokens: Record<string, string> = {
     SHOT_ID: shot.id,
     SHOT_TITLE: shot.title,
@@ -3561,7 +3593,7 @@ function inferPromptTokens(
     STORYBOARD_DENOISE: String(storyboardWeights.denoise),
     STORYBOARD_STEPS: String(storyboardWeights.steps),
     STORYBOARD_CFG: String(storyboardWeights.cfg),
-    STORYBOARD_IMAGE_MODEL: settings.storyboardImageModelName?.trim() || "sd_xl_base_1.0.safetensors",
+    STORYBOARD_IMAGE_MODEL: effectiveStoryboardModel,
     FRAME_IMAGE_PATH: defaultFramePath,
     FIRST_FRAME_PATH: firstFramePath,
     LAST_FRAME_PATH: lastFramePath,
