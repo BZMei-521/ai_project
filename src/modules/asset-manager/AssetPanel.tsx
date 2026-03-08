@@ -357,11 +357,11 @@ function buildCharacterViewPrompt(name: string, context: string, view: "front" |
         ? "strict right profile orthographic view, nose points right, only one eye visible, shoulders and hips stacked in profile"
         : "strict back orthographic view, facing away from camera, no visible face, shoulders level";
   return [
-    `角色设定三视图，${viewLabel}，单人全身，角色：${name}。`,
+    `单张角色${viewLabel}，单人全身，角色：${name}。`,
     sanitizedContext,
-    "设定板用途，标准正交视角，完整服装，完整鞋靴，头顶到脚底完整入镜。",
+    "单张单人视角图，标准正交视角，完整服装，完整鞋靴，头顶到脚底完整入镜。",
     "中性站姿，双臂自然下垂且略微离开身体，双腿自然站立，禁止剧情动作和时装摆拍。",
-    "纯净中性背景，无道具，无环境叙事，无其他人物，无拼版，无分屏。",
+    "纯净中性背景，无道具，无环境叙事，无其他人物，无拼版，无分屏，无设定板排版。",
     "禁止漂浮宠物、悬浮武器、额外徽记、头像小窗、说明文字、标注引线、局部放大框。",
     "同一角色身份稳定，脸型、发型、体型、服装款式与配色必须一致。",
     viewConstraint
@@ -378,12 +378,13 @@ function buildCharacterViewNegativePrompt(view: "front" | "side" | "back", baseN
   return [
     baseNegativePrompt,
     viewConstraint,
-    "two characters, two bodies, clone, mirrored twin, duplicate body, split composition, character sheet layout, turnaround sheet, collage",
+    "two characters, two bodies, clone, mirrored twin, duplicate body, split composition, character sheet layout, turnaround sheet, turnaround chart, triptych, three figures, three bodies, figure lineup, model lineup, character lineup, collage",
     "close-up portrait, bust shot, upper body only, cowboy shot, cropped body, cut off head, cut off feet, oversized subject",
     "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra arms, extra legs, malformed hands, fused fingers",
     "crossed arms, folded arms, hands behind back, hands in pockets, leaning pose, contrapposto, runway pose, bent knee, tilted shoulders, tilted hips",
     "dramatic perspective, foreshortening, fisheye, dutch angle, low angle shot, high angle shot, scene background clutter",
-    "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text"
+    "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text",
+    "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh"
   ]
     .filter((item) => item.trim().length > 0)
     .join(", ");
@@ -475,16 +476,23 @@ function buildCharacterThreeViewSheetPrompt(name: string, context: string, backg
 }
 
 function buildCharacterViewEditRetryPrompt(name: string, context: string, view: "side" | "back", attempt: number): string {
+  const sanitizedContext = sanitizeCharacterViewContext(context);
+  const viewInstruction =
+    view === "side"
+      ? "Render one single full-body human character in a strict right-facing profile. Exactly one body in the entire image."
+      : "Render one single full-body human character in a strict back view. Exactly one body in the entire image.";
   const retryTuning =
     attempt <= 0
       ? "Keep generous blank margin around the whole body. Full body must be entirely inside frame."
       : attempt === 1
         ? "Zoom out slightly. Character should occupy less frame area. Keep one clean silhouette only and remove any duplicate limbs or duplicate figure."
-        : "Strict orthographic reference image, one angle only, one person only, plain studio sheet, full body centered, no crop, no decorative effects.";
+        : "Single full-body figure only, centered, no crop, no decorative effects, no second figure, no ghosted duplicate.";
   return [
-    buildCharacterViewPrompt(name, context, view),
+    `角色：${name}`,
+    sanitizedContext,
+    viewInstruction,
     "Use the reference image as the exact identity source. Keep the same face, hairstyle, body proportions, clothing structure, accessories, colors, and silhouette. Do not redesign the character.",
-    "Render exactly one isolated human character on a plain light grey background. No lineup, no character sheet, no extra panel, no annotation, no frame, no scenery.",
+    "Render exactly one isolated human character on a plain light grey background. Not a lineup, not a character sheet, not a turnaround chart, not a triptych, not a split panel, not an anatomy guide.",
     retryTuning
   ]
     .filter((item) => item.trim().length > 0)

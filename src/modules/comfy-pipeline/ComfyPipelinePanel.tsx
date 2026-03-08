@@ -4916,8 +4916,8 @@ export function ComfyPipelinePanel() {
       "exactly one human character, not an object, not a vehicle, not a statue, not an animal",
       "no perspective exaggeration",
       "flat camera, eye-level camera, centered framing",
-      "single panel character reference, no sheet layout, no split layout",
-      "full body centered, exactly one person",
+      "single isolated full-body character, no sheet layout, no split layout, no turnaround chart, no lineup",
+      "full body centered, exactly one person, exactly one body in the entire image",
       framingInstruction,
       "clear margin around head, hands, feet, hair, and clothing silhouette",
       "leave generous blank background on all four sides",
@@ -5040,22 +5040,33 @@ export function ComfyPipelinePanel() {
     view: "side" | "back",
     attempt: number
   ) => {
-    const basePrompt = buildCharacterViewPrompt(name, context, view);
+    const sanitizedContext = sanitizeCharacterViewContext(context);
+    const viewInstruction =
+      view === "side"
+        ? "Render one single full-body human character in a strict right-facing profile. Exactly one body in the entire image."
+        : "Render one single full-body human character in a strict back view. Exactly one body in the entire image.";
     const identityInstruction =
       "Use the reference image as the exact identity source. Keep the same face, hairstyle, body proportions, clothing structure, accessories, colors, and silhouette. Do not redesign the character.";
     const sheetConstraint =
-      "Render exactly one isolated human character on a plain light grey background. No lineup, no character sheet, no extra panel, no annotation, no frame, no scenery.";
+      "Render exactly one isolated human character on a plain light grey background. Not a lineup, not a character sheet, not a turnaround chart, not a triptych, not a split panel, not an anatomy guide.";
     const retryTuning =
       attempt <= 0
         ? "Keep generous blank margin around the whole body. Full body must be entirely inside frame."
         : attempt === 1
           ? "Zoom out slightly. Character should occupy less frame area. Keep one clean silhouette only and remove any duplicate limbs or duplicate figure."
           : attempt === 2
-            ? "Strict orthographic reference image, one angle only, one person only, plain studio sheet, full body centered, no crop, no decorative effects."
+            ? "Single full-body figure only, centered, no crop, no decorative effects, no second figure, no ghosted duplicate."
             : attempt === 3
               ? "Keep the body rigidly aligned to the requested angle. Avoid frontal shoulder reveal, avoid face turn, avoid second arm appearing in front."
-              : "Minimal production-sheet composition. One isolated figure, smaller in frame, clean flat grey background, no poster styling.";
-    return mergePromptFragments([basePrompt, identityInstruction, sheetConstraint, retryTuning]);
+              : "Minimal studio figure composition. One isolated figure only, smaller in frame, clean flat grey background, no poster styling, no layout board.";
+    return mergePromptFragments([
+      `角色：${name}`,
+      sanitizedContext,
+      viewInstruction,
+      identityInstruction,
+      sheetConstraint,
+      retryTuning
+    ]);
   };
 
   const repairCharacterFrontReferenceCandidate = async (
@@ -5233,7 +5244,7 @@ export function ComfyPipelinePanel() {
     const clutterConstraint =
       "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text";
     const templateConstraint =
-      "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh";
+      "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh, turnaround chart, turnaround sheet, triptych, three figures, three bodies, figure lineup, model lineup, character lineup";
     return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}, ${templateConstraint}`;
   };
 
