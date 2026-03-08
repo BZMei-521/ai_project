@@ -873,6 +873,7 @@ type ProvisionCreateResult = {
   assetId: string;
   previewPaths: string[];
   reused: boolean;
+  viewState?: "front" | "threeview";
 };
 
 type ShotReferencePreview = {
@@ -6412,14 +6413,15 @@ export function ComfyPipelinePanel() {
       .map((value) => value?.trim() ?? "")
       .filter((value): value is string => Boolean(value));
 
-  const hasProvisionReadyCharacterAsset = (asset: Asset | null | undefined) => {
-    const paths = listCharacterThreeViewPaths(asset);
-    return paths.length >= 3 && new Set(paths).size >= 3;
-  };
+  const hasProvisionReadyCharacterAnchorAsset = (asset: Asset | null | undefined) =>
+    Boolean(resolveExistingCharacterAnchorPath(asset));
 
-  const findProvisionReadyCharacterAssetIdByName = (name: string) => {
+  const hasProvisionReadyCharacterThreeViewAsset = (asset: Asset | null | undefined) =>
+    Boolean(asset?.characterFrontPath?.trim() && asset?.characterSidePath?.trim() && asset?.characterBackPath?.trim());
+
+  const findProvisionReadyCharacterAnchorAssetIdByName = (name: string) => {
     const asset = findAssetByName("character", name);
-    return asset && hasProvisionReadyCharacterAsset(asset) ? asset.id : "";
+    return asset && hasProvisionReadyCharacterAnchorAsset(asset) ? asset.id : "";
   };
 
   const upsertImportedCharacterAssets = async (
@@ -6582,7 +6584,7 @@ export function ComfyPipelinePanel() {
           nextCharacterNames.push(name);
           continue;
         }
-        const resolved = override || findProvisionReadyCharacterAssetIdByName(name);
+        const resolved = override || findProvisionReadyCharacterAnchorAssetIdByName(name);
         if (resolved) {
           nextCharacterRefs.push(resolved);
         } else {
@@ -6616,20 +6618,10 @@ export function ComfyPipelinePanel() {
       };
     });
 
-  const createCharacterOrthographicContext = (name: string) =>
-    mergePromptFragments([
-      `${name} 角色设定`,
-      "标准正交三视图",
-      "完整服装",
-      "中性站姿",
-      "全身完整入镜",
-      "禁止剧情动作",
-      "禁止场景叙事"
-    ]);
-
   const createCharacterAssetIfMissing = async (
     runtimeSettings: ComfySettings,
-    name: string
+    name: string,
+    context = ""
   ): Promise<ProvisionCreateResult> => {
     const nameKey = normalizeEntityKey(name);
     const inFlight = nameKey ? characterProvisionInFlightRef.current.get(nameKey) : undefined;
@@ -6642,108 +6634,99 @@ export function ComfyPipelinePanel() {
         : null;
       const reusableFrontReferencePath = resolveExistingCharacterAnchorPath(existingAsset);
       if (existingId) {
-        const asset = existingAsset;
-        const front = asset?.characterFrontPath?.trim() || "";
-        const side = asset?.characterSidePath?.trim() || "";
-        const back = asset?.characterBackPath?.trim() || "";
-        const threeViewPaths = [front, side, back].filter((value) => value.length > 0);
-        const mode = resolveEffectiveAssetWorkflowMode(
-          "character",
-          runtimeSettings.characterAssetWorkflowMode ?? DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE,
-          runtimeSettings.characterWorkflowJson?.trim() ?? ""
-        ) as CharacterAssetWorkflowMode;
-        const strictAdvancedMode = mode === "advanced_multiview";
-        const hasDistinctThreeViews = new Set(threeViewPaths).size >= 3;
-        const hasLegacyBasicPrefix = threeViewPaths.some((value) => /character_threeview/i.test(value));
-        const hasLegacyMvPrefix = threeViewPaths.some((value) => /character_mv_/i.test(value));
-        const qualityCheck = await evaluateThreeViewQuality(threeViewPaths);
-        const hasLowVisualDiversity = qualityCheck.lowDiversity;
-        const hasLowVisualSharpness = qualityCheck.lowSharpness;
-        const hasLowOrientation = qualityCheck.lowOrientation;
-        const shouldForceRegenerate =
-          (strictAdvancedMode &&
-            (threeViewPaths.length < 3 ||
-              !hasDistinctThreeViews ||
-              hasLegacyBasicPrefix ||
-              hasLowVisualDiversity ||
-              hasLowVisualSharpness ||
-              hasLowOrientation)) ||
-          (!strictAdvancedMode &&
-            (threeViewPaths.length < 3 ||
-              !hasDistinctThreeViews ||
-              hasLegacyMvPrefix ||
-              hasLowVisualDiversity ||
-              hasLowVisualSharpness ||
-              hasLowOrientation));
-        if (!shouldForceRegenerate) {
+        const previewPaths = listCharacterThreeViewPaths(existingAsset);
+        if (hasProvisionReadyCharacterThreeViewAsset(existingAsset)) {
           return {
             assetId: existingId,
-            previewPaths: threeViewPaths,
-            reused: true
+            previewPaths:
+              previewPaths.length > 0
+                ? previewPaths
+                : [reusableFrontReferencePath].filter((value): value is string => Boolean(value)),
+            reused: true,
+            viewState: "threeview"
           };
         }
-        if (hasLowVisualDiversity) {
-          appendLog(
-            `检测到角色三视图过于相似（哈希距离：${qualityCheck.distances.join("/") || "unknown"}），已自动重建：${name}`,
-            "info"
-          );
-        }
-        if (hasLowVisualSharpness) {
-          appendLog(
-            `检测到角色三视图清晰度偏低（min=${(qualityCheck.minSharpness ?? 0).toFixed(1)}），已自动重建：${name}`,
-            "info"
-          );
-        }
-        if (hasLowOrientation) {
-          appendLog(`检测到角色三视图角度异常（${qualityCheck.orientationAlerts.join("|")}），已自动重建：${name}`, "info");
-        }
-        appendLog(`检测到旧版或异常角色三视图资产，已自动重建：${name}`, "info");
       }
       if (!reusableFrontReferencePath) {
-        const message = `角色 ${name} 缺少正视锚点图，已停止自动三视图生成。请先在人物库中为该角色提供正视参考图，再生成侧视图/背视图和分镜。`;
+        const message = `角色 ${name} 缺少正视锚点图，自动资产阶段需要先有可用的 front 锚点；front 通过后才会自动续跑三视图。请先在人物库中确认 front。`;
         appendLog(message, "error");
         throw new Error(message);
       }
-      const orthographicContext = createCharacterOrthographicContext(name);
-      const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
-      const baseSeed = stableAssetSeed(`${name}|orthographic_threeview|${styleAnchor || "default"}|character`);
-      await ensureCharacterWorkflowReady(runtimeSettings);
-      appendLog(`开始生成角色三视图：${name}`);
-      appendLog(`角色三视图已与剧情文本解绑，仅按标准正交设定生成：${name}`, "info");
-      appendLog(`角色三视图使用专用工作流：${name}`);
-      const { front, side, back } = await generateCharacterThreeViews(
-        runtimeSettings,
-        name,
-        orthographicContext,
-        baseSeed,
-        reusableFrontReferencePath
-      );
-
-      const nextAssetPatch = {
-        filePath: front.localPath || front.previewUrl,
-        characterFrontPath: front.localPath || front.previewUrl,
-        characterSidePath: side.localPath || side.previewUrl,
-        characterBackPath: back.localPath || back.previewUrl
+      const frontOnlyPatch = {
+        filePath: reusableFrontReferencePath,
+        characterFrontPath: reusableFrontReferencePath,
+        characterSidePath: existingAsset?.characterSidePath?.trim() ?? "",
+        characterBackPath: existingAsset?.characterBackPath?.trim() ?? ""
       };
       if (existingId) {
-        useStoryboardStore.getState().updateAsset(existingId, nextAssetPatch);
+        useStoryboardStore.getState().updateAsset(existingId, frontOnlyPatch);
       } else {
         addAsset({
           type: "character",
           name,
-          ...nextAssetPatch
+          ...frontOnlyPatch
         });
       }
-      const created = existingId || findAssetIdByName("character", name);
-      appendLog(`角色三视图生成成功：${name}`);
+      let created = existingId || findAssetIdByName("character", name);
+      const normalizedContext = context.trim();
+      if (!normalizedContext) {
+        appendLog(`角色正视锚点已就绪：${name}`);
+        return {
+          assetId: created,
+          previewPaths: [reusableFrontReferencePath].filter((value): value is string => Boolean(value)),
+          reused: false,
+          viewState: "front"
+        };
+      }
+      appendLog(`角色正视锚点已通过质检，开始自动续跑三视图：${name}`, "info");
+      try {
+        const seedBase = stableAssetSeed(
+          `${name}|character_threeview_autocontinue|${normalizedContext}|${reusableFrontReferencePath}`
+        );
+        const { front, side, back } = await generateCharacterThreeViews(
+          runtimeSettings,
+          name,
+          normalizedContext,
+          seedBase,
+          reusableFrontReferencePath
+        );
+        const generatedFrontPath = (front.localPath || front.previewUrl || reusableFrontReferencePath).trim();
+        const generatedSidePath = (side.localPath || side.previewUrl || "").trim();
+        const generatedBackPath = (back.localPath || back.previewUrl || "").trim();
+        const threeViewPatch = {
+          filePath: generatedFrontPath,
+          characterFrontPath: generatedFrontPath,
+          characterSidePath: generatedSidePath,
+          characterBackPath: generatedBackPath
+        };
+        if (created) {
+          useStoryboardStore.getState().updateAsset(created, threeViewPatch);
+        } else {
+          addAsset({
+            type: "character",
+            name,
+            ...threeViewPatch
+          });
+          created = findAssetIdByName("character", name);
+        }
+        appendLog(`角色三视图自动续跑成功：${name}`, "info");
+        return {
+          assetId: created,
+          previewPaths: [generatedFrontPath, generatedSidePath, generatedBackPath].filter(
+            (value): value is string => Boolean(value)
+          ),
+          reused: false,
+          viewState: "threeview"
+        };
+      } catch (error) {
+        appendLog(`角色三视图自动续跑失败，已保留 front 锚点：${name}，${String(error)}`, "error");
+      }
+      appendLog(`角色正视锚点已就绪：${name}`);
       return {
         assetId: created,
-        previewPaths: [
-          front.localPath || front.previewUrl,
-          side.localPath || side.previewUrl,
-          back.localPath || back.previewUrl
-        ].filter((value): value is string => Boolean(value)),
-        reused: false
+        previewPaths: [reusableFrontReferencePath].filter((value): value is string => Boolean(value)),
+        reused: false,
+        viewState: "front"
       };
     })();
 
@@ -6927,6 +6910,7 @@ export function ComfyPipelinePanel() {
       bindShots?: boolean;
       onProgress?: (current: number, total: number, message: string) => void;
       extraCharacterNames?: string[];
+      characterContexts?: Record<string, string>;
     }
   ) => {
     const characterIdMap = new Map<string, string>();
@@ -6960,7 +6944,10 @@ export function ComfyPipelinePanel() {
         kind: task.kind,
         name: task.name,
         status: "pending",
-        detail: task.kind === "character" ? "已识别，等待生成角色三视图" : "已识别，等待生成场景天空盒",
+        detail:
+          task.kind === "character"
+            ? "已识别，等待生成角色正视锚点；合格后自动续跑三视图"
+            : "已识别，等待生成场景天空盒",
         thumbs: []
       });
     }
@@ -6971,34 +6958,40 @@ export function ComfyPipelinePanel() {
       if (!key || characterIdMap.has(key)) continue;
       if (failedCharacterKeys.has(key)) continue;
       if (isSuspiciousCharacterCandidate(name)) {
-        appendLog(`角色三视图跳过：${name}（名称可疑，已拦截）`, "error");
+        appendLog(`角色正视锚点跳过：${name}（名称可疑，已拦截）`, "error");
         upsertProvisionPreview({
           key: `character:${key}`,
           kind: "character",
           name,
           status: "skipped",
-          detail: "名称可疑，已跳过角色三视图生成",
+          detail: "名称可疑，已跳过角色正视锚点生成",
           thumbs: []
         });
         continue;
       }
       progressIndex += 1;
-      options?.onProgress?.(progressIndex, tasks.length, `角色三视图：${name}`);
+      options?.onProgress?.(progressIndex, tasks.length, `角色 front/三视图：${name}`);
       upsertProvisionPreview({
         key: `character:${key}`,
         kind: "character",
         name,
         status: "running",
-        detail: "正在生成三视图",
+        detail: "正在检查 front，并在合格后自动续跑三视图",
         thumbs: []
       });
       try {
-        const result = await createCharacterAssetIfMissing(runtimeSettings, name);
+        const result = await createCharacterAssetIfMissing(
+          runtimeSettings,
+          name,
+          options?.characterContexts?.[key]?.trim() ?? ""
+        );
         if (result.assetId) {
           characterIdMap.set(key, result.assetId);
           if (result.reused) {
             reusedCharacters += 1;
-            appendLog(`复用已有角色资产：${name}`);
+            appendLog(
+              result.viewState === "threeview" ? `复用已有角色三视图：${name}` : `复用已有角色正视锚点：${name}`
+            );
           } else {
             createdCharacters += 1;
           }
@@ -7007,12 +7000,19 @@ export function ComfyPipelinePanel() {
             kind: "character",
             name,
             status: result.reused ? "reused" : "success",
-            detail: result.reused ? "复用已有角色三视图" : "角色三视图生成完成",
+            detail:
+              result.reused
+                ? result.viewState === "threeview"
+                  ? "复用已有角色三视图"
+                  : "复用已有角色正视锚点"
+                : result.viewState === "threeview"
+                  ? "front 已通过，角色三视图生成完成"
+                  : "角色正视锚点生成完成，三视图未续跑",
             thumbs: result.previewPaths
           });
         }
       } catch (error) {
-        appendLog(`角色三视图生成失败：${name}，${String(error)}`, "error");
+        appendLog(`角色正视锚点生成失败：${name}，${String(error)}`, "error");
         failedCharacterKeys.add(key);
         upsertProvisionPreview({
           key: `character:${key}`,
@@ -7117,7 +7117,7 @@ export function ComfyPipelinePanel() {
           [
             ...item.characterRefs,
             ...item.characterNames
-              .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findProvisionReadyCharacterAssetIdByName(name))
+              .map((name) => characterIdMap.get(normalizeEntityKey(name)) ?? findProvisionReadyCharacterAnchorAssetIdByName(name))
               .filter((value): value is string => Boolean(value))
           ].filter(Boolean)
         );
@@ -7208,11 +7208,16 @@ export function ComfyPipelinePanel() {
       return;
     }
     setPhase("running");
-    setPipelineState("自动资产生成：预生成角色三视图与场景天空盒");
+    setPipelineState("自动资产生成：先补角色正视锚点，合格后自动续跑三视图与场景天空盒");
     try {
       const summary = await provisionAssetsForItems(items, runtimeSettings, {
         bindShots: true,
-        extraCharacterNames: uniqueEntities(profiles.map((profile) => profile.name).filter(Boolean))
+        extraCharacterNames: uniqueEntities(profiles.map((profile) => profile.name).filter(Boolean)),
+        characterContexts: Object.fromEntries(
+          profiles
+            .map((profile) => [normalizeEntityKey(profile.name), profile.description.trim()] as const)
+            .filter((entry) => entry[0] && entry[1])
+        )
       });
       appendLog(
         `自动资产生成与镜头绑定完成：新建角色 ${summary.createdCharacters} / 复用角色 ${summary.reusedCharacters} / 新建天空盒 ${summary.createdSkyboxes} / 复用天空盒 ${summary.reusedSkyboxes}`
@@ -7283,7 +7288,7 @@ export function ComfyPipelinePanel() {
 
     const label =
       mode === "characters"
-        ? `${sourceLabel}预生成角色三视图`
+        ? `${sourceLabel}预生成角色正视锚点（合格后自动续跑三视图）`
         : mode === "skyboxes"
           ? `${sourceLabel}预生成场景天空盒`
           : `${sourceLabel}预生成缺失资产`;
@@ -8510,8 +8515,8 @@ export function ComfyPipelinePanel() {
       }
       setPhase("running");
       if (!skipProvision) {
-        appendLog("分镜图前置资产阶段已启用：将先检查角色三视图与场景天空盒");
-        setPipelineState("分镜图前置：准备生成角色三视图与场景天空盒");
+        appendLog("分镜图前置资产阶段已启用：将先检查角色正视锚点与场景天空盒");
+        setPipelineState("分镜图前置：准备生成角色正视锚点与场景天空盒");
         const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, runtimeSettings, "分镜图前置资产生成");
         if (!provisionOk) {
           appendLog("分镜图生成中断：前置资产生成未完成", "error");
@@ -8940,10 +8945,10 @@ export function ComfyPipelinePanel() {
     appendLog(`一键生成整片开始，共 ${shotsForRun.length} 个镜头`);
     pushToast("已开始一键生成整片", "success");
     try {
-      setPipelineState("一键生成整片：步骤 1/6 预生成角色三视图与场景天空盒");
+      setPipelineState("一键生成整片：步骤 1/6 预生成角色正视锚点与场景天空盒");
       setRunAllProgress(8);
-      setRunAllStage("步骤 1/6 预生成角色三视图与场景天空盒");
-      appendLog("一键生成前置资产阶段已启用：将先检查角色三视图与场景天空盒");
+      setRunAllStage("步骤 1/6 预生成角色正视锚点与场景天空盒");
+      appendLog("一键生成前置资产阶段已启用：将先检查角色正视锚点与场景天空盒");
       const provisionOk = await ensureProvisionedAssetsForCurrentShots(shotsForRun, settings, "一键生成前置资产生成");
       if (!provisionOk) {
         appendLog("一键生成提示：前置资产阶段未完成，继续执行后续分镜/视频流程", "error");
@@ -10822,7 +10827,7 @@ export function ComfyPipelinePanel() {
                     }
                     type="button"
                   >
-                    预生成缺失角色三视图
+                    预生成缺失角色正视锚点
                   </button>
                   <button
                     className="btn-ghost"
@@ -11196,7 +11201,7 @@ export function ComfyPipelinePanel() {
                     }
                     type="button"
                   >
-                    预生成缺失角色三视图
+                    预生成缺失角色正视锚点
                   </button>
                   <button
                     className="btn-ghost"
