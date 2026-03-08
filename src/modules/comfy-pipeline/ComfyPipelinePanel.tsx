@@ -4262,12 +4262,12 @@ export function ComfyPipelinePanel() {
     const { widthRatio, heightRatio } = layout.bbox;
     const { foregroundRatio } = layout;
     if (view === "side") {
-      return heightRatio > 0.66 || widthRatio > 0.42 || foregroundRatio > 0.14;
+      return heightRatio > 0.7 || widthRatio > 0.46 || foregroundRatio > 0.17;
     }
     if (view === "back") {
-      return heightRatio > 0.68 || widthRatio > 0.5 || foregroundRatio > 0.15;
+      return heightRatio > 0.72 || widthRatio > 0.54 || foregroundRatio > 0.18;
     }
-    return heightRatio > 0.68 || widthRatio > 0.48 || foregroundRatio > 0.15;
+    return heightRatio > 0.72 || widthRatio > 0.52 || foregroundRatio > 0.18;
   };
 
   const evaluateThreeViewQuality = async (paths: string[]) => {
@@ -4294,7 +4294,7 @@ export function ComfyPipelinePanel() {
     if (typeof frontSymmetry === "number" && frontSymmetry < 0.66) {
       orientationAlerts.push(`front_symmetry_low=${frontSymmetry.toFixed(2)}`);
     }
-    if (typeof sideSymmetry === "number" && sideSymmetry > 0.95) {
+    if (typeof sideSymmetry === "number" && sideSymmetry > 0.985) {
       orientationAlerts.push(`side_not_profile(sym=${sideSymmetry.toFixed(2)})`);
     }
     if (typeof backSymmetry === "number" && backSymmetry < 0.72) {
@@ -4309,25 +4309,25 @@ export function ComfyPipelinePanel() {
       ] as const
     ).forEach(([label, layout]) => {
       if (!layout) return;
-      if (layout.significantComponents > 1) {
+      if (layout.significantComponents > 2) {
         layoutAlerts.push(`${label}_multi_blob=${layout.significantComponents}`);
       }
-      if (layout.mediumComponents > 3) {
+      if (layout.mediumComponents > 5) {
         layoutAlerts.push(`${label}_multi_cluster=${layout.mediumComponents}`);
       }
-      if (layout.secondaryForegroundRatio > 0.14) {
+      if (layout.secondaryForegroundRatio > 0.24) {
         layoutAlerts.push(`${label}_secondary_fg=${layout.secondaryForegroundRatio.toFixed(2)}`);
       }
-      if (layout.detachedForegroundRatio > 0.18) {
+      if (layout.detachedForegroundRatio > 0.28) {
         layoutAlerts.push(`${label}_detached_fg=${layout.detachedForegroundRatio.toFixed(2)}`);
       }
-      if (layout.edgeForegroundRatio > 0.26) {
+      if (layout.edgeForegroundRatio > 0.32) {
         layoutAlerts.push(`${label}_edge_clutter=${layout.edgeForegroundRatio.toFixed(2)}`);
       }
       if (isLayoutTooTight(layout, label)) {
         layoutAlerts.push(`${label}_touching_edge`);
       }
-      if (layout.bbox.heightRatio < 0.6) {
+      if (layout.bbox.heightRatio < 0.52) {
         layoutAlerts.push(`${label}_subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     });
@@ -4373,7 +4373,7 @@ export function ComfyPipelinePanel() {
       if (view === "front" && symmetry < 0.66) {
         issues.push(`front_symmetry_low=${symmetry.toFixed(2)}`);
       }
-      if (view === "side" && symmetry > 0.95) {
+      if (view === "side" && symmetry > 0.985) {
         issues.push(`side_not_profile(sym=${symmetry.toFixed(2)})`);
       }
       if (view === "back" && symmetry < 0.72) {
@@ -4381,25 +4381,25 @@ export function ComfyPipelinePanel() {
       }
     }
     if (layout) {
-      if (layout.significantComponents > 1) {
+      if (layout.significantComponents > 2) {
         issues.push(`multi_blob=${layout.significantComponents}`);
       }
-      if (layout.mediumComponents > 3) {
+      if (layout.mediumComponents > 5) {
         issues.push(`multi_cluster=${layout.mediumComponents}`);
       }
-      if (layout.secondaryForegroundRatio > 0.14) {
+      if (layout.secondaryForegroundRatio > 0.24) {
         issues.push(`secondary_fg=${layout.secondaryForegroundRatio.toFixed(2)}`);
       }
-      if (layout.detachedForegroundRatio > 0.18) {
+      if (layout.detachedForegroundRatio > 0.28) {
         issues.push(`detached_fg=${layout.detachedForegroundRatio.toFixed(2)}`);
       }
-      if (layout.edgeForegroundRatio > 0.26) {
+      if (layout.edgeForegroundRatio > 0.32) {
         issues.push(`edge_clutter=${layout.edgeForegroundRatio.toFixed(2)}`);
       }
       if (isLayoutTooTight(layout, view)) {
         issues.push("touching_edge");
       }
-      if (layout.bbox.heightRatio < 0.58) {
+      if (layout.bbox.heightRatio < 0.5) {
         issues.push(`subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     }
