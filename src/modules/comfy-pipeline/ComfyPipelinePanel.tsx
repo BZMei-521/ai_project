@@ -3876,13 +3876,15 @@ export function ComfyPipelinePanel() {
     const nearDuplicatePairs = distances.filter((distance) => distance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD).length;
     const [frontSideDistance, frontBackDistance, sideBackDistance] = distances;
     const strictOrientationGapTooSmall =
-      frontSideDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 6 ||
-      frontBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 8 ||
-      sideBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 4;
+      frontSideDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 2 ||
+      frontBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 3 ||
+      sideBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1;
     const lowDiversity =
       nearDuplicatePairs >= 2 ||
-      Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 4 ||
-      strictOrientationGapTooSmall;
+      Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 2 ||
+      (strictOrientationGapTooSmall &&
+        nearDuplicatePairs >= 1 &&
+        Math.min(frontSideDistance, frontBackDistance, sideBackDistance) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD);
     return { inspected: true, lowDiversity, distances };
   };
 
@@ -4292,7 +4294,7 @@ export function ComfyPipelinePanel() {
     if (typeof frontSymmetry === "number" && frontSymmetry < 0.66) {
       orientationAlerts.push(`front_symmetry_low=${frontSymmetry.toFixed(2)}`);
     }
-    if (typeof sideSymmetry === "number" && sideSymmetry > 0.9) {
+    if (typeof sideSymmetry === "number" && sideSymmetry > 0.95) {
       orientationAlerts.push(`side_not_profile(sym=${sideSymmetry.toFixed(2)})`);
     }
     if (typeof backSymmetry === "number" && backSymmetry < 0.72) {
@@ -4371,7 +4373,7 @@ export function ComfyPipelinePanel() {
       if (view === "front" && symmetry < 0.66) {
         issues.push(`front_symmetry_low=${symmetry.toFixed(2)}`);
       }
-      if (view === "side" && symmetry > 0.9) {
+      if (view === "side" && symmetry > 0.95) {
         issues.push(`side_not_profile(sym=${symmetry.toFixed(2)})`);
       }
       if (view === "back" && symmetry < 0.72) {
