@@ -93,6 +93,14 @@ const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [
   "v1-5-pruned-emaonly-fp16.safetensors",
   "sd_xl_base_1.0.safetensors"
 ] as const;
+const CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER = [
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "dreamshaper_8.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "sd_xl_base_1.0.safetensors",
+  "animagine-xl-4.0.safetensors"
+] as const;
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
 const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
 const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
@@ -422,6 +430,14 @@ function resolveMvAdapterCharacterModel(requestedModel: string): string {
 
 function resolveMvAdapterFallbackModel(requestedModel: string): string {
   return resolveMvAdapterCharacterModel(requestedModel);
+}
+
+function prefersRealisticCharacterAnchorModel(context: string): boolean {
+  const normalized = context.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(写实|电影|影视|真人|实拍|摄影|写实风|realistic|cinematic|live action|photographic|photo real)/i.test(
+    normalized
+  );
 }
 
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
@@ -5501,7 +5517,11 @@ export function ComfyPipelinePanel() {
     return "";
   };
 
-  const resolveRuntimeCharacterAnchorModel = async (runtimeSettings: ComfySettings, sourceLabel: string) => {
+  const resolveRuntimeCharacterAnchorModel = async (
+    runtimeSettings: ComfySettings,
+    sourceLabel: string,
+    context = ""
+  ) => {
     const selectedModel = runtimeSettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL;
     let options = availableCheckpointOptions;
     if (options.length === 0) {
@@ -5515,7 +5535,10 @@ export function ComfyPipelinePanel() {
     if (options.includes(selectedModel) && !shouldAutoUpgradeCharacterAnchorModel(selectedModel)) {
       return selectedModel;
     }
-    const recommended = pickFirstAvailableModel(CHARACTER_ASSET_MODEL_RECOMMEND_ORDER, options);
+    const recommendOrder = prefersRealisticCharacterAnchorModel(context)
+      ? CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER
+      : CHARACTER_ASSET_MODEL_RECOMMEND_ORDER;
+    const recommended = pickFirstAvailableModel(recommendOrder, options);
     if (!recommended) return selectedModel;
     if (recommended !== selectedModel) {
       appendLog(`${sourceLabel}自动切换角色正视锚点模型：${selectedModel} -> ${recommended}`, "info");
@@ -5652,7 +5675,7 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
-    const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图");
+    const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图", context);
     const characterModelForWorkflow = requestedCharacterModel;
     const referenceEditModel = resolveMvAdapterFallbackModel(characterModelForWorkflow);
     const referenceEditWorkflow = buildCharacterReferenceEditSingleViewWorkflowTemplateJson(referenceEditModel);
@@ -6464,7 +6487,11 @@ export function ComfyPipelinePanel() {
         : null;
       if (!anchorPath && profile.description.trim().length > 0) {
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
-        const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, sourceLabel);
+        const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(
+          runtimeSettings,
+          sourceLabel,
+          profile.description
+        );
         const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModel);
         const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
           characterModel,
