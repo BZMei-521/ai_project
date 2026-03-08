@@ -660,11 +660,11 @@ function buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName: string)
     "7": {
       inputs: {
         seed: "{{SEED}}",
-        steps: 26,
-        cfg: 6.2,
+        steps: 24,
+        cfg: 5.4,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.38,
+        denoise: 0.24,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -4101,6 +4101,94 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const analyzeCharacterTemplateAppearance = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const size = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0, size, size);
+      const data = context.getImageData(0, 0, size, size).data;
+      let borderR = 0;
+      let borderG = 0;
+      let borderB = 0;
+      let borderCount = 0;
+      const sampleBorder = (x: number, y: number) => {
+        const index = (y * size + x) * 4;
+        borderR += data[index] ?? 0;
+        borderG += data[index + 1] ?? 0;
+        borderB += data[index + 2] ?? 0;
+        borderCount += 1;
+      };
+      for (let x = 0; x < size; x += 1) {
+        sampleBorder(x, 0);
+        sampleBorder(x, size - 1);
+      }
+      for (let y = 1; y < size - 1; y += 1) {
+        sampleBorder(0, y);
+        sampleBorder(size - 1, y);
+      }
+      if (borderCount <= 0) return null;
+      const bgR = borderR / borderCount;
+      const bgG = borderG / borderCount;
+      const bgB = borderB / borderCount;
+      let foregroundPixels = 0;
+      let saturationSum = 0;
+      let chromaSum = 0;
+      let lowColorPixels = 0;
+      let nearGrayPixels = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        const r = data[index] ?? 0;
+        const g = data[index + 1] ?? 0;
+        const b = data[index + 2] ?? 0;
+        const dr = r - bgR;
+        const dg = g - bgG;
+        const db = b - bgB;
+        const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+        if (distance < 42) continue;
+        foregroundPixels += 1;
+        const maxChannel = Math.max(r, g, b);
+        const minChannel = Math.min(r, g, b);
+        const chroma = maxChannel - minChannel;
+        const saturation = maxChannel > 0 ? chroma / maxChannel : 0;
+        saturationSum += saturation;
+        chromaSum += chroma;
+        if (saturation < 0.18 || chroma < 28) {
+          lowColorPixels += 1;
+        }
+        if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && chroma < 18) {
+          nearGrayPixels += 1;
+        }
+      }
+      if (foregroundPixels <= 0) return null;
+      const averageSaturation = saturationSum / foregroundPixels;
+      const averageChroma = chromaSum / foregroundPixels;
+      const lowColorRatio = lowColorPixels / foregroundPixels;
+      const nearGrayRatio = nearGrayPixels / foregroundPixels;
+      const likelyTemplateFigure =
+        foregroundPixels >= 180 &&
+        averageSaturation < 0.18 &&
+        averageChroma < 30 &&
+        lowColorRatio > 0.72 &&
+        nearGrayRatio > 0.48;
+      return {
+        averageSaturation,
+        averageChroma,
+        lowColorRatio,
+        nearGrayRatio,
+        likelyTemplateFigure
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const isLayoutTooTight = (
     layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>>,
     view: "front" | "side" | "back" | "reference_front"
@@ -4206,10 +4294,11 @@ export function ComfyPipelinePanel() {
   };
 
   const evaluateSingleCharacterViewQuality = async (pathOrUrl: string, view: "front" | "side" | "back") => {
-    const [sharpness, symmetry, layout] = await Promise.all([
+    const [sharpness, symmetry, layout, appearance] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
       computeHorizontalMirrorSimilarity(pathOrUrl),
-      analyzeForegroundLayout(pathOrUrl)
+      analyzeForegroundLayout(pathOrUrl),
+      analyzeCharacterTemplateAppearance(pathOrUrl)
     ]);
     const issues: string[] = [];
     if (typeof sharpness === "number" && sharpness < CHARACTER_VIEW_MIN_SHARPNESS_SCORE) {
@@ -4249,16 +4338,23 @@ export function ComfyPipelinePanel() {
         issues.push(`subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     }
+    if (appearance?.likelyTemplateFigure) {
+      issues.push(
+        `template_figure(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
+      );
+    }
     return {
       acceptable: issues.length === 0,
       issues,
       score:
         (typeof sharpness === "number" ? sharpness : 0) -
         issues.length * 8 -
+        (appearance?.likelyTemplateFigure ? 30 : 0) -
         (view === "side" && typeof symmetry === "number" ? Math.max(0, symmetry - 0.82) * 28 : 0),
       sharpness,
       symmetry,
-      layout
+      layout,
+      appearance
     };
   };
 
@@ -4283,10 +4379,11 @@ export function ComfyPipelinePanel() {
   };
 
   const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
-    const [sharpness, symmetry, layout] = await Promise.all([
+    const [sharpness, symmetry, layout, appearance] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
       computeHorizontalMirrorSimilarity(pathOrUrl),
-      analyzeForegroundLayout(pathOrUrl)
+      analyzeForegroundLayout(pathOrUrl),
+      analyzeCharacterTemplateAppearance(pathOrUrl)
     ]);
     const lowSharpness =
       typeof sharpness === "number" && sharpness < CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE;
@@ -4321,6 +4418,9 @@ export function ComfyPipelinePanel() {
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
       layout && layout.bbox.heightRatio < 0.58 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      appearance?.likelyTemplateFigure
+        ? `角色像灰模或人体模板(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
+        : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
@@ -4340,6 +4440,7 @@ export function ComfyPipelinePanel() {
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.1) * 140 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
       (layout && layout.bbox.heightRatio < 0.58 ? (0.58 - layout.bbox.heightRatio) * 90 : 0) +
+      (appearance?.likelyTemplateFigure ? 56 : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
@@ -5028,6 +5129,8 @@ export function ComfyPipelinePanel() {
     return mergePromptFragments([
       buildCharacterViewPrompt(name, sanitizedContext, "front"),
       "Use the input image as the exact identity and costume source. Do not redesign the character.",
+      "Preserve the original outfit layers, trims, colors, hairstyle silhouette, and accessories from the source image.",
+      "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
       "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
       "Keep exactly one centered full-body human character, front-facing, head-to-toe visible, plain light grey background.",
       retryTuning
@@ -5046,7 +5149,7 @@ export function ComfyPipelinePanel() {
         ? "Render one single full-body human character in a strict right-facing profile. Exactly one body in the entire image."
         : "Render one single full-body human character in a strict back view. Exactly one body in the entire image.";
     const identityInstruction =
-      "Use the reference image as the exact identity source. Keep the same face, hairstyle, body proportions, clothing structure, accessories, colors, and silhouette. Do not redesign the character.";
+      "Use the reference image as the exact identity source. Keep the same face, hairstyle, body proportions, clothing structure, accessories, colors, and silhouette. Do not redesign the character or simplify it into a mannequin or template body.";
     const sheetConstraint =
       "Render exactly one isolated human character on a plain light grey background. Not a lineup, not a character sheet, not a turnaround chart, not a triptych, not a split panel, not an anatomy guide.";
     const retryTuning =
