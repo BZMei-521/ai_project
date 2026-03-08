@@ -5235,6 +5235,7 @@ export function ComfyPipelinePanel() {
     let bestPath = candidatePath;
     let bestQuality = await evaluateFrontReferenceQuality(candidatePath);
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      const cleanupSourcePath = bestPath.trim() || candidatePath;
       const generated = await generateShotAsset(
         runtimeSettings,
         makeAssetGenerationShot(
@@ -5251,7 +5252,7 @@ export function ComfyPipelinePanel() {
         {
           workflowJsonOverride: cleanupWorkflow,
           tokenOverrides: {
-            FRAME_IMAGE_PATH: candidatePath,
+            FRAME_IMAGE_PATH: cleanupSourcePath,
             NEGATIVE_PROMPT: cleanupNegativePrompt
           }
         }
