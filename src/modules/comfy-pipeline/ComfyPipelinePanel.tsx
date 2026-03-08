@@ -4176,28 +4176,28 @@ export function ComfyPipelinePanel() {
         ? layout.bbox.widthRatio < 0.08 ||
           layout.foregroundRatio > 0.42 ||
           layout.foregroundRatio < 0.04 ||
-          layout.bbox.heightRatio < 0.64 ||
+          layout.bbox.heightRatio < 0.58 ||
           (layout.bbox.widthRatio > 0.94 && layout.foregroundRatio > 0.26) ||
-          (typeof bboxAspect === "number" && (bboxAspect > 1.02 || bboxAspect < 0.1))
+          (typeof bboxAspect === "number" && (bboxAspect > 1.4 || bboxAspect < 0.1))
         : false;
     const layoutIssues = [
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
-      layout && layout.mediumComponents > 2
+      layout && layout.mediumComponents > 3
         ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
         : "",
-      layout && layout.secondaryForegroundRatio > 0.14
+      layout && layout.secondaryForegroundRatio > 0.18
         ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
         : "",
-      layout && layout.detachedForegroundRatio > 0.16
+      layout && layout.detachedForegroundRatio > 0.22
         ? `画面含有额外设定页元素(detached=${layout.detachedForegroundRatio.toFixed(2)})`
         : "",
       layout && layout.edgeForegroundRatio > 0.24
         ? `边缘存在文字或装饰杂项(edge=${layout.edgeForegroundRatio.toFixed(2)})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.64 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      layout && layout.bbox.heightRatio < 0.58 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
@@ -4211,12 +4211,12 @@ export function ComfyPipelinePanel() {
       (layout?.significantComponents && layout.significantComponents > 1
         ? 40 + (layout.significantComponents - 1) * 16
         : 0) +
-      (layout?.mediumComponents && layout.mediumComponents > 2 ? 16 + (layout.mediumComponents - 2) * 10 : 0) +
-      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.06) * 180 : 0) +
-      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.08) * 170 : 0) +
+      (layout?.mediumComponents && layout.mediumComponents > 3 ? 14 + (layout.mediumComponents - 3) * 10 : 0) +
+      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.12) * 180 : 0) +
+      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.14) * 170 : 0) +
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.1) * 140 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
-      (layout && layout.bbox.heightRatio < 0.64 ? (0.64 - layout.bbox.heightRatio) * 90 : 0) +
+      (layout && layout.bbox.heightRatio < 0.58 ? (0.58 - layout.bbox.heightRatio) * 90 : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
@@ -4492,7 +4492,7 @@ export function ComfyPipelinePanel() {
       sourceHeight > sourceWidth ? sourceHeight : Math.max(sourceHeight, Math.round(sourceWidth * 1.3125));
     const outputWidth = sourceWidth;
     const outputHeight = portraitTargetHeight;
-    const minimumHeightRatio = view === "side" ? 0.52 : view === "back" ? 0.54 : 0.56;
+    const minimumHeightRatio = view === "side" ? 0.52 : view === "back" ? 0.54 : 0.62;
     const requiresRefit = isLayoutTooTight(layout, view) || sourceHeight <= sourceWidth || layout.bbox.heightRatio < minimumHeightRatio;
     if (!requiresRefit) return pathOrUrl;
     const bboxWidthPx = Math.max(1, layout.bbox.widthRatio * sourceWidth);
@@ -4500,8 +4500,8 @@ export function ComfyPipelinePanel() {
     const analysisSize = 128;
     const bboxCenterX = (((layout.bbox.minX + layout.bbox.maxX + 1) / 2) / analysisSize) * sourceWidth;
     const bboxCenterY = (((layout.bbox.minY + layout.bbox.maxY + 1) / 2) / analysisSize) * sourceHeight;
-    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.6 : 0.62;
-    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.4 : 0.46;
+    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.6 : 0.72;
+    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.4 : 0.52;
     const scale = Math.min(
       1.8,
       (outputHeight * targetHeightRatio) / bboxHeightPx,
