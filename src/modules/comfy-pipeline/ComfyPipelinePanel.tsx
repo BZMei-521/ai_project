@@ -4240,6 +4240,12 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, "_flatbg.png");
   };
 
+  const buildPrimarySubjectOutputPath = (sourcePath: string) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, "_subject.png");
+  };
+
   const buildFramedCharacterViewOutputPath = (sourcePath: string) => {
     const trimmed = sourcePath.trim();
     if (!trimmed) return "";
@@ -4327,9 +4333,146 @@ export function ComfyPipelinePanel() {
     return result.filePath || pathOrUrl;
   };
 
+  const isolateCharacterPrimarySubject = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return pathOrUrl;
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return pathOrUrl;
+    const src = toDesktopMediaSource(trimmed);
+    if (!src) return pathOrUrl;
+    const image = await loadImageForHash(src);
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return pathOrUrl;
+
+    const analysisSize = 128;
+    const analysisCanvas = document.createElement("canvas");
+    analysisCanvas.width = analysisSize;
+    analysisCanvas.height = analysisSize;
+    const analysisContext = analysisCanvas.getContext("2d");
+    if (!analysisContext) return pathOrUrl;
+    analysisContext.drawImage(image, 0, 0, analysisSize, analysisSize);
+    const analysisFrame = analysisContext.getImageData(0, 0, analysisSize, analysisSize);
+    const data = analysisFrame.data;
+    const gray = new Float32Array(analysisSize * analysisSize);
+    for (let index = 0, pixel = 0; index < data.length; index += 4, pixel += 1) {
+      gray[pixel] = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+    }
+
+    let borderSum = 0;
+    let borderCount = 0;
+    for (let x = 0; x < analysisSize; x += 1) {
+      borderSum += gray[x];
+      borderSum += gray[(analysisSize - 1) * analysisSize + x];
+      borderCount += 2;
+    }
+    for (let y = 1; y < analysisSize - 1; y += 1) {
+      borderSum += gray[y * analysisSize];
+      borderSum += gray[y * analysisSize + (analysisSize - 1)];
+      borderCount += 2;
+    }
+    if (borderCount <= 0) return pathOrUrl;
+    const backgroundGray = borderSum / borderCount;
+    const threshold = 28;
+    const mask = new Uint8Array(analysisSize * analysisSize);
+    for (let index = 0; index < gray.length; index += 1) {
+      mask[index] = Math.abs(gray[index] - backgroundGray) >= threshold ? 1 : 0;
+    }
+
+    const visited = new Uint8Array(mask.length);
+    const queue = new Int32Array(mask.length);
+    const components: Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> = [];
+    for (let start = 0; start < mask.length; start += 1) {
+      if (mask[start] === 0 || visited[start] === 1) continue;
+      let area = 0;
+      let head = 0;
+      let tail = 0;
+      let componentMinX = analysisSize;
+      let componentMinY = analysisSize;
+      let componentMaxX = -1;
+      let componentMaxY = -1;
+      visited[start] = 1;
+      queue[tail++] = start;
+      while (head < tail) {
+        const current = queue[head++];
+        area += 1;
+        const x = current % analysisSize;
+        const y = Math.floor(current / analysisSize);
+        if (x < componentMinX) componentMinX = x;
+        if (y < componentMinY) componentMinY = y;
+        if (x > componentMaxX) componentMaxX = x;
+        if (y > componentMaxY) componentMaxY = y;
+        const neighbors = [
+          y > 0 ? current - analysisSize : -1,
+          y < analysisSize - 1 ? current + analysisSize : -1,
+          x > 0 ? current - 1 : -1,
+          x < analysisSize - 1 ? current + 1 : -1
+        ];
+        neighbors.forEach((neighbor) => {
+          if (neighbor < 0 || mask[neighbor] === 0 || visited[neighbor] === 1) return;
+          visited[neighbor] = 1;
+          queue[tail++] = neighbor;
+        });
+      }
+      components.push({
+        area,
+        minX: componentMinX,
+        minY: componentMinY,
+        maxX: componentMaxX,
+        maxY: componentMaxY
+      });
+    }
+    if (components.length <= 0) return pathOrUrl;
+    components.sort((left, right) => right.area - left.area);
+    const primary = components[0];
+    if (!primary) return pathOrUrl;
+    const primaryRatio = primary.area / Math.max(1, mask.reduce((sum, value) => sum + value, 0));
+    if (primaryRatio >= 0.985 && components.length <= 1) return pathOrUrl;
+
+    const margin = Math.max(4, Math.round(analysisSize * 0.05));
+    const cropMinX = Math.max(0, primary.minX - margin);
+    const cropMinY = Math.max(0, primary.minY - margin);
+    const cropMaxX = Math.min(analysisSize - 1, primary.maxX + margin);
+    const cropMaxY = Math.min(analysisSize - 1, primary.maxY + margin);
+    const sourceCropMinX = Math.max(0, Math.floor((cropMinX / analysisSize) * sourceWidth));
+    const sourceCropMinY = Math.max(0, Math.floor((cropMinY / analysisSize) * sourceHeight));
+    const sourceCropMaxX = Math.min(sourceWidth, Math.ceil(((cropMaxX + 1) / analysisSize) * sourceWidth));
+    const sourceCropMaxY = Math.min(sourceHeight, Math.ceil(((cropMaxY + 1) / analysisSize) * sourceHeight));
+    const cropWidth = Math.max(1, sourceCropMaxX - sourceCropMinX);
+    const cropHeight = Math.max(1, sourceCropMaxY - sourceCropMinY);
+    if (cropWidth >= sourceWidth - 2 && cropHeight >= sourceHeight - 2) return pathOrUrl;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return pathOrUrl;
+    context.fillStyle = "rgb(236,236,236)";
+    context.fillRect(0, 0, sourceWidth, sourceHeight);
+    context.drawImage(
+      image,
+      sourceCropMinX,
+      sourceCropMinY,
+      cropWidth,
+      cropHeight,
+      sourceCropMinX,
+      sourceCropMinY,
+      cropWidth,
+      cropHeight
+    );
+    const filePath = buildPrimarySubjectOutputPath(trimmed);
+    if (!filePath) return pathOrUrl;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath || pathOrUrl;
+  };
+
   const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string) => {
     const normalized = await normalizeCharacterAnchorBackground(pathOrUrl);
-    return fitCharacterViewWithinCanvas(normalized, "front");
+    const isolated = await isolateCharacterPrimarySubject(normalized);
+    return fitCharacterViewWithinCanvas(isolated, "front");
   };
 
   const fitCharacterViewWithinCanvas = async (pathOrUrl: string, view: "front" | "side" | "back") => {
