@@ -186,7 +186,7 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
         cfg: 5.6,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.56,
+        denoise: 0.62,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -459,8 +459,11 @@ function buildCharacterFallbackSheetPrompt(name: string, context: string, attemp
     normalizeStoryInput(context),
     "exactly three equal vertical panels on a plain light grey background",
     "left panel front view, middle panel strict right side profile, right panel back view",
+    "the left panel already provides the identity reference and should stay the front view",
+    "generate the missing right-profile view in the middle panel and the missing back view in the right panel",
     "preserve the exact same face, hairstyle, body proportions, costume structure, accessories, silhouette, and colors from the reference image",
     "all three figures fully visible from head to toe, no crop, no text, no watermark, no icons, no decorative border, no scenery",
+    "middle panel is a strict right profile with one eye only, nose pointing right, shoulders and hips stacked in profile; right panel is a strict back view with no face visible",
     retryTuning
   ]
     .filter((item) => item.trim().length > 0)
@@ -472,7 +475,7 @@ function buildCharacterFallbackSheetNegativePrompt(baseNegativePrompt: string): 
     baseNegativePrompt,
     "single centered figure only, two figures only, four figures, five figures, crowd, lineup with many tiny characters",
     "character poster, fashion poster, decorative border, flower border, magic circle, text, annotation, watermark, logo, inset portrait, extra face icon",
-    "cropped side figure, overlapping figures, merged bodies, duplicate front view, three quarter view, dramatic perspective",
+    "cropped side figure, overlapping figures, merged bodies, duplicate front view, middle panel front view, right panel front view, three identical front views, three quarter view, three quarter back view, semi profile, dramatic perspective",
     "robot armor mannequin, faceless mannequin, wireframe body, silhouette only, statue, vehicle, building"
   ]
     .filter((item) => item.trim().length > 0)
@@ -511,17 +514,23 @@ async function buildCharacterFallbackTriptychInput(
   context.fillRect(0, 0, width, height);
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
-  const targetHeightRatios = [0.78, 0.74, 0.7];
+  const targetHeightRatios = [0.74, 0.7, 0.66];
   const targetHeightRatio = targetHeightRatios[Math.max(0, Math.min(targetHeightRatios.length - 1, attempt))] ?? 0.7;
   const scale = Math.min((panelWidth * 0.72) / image.width, (height * targetHeightRatio) / image.height);
   if (!Number.isFinite(scale) || scale <= 0) return sourcePath;
   const drawWidth = image.width * scale;
   const drawHeight = image.height * scale;
   const y = Math.round((height - drawHeight) / 2);
-  for (let panelIndex = 0; panelIndex < 3; panelIndex += 1) {
-    const x = Math.round(panelIndex * panelWidth + (panelWidth - drawWidth) / 2);
-    context.drawImage(image, x, y, drawWidth, drawHeight);
-  }
+  const leftX = Math.round((panelWidth - drawWidth) / 2);
+  context.drawImage(image, leftX, y, drawWidth, drawHeight);
+  context.strokeStyle = "rgba(180,180,180,0.85)";
+  context.lineWidth = Math.max(2, Math.round(width / 512));
+  context.beginPath();
+  context.moveTo(panelWidth, 0);
+  context.lineTo(panelWidth, height);
+  context.moveTo(panelWidth * 2, 0);
+  context.lineTo(panelWidth * 2, height);
+  context.stroke();
   const filePath = buildCharacterFallbackTriptychInputPath(trimmed, attempt);
   if (!filePath) return sourcePath;
   const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {

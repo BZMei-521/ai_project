@@ -541,7 +541,7 @@ function buildCharacterReferenceEditFallbackWorkflowTemplateJson(checkpointName:
         cfg: 5.6,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.56,
+        denoise: 0.62,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -3874,7 +3874,9 @@ export function ComfyPipelinePanel() {
       const queue = new Int32Array(size * size);
       const minComponentArea = Math.round(size * size * 0.05);
       let significantComponents = 0;
+      let mediumComponents = 0;
       const components: Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> = [];
+      const mediumComponentArea = Math.max(24, Math.round(size * size * 0.008));
       for (let start = 0; start < mask.length; start += 1) {
         if (mask[start] === 0 || visited[start] === 1) continue;
         let area = 0;
@@ -3901,6 +3903,7 @@ export function ComfyPipelinePanel() {
         }
         components.push({ area, minX, minY, maxX, maxY });
         if (area >= minComponentArea) significantComponents += 1;
+        if (area >= mediumComponentArea) mediumComponents += 1;
       }
 
       components.sort((left, right) => right.area - left.area);
@@ -3939,6 +3942,7 @@ export function ComfyPipelinePanel() {
       const heightRatio = (maxY - minY + 1) / size;
       return {
         significantComponents,
+        mediumComponents,
         touchingEdges: minX <= 1 || minY <= 1 || maxX >= size - 2 || (maxY >= size - 1 && heightRatio > 0.97),
         bbox: {
           minX,
@@ -3950,6 +3954,8 @@ export function ComfyPipelinePanel() {
         },
         foregroundRatio: foregroundPixels / (size * size),
         primaryComponentRatio: primaryComponent ? primaryComponent.area / foregroundPixels : 0,
+        secondaryForegroundRatio:
+          primaryComponent && foregroundPixels > 0 ? Math.max(0, 1 - primaryComponent.area / foregroundPixels) : 0,
         detachedForegroundRatio: foregroundPixels > 0 ? detachedForegroundPixels / foregroundPixels : 0,
         edgeForegroundRatio: foregroundPixels > 0 ? edgeForegroundPixels / foregroundPixels : 0
       };
@@ -4016,6 +4022,12 @@ export function ComfyPipelinePanel() {
       if (layout.significantComponents > 1) {
         layoutAlerts.push(`${label}_multi_blob=${layout.significantComponents}`);
       }
+      if (layout.mediumComponents > 3) {
+        layoutAlerts.push(`${label}_multi_cluster=${layout.mediumComponents}`);
+      }
+      if (layout.secondaryForegroundRatio > 0.14) {
+        layoutAlerts.push(`${label}_secondary_fg=${layout.secondaryForegroundRatio.toFixed(2)}`);
+      }
       if (layout.detachedForegroundRatio > 0.18) {
         layoutAlerts.push(`${label}_detached_fg=${layout.detachedForegroundRatio.toFixed(2)}`);
       }
@@ -4080,6 +4092,12 @@ export function ComfyPipelinePanel() {
     if (layout) {
       if (layout.significantComponents > 1) {
         issues.push(`multi_blob=${layout.significantComponents}`);
+      }
+      if (layout.mediumComponents > 3) {
+        issues.push(`multi_cluster=${layout.mediumComponents}`);
+      }
+      if (layout.secondaryForegroundRatio > 0.14) {
+        issues.push(`secondary_fg=${layout.secondaryForegroundRatio.toFixed(2)}`);
       }
       if (layout.detachedForegroundRatio > 0.18) {
         issues.push(`detached_fg=${layout.detachedForegroundRatio.toFixed(2)}`);
@@ -4151,6 +4169,12 @@ export function ComfyPipelinePanel() {
     const layoutIssues = [
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
+        : "",
+      layout && layout.mediumComponents > 2
+        ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
+        : "",
+      layout && layout.secondaryForegroundRatio > 0.1
+        ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
         : "",
       layout && layout.detachedForegroundRatio > 0.16
         ? `画面含有额外设定页元素(detached=${layout.detachedForegroundRatio.toFixed(2)})`
@@ -4405,17 +4429,23 @@ export function ComfyPipelinePanel() {
     const sourceWidth = image.naturalWidth || image.width;
     const sourceHeight = image.naturalHeight || image.height;
     if (sourceWidth <= 0 || sourceHeight <= 0) return pathOrUrl;
-    const targetHeightRatios = [0.78, 0.74, 0.7, 0.66, 0.62];
+    const targetHeightRatios = [0.74, 0.7, 0.66, 0.62, 0.58];
     const targetHeightRatio = targetHeightRatios[Math.max(0, Math.min(targetHeightRatios.length - 1, attempt))] ?? 0.7;
     const scale = Math.min((panelWidth * 0.72) / sourceWidth, (height * targetHeightRatio) / sourceHeight);
     if (!Number.isFinite(scale) || scale <= 0) return pathOrUrl;
     const drawWidth = sourceWidth * scale;
     const drawHeight = sourceHeight * scale;
     const y = Math.round((height - drawHeight) / 2);
-    for (let panelIndex = 0; panelIndex < 3; panelIndex += 1) {
-      const x = Math.round(panelIndex * panelWidth + (panelWidth - drawWidth) / 2);
-      context.drawImage(image, x, y, drawWidth, drawHeight);
-    }
+    const leftX = Math.round((panelWidth - drawWidth) / 2);
+    context.drawImage(image, leftX, y, drawWidth, drawHeight);
+    context.strokeStyle = "rgba(180,180,180,0.85)";
+    context.lineWidth = Math.max(2, Math.round(width / 512));
+    context.beginPath();
+    context.moveTo(panelWidth, 0);
+    context.lineTo(panelWidth, height);
+    context.moveTo(panelWidth * 2, 0);
+    context.lineTo(panelWidth * 2, height);
+    context.stroke();
     const filePath = buildCharacterFallbackTriptychInputPath(trimmed, attempt);
     if (!filePath) return pathOrUrl;
     const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
@@ -4664,6 +4694,8 @@ export function ComfyPipelinePanel() {
       "three equal vertical panels on a plain light grey background",
       "exactly three full-body figures only",
       "left panel front view, middle panel strict right side profile, right panel back view",
+      "the left panel already provides the identity reference and should stay the front view",
+      "generate the missing right-profile view in the middle panel and the missing back view in the right panel",
       "orthographic character reference sheet",
       "one consistent human character identity repeated across all three panels",
       `角色：${name}`,
@@ -4672,7 +4704,7 @@ export function ComfyPipelinePanel() {
       styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
       "Preserve the exact same face, hairstyle, body proportions, costume structure, accessories, silhouette, and colors from the reference image.",
       "All three figures must be fully clothed, anatomically correct, full body, centered within their own panel, and fully visible from head to toe.",
-      "Front panel faces camera. Side panel is a strict right profile with one-eye silhouette only. Back panel shows no face.",
+      "Front panel faces camera. Middle panel is a strict right profile with one eye only, nose pointing right, shoulders and hips stacked in profile. Right panel is a strict back view with no face visible.",
       "No text, no watermark, no icons, no extra portrait insets, no decorative border, no scenery, no flowers, no magic circle, no extra fourth figure.",
       retryTuning
     ]);
@@ -4702,7 +4734,12 @@ export function ComfyPipelinePanel() {
       "overlapping figures",
       "merged bodies",
       "duplicate front view",
+      "middle panel front view",
+      "right panel front view",
+      "three identical front views",
       "three quarter view",
+      "three quarter back view",
+      "semi profile",
       "dramatic perspective",
       "robot armor mannequin",
       "faceless mannequin",
