@@ -4485,10 +4485,37 @@ export function ComfyPipelinePanel() {
       });
     }
     if (components.length <= 0) return pathOrUrl;
-    components.sort((left, right) => right.area - left.area);
-    const primary = components[0];
+    const totalForeground = Math.max(
+      1,
+      components.reduce((sum, component) => sum + component.area, 0)
+    );
+    const scoreComponent = (component: { area: number; minX: number; minY: number; maxX: number; maxY: number }) => {
+      const widthRatio = (component.maxX - component.minX + 1) / analysisSize;
+      const heightRatio = (component.maxY - component.minY + 1) / analysisSize;
+      const aspectRatio = heightRatio / Math.max(widthRatio, 0.01);
+      const centerX = (component.minX + component.maxX + 1) / 2 / analysisSize;
+      const centerY = (component.minY + component.maxY + 1) / 2 / analysisSize;
+      const centerDistance = Math.hypot(centerX - 0.5, centerY - 0.5);
+      const areaRatio = component.area / totalForeground;
+      const touchesEdge =
+        component.minX <= 1 ||
+        component.minY <= 1 ||
+        component.maxX >= analysisSize - 2 ||
+        component.maxY >= analysisSize - 2;
+      const tallBonus =
+        aspectRatio >= 1.4 && aspectRatio <= 4.8 ? 18 : aspectRatio >= 1.05 && aspectRatio <= 5.6 ? 8 : -18;
+      const sizeScore = areaRatio * 120 + heightRatio * 38 - widthRatio * 10;
+      const centerScore = 22 - centerDistance * 42;
+      const edgePenalty = touchesEdge ? 12 : 0;
+      return sizeScore + centerScore + tallBonus - edgePenalty;
+    };
+    const primary =
+      components.reduce<typeof components[number] | null>((best, component) => {
+        if (!best) return component;
+        return scoreComponent(component) > scoreComponent(best) ? component : best;
+      }, null) ?? null;
     if (!primary) return pathOrUrl;
-    const primaryRatio = primary.area / Math.max(1, mask.reduce((sum, value) => sum + value, 0));
+    const primaryRatio = primary.area / totalForeground;
     if (primaryRatio >= 0.985 && components.length <= 1) return pathOrUrl;
 
     const margin = Math.max(4, Math.round(analysisSize * 0.05));
@@ -4509,10 +4536,32 @@ export function ComfyPipelinePanel() {
     canvas.height = sourceHeight;
     const context = canvas.getContext("2d");
     if (!context) return pathOrUrl;
+    context.drawImage(image, 0, 0, sourceWidth, sourceHeight);
     context.fillStyle = "rgb(236,236,236)";
-    context.fillRect(0, 0, sourceWidth, sourceHeight);
-    context.drawImage(
-      image,
+    components.forEach((component) => {
+      if (component === primary) return;
+      const componentMargin = Math.max(4, Math.round(analysisSize * 0.025));
+      const eraseMinX = Math.max(0, component.minX - componentMargin);
+      const eraseMinY = Math.max(0, component.minY - componentMargin);
+      const eraseMaxX = Math.min(analysisSize - 1, component.maxX + componentMargin);
+      const eraseMaxY = Math.min(analysisSize - 1, component.maxY + componentMargin);
+      const sourceEraseMinX = Math.max(0, Math.floor((eraseMinX / analysisSize) * sourceWidth));
+      const sourceEraseMinY = Math.max(0, Math.floor((eraseMinY / analysisSize) * sourceHeight));
+      const sourceEraseMaxX = Math.min(sourceWidth, Math.ceil(((eraseMaxX + 1) / analysisSize) * sourceWidth));
+      const sourceEraseMaxY = Math.min(sourceHeight, Math.ceil(((eraseMaxY + 1) / analysisSize) * sourceHeight));
+      const eraseWidth = Math.max(1, sourceEraseMaxX - sourceEraseMinX);
+      const eraseHeight = Math.max(1, sourceEraseMaxY - sourceEraseMinY);
+      context.fillRect(sourceEraseMinX, sourceEraseMinY, eraseWidth, eraseHeight);
+    });
+    const extractedCanvas = document.createElement("canvas");
+    extractedCanvas.width = sourceWidth;
+    extractedCanvas.height = sourceHeight;
+    const extractedContext = extractedCanvas.getContext("2d");
+    if (!extractedContext) return pathOrUrl;
+    extractedContext.fillStyle = "rgb(236,236,236)";
+    extractedContext.fillRect(0, 0, sourceWidth, sourceHeight);
+    extractedContext.drawImage(
+      canvas,
       sourceCropMinX,
       sourceCropMinY,
       cropWidth,
@@ -4526,7 +4575,7 @@ export function ComfyPipelinePanel() {
     if (!filePath) return pathOrUrl;
     const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
       filePath,
-      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+      base64Data: extractedCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
     });
     return result.filePath || pathOrUrl;
   };
@@ -4799,10 +4848,10 @@ export function ComfyPipelinePanel() {
       "single character, solo",
       "single-view full-body orthographic character reference image",
       "orthographic view",
-      "single panel costume reference",
+      "single subject studio reference image",
       "production-ready character anchor image",
       "clean studio character reference",
-      "human character design reference only",
+      "human full-body character image only",
       "exactly one human character, not an object, not a vehicle, not a statue, not an animal",
       "no perspective exaggeration",
       "flat camera, eye-level camera, centered framing",
@@ -4828,7 +4877,7 @@ export function ComfyPipelinePanel() {
       `风格倾向：${styleHint}`,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
       angleInstruction,
-      "只保留角色设定信息与服装设计",
+      "只保留角色外观与服装本体，不要设定页排版元素",
       "不要叙事场景",
       "不要与他人互动",
       sanitizedContext
@@ -4900,8 +4949,8 @@ export function ComfyPipelinePanel() {
         : attempt === 1
           ? "补充要求：镜头再拉远一档，人物仅占画面高度约 50% 到 58%，头顶、脚底、左右两侧都保留明显空白。full body long shot, zoomed out, generous empty margin on all sides."
           : attempt === 2
-          ? "补充要求：必须是标准立式角色设定板取景，人物完整站在画面中央，绝不允许贴边，绝不允许顶到头顶和鞋底。camera farther away, full body entirely inside frame, substantial blank space above head and below feet."
-          : "补充要求：严格远机位全身设定图，主体只占画面高度约 45% 到 55%，四周大留白，像服装设定页而不是人物海报。very zoomed out costume reference sheet, subject smaller in frame, large negative space, not a poster close-up.";
+          ? "补充要求：必须是标准单人摄影棚参照图，人物完整站在画面中央，绝不允许贴边，绝不允许顶到头顶和鞋底。camera farther away, full body entirely inside frame, substantial blank space above head and below feet."
+          : "补充要求：严格远机位单人全身参照图，主体只占画面高度约 45% 到 55%，四周大留白，像纯背景人物参照图而不是设定页或人物海报。very zoomed out studio full-body reference, subject smaller in frame, large negative space, not a character sheet, not a poster close-up.";
     const cleanupInstruction =
       "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout.";
     return mergePromptFragments([basePrompt, retryTuning, cleanupInstruction]);
@@ -4960,6 +5009,20 @@ export function ComfyPipelinePanel() {
     logPrefix: string
   ) => {
     const cleanupWorkflow = buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName);
+    const cleanupNegativePrompt = appendNegativePrompt(negativePrompt, [
+      "mannequin",
+      "faceless mannequin",
+      "wireframe body",
+      "anatomy template",
+      "body template",
+      "pose guide",
+      "croquis",
+      "base mesh",
+      "3d reference doll",
+      "grey dummy",
+      "line art mannequin",
+      "multiple standing mannequins"
+    ]);
     let bestPath = candidatePath;
     let bestQuality = await evaluateFrontReferenceQuality(candidatePath);
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -4980,7 +5043,7 @@ export function ComfyPipelinePanel() {
           workflowJsonOverride: cleanupWorkflow,
           tokenOverrides: {
             FRAME_IMAGE_PATH: candidatePath,
-            NEGATIVE_PROMPT: negativePrompt
+            NEGATIVE_PROMPT: cleanupNegativePrompt
           }
         }
       );
