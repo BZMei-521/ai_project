@@ -3882,6 +3882,10 @@ export function ComfyPipelinePanel() {
         let area = 0;
         let head = 0;
         let tail = 0;
+        let componentMinX = size;
+        let componentMinY = size;
+        let componentMaxX = -1;
+        let componentMaxY = -1;
         visited[start] = 1;
         queue[tail++] = start;
         while (head < tail) {
@@ -3889,6 +3893,10 @@ export function ComfyPipelinePanel() {
           area += 1;
           const x = current % size;
           const y = Math.floor(current / size);
+          if (x < componentMinX) componentMinX = x;
+          if (y < componentMinY) componentMinY = y;
+          if (x > componentMaxX) componentMaxX = x;
+          if (y > componentMaxY) componentMaxY = y;
           const neighbors = [
             y > 0 ? current - size : -1,
             y < size - 1 ? current + size : -1,
@@ -3901,7 +3909,13 @@ export function ComfyPipelinePanel() {
             queue[tail++] = neighbor;
           });
         }
-        components.push({ area, minX, minY, maxX, maxY });
+        components.push({
+          area,
+          minX: componentMinX,
+          minY: componentMinY,
+          maxX: componentMaxX,
+          maxY: componentMaxY
+        });
         if (area >= minComponentArea) significantComponents += 1;
         if (area >= mediumComponentArea) mediumComponents += 1;
       }
@@ -4160,7 +4174,7 @@ export function ComfyPipelinePanel() {
     const abnormalFullBodySilhouette =
       layout
         ? layout.bbox.widthRatio < 0.08 ||
-          layout.foregroundRatio > 0.34 ||
+          layout.foregroundRatio > 0.42 ||
           layout.foregroundRatio < 0.04 ||
           layout.bbox.heightRatio < 0.64 ||
           (layout.bbox.widthRatio > 0.94 && layout.foregroundRatio > 0.26) ||
@@ -4173,7 +4187,7 @@ export function ComfyPipelinePanel() {
       layout && layout.mediumComponents > 2
         ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
         : "",
-      layout && layout.secondaryForegroundRatio > 0.1
+      layout && layout.secondaryForegroundRatio > 0.14
         ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
         : "",
       layout && layout.detachedForegroundRatio > 0.16
@@ -4193,13 +4207,29 @@ export function ComfyPipelinePanel() {
       lowSymmetry && typeof symmetry === "number" ? `正面不够居中(sym=${symmetry.toFixed(2)})` : "",
       ...layoutIssues
     ].filter(Boolean);
+    const layoutPenalty =
+      (layout?.significantComponents && layout.significantComponents > 1
+        ? 40 + (layout.significantComponents - 1) * 16
+        : 0) +
+      (layout?.mediumComponents && layout.mediumComponents > 2 ? 16 + (layout.mediumComponents - 2) * 10 : 0) +
+      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.06) * 180 : 0) +
+      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.08) * 170 : 0) +
+      (layout ? Math.max(0, layout.edgeForegroundRatio - 0.1) * 140 : 0) +
+      (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
+      (layout && layout.bbox.heightRatio < 0.64 ? (0.64 - layout.bbox.heightRatio) * 90 : 0) +
+      (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
       symmetry,
       lowSharpness,
       lowSymmetry,
       acceptable: !lowSharpness && !lowSymmetry && layoutIssues.length === 0,
-      score: (sharpness ?? 0) + (symmetry ?? 0) * 10,
+      score:
+        (sharpness ?? 0) +
+        (symmetry ?? 0) * 10 -
+        (lowSharpness ? 12 : 0) -
+        (lowSymmetry ? 10 : 0) -
+        layoutPenalty,
       issues
     };
   };
@@ -4295,6 +4325,11 @@ export function ComfyPipelinePanel() {
       base64Data: dataUrl.replace(/^data:[^,]+,/, "")
     });
     return result.filePath || pathOrUrl;
+  };
+
+  const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string) => {
+    const normalized = await normalizeCharacterAnchorBackground(pathOrUrl);
+    return fitCharacterViewWithinCanvas(normalized, "front");
   };
 
   const fitCharacterViewWithinCanvas = async (pathOrUrl: string, view: "front" | "side" | "back") => {
@@ -4588,6 +4623,7 @@ export function ComfyPipelinePanel() {
       "头发与裙摆或衣摆保持自然下垂，禁止大幅外扩占满画面",
       "背景必须纯净单色，不允许花纹背景、光效背景、魔法阵背景、花瓣背景、海报背景",
       "背景里不能出现任何场景、纹样、道具墙、角色设定表、立绘排版、小人阵列",
+      "禁止漂浮宠物、悬浮武器、额外徽记、头像小窗、说明文字、标注引线、局部放大框",
       "单张图只允许一个角色",
       "单张图只允许一个角度",
       "画面只允许一个人体实体，禁止并排双人、镜像双人、克隆分身",
@@ -4645,9 +4681,11 @@ export function ComfyPipelinePanel() {
         : attempt === 1
           ? "补充要求：镜头再拉远一档，人物仅占画面高度约 50% 到 58%，头顶、脚底、左右两侧都保留明显空白。full body long shot, zoomed out, generous empty margin on all sides."
           : attempt === 2
-            ? "补充要求：必须是标准立式角色设定板取景，人物完整站在画面中央，绝不允许贴边，绝不允许顶到头顶和鞋底。camera farther away, full body entirely inside frame, substantial blank space above head and below feet."
-            : "补充要求：严格远机位全身设定图，主体只占画面高度约 45% 到 55%，四周大留白，像服装设定页而不是人物海报。very zoomed out costume reference sheet, subject smaller in frame, large negative space, not a poster close-up.";
-    return retryTuning ? `${basePrompt} ${retryTuning}` : basePrompt;
+          ? "补充要求：必须是标准立式角色设定板取景，人物完整站在画面中央，绝不允许贴边，绝不允许顶到头顶和鞋底。camera farther away, full body entirely inside frame, substantial blank space above head and below feet."
+          : "补充要求：严格远机位全身设定图，主体只占画面高度约 45% 到 55%，四周大留白，像服装设定页而不是人物海报。very zoomed out costume reference sheet, subject smaller in frame, large negative space, not a poster close-up.";
+    const cleanupInstruction =
+      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout.";
+    return mergePromptFragments([basePrompt, retryTuning, cleanupInstruction]);
   };
 
   const buildCharacterViewEditRetryPrompt = (
@@ -4771,7 +4809,9 @@ export function ComfyPipelinePanel() {
       "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo, dramatic perspective, foreshortening, fisheye lens, dutch angle, low angle shot, high angle shot, photo background clutter";
     const environmentConstraint =
       "architecture, building, temple, pagoda, palace exterior, blueprint, floor plan, site plan, campus aerial render, throne, statue, environment concept art, landscape sheet, aerial view, bird's-eye view, top-down view, moodboard, picture-in-picture, inset panels, magic circle, petals, floral background, ornate background, decorative frame, poster background, scene background, gradient backdrop";
-    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}`;
+    const clutterConstraint =
+      "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text";
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}`;
   };
 
   const stripInlineDataUrlPrefix = (raw: string) => raw.replace(/^data:[^,]+,/, "");
@@ -5267,7 +5307,7 @@ export function ComfyPipelinePanel() {
           );
           const currentReferencePathRaw = currentReference.localPath || currentReference.previewUrl;
           const currentReferencePath = currentReferencePathRaw
-            ? await normalizeCharacterAnchorBackground(currentReferencePathRaw)
+            ? await prepareCharacterFrontReferenceCandidate(currentReferencePathRaw)
             : "";
           if (!currentReferencePath) continue;
           const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath);
@@ -5850,8 +5890,9 @@ export function ComfyPipelinePanel() {
               }
             }
           );
-          const candidatePath = (generated.localPath || generated.previewUrl || "").trim();
-          if (!candidatePath) continue;
+          const candidatePathRaw = (generated.localPath || generated.previewUrl || "").trim();
+          if (!candidatePathRaw) continue;
+          const candidatePath = await prepareCharacterFrontReferenceCandidate(candidatePathRaw);
           const quality = await evaluateFrontReferenceQuality(candidatePath);
           if (quality.score > bestAnchorScore) {
             bestAnchorPath = candidatePath;

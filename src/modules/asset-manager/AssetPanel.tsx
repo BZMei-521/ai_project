@@ -319,6 +319,7 @@ function buildCharacterViewPrompt(name: string, context: string, view: "front" |
     "设定板用途，标准正交视角，完整服装，完整鞋靴，头顶到脚底完整入镜。",
     "中性站姿，双臂自然下垂且略微离开身体，双腿自然站立，禁止剧情动作和时装摆拍。",
     "纯净中性背景，无道具，无环境叙事，无其他人物，无拼版，无分屏。",
+    "禁止漂浮宠物、悬浮武器、额外徽记、头像小窗、说明文字、标注引线、局部放大框。",
     "同一角色身份稳定，脸型、发型、体型、服装款式与配色必须一致。",
     viewConstraint
   ].join(" ");
@@ -338,7 +339,8 @@ function buildCharacterViewNegativePrompt(view: "front" | "side" | "back", baseN
     "close-up portrait, bust shot, upper body only, cowboy shot, cropped body, cut off head, cut off feet, oversized subject",
     "deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra arms, extra legs, malformed hands, fused fingers",
     "crossed arms, folded arms, hands behind back, hands in pockets, leaning pose, contrapposto, runway pose, bent knee, tilted shoulders, tilted hips",
-    "dramatic perspective, foreshortening, fisheye, dutch angle, low angle shot, high angle shot, scene background clutter"
+    "dramatic perspective, foreshortening, fisheye, dutch angle, low angle shot, high angle shot, scene background clutter",
+    "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text"
   ]
     .filter((item) => item.trim().length > 0)
     .join(", ");
