@@ -5217,63 +5217,42 @@ export function ComfyPipelinePanel() {
     shotPrefix: string,
     logPrefix: string
   ) => {
-    const cleanupWorkflow = buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName);
-    const cleanupNegativePrompt = appendNegativePrompt(negativePrompt, [
-      "mannequin",
-      "faceless mannequin",
-      "wireframe body",
-      "anatomy template",
-      "body template",
-      "pose guide",
-      "croquis",
-      "base mesh",
-      "3d reference doll",
-      "grey dummy",
-      "line art mannequin",
-      "multiple standing mannequins"
-    ]);
-    let bestPath = candidatePath;
-    let bestQuality = await evaluateFrontReferenceQuality(candidatePath);
+    void runtimeSettings;
+    void name;
+    void context;
+    void checkpointName;
+    void negativePrompt;
+    void seedBase;
+    void shotPrefix;
+    let bestPath = (await prepareCharacterFrontReferenceCandidate(candidatePath)) || candidatePath;
+    let bestQuality = await evaluateFrontReferenceQuality(bestPath);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const cleanupSourcePath = bestPath.trim() || candidatePath;
-      const generated = await generateShotAsset(
-        runtimeSettings,
-        makeAssetGenerationShot(
-          `${shotPrefix}_cleanup_${attempt + 1}`,
-          `${name} 正视锚点修复`,
-          buildFrontAnchorCleanupPrompt(name, context, attempt),
-          "",
-          seedBase + attempt * 131
-        ),
-        0,
-        "image",
-        [],
-        [],
-        {
-          workflowJsonOverride: cleanupWorkflow,
-          tokenOverrides: {
-            FRAME_IMAGE_PATH: cleanupSourcePath,
-            NEGATIVE_PROMPT: cleanupNegativePrompt
-          }
+      const variants = await expandCharacterViewCandidatePanels(cleanupSourcePath);
+      let attemptBestPath = bestPath;
+      let attemptBestQuality = bestQuality;
+      for (const variant of variants) {
+        let repairedPath = await prepareCharacterFrontReferenceCandidate(variant);
+        if (attempt > 0) {
+          repairedPath = await prepareCharacterFrontReferenceCandidate(repairedPath);
         }
-      );
-      const repairedRaw = (generated.localPath || generated.previewUrl || "").trim();
-      if (!repairedRaw) continue;
-      const repairedPath = await prepareCharacterFrontReferenceCandidate(repairedRaw);
-      const repairedQuality = await evaluateFrontReferenceQuality(repairedPath);
-      if (repairedQuality.score > bestQuality.score) {
-        bestPath = repairedPath;
-        bestQuality = repairedQuality;
+        const repairedQuality = await evaluateFrontReferenceQuality(repairedPath);
+        if (repairedQuality.score > attemptBestQuality.score) {
+          attemptBestPath = repairedPath;
+          attemptBestQuality = repairedQuality;
+        }
       }
-      if (repairedQuality.acceptable) {
+      bestPath = attemptBestPath;
+      bestQuality = attemptBestQuality;
+      if (bestQuality.acceptable) {
         appendLog(`${logPrefix}经清理修复后达标：${name}`, "info");
         return {
-          path: repairedPath,
-          quality: repairedQuality
+          path: bestPath,
+          quality: bestQuality
         };
       }
       if (attempt < 2) {
-        appendLog(`${logPrefix}未达标（${repairedQuality.issues.join(" / ")}），继续修复：${name}`, "info");
+        appendLog(`${logPrefix}未达标（${bestQuality.issues.join(" / ")}），继续修复：${name}`, "info");
       }
     }
     return {
