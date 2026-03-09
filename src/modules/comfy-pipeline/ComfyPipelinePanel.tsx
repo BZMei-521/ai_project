@@ -6729,7 +6729,10 @@ export function ComfyPipelinePanel() {
   const upsertImportedCharacterAssets = async (
     profiles: NormalizedImportedCharacterProfile[],
     sourceLabel: string,
-    runtimeSettings: ComfySettings
+    runtimeSettings: ComfySettings,
+    options?: {
+      preferReuseExisting?: boolean;
+    }
   ) => {
     if (profiles.length === 0) return;
     const needGeneratedAnchors = profiles.some(
@@ -6747,6 +6750,23 @@ export function ComfyPipelinePanel() {
       const existingAsset = existingId
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId && item.type === "character")
         : null;
+      const hasExplicitVisualPaths = Boolean(
+        profile.anchorImagePath.trim() ||
+          profile.frontPath.trim() ||
+          profile.sidePath.trim() ||
+          profile.backPath.trim()
+      );
+      if (options?.preferReuseExisting && existingAsset && hasProvisionReadyCharacterThreeViewAsset(existingAsset) && !hasExplicitVisualPaths) {
+        const nextVoiceProfile = (profile.voiceProfile || existingAsset.voiceProfile || "").trim();
+        if (nextVoiceProfile && nextVoiceProfile !== (existingAsset.voiceProfile ?? "").trim()) {
+          updateAsset(existingId!, { voiceProfile: nextVoiceProfile });
+          updated += 1;
+        } else {
+          skipped += 1;
+        }
+        appendLog(`${sourceLabel}复用已有角色三视图：${profile.name}`);
+        continue;
+      }
       if (!anchorPath && profile.description.trim().length > 0) {
         const semanticContext = mergeCharacterSemanticContext(profile.description, profile.voiceProfile);
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
@@ -7534,7 +7554,16 @@ export function ComfyPipelinePanel() {
     try {
       const summary = await provisionAssetsForItems(items, runtimeSettings, {
         bindShots: true,
-        extraCharacterNames: uniqueEntities(profiles.map((profile) => profile.name).filter(Boolean)),
+        extraCharacterNames: uniqueEntities(
+          profiles
+            .map((profile) => profile.name)
+            .filter(Boolean)
+            .filter((name) => {
+              if (!skipExisting) return true;
+              const existingAsset = findAssetByName("character", name);
+              return !hasProvisionReadyCharacterThreeViewAsset(existingAsset);
+            })
+        ),
         characterContexts: Object.fromEntries(
           profiles
             .map(
@@ -7731,7 +7760,9 @@ export function ComfyPipelinePanel() {
           normalizeImportedCharacterProfiles(parsed),
           normalizeImportedCharacterProfilesFromShots(parsed)
         );
-        await upsertImportedCharacterAssets(profiles, "脚本导入", settings);
+        await upsertImportedCharacterAssets(profiles, "脚本导入", settings, {
+          preferReuseExisting: skipExisting
+        });
         const normalized = normalizeImportedShotsWithProfiles(parsed);
         const items = applyImportedShotItems(
           applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
@@ -7765,7 +7796,9 @@ export function ComfyPipelinePanel() {
               normalizeImportedCharacterProfiles(casted),
               normalizeImportedCharacterProfilesFromShots(casted)
             );
-            await upsertImportedCharacterAssets(profiles, "故事解析导入", settings);
+            await upsertImportedCharacterAssets(profiles, "故事解析导入", settings, {
+              preferReuseExisting: skipExisting
+            });
             const normalized = normalizeImportedShotsWithProfiles(
               parsed as unknown as {
                 shots?: Array<Record<string, unknown>>;
