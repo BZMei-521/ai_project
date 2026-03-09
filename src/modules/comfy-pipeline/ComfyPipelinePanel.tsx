@@ -2280,7 +2280,10 @@ function deriveShotBindingRepairs(
   shots: Shot[],
   assets: Asset[]
 ): {
-  patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }>;
+  patches: Array<{
+    shotId: string;
+    fields: { characterRefs: string[]; sceneRefId: string; generatedImagePath?: string; generatedVideoPath?: string };
+  }>;
   repairedCharacterShots: number;
   repairedSceneShots: number;
 } {
@@ -2302,7 +2305,10 @@ function deriveShotBindingRepairs(
     if (!canonicalKey) return raw;
     return skyboxCanonicalPrimaryMap.get(canonicalKey) ?? raw;
   };
-  const patches: Array<{ shotId: string; fields: { characterRefs: string[]; sceneRefId: string } }> = [];
+  const patches: Array<{
+    shotId: string;
+    fields: { characterRefs: string[]; sceneRefId: string; generatedImagePath?: string; generatedVideoPath?: string };
+  }> = [];
   let repairedCharacterShots = 0;
   let repairedSceneShots = 0;
 
@@ -2350,10 +2356,11 @@ function deriveShotBindingRepairs(
       normalizeSceneRefId(previousShot?.sceneRefId) ||
       (skyboxAssets.length === 1 ? skyboxAssets[0]?.id ?? "" : "");
 
-    const fields: { characterRefs: string[]; sceneRefId: string } = {
+    const fields: { characterRefs: string[]; sceneRefId: string; generatedImagePath?: string; generatedVideoPath?: string } = {
       characterRefs: shot.characterRefs ?? [],
       sceneRefId: shot.sceneRefId ?? ""
     };
+    let invalidateGeneratedStoryboard = false;
     const normalizedCharacterRefs = (() => {
       const characterOrder = new Map(characterAssets.map((asset, order) => [asset.id, order] as const));
       const seenNameKeys = new Set<string>();
@@ -2375,20 +2382,41 @@ function deriveShotBindingRepairs(
     ) {
       fields.characterRefs = normalizedCharacterRefs;
       repairedCharacterShots += 1;
+      invalidateGeneratedStoryboard = true;
     }
     if (nextSceneRefId && nextSceneRefId !== (shot.sceneRefId ?? "")) {
       fields.sceneRefId = nextSceneRefId;
       repairedSceneShots += 1;
+      invalidateGeneratedStoryboard = true;
+    }
+    if (invalidateGeneratedStoryboard) {
+      fields.generatedImagePath = "";
+      fields.generatedVideoPath = "";
     }
     if (
       fields.characterRefs.join(",") !== uniqueEntities(shot.characterRefs ?? []).join(",") ||
-      fields.sceneRefId !== (shot.sceneRefId ?? "")
+      fields.sceneRefId !== (shot.sceneRefId ?? "") ||
+      (invalidateGeneratedStoryboard &&
+        (Boolean(shot.generatedImagePath?.trim()) || Boolean(shot.generatedVideoPath?.trim())))
     ) {
       patches.push({ shotId: shot.id, fields });
     }
   }
 
   return { patches, repairedCharacterShots, repairedSceneShots };
+}
+
+function withFreshMediaVersion(url: string, token = Date.now()): string {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    parsed.searchParams.set("v", String(token));
+    return parsed.toString();
+  } catch {
+    const separator = trimmed.includes("?") ? "&" : "?";
+    return `${trimmed}${separator}v=${encodeURIComponent(String(token))}`;
+  }
 }
 
 function formatPipelineLogText(items: PipelineLogItem[]): string {
@@ -8543,9 +8571,13 @@ export function ComfyPipelinePanel() {
         });
       }
       if (kind === "image") {
-        updateShotFields(shot.id, { generatedImagePath: output.previewUrl });
+        updateShotFields(shot.id, {
+          generatedImagePath: withFreshMediaVersion(output.previewUrl)
+        });
       } else if (kind === "video") {
-        updateShotFields(shot.id, { generatedVideoPath: output.localPath || output.previewUrl });
+        updateShotFields(shot.id, {
+          generatedVideoPath: output.localPath || output.previewUrl
+        });
       }
       setAssetStatus(kind, shotId, "success");
       setLastErrorByShot((previous) => ({ ...previous, [shotId]: "" }));
@@ -8585,7 +8617,9 @@ export function ComfyPipelinePanel() {
               setPipelineState(`分镜图应急重试中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
             }
           });
-          updateShotFields(shot.id, { generatedImagePath: output.previewUrl });
+          updateShotFields(shot.id, {
+            generatedImagePath: withFreshMediaVersion(output.previewUrl)
+          });
           setAssetStatus(kind, shotId, "success");
           setLastErrorByShot((previous) => ({ ...previous, [shotId]: "" }));
           appendLog(`应急模板生成成功：${shot.title} -> ${output.previewUrl}`);
