@@ -1,6 +1,68 @@
 import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
 import { invokeDesktopCommand, isDesktopRuntime } from "../platform/desktopBridge";
 
+function normalizeEntityKey(value: string): string {
+  return value.trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function stripSceneTemporalQualifier(name: string): string {
+  return name
+    .replace(/^(清晨|早晨|上午|中午|下午|黄昏|傍晚|夜晚|深夜|凌晨)/g, "")
+    .replace(/(清晨|早晨|上午|中午|下午|黄昏|傍晚|夜晚|深夜|凌晨)$/g, "")
+    .replace(/^(白天|夜间|夜里|日间)/g, "")
+    .replace(/(白天|夜间|夜里|日间)$/g, "");
+}
+
+function canonicalAssetName(type: "character" | "scene" | "skybox", name: string): string {
+  let normalized = normalizeEntityKey(name);
+  if (!normalized) return "";
+  if (type === "character") {
+    normalized = normalized.replace(/(角色|人物|主角|配角|立绘|设定|三视图|正视图|侧视图|背视图)$/g, "");
+  } else {
+    normalized = normalized
+      .replace(/(天空盒|skybox|panorama|全景|环境图)$/g, "")
+      .replace(/(场景|场景图|环境图|设定图)$/g, "");
+    normalized = stripSceneTemporalQualifier(normalized);
+  }
+  return normalized.trim();
+}
+
+function characterAssetReferenceScore(asset: Asset): number {
+  let score = 0;
+  if ((asset.characterFrontPath?.trim() || asset.filePath?.trim() || "").length > 0) score += 3;
+  if ((asset.characterSidePath?.trim() || "").length > 0) score += 4;
+  if ((asset.characterBackPath?.trim() || "").length > 0) score += 4;
+  return score;
+}
+
+function buildCanonicalPrimaryCharacterMap(assets: Asset[]): Map<string, string> {
+  const chosen = new Map<string, { id: string; score: number; index: number }>();
+  assets.forEach((asset, index) => {
+    if (asset.type !== "character") return;
+    const canonicalKey = canonicalAssetName("character", asset.name);
+    if (!canonicalKey) return;
+    const nextScore = characterAssetReferenceScore(asset);
+    const previous = chosen.get(canonicalKey);
+    if (!previous || nextScore > previous.score || (nextScore === previous.score && index < previous.index)) {
+      chosen.set(canonicalKey, { id: asset.id, score: nextScore, index });
+    }
+  });
+  return new Map(Array.from(chosen.entries(), ([key, value]) => [key, value.id] as const));
+}
+
+function normalizeCharacterAssetRefId(
+  assets: Asset[],
+  canonicalCharacterMap: Map<string, string>,
+  refId?: string
+): string {
+  const raw = refId?.trim() ?? "";
+  if (!raw) return "";
+  const asset = assets.find((item) => item.id === raw && item.type === "character");
+  if (!asset) return "";
+  const canonicalKey = canonicalAssetName("character", asset.name);
+  return (canonicalKey && canonicalCharacterMap.get(canonicalKey)) || asset.id;
+}
+
 export type ComfySettings = {
   baseUrl: string;
   outputDir: string;
@@ -3385,6 +3447,8 @@ function inferPromptTokens(
   const nextShot = allShots[index + 1];
   const mode = inferVideoMode(shot, nextShot);
   const promptBaseRaw = shot.storyPrompt?.trim() || shot.notes?.trim() || shot.title;
+  const characterAssetsAll = assets.filter((item) => item.type === "character");
+  const canonicalCharacterMap = buildCanonicalPrimaryCharacterMap(characterAssetsAll);
   const sceneAsset = assets.find(
     (item) => item.id === (shot.sceneRefId ?? "") && (item.type === "scene" || item.type === "skybox")
   );
@@ -3406,7 +3470,7 @@ function inferPromptTokens(
   const resolvedCharacterAssets: Asset[] = [];
   const seenCharacterIds = new Set<string>();
   for (const refId of shot.characterRefs ?? []) {
-    const trimmedId = refId.trim();
+    const trimmedId = normalizeCharacterAssetRefId(assets, canonicalCharacterMap, refId);
     if (!trimmedId || seenCharacterIds.has(trimmedId)) continue;
     const matched = assets.find((item) => item.id === trimmedId && item.type === "character");
     if (!matched) continue;
@@ -3581,7 +3645,7 @@ function inferPromptTokens(
     CAMERA_FOV: typeof shot.cameraFov === "number" && Number.isFinite(shot.cameraFov) ? String(shot.cameraFov) : "",
     RENDER_WIDTH: String(targetRenderWidth),
     RENDER_HEIGHT: String(targetRenderHeight),
-    CHARACTER_REFS: (shot.characterRefs ?? []).join(","),
+    CHARACTER_REFS: resolvedCharacterAssets.map((item) => item.id).join(","),
     PREV_SCENE_SHOT_TITLE: continuityPlan.previousSceneShot?.title ?? "",
     PREV_SCENE_IMAGE_PATH: parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? ""),
     PREV_CHARACTER_SHOT_TITLE: continuityPlan.previousCharacterShot?.title ?? "",
@@ -5402,7 +5466,7 @@ export async function generateSkyboxFaces(
   const previews: Partial<Record<SkyboxFace, string>> = {};
   for (const face of SKYBOX_FACES) {
     const workflow = ensureWorkflowJson(workflowRaw);
-    const tokens = buildSkyboxTokens(settings, description, face);
+    const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face), "image");
     applyDynamicCharacterRefsForImageWorkflow(workflow, []);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, "image", tokens);
@@ -5439,7 +5503,7 @@ export async function generateSkyboxFaceUpdate(
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const workflow = ensureWorkflowJson(workflowRaw);
-  const tokens = buildSkyboxTokens(settings, description, face, eventPrompt);
+  const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face, eventPrompt), "image");
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);

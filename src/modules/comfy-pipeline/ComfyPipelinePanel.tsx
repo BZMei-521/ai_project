@@ -104,6 +104,7 @@ const CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER = [
   "animagine-xl-4.0.safetensors"
 ] as const;
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
+type UnifiedVisualStyleKind = "anime" | "realistic" | "neutral";
 const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
 const DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE: SkyboxAssetWorkflowMode = "basic_builtin";
 const DEFAULT_CHARACTER_ADVANCED_UNET = "flux1-kontext-dev.safetensors";
@@ -482,6 +483,38 @@ function prefersRealisticCharacterAnchorModel(context: string): boolean {
   return /(写实|电影|影视|真人|实拍|摄影|写实风|realistic|cinematic|live action|photographic|photo real)/i.test(
     normalized
   );
+}
+
+function looksLikeAnimeModelName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(animagine|anime|anything|abyss|awpainting|cardos|neta|yume|anima|pencil|illustration|cartoon)/.test(
+    normalized
+  );
+}
+
+function looksLikeRealisticModelName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(realistic|vision|majicmix|dreamshaper|juggernaut|interior|architecture)/.test(normalized);
+}
+
+function inferVisualStyleKindFromText(text: string): UnifiedVisualStyleKind | "" {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return "";
+  if (/(二次元|动漫|动画|插画|日系|赛璐璐|平涂|anime|manga|illustration|cel shading|toon|cartoon)/i.test(normalized)) {
+    return "anime";
+  }
+  if (/(写实|电影|影视|真人|实拍|摄影|真实|cinematic|realistic|photographic|photo real|live action)/i.test(normalized)) {
+    return "realistic";
+  }
+  return "";
+}
+
+function inferVisualStyleKindFromModelName(name: string): UnifiedVisualStyleKind | "" {
+  if (looksLikeAnimeModelName(name)) return "anime";
+  if (looksLikeRealisticModelName(name)) return "realistic";
+  return "";
 }
 
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
@@ -1427,6 +1460,63 @@ function computeAssetNameScore(type: "character" | "scene" | "skybox", input: st
   return overlap / Math.max(charsA.size, charsB.size);
 }
 
+function characterAssetReferenceScore(asset: Asset): number {
+  let score = 0;
+  if ((asset.characterFrontPath?.trim() || asset.filePath?.trim() || "").length > 0) score += 3;
+  if ((asset.characterSidePath?.trim() || "").length > 0) score += 4;
+  if ((asset.characterBackPath?.trim() || "").length > 0) score += 4;
+  return score;
+}
+
+function skyboxAssetReferenceScore(asset: Asset): number {
+  if (asset.type !== "skybox") return 0;
+  let score = 0;
+  if ((asset.skyboxFaces?.front?.trim() || asset.filePath?.trim() || "").length > 0) score += 3;
+  if ((asset.skyboxFaces?.right?.trim() || "").length > 0) score += 2;
+  if ((asset.skyboxFaces?.back?.trim() || "").length > 0) score += 2;
+  if ((asset.skyboxFaces?.left?.trim() || "").length > 0) score += 2;
+  if ((asset.skyboxFaces?.up?.trim() || "").length > 0) score += 1;
+  if ((asset.skyboxFaces?.down?.trim() || "").length > 0) score += 1;
+  return score;
+}
+
+function assetReferencePreferenceScore(type: "character" | "scene" | "skybox", asset: Asset): number {
+  if (type === "character") return characterAssetReferenceScore(asset);
+  if (type === "skybox") return skyboxAssetReferenceScore(asset);
+  return (asset.filePath?.trim() || "").length > 0 ? 1 : 0;
+}
+
+function buildCanonicalPrimaryAssetMap(
+  assets: Asset[],
+  type: "character" | "scene" | "skybox"
+): Map<string, string> {
+  const chosen = new Map<string, { id: string; score: number; index: number }>();
+  assets.forEach((asset, index) => {
+    if (asset.type !== type) return;
+    const canonicalKey = canonicalAssetName(type, asset.name);
+    if (!canonicalKey) return;
+    const nextScore = assetReferencePreferenceScore(type, asset);
+    const previous = chosen.get(canonicalKey);
+    if (!previous || nextScore > previous.score || (nextScore === previous.score && index < previous.index)) {
+      chosen.set(canonicalKey, { id: asset.id, score: nextScore, index });
+    }
+  });
+  return new Map(Array.from(chosen.entries(), ([key, value]) => [key, value.id] as const));
+}
+
+function normalizeCharacterAssetRefId(
+  assets: Asset[],
+  canonicalCharacterMap: Map<string, string>,
+  refId?: string
+): string {
+  const raw = refId?.trim() ?? "";
+  if (!raw) return "";
+  const asset = assets.find((item) => item.id === raw && item.type === "character");
+  if (!asset) return "";
+  const canonicalKey = canonicalAssetName("character", asset.name);
+  return (canonicalKey && canonicalCharacterMap.get(canonicalKey)) || asset.id;
+}
+
 function findMatchingAssetId(
   assets: Asset[],
   type: "character" | "scene" | "skybox",
@@ -1435,14 +1525,20 @@ function findMatchingAssetId(
   const sourceName = name.trim();
   if (!sourceName) return "";
   const allAssets = assets.filter((asset) => asset.type === type);
-  const exact = allAssets.find((asset) => canonicalAssetName(type, asset.name) === canonicalAssetName(type, sourceName));
-  if (exact) return exact.id;
+  const canonicalPrimaryMap = buildCanonicalPrimaryAssetMap(allAssets, type);
+  const canonicalKey = canonicalAssetName(type, sourceName);
+  if (canonicalKey) {
+    const exactId = canonicalPrimaryMap.get(canonicalKey);
+    if (exactId) return exactId;
+  }
   const scored = allAssets
-    .map((asset) => ({
+    .map((asset, index) => ({
       id: asset.id,
-      score: computeAssetNameScore(type, sourceName, asset.name)
+      score: computeAssetNameScore(type, sourceName, asset.name),
+      preference: assetReferencePreferenceScore(type, asset),
+      index
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || b.preference - a.preference || a.index - b.index);
   const best = scored[0];
   const threshold = type === "character" ? 0.72 : 0.58;
   return best && best.score >= threshold ? best.id : "";
@@ -2202,6 +2298,7 @@ function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReference
   const assetById = new Map(assets.map((asset) => [asset.id, asset]));
   const characterAssets = assets.filter((asset) => asset.type === "character");
   const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const characterCanonicalPrimaryMap = buildCanonicalPrimaryAssetMap(characterAssets, "character");
   const context = compactTextParts(
     shot.title,
     shot.storyPrompt,
@@ -2211,7 +2308,9 @@ function resolveShotReferencePreview(shot: Shot, assets: Asset[]): ShotReference
     shot.sourceSceneName
   );
   const matchedCharacterIds = uniqueEntities([
-    ...(shot.characterRefs ?? []).filter((id) => assetById.get(id)?.type === "character"),
+    ...(shot.characterRefs ?? [])
+      .map((id) => normalizeCharacterAssetRefId(assets, characterCanonicalPrimaryMap, id))
+      .filter((id) => assetById.get(id)?.type === "character"),
     ...(shot.sourceCharacterNames ?? [])
       .map((name) => findMatchingAssetId(assets, "character", name))
       .filter(Boolean),
@@ -2337,6 +2436,7 @@ function deriveShotBindingRepairs(
 } {
   const characterAssets = assets.filter((asset) => asset.type === "character");
   const skyboxAssets = assets.filter((asset) => asset.type === "skybox");
+  const characterCanonicalPrimaryMap = buildCanonicalPrimaryAssetMap(characterAssets, "character");
   const skyboxCanonicalPrimaryMap = new Map<string, string>();
   for (const asset of skyboxAssets) {
     const canonicalKey = canonicalAssetName("skybox", asset.name);
@@ -2373,7 +2473,9 @@ function deriveShotBindingRepairs(
     );
 
     const nextCharacterRefs = uniqueEntities([
-      ...(shot.characterRefs ?? []).filter((id) => assets.some((asset) => asset.id === id && asset.type === "character")),
+      ...(shot.characterRefs ?? [])
+        .map((id) => normalizeCharacterAssetRefId(assets, characterCanonicalPrimaryMap, id))
+        .filter((id) => assets.some((asset) => asset.id === id && asset.type === "character")),
       ...(shot.sourceCharacterNames ?? [])
         .map((name) => findMatchingAssetId(assets, "character", name))
         .filter(Boolean),
@@ -2387,7 +2489,11 @@ function deriveShotBindingRepairs(
 
     if (nextCharacterRefs.length === 0 && shotLooksCharacterDriven(shot)) {
       if ((previousShot?.characterRefs?.length ?? 0) > 0) {
-        nextCharacterRefs.push(...(previousShot?.characterRefs ?? []));
+        nextCharacterRefs.push(
+          ...(previousShot?.characterRefs ?? [])
+            .map((id) => normalizeCharacterAssetRefId(assets, characterCanonicalPrimaryMap, id))
+            .filter(Boolean)
+        );
       } else if (characterAssets.length > 0 && characterAssets.length <= 2) {
         nextCharacterRefs.push(...characterAssets.map((asset) => asset.id));
       }
@@ -2414,12 +2520,13 @@ function deriveShotBindingRepairs(
       const seenNameKeys = new Set<string>();
       const output: string[] = [];
       for (const refId of uniqueEntities(nextCharacterRefs)) {
-        const asset = assets.find((item) => item.id === refId && item.type === "character");
+        const normalizedRefId = normalizeCharacterAssetRefId(assets, characterCanonicalPrimaryMap, refId);
+        const asset = assets.find((item) => item.id === normalizedRefId && item.type === "character");
         if (!asset) continue;
         const key = normalizeEntityKey(asset.name || asset.id);
         if (key && seenNameKeys.has(key)) continue;
         if (key) seenNameKeys.add(key);
-        output.push(refId);
+        output.push(normalizedRefId);
       }
       output.sort((left, right) => (characterOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (characterOrder.get(right) ?? Number.MAX_SAFE_INTEGER));
       return output;
@@ -5237,22 +5344,58 @@ export function ComfyPipelinePanel() {
       .replace(/\s{2,}/g, " ")
       .trim();
 
-  const resolvePipelineVisualStyleHint = () => {
-    const modelName = (
-      settings.storyboardImageModelName?.trim() ||
-      settings.characterAssetModelName?.trim() ||
-      settings.skyboxAssetModelName?.trim() ||
-      ""
-    ).toLowerCase();
-    if (
-      /(animagine|anime|anything|abyss|awpainting|cardos|neta|yume|anima|pencil|illustration|cartoon)/.test(modelName)
-    ) {
-      return "二次元插画风，线稿清晰，平滑上色";
-    }
-    if (/(realistic|vision|majicmix|dreamshaper|juggernaut|interior|architecture)/.test(modelName)) {
-      return "写实影视美术风，材质与光影自然";
-    }
-    return "统一风格美术表达";
+  const resolveSharedVisualStyleProfile = (contexts: string[] = []) => {
+    const globalStyle = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const kind =
+      [
+        inferVisualStyleKindFromText(globalStyle),
+        ...contexts.map((item) => inferVisualStyleKindFromText(item)),
+        inferVisualStyleKindFromModelName(settings.characterAssetModelName?.trim() || ""),
+        inferVisualStyleKindFromModelName(settings.skyboxAssetModelName?.trim() || ""),
+        inferVisualStyleKindFromModelName(settings.storyboardImageModelName?.trim() || "")
+      ].find((item): item is UnifiedVisualStyleKind => Boolean(item)) ?? "neutral";
+    const baseAnchor =
+      kind === "anime"
+        ? "统一二次元角色设定与场景插画风，清晰线稿，平滑上色，人物与场景共享同一渲染方式，禁止写实摄影感。"
+        : kind === "realistic"
+          ? "统一写实影视概念美术风，人物与场景共享同一写实材质、自然光影和电影级色彩，禁止二次元卡通感。"
+          : "统一概念美术风，人物与场景共享同一材质语言、光影系统与色彩倾向。";
+    const styleHint =
+      kind === "anime"
+        ? "二次元设定插画风，线稿清晰，平滑上色，人物与场景同一渲染方式"
+        : kind === "realistic"
+          ? "写实影视概念风，人物与场景同一写实材质、自然光影和电影色彩"
+          : "统一概念美术风，人物与场景同一材质表现与光影语言";
+    const styleNegative =
+      kind === "anime"
+        ? "photorealistic, live action, cinematic photo, realistic skin pores, photography, 3d render, clay render"
+        : kind === "realistic"
+          ? "anime, manga, cel shading, cartoon, chibi, flat illustration, mascot style, toon render"
+          : "";
+    const characterDirective =
+      kind === "anime"
+        ? "人物必须保持统一二次元角色设定插画风，服装、发型和肤色都按同一插画质感表现，禁止写实摄影感。"
+        : kind === "realistic"
+          ? "人物必须保持统一写实影视概念风，服装材质、肤色和面部都按真实材质与自然光影表现，禁止卡通化。"
+          : "人物必须保持统一概念美术风，服装、脸部和材质表现保持同一渲染语言。";
+    const sceneDirective =
+      kind === "anime"
+        ? "场景必须与角色三视图保持同一二次元插画风，环境线条、上色和明暗方式要与人物一致，禁止写实照片感。"
+        : kind === "realistic"
+          ? "场景必须与角色三视图保持同一写实影视概念风，环境材质、空间光影和色彩都要与人物一致，禁止二次元平涂感。"
+          : "场景必须与角色三视图保持同一概念美术风，环境材质、光影与人物表现一致。";
+    return {
+      kind,
+      styleHint,
+      styleAnchor: mergePromptFragments([baseAnchor, globalStyle]).trim(),
+      styleNegative,
+      characterDirective,
+      sceneDirective
+    };
+  };
+
+  const resolvePipelineVisualStyleHint = (contexts: string[] = []) => {
+    return resolveSharedVisualStyleProfile(contexts).styleHint;
   };
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
@@ -5261,8 +5404,9 @@ export function ComfyPipelinePanel() {
       const translatedContext = buildTranslatedCharacterAppearanceContext(context, true);
       const appearanceContext = translatedContext || sanitizedContext;
       const genderHint = inferCharacterGenderHint(context);
-      const styleHint = resolvePipelineVisualStyleHint();
-      const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+      const styleProfile = resolveSharedVisualStyleProfile([context]);
+      const styleHint = styleProfile.styleHint;
+      const styleAnchor = styleProfile.styleAnchor;
       const core = mergePromptFragments([
         "masterpiece, best quality, high detail",
         genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
@@ -5281,6 +5425,7 @@ export function ComfyPipelinePanel() {
         `角色：${name}`,
         `风格倾向：${styleHint}`,
         styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
+        styleProfile.characterDirective,
         appearanceContext ? `Appearance details: ${appearanceContext}` : ""
       ]);
       const constraints = mergePromptFragments([
@@ -5295,6 +5440,7 @@ export function ComfyPipelinePanel() {
         "禁止裸体、禁止裸模、禁止赤脚、禁止裸足、禁止露胸、禁止露出躯干、禁止内衣态、禁止泳装态",
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
         "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人",
+        "必须与后续三视图和场景保持同一画风与材质表现，不允许换成另一种渲染风格",
         "不是设定板，不是人设页，不是 collage，不是 lineup，不是 triptych"
       ]);
       return `${core}。严格要求：${constraints}。`;
@@ -5305,8 +5451,9 @@ export function ComfyPipelinePanel() {
     const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
     const appearanceContext = translatedContext || sanitizedContext;
     const genderHint = inferCharacterGenderHint(context);
-    const styleHint = resolvePipelineVisualStyleHint();
-    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const styleProfile = resolveSharedVisualStyleProfile([context]);
+    const styleHint = styleProfile.styleHint;
+    const styleAnchor = styleProfile.styleAnchor;
     const framingInstruction =
       "character occupies about 50% to 62% of frame height, centered with extra blank margin on both sides and above the head";
     const angleInstruction =
@@ -5347,6 +5494,7 @@ export function ComfyPipelinePanel() {
       `角色：${name}`,
       `风格倾向：${styleHint}`,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
+      styleProfile.characterDirective,
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       angleInstruction,
       "只保留角色外观与服装本体，不要设定页排版元素",
@@ -5392,6 +5540,7 @@ export function ComfyPipelinePanel() {
       "镜头距离为中远景，禁止半身、胸像、特写构图",
       "同一角色三视图必须保持同一张脸、同一发型、同一体型比例、同一服装款式与配色",
       "必须与参考正视图为同一角色身份，不允许变成另一个人",
+      "必须与场景和分镜保持同一画风，不允许换成另一种渲染质感",
       "不允许在 front/side/back 之间换装、换脸、换发型、换年龄、换体型",
       "禁止裸露、内衣态、泳装态、赤膊",
       "人体比例自然，头身比协调，肩胯关系合理，四肢长度正常",
@@ -5460,6 +5609,7 @@ export function ComfyPipelinePanel() {
     const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
     const appearanceContext = translatedContext || sanitizedContext;
     const genderHint = inferCharacterGenderHint(context);
+    const styleProfile = resolveSharedVisualStyleProfile([context]);
     const viewInstruction =
       view === "side"
         ? "Render one single full-body human character in a strict right-facing profile. Exactly one body in the entire image."
@@ -5482,6 +5632,9 @@ export function ComfyPipelinePanel() {
       `角色：${name}`,
       genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
+      `Style hint: ${styleProfile.styleHint}`,
+      styleProfile.styleAnchor ? `Global style anchor: ${styleProfile.styleAnchor}` : "",
+      styleProfile.characterDirective,
       viewInstruction,
       identityInstruction,
       sheetConstraint,
@@ -5546,8 +5699,9 @@ export function ComfyPipelinePanel() {
 
   const buildCharacterFallbackSheetPrompt = (name: string, context: string, attempt: number) => {
     const sanitizedContext = sanitizeCharacterViewContext(context);
-    const styleHint = resolvePipelineVisualStyleHint();
-    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const styleProfile = resolveSharedVisualStyleProfile([context]);
+    const styleHint = styleProfile.styleHint;
+    const styleAnchor = styleProfile.styleAnchor;
     const retryTuning =
       attempt <= 0
         ? "Three figures must be evenly spaced in three equal vertical panels. Each full body stays entirely inside its own panel."
@@ -5572,6 +5726,7 @@ export function ComfyPipelinePanel() {
       sanitizedContext,
       `风格倾向：${styleHint}`,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
+      styleProfile.characterDirective,
       "Preserve the exact same face, hairstyle, body proportions, costume structure, accessories, silhouette, and colors from the reference image.",
       "All three figures must be fully clothed, anatomically correct, full body, centered within their own panel, and fully visible from head to toe.",
       "Front panel faces camera. Middle panel is a strict right profile with one eye only, nose pointing right, shoulders and hips stacked in profile. Right panel is a strict back view with no face visible.",
@@ -5621,6 +5776,7 @@ export function ComfyPipelinePanel() {
     ]);
 
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string, context = "") => {
+    const styleProfile = resolveSharedVisualStyleProfile([context]);
     const viewConstraint =
       view === "front"
         ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
@@ -5648,7 +5804,7 @@ export function ComfyPipelinePanel() {
     const nudityConstraint =
       "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, lingerie, bikini, swimsuit, barefoot, exposed toes";
     const contextualConstraint = buildContextualCharacterNegativeHints(context);
-    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}, ${templateConstraint}, ${nudityConstraint}${contextualConstraint ? `, ${contextualConstraint}` : ""}`;
+    return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}, ${templateConstraint}, ${nudityConstraint}${styleProfile.styleNegative ? `, ${styleProfile.styleNegative}` : ""}${contextualConstraint ? `, ${contextualConstraint}` : ""}`;
   };
 
   const ensureCharacterThreeViewLayoutReferenceFilename = async (runtimeSettings: ComfySettings) => {
@@ -5697,8 +5853,9 @@ export function ComfyPipelinePanel() {
     const appearanceContext = translatedContext || sanitizedContext;
     const genderHint = inferCharacterGenderHint(context);
     const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
-    const styleHint = resolvePipelineVisualStyleHint();
-    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
+    const styleProfile = resolveSharedVisualStyleProfile([context]);
+    const styleHint = styleProfile.styleHint;
+    const styleAnchor = styleProfile.styleAnchor;
     return mergePromptFragments([
       "Recreate the same clothed character from the first image into exactly three full-body orthographic views arranged left to right as front, strict right side profile, and back.",
       genderHint === "female" ? "The character is a young adult woman." : genderHint === "male" ? "The character is a young adult man." : "",
@@ -5714,6 +5871,8 @@ export function ComfyPipelinePanel() {
       `${backgroundPrompt}，grey background，clean character turnaround sheet，studio reference board`,
       `Style hint: ${styleHint}`,
       styleAnchor ? `Global style anchor: ${styleAnchor}` : "",
+      styleProfile.characterDirective,
+      "The turnaround sheet must keep the same visual style language as the scene asset and storyboard frames.",
       "Do not invent a different art medium, genre, era, costume, props, or companion creature from the first image.",
       "High detail, stable anatomy, strong costume preservation, consistent clothing folds and placement, production-ready character turnaround."
     ]);
@@ -5723,6 +5882,7 @@ export function ComfyPipelinePanel() {
     mergePromptFragments([
       baseNegativePrompt,
       buildContextualCharacterNegativeHints(context),
+      resolveSharedVisualStyleProfile([context]).styleNegative,
       "text, watermark, logo, annotation, label, callout, decorative border, inset portrait, extra icon",
       "extra panel, fourth figure, lineup with many tiny characters, collage, poster layout, sprite sheet",
       "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose",
@@ -5734,8 +5894,9 @@ export function ComfyPipelinePanel() {
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定图`;
-    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
-    const styleHint = resolvePipelineVisualStyleHint();
+    const styleProfile = resolveSharedVisualStyleProfile([sceneName, scenePrompt]);
+    const styleAnchor = styleProfile.styleAnchor;
+    const styleHint = styleProfile.styleHint;
     return `${mergePromptFragments([
       prompt,
       "场景设定图",
@@ -5744,6 +5905,7 @@ export function ComfyPipelinePanel() {
       "主光方向明确，阴影逻辑自然",
       "材质细节清晰，画面干净锐利",
       "符合物理规律与常识，不扭曲不违和",
+      styleProfile.sceneDirective,
       styleHint,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
     ])}。`;
@@ -5752,8 +5914,9 @@ export function ComfyPipelinePanel() {
   const buildSkyboxDescription = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
     const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
-    const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
-    const styleHint = resolvePipelineVisualStyleHint();
+    const styleProfile = resolveSharedVisualStyleProfile([sceneName, scenePrompt]);
+    const styleAnchor = styleProfile.styleAnchor;
+    const styleHint = styleProfile.styleHint;
     return `${mergePromptFragments([
       prompt,
       presetPrompt,
@@ -5764,6 +5927,7 @@ export function ComfyPipelinePanel() {
       "保持地平线与垂直结构稳定，避免几何扭曲",
       "画面清晰锐利，可支持后续角色合成",
       "符合真实空间与物理逻辑",
+      styleProfile.sceneDirective,
       `风格倾向：${styleHint}`,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
     ])}。`;

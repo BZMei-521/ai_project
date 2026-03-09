@@ -36,6 +36,7 @@ const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
 
 type CharacterAssetWorkflowMode = "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
+type UnifiedVisualStyleKind = "anime" | "realistic" | "neutral";
 
 const CHARACTER_RENDER_PRESET_CONFIG: Record<
   "stable_fullbody" | "clean_reference",
@@ -74,6 +75,83 @@ async function cleanupGeneratedCharacterFamilies(sourcePaths: string[], keepPath
 
 function normalizeStoryInput(raw: string): string {
   return raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, " ").trim();
+}
+
+function looksLikeAnimeModelName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(animagine|anime|anything|abyss|awpainting|cardos|neta|yume|anima|pencil|illustration|cartoon)/.test(
+    normalized
+  );
+}
+
+function looksLikeRealisticModelName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(realistic|vision|majicmix|dreamshaper|juggernaut|interior|architecture)/.test(normalized);
+}
+
+function inferVisualStyleKindFromText(text: string): UnifiedVisualStyleKind | "" {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return "";
+  if (/(二次元|动漫|动画|插画|日系|赛璐璐|平涂|anime|manga|illustration|cel shading|toon|cartoon)/i.test(normalized)) {
+    return "anime";
+  }
+  if (/(写实|电影|影视|真人|实拍|摄影|真实|cinematic|realistic|photographic|photo real|live action)/i.test(normalized)) {
+    return "realistic";
+  }
+  return "";
+}
+
+function inferVisualStyleKindFromModelName(name: string): UnifiedVisualStyleKind | "" {
+  if (looksLikeAnimeModelName(name)) return "anime";
+  if (looksLikeRealisticModelName(name)) return "realistic";
+  return "";
+}
+
+function resolveUnifiedStyleProfile(comfySettings: ComfySettings, contexts: string[] = []) {
+  const globalStyle = normalizeStoryInput(comfySettings.globalVisualStylePrompt ?? "").replace(/\s{2,}/g, " ").trim();
+  const kind =
+    [
+      inferVisualStyleKindFromText(globalStyle),
+      ...contexts.map((item) => inferVisualStyleKindFromText(item)),
+      inferVisualStyleKindFromModelName(comfySettings.characterAssetModelName?.trim() || ""),
+      inferVisualStyleKindFromModelName(comfySettings.skyboxAssetModelName?.trim() || "")
+    ].find((item): item is UnifiedVisualStyleKind => Boolean(item)) ?? "neutral";
+  const baseAnchor =
+    kind === "anime"
+      ? "统一二次元角色设定与场景插画风，清晰线稿，平滑上色，人物与场景共享同一渲染方式，禁止写实摄影感。"
+      : kind === "realistic"
+        ? "统一写实影视概念美术风，人物与场景共享同一写实材质、自然光影和电影级色彩，禁止二次元卡通感。"
+        : "统一概念美术风，人物与场景共享同一材质语言、光影系统与色彩倾向。";
+  return {
+    kind,
+    styleHint:
+      kind === "anime"
+        ? "二次元设定插画风，线稿清晰，平滑上色，人物与场景同一渲染方式"
+        : kind === "realistic"
+          ? "写实影视概念风，人物与场景同一写实材质、自然光影和电影色彩"
+          : "统一概念美术风，人物与场景同一材质表现与光影语言",
+    styleAnchor: [baseAnchor, globalStyle].filter(Boolean).join(" ").trim(),
+    styleNegative:
+      kind === "anime"
+        ? "photorealistic, live action, cinematic photo, realistic skin pores, photography, 3d render, clay render"
+        : kind === "realistic"
+          ? "anime, manga, cel shading, cartoon, chibi, flat illustration, mascot style, toon render"
+          : "",
+    characterDirective:
+      kind === "anime"
+        ? "人物必须保持统一二次元角色设定插画风，服装、发型和肤色都按同一插画质感表现，禁止写实摄影感。"
+        : kind === "realistic"
+          ? "人物必须保持统一写实影视概念风，服装材质、肤色和面部都按真实材质与自然光影表现，禁止卡通化。"
+          : "人物必须保持统一概念美术风，服装、脸部和材质表现保持同一渲染语言。",
+    sceneDirective:
+      kind === "anime"
+        ? "场景必须与角色三视图保持同一二次元插画风，环境线条、上色和明暗方式要与人物一致，禁止写实照片感。"
+        : kind === "realistic"
+          ? "场景必须与角色三视图保持同一写实影视概念风，环境材质、空间光影和色彩都要与人物一致，禁止二次元平涂感。"
+          : "场景必须与角色三视图保持同一概念美术风，环境材质、光影与人物表现一致。"
+  };
 }
 
 function sanitizeCharacterViewContext(context: string): string {
@@ -372,12 +450,21 @@ function makeAssetGenerationShot(
   };
 }
 
-function buildCharacterViewPrompt(name: string, context: string, view: "front" | "side" | "back") {
+function buildCharacterViewPrompt(
+  name: string,
+  context: string,
+  view: "front" | "side" | "back",
+  comfySettings: ComfySettings
+) {
+  const styleProfile = resolveUnifiedStyleProfile(comfySettings, [context]);
   if (view === "front") {
     const sanitizedContext = sanitizeCharacterAnchorContext(context);
     return [
       `单张角色正视图，角色：${name}。`,
       sanitizedContext,
+      `风格倾向：${styleProfile.styleHint}。`,
+      styleProfile.styleAnchor ? `全局画风锚点：${styleProfile.styleAnchor}。` : "",
+      styleProfile.characterDirective,
       "必须是一个完整人体，包含头部、躯干、双臂、双手、双腿、双脚。",
       "必须有清晰的人类面部特征、发型、服装层次和鞋靴。",
       "单人全身，正面朝向镜头，头顶到脚底完整入镜，双手双脚完整可见。",
@@ -388,7 +475,8 @@ function buildCharacterViewPrompt(name: string, context: string, view: "front" |
       "禁止漂浮宠物、悬浮武器、伴生物、额外道具、漂浮挂件。",
       "禁止抽象色块、禁止水彩斑点、禁止漂浮符号、禁止独立图标、禁止单独头部、禁止动物头像、禁止吉祥物头像。",
       "中性站姿，双臂自然下垂，双腿自然站立，完整服装和鞋靴清楚可见。",
-      "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人。"
+      "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人。",
+      "必须与后续三视图和场景保持同一画风与材质表现，不允许换成另一种渲染风格。"
     ].join(" ");
   }
   const sanitizedContext = sanitizeCharacterViewContext(context);
@@ -400,16 +488,26 @@ function buildCharacterViewPrompt(name: string, context: string, view: "front" |
   return [
     `单张角色${viewLabel}，单人全身，角色：${name}。`,
     sanitizedContext,
+    `风格倾向：${styleProfile.styleHint}。`,
+    styleProfile.styleAnchor ? `全局画风锚点：${styleProfile.styleAnchor}。` : "",
+    styleProfile.characterDirective,
     "单张单人视角图，标准正交视角，完整服装，完整鞋靴，头顶到脚底完整入镜。",
     "中性站姿，双臂自然下垂且略微离开身体，双腿自然站立，禁止剧情动作和时装摆拍。",
     "纯净中性背景，无道具，无环境叙事，无其他人物，无拼版，无分屏，无设定板排版。",
     "禁止漂浮宠物、悬浮武器、额外徽记、头像小窗、说明文字、标注引线、局部放大框。",
     "同一角色身份稳定，脸型、发型、体型、服装款式与配色必须一致。",
+    "必须与场景和分镜保持同一画风，不允许换成另一种渲染质感。",
     viewConstraint
   ].join(" ");
 }
 
-function buildCharacterViewNegativePrompt(view: "front" | "side" | "back", baseNegativePrompt: string) {
+function buildCharacterViewNegativePrompt(
+  view: "front" | "side" | "back",
+  baseNegativePrompt: string,
+  comfySettings: ComfySettings,
+  context = ""
+) {
+  const styleProfile = resolveUnifiedStyleProfile(comfySettings, [context]);
   const viewConstraint =
     view === "front"
       ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
@@ -425,7 +523,8 @@ function buildCharacterViewNegativePrompt(view: "front" | "side" | "back", baseN
     "crossed arms, folded arms, hands behind back, hands in pockets, leaning pose, contrapposto, runway pose, bent knee, tilted shoulders, tilted hips",
     "dramatic perspective, foreshortening, fisheye, dutch angle, low angle shot, high angle shot, scene background clutter",
     "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text",
-    "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh"
+    "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh",
+    styleProfile.styleNegative
   ]
     .filter((item) => item.trim().length > 0)
     .join(", ");
@@ -496,7 +595,13 @@ async function ensureCharacterThreeViewLayoutReferenceFilename(comfySettings: Co
   return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
 }
 
-function buildCharacterThreeViewSheetPrompt(name: string, context: string, backgroundPreset: "white" | "gray" | "studio" = "gray"): string {
+function buildCharacterThreeViewSheetPrompt(
+  name: string,
+  context: string,
+  comfySettings: ComfySettings,
+  backgroundPreset: "white" | "gray" | "studio" = "gray"
+): string {
+  const styleProfile = resolveUnifiedStyleProfile(comfySettings, [context]);
   const backgroundText =
     backgroundPreset === "white"
       ? "pure white background"
@@ -508,10 +613,47 @@ function buildCharacterThreeViewSheetPrompt(name: string, context: string, backg
     "Match the exact layout, spacing, pose family, framing, and anatomical orientation of the second reference image.",
     `Character identity: ${name}`,
     normalizeStoryInput(context),
+    `Style hint: ${styleProfile.styleHint}`,
+    styleProfile.styleAnchor ? `Global style anchor: ${styleProfile.styleAnchor}` : "",
+    styleProfile.characterDirective,
     "Preserve the same face, hairstyle, body proportions, costume structure, accessories, and silhouette from the first image.",
     "One character only, one front view, one side view, one back view, full body, head and feet visible, no crop, no extra panels, no text, no watermark.",
     "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
-    `${backgroundText}, clean character turnaround sheet, production-ready reference board`
+    `${backgroundText}, clean character turnaround sheet, production-ready reference board`,
+    "The turnaround sheet must keep the same visual style language as the scene asset and storyboard frames."
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(" ");
+}
+
+function buildCharacterThreeViewSheetNegativePrompt(
+  baseNegativePrompt: string,
+  comfySettings: ComfySettings,
+  context: string
+): string {
+  const styleProfile = resolveUnifiedStyleProfile(comfySettings, [context]);
+  return [
+    baseNegativePrompt,
+    styleProfile.styleNegative,
+    "text, watermark, logo, annotation, label, callout, decorative border, inset portrait, extra icon",
+    "extra panel, fourth figure, lineup with many tiny characters, collage, poster layout, sprite sheet",
+    "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose",
+    "mannequin, faceless mannequin, wireframe body, anatomy template, croquis, 3d reference doll, grey dummy, base mesh, neutral bodysuit",
+    "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, swimsuit, bikini, lingerie, barefoot, exposed toes",
+    "duplicate character, mirrored twin, merged body, duplicate limbs, extra arms, extra legs",
+    "scene background, architecture, temple, palace, landscape, magic circle, petals, floral background"
+  ]
+    .filter((item) => item.trim().length > 0)
+    .join(", ");
+}
+
+function buildSkyboxDescription(description: string, comfySettings: ComfySettings): string {
+  const styleProfile = resolveUnifiedStyleProfile(comfySettings, [description]);
+  return [
+    description.trim(),
+    styleProfile.sceneDirective,
+    `风格倾向：${styleProfile.styleHint}`,
+    styleProfile.styleAnchor ? `全局画风锚点：${styleProfile.styleAnchor}` : ""
   ]
     .filter((item) => item.trim().length > 0)
     .join(" ");
@@ -850,8 +992,8 @@ export function AssetPanel() {
                 currentSequenceId,
                 `asset_panel_char_${batchId}_front`,
                 `${trimmedName} 正视图`,
-                buildCharacterViewPrompt(trimmedName, context, "front"),
-                buildCharacterViewNegativePrompt("front", baseNegativePrompt),
+                buildCharacterViewPrompt(trimmedName, context, "front", comfySettings),
+                buildCharacterViewNegativePrompt("front", baseNegativePrompt, comfySettings, context),
                 batchId
               ),
               0,
@@ -861,7 +1003,7 @@ export function AssetPanel() {
               {
                 workflowJsonOverride: referenceWorkflow,
                 tokenOverrides: {
-                  NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", baseNegativePrompt)
+                  NEGATIVE_PROMPT: buildCharacterViewNegativePrompt("front", baseNegativePrompt, comfySettings, context)
                 }
               }
             );
@@ -880,7 +1022,12 @@ export function AssetPanel() {
             currentSequenceId,
             `asset_panel_char_${batchId}_threeview_sheet`,
             `${trimmedName} 三视图整板`,
-            buildCharacterThreeViewSheetPrompt(trimmedName, context, comfySettings.characterBackgroundPreset ?? "gray"),
+            buildCharacterThreeViewSheetPrompt(
+              trimmedName,
+              context,
+              comfySettings,
+              comfySettings.characterBackgroundPreset ?? "gray"
+            ),
             "",
             batchId + 101
           ),
@@ -892,7 +1039,8 @@ export function AssetPanel() {
             workflowJsonOverride: advancedWorkflow,
             tokenOverrides: {
               FRAME_IMAGE_PATH: frontAnchorPath,
-              [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename
+              [CHARACTER_THREEVIEW_LAYOUT_TOKEN]: layoutFilename,
+              NEGATIVE_PROMPT: buildCharacterThreeViewSheetNegativePrompt(baseNegativePrompt, comfySettings, context)
             }
           }
         );
@@ -945,7 +1093,7 @@ export function AssetPanel() {
     }
     try {
       setBusy(true);
-      const result = await generateSkyboxFaces(comfySettings, desc);
+      const result = await generateSkyboxFaces(comfySettings, buildSkyboxDescription(desc, comfySettings));
       setSkyboxFacePaths(result.faces);
       if (result.faces.front) setFilePath(result.faces.front);
       pushToast("天空盒六面生成完成", "success");
@@ -972,7 +1120,7 @@ export function AssetPanel() {
     }
     try {
       setBusy(true);
-      const description = asset.skyboxDescription?.trim() || asset.name;
+      const description = buildSkyboxDescription(asset.skyboxDescription?.trim() || asset.name, comfySettings);
       const generated = await generateSkyboxFaceUpdate(comfySettings, description, face, eventPrompt);
       const nextFaces = { ...(asset.skyboxFaces ?? {}), [face]: generated.filePath };
       const nextEvents = [
