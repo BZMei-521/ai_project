@@ -95,11 +95,11 @@ const CHARACTER_ASSET_MODEL_RECOMMEND_ORDER = [
   "sd_xl_base_1.0.safetensors"
 ] as const;
 const CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER = [
-  "juggernautXL_v8Rundiffusion.safetensors",
-  "dreamshaper_8.safetensors",
   "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
   "Qwen-Rapid-AIO-SFW-v5.safetensors",
   "v1-5-pruned-emaonly-fp16.safetensors",
+  "dreamshaper_8.safetensors",
   "sd_xl_base_1.0.safetensors",
   "animagine-xl-4.0.safetensors"
 ] as const;
@@ -5412,11 +5412,11 @@ export function ComfyPipelinePanel() {
         genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
         "single character, solo, exactly one human character",
         "one complete human body with head, torso, two arms, two hands, two legs, two feet",
-        "clear human face, visible facial features, visible hairstyle, visible clothing layers",
+        "real human face, natural facial features, realistic skin tone, visible hairstyle, visible clothing layers",
         "front-facing full-body character image",
         "single isolated character on a pure white background",
-        "clean studio full-body character portrait",
-        "character catalog photo illustration",
+        "clean studio full-body standing character",
+        "real dressed human person, not mannequin, not fashion doll, not body template",
         "one person only, one body only, one angle only",
         "centered composition, head-to-toe fully visible, generous blank margin on all sides",
         "plain white seamless backdrop only, no floor props, no scenery, no layout board",
@@ -5441,6 +5441,7 @@ export function ComfyPipelinePanel() {
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
         "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人",
         "必须与后续三视图和场景保持同一画风与材质表现，不允许换成另一种渲染风格",
+        "必须是正常穿衣的人类角色，不是服装模特假人，不是 mannequin，不是 fashion doll，不是 anatomy template",
         "不是设定板，不是人设页，不是 collage，不是 lineup，不是 triptych"
       ]);
       return `${core}。严格要求：${constraints}。`;
@@ -6024,8 +6025,16 @@ export function ComfyPipelinePanel() {
     if (primary !== selectedModel) {
       appendLog(`${sourceLabel}自动切换角色正视锚点模型：${selectedModel} -> ${primary}`, "info");
     }
-    return ordered.slice(0, 2);
+    return ordered.slice(0, 4);
   };
+
+  const resolveCharacterAnchorRenderPreset = (
+    runtimeSettings: ComfySettings,
+    context = ""
+  ): "stable_fullbody" | "clean_reference" =>
+    prefersRealisticCharacterAnchorModel(context)
+      ? "stable_fullbody"
+      : runtimeSettings.characterRenderPreset ?? "clean_reference";
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
@@ -6184,10 +6193,11 @@ export function ComfyPipelinePanel() {
         "mirrored body"
       ]
     );
+    const characterAnchorRenderPreset = resolveCharacterAnchorRenderPreset(runtimeSettings, context);
     const referenceWorkflow = buildCharacterWorkflowTemplateJson(
       characterModelForWorkflow,
       runtimeSettings.characterTemplatePreset ?? "portrait",
-      runtimeSettings.characterRenderPreset ?? "clean_reference"
+      characterAnchorRenderPreset
     );
     const generatedArtifactSourcePaths = new Set<string>();
     const runReferenceEditFallbackThreeViews = async (seedBase: number) => {
@@ -7045,16 +7055,18 @@ export function ComfyPipelinePanel() {
         let acceptedAnchor = false;
         for (let modelIndex = 0; modelIndex < requestedCharacterModels.length; modelIndex += 1) {
           const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModels[modelIndex] || DEFAULT_CHARACTER_ASSET_MODEL);
+          let mannequinFailures = 0;
           if (modelIndex > 0) {
             appendLog(
               `${sourceLabel}角色正视锚点切换备用模型：${requestedCharacterModels[modelIndex - 1]} -> ${characterModel}`,
               "info"
             );
           }
+          const characterAnchorRenderPreset = resolveCharacterAnchorRenderPreset(runtimeSettings, semanticContext);
           const referenceWorkflow = buildCharacterReferenceWorkflowTemplateJson(
             characterModel,
             runtimeSettings.characterTemplatePreset ?? "portrait",
-            runtimeSettings.characterRenderPreset ?? "clean_reference"
+            characterAnchorRenderPreset
           );
           for (let attempt = 0; attempt < 5; attempt += 1) {
             const generated = await generateShotAsset(
@@ -7095,6 +7107,15 @@ export function ComfyPipelinePanel() {
               bestAnchorPath = candidatePath;
               bestAnchorModel = characterModel;
               acceptedAnchor = true;
+              break;
+            }
+            if (quality.issues.some((issue) => issue.includes("灰模") || issue.includes("人体模板"))) {
+              mannequinFailures += 1;
+            } else {
+              mannequinFailures = 0;
+            }
+            if (mannequinFailures >= 2 && modelIndex < requestedCharacterModels.length - 1) {
+              appendLog(`${sourceLabel}角色正视锚点连续命中灰模/模板人，提前切换下一个模型：${profile.name}`, "info");
               break;
             }
             if (attempt < 4) {

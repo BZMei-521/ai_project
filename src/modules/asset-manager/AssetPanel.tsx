@@ -109,6 +109,34 @@ function inferVisualStyleKindFromModelName(name: string): UnifiedVisualStyleKind
   return "";
 }
 
+function prefersRealisticCharacterAnchorModel(context: string): boolean {
+  const normalized = context.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(写实|电影|影视|真人|实拍|摄影|写实风|realistic|cinematic|live action|photographic|photo real)/i.test(
+    normalized
+  );
+}
+
+function resolveCharacterAnchorRenderPreset(
+  comfySettings: ComfySettings,
+  context: string
+): "stable_fullbody" | "clean_reference" {
+  return prefersRealisticCharacterAnchorModel(context)
+    ? "stable_fullbody"
+    : comfySettings.characterRenderPreset ?? "clean_reference";
+}
+
+function resolveCharacterAnchorModelForContext(comfySettings: ComfySettings, context: string): string {
+  const selected = resolveMvAdapterCharacterModel(
+    comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
+  );
+  if (!prefersRealisticCharacterAnchorModel(context)) return selected;
+  if (looksLikeAnimeModelName(selected) || selected === DEFAULT_CHARACTER_ASSET_MODEL) {
+    return "realisticVisionV60B1_v51VAE.safetensors";
+  }
+  return selected;
+}
+
 function resolveUnifiedStyleProfile(comfySettings: ComfySettings, contexts: string[] = []) {
   const globalStyle = normalizeStoryInput(comfySettings.globalVisualStylePrompt ?? "").replace(/\s{2,}/g, " ").trim();
   const kind =
@@ -965,10 +993,8 @@ export function AssetPanel() {
       setBusy(true);
       const batchId = Date.now();
       const generatedSourcePaths = new Set<string>();
-      const characterModel = resolveMvAdapterCharacterModel(
-        comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
-      );
-      const characterRenderPreset = comfySettings.characterRenderPreset ?? "clean_reference";
+      const characterModel = resolveCharacterAnchorModelForContext(comfySettings, context);
+      const characterRenderPreset = resolveCharacterAnchorRenderPreset(comfySettings, context);
       const characterTemplatePreset = comfySettings.characterTemplatePreset ?? "portrait";
       const baseNegativePrompt = comfySettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT;
       const referenceWorkflow = buildCharacterWorkflowTemplateJson(
