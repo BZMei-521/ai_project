@@ -65,7 +65,7 @@
   "8": {
     "inputs": {
       "model": [
-        "6",
+        "17",
         0
       ],
       "ipadapter": [
@@ -197,15 +197,35 @@
   },
   "16": {
     "inputs": {
-      "image": [
-        "2",
-        0
-      ],
+      "image": "{{FRAME_IMAGE_PATH}}",
       "upscale_method": "lanczos",
       "width": "{{RENDER_WIDTH}}",
       "height": "{{RENDER_HEIGHT}}",
       "crop": "center"
     },
     "class_type": "ImageScale"
+  },
+  "17": {
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "2",
+        0
+      ],
+      "weight": 0.58,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 0.8,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
   }
 }

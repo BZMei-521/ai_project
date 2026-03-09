@@ -2062,38 +2062,7 @@ function inferStoryboardReferenceWeights(
   steps: number;
   cfg: number;
 } {
-  const characterDriven = (() => {
-    if ((shot.characterRefs?.length ?? 0) > 0) return true;
-    if (shot.dialogue?.trim()) return true;
-    const corpus = [
-      shot.title ?? "",
-      shot.storyPrompt ?? "",
-      shot.videoPrompt ?? "",
-      shot.notes ?? "",
-      ...(shot.tags ?? [])
-    ]
-      .join(" ")
-      .toLowerCase();
-    return containsAnyKeyword(corpus, [
-      "人物",
-      "角色",
-      "对峙",
-      "对白",
-      "打斗",
-      "交手",
-      "冲拳",
-      "出拳",
-      "闪避",
-      "反击",
-      "对话",
-      "face off",
-      "duel",
-      "fight",
-      "punch",
-      "kick",
-      "dodge"
-    ]);
-  })();
+  const characterDriven = isCharacterDrivenShot(shot);
   const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
@@ -2154,6 +2123,39 @@ function inferStoryboardReferenceWeights(
     steps: 28,
     cfg: 5.2
   };
+}
+
+function isCharacterDrivenShot(shot: Shot): boolean {
+  if ((shot.characterRefs?.length ?? 0) > 0) return true;
+  if (shot.dialogue?.trim()) return true;
+  const corpus = [
+    shot.title ?? "",
+    shot.storyPrompt ?? "",
+    shot.videoPrompt ?? "",
+    shot.notes ?? "",
+    ...(shot.tags ?? [])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return containsAnyKeyword(corpus, [
+    "人物",
+    "角色",
+    "对峙",
+    "对白",
+    "打斗",
+    "交手",
+    "冲拳",
+    "出拳",
+    "闪避",
+    "反击",
+    "对话",
+    "face off",
+    "duel",
+    "fight",
+    "punch",
+    "kick",
+    "dodge"
+  ]);
 }
 
 function shotsShareCharacters(left: Shot, right: Shot): boolean {
@@ -3417,6 +3419,7 @@ function inferPromptTokens(
     char1PrimaryPath ||
     "";
   const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
+  const characterDriven = isCharacterDrivenShot(shot);
   const hasCharacters = characterAssets.length > 0;
   const hasSecondCharacter = Boolean(charSlots[1]);
   const useSecondaryCharacterView = shouldUseSecondaryCharacterView(shot) && !hasSecondCharacter;
@@ -3468,6 +3471,15 @@ function inferPromptTokens(
   const nextScenePrompt = toNextScenePrompt(promptBase);
   const videoPrompt = toVideoPrompt(shot, mode);
   const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
+  const storyboardFrameSeedPath =
+    kind === "image"
+      ? (
+          (characterDriven ? normalizedChar1PrimaryPath : "") ||
+          sceneRefPath ||
+          normalizedChar1PrimaryPath ||
+          defaultFramePath
+        )
+      : defaultFramePath;
   const firstFramePath = parseComfyViewPath(
     shot.videoStartFramePath?.trim() || defaultFramePath
   );
@@ -3594,7 +3606,7 @@ function inferPromptTokens(
     STORYBOARD_STEPS: String(storyboardWeights.steps),
     STORYBOARD_CFG: String(storyboardWeights.cfg),
     STORYBOARD_IMAGE_MODEL: effectiveStoryboardModel,
-    FRAME_IMAGE_PATH: defaultFramePath,
+    FRAME_IMAGE_PATH: storyboardFrameSeedPath,
     FIRST_FRAME_PATH: firstFramePath,
     LAST_FRAME_PATH: lastFramePath,
     DIALOGUE_AUDIO_PATH: "",
