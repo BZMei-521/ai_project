@@ -835,6 +835,17 @@ async function copyFileTo(sourcePath, targetPath) {
 }
 
 async function deleteGeneratedFileFamilies(sourcePaths, excludePaths) {
+  const normalizeGeneratedFamilyPrefix = (stem) => {
+    let normalized = String(stem || "").trim();
+    if (!normalized) return normalized;
+    normalized = normalized.replace(/_(front|side|back)$/i, "");
+    const scopedFamily =
+      /(asset_char_|asset_panel_char_|threeview_sheet|fallback_|cleanup_|reference_cleanup)/i.test(normalized);
+    if (scopedFamily) {
+      normalized = normalized.replace(/_\d+_?$/i, "");
+    }
+    return normalized;
+  };
   const sources = Array.isArray(sourcePaths) ? sourcePaths : [];
   const excludes = new Set(
     (Array.isArray(excludePaths) ? excludePaths : [])
@@ -850,7 +861,7 @@ async function deleteGeneratedFileFamilies(sourcePaths, excludePaths) {
     if (!grouped.has(parsed.dir)) {
       grouped.set(parsed.dir, new Set());
     }
-    grouped.get(parsed.dir).add(parsed.name);
+    grouped.get(parsed.dir).add(normalizeGeneratedFamilyPrefix(parsed.name));
   }
   const deletedPaths = [];
   for (const [dir, prefixes] of grouped.entries()) {
@@ -861,7 +872,7 @@ async function deleteGeneratedFileFamilies(sourcePaths, excludePaths) {
       if (excludes.has(candidatePath)) continue;
       let matches = false;
       for (const prefix of prefixes.values()) {
-        if (entry.name.startsWith(prefix)) {
+        if (prefix && entry.name.startsWith(prefix)) {
           matches = true;
           break;
         }

@@ -2572,6 +2572,40 @@ fn delete_generated_file_families(
     source_paths: Vec<String>,
     exclude_paths: Option<Vec<String>>,
 ) -> Result<DeleteGeneratedFileFamiliesResult, String> {
+    fn normalize_generated_family_prefix(stem: &str) -> String {
+        let mut normalized = stem.trim().to_string();
+        if normalized.is_empty() {
+            return normalized;
+        }
+        for suffix in ["_front", "_side", "_back"] {
+            if normalized.ends_with(suffix) {
+                normalized.truncate(normalized.len() - suffix.len());
+                break;
+            }
+        }
+        let scoped_family = [
+            "asset_char_",
+            "asset_panel_char_",
+            "threeview_sheet",
+            "fallback_",
+            "cleanup_",
+            "reference_cleanup",
+        ]
+        .iter()
+        .any(|token| normalized.contains(token));
+        if scoped_family {
+            let trimmed = normalized.trim_end_matches('_');
+            let mut split_index = trimmed.len();
+            while split_index > 0 && trimmed.as_bytes()[split_index - 1].is_ascii_digit() {
+                split_index -= 1;
+            }
+            if split_index < trimmed.len() && split_index > 0 && trimmed.as_bytes()[split_index - 1] == b'_' {
+                normalized = trimmed[..split_index - 1].to_string();
+            }
+        }
+        normalized
+    }
+
     let excludes: HashSet<PathBuf> = exclude_paths
         .unwrap_or_default()
         .into_iter()
@@ -2591,13 +2625,14 @@ fn delete_generated_file_families(
         let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
             continue;
         };
-        if stem.trim().is_empty() {
+        let normalized_prefix = normalize_generated_family_prefix(stem);
+        if normalized_prefix.trim().is_empty() {
             continue;
         }
         grouped_prefixes
             .entry(parent.to_path_buf())
             .or_default()
-            .insert(stem.to_string());
+            .insert(normalized_prefix);
     }
 
     let mut deleted_paths = Vec::new();
@@ -2614,7 +2649,10 @@ fn delete_generated_file_families(
             let Some(file_name) = candidate_path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if !prefixes.iter().any(|prefix| file_name.starts_with(prefix)) {
+            if !prefixes
+                .iter()
+                .any(|prefix| !prefix.is_empty() && file_name.starts_with(prefix))
+            {
                 continue;
             }
             fs::remove_file(&candidate_path)

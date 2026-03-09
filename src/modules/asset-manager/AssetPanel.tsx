@@ -30,6 +30,7 @@ const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
 const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
 const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
 const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
+const CHARACTER_ANCHOR_OUTPUT_PREFIX = "Storyboard/character_anchor_{{SHOT_ID}}";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes";
@@ -279,6 +280,9 @@ function buildCharacterWorkflowTemplateJson(
     template["5"].inputs.cfg = config.cfg;
     template["5"].inputs.sampler_name = config.sampler_name;
     template["5"].inputs.scheduler = config.scheduler;
+  }
+  if (template["7"]?.inputs) {
+    template["7"].inputs.filename_prefix = CHARACTER_ANCHOR_OUTPUT_PREFIX;
   }
   return JSON.stringify(template, null, 2);
 }

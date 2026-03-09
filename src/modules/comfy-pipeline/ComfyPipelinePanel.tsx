@@ -114,6 +114,7 @@ const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
 const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
 const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
 const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
+const CHARACTER_ANCHOR_OUTPUT_PREFIX = "Storyboard/character_anchor_{{SHOT_ID}}";
 const CHARACTER_ANCHOR_CLEANUP_OUTPUT_PREFIX = "Storyboard/character_anchor_cleanup_{{SHOT_ID}}";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const CHARACTER_ADVANCED_NODE_TYPES = [
@@ -554,6 +555,9 @@ function buildCharacterWorkflowTemplateJson(
     template["5"].inputs.sampler_name = config.sampler_name;
     template["5"].inputs.scheduler = config.scheduler;
   }
+  if (template["7"]?.inputs) {
+    template["7"].inputs.filename_prefix = CHARACTER_ANCHOR_OUTPUT_PREFIX;
+  }
   return JSON.stringify(template, null, 2);
 }
 
@@ -566,7 +570,7 @@ function buildCharacterReferenceWorkflowTemplateJson(
     buildCharacterWorkflowTemplateJson(checkpointName, preset, renderPreset)
   ) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["7"]?.inputs) {
-    template["7"].inputs.filename_prefix = "Storyboard/character_anchor";
+    template["7"].inputs.filename_prefix = CHARACTER_ANCHOR_OUTPUT_PREFIX;
   }
   return JSON.stringify(template, null, 2);
 }
@@ -4659,6 +4663,48 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const collectCriticalThreeViewPanelIssues = (
+    frontQuality: Awaited<ReturnType<typeof evaluateFrontReferenceQuality>>,
+    sideQuality: Awaited<ReturnType<typeof evaluateSingleCharacterViewQuality>>,
+    backQuality: Awaited<ReturnType<typeof evaluateSingleCharacterViewQuality>>
+  ) => {
+    const frontCriticalPatterns = [
+      /疑似多主体\/多角度/u,
+      /存在额外设定页组件/u,
+      /主体外还有额外前景元素/u,
+      /画面含有额外设定页元素/u,
+      /边缘存在文字或装饰杂项/u,
+      /角色像灰模或人体模板/u,
+      /裸露过多或疑似裸模/u
+    ];
+    const viewCriticalPatterns = [
+      /template_figure/i,
+      /nude_like/i,
+      /multi_blob/i,
+      /multi_cluster/i,
+      /secondary_fg=/i,
+      /detached_fg=/i,
+      /edge_clutter=/i
+    ];
+    const issues: string[] = [];
+    for (const issue of frontQuality.issues) {
+      if (frontCriticalPatterns.some((pattern) => pattern.test(issue))) {
+        issues.push(`front:${issue}`);
+      }
+    }
+    for (const issue of sideQuality.issues) {
+      if (viewCriticalPatterns.some((pattern) => pattern.test(issue))) {
+        issues.push(`side:${issue}`);
+      }
+    }
+    for (const issue of backQuality.issues) {
+      if (viewCriticalPatterns.some((pattern) => pattern.test(issue))) {
+        issues.push(`back:${issue}`);
+      }
+    }
+    return issues;
+  };
+
   const evaluateImageSharpnessQuality = async (paths: string[], minSharpnessThreshold: number) => {
     const targets = paths.map((item) => item.trim()).filter((item) => item.length > 0);
     const sharpnessValues = (await Promise.all(targets.map((path) => computeImageSharpnessScore(path)))).filter(
@@ -6603,22 +6649,39 @@ export function ComfyPipelinePanel() {
     };
     const runAdvancedThreeViewsWithAutoRetry = async (seedBase: number) => {
       let bestResult: Awaited<ReturnType<typeof runAdvancedThreeViews>> | null = null;
-      let bestQuality: Awaited<ReturnType<typeof evaluateThreeViewQuality>> | null = null;
+      let bestQuality:
+        | (Awaited<ReturnType<typeof evaluateThreeViewQuality>> & {
+            criticalPanelIssues: string[];
+          })
+        | null = null;
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const seed = seedBase + attempt * 7331;
         const current = await runAdvancedThreeViews(seed);
-        const currentPaths = [
-          current.front.localPath || current.front.previewUrl,
-          current.side.localPath || current.side.previewUrl,
-          current.back.localPath || current.back.previewUrl
-        ].filter((value): value is string => Boolean(value));
+        const frontPath = current.front.localPath || current.front.previewUrl || "";
+        const sidePath = current.side.localPath || current.side.previewUrl || "";
+        const backPath = current.back.localPath || current.back.previewUrl || "";
+        const currentPaths = [frontPath, sidePath, backPath].filter((value): value is string => Boolean(value));
         const currentQuality = await evaluateThreeViewQuality(currentPaths, current.referenceFrontPath);
+        const [frontPanelQuality, sidePanelQuality, backPanelQuality] = await Promise.all([
+          frontPath ? evaluateFrontReferenceQuality(frontPath) : Promise.resolve(null),
+          sidePath ? evaluateSingleCharacterViewQuality(sidePath, "side") : Promise.resolve(null),
+          backPath ? evaluateSingleCharacterViewQuality(backPath, "back") : Promise.resolve(null)
+        ]);
+        const criticalPanelIssues =
+          frontPanelQuality && sidePanelQuality && backPanelQuality
+            ? collectCriticalThreeViewPanelIssues(frontPanelQuality, sidePanelQuality, backPanelQuality)
+            : [];
         const incomplete = currentPaths.length < 3;
-        const currentScore = currentQuality.score + (incomplete ? -1000 : 0);
-        const isAcceptable = !incomplete && !currentQuality.lowDiversity && !currentQuality.lowSharpness && !currentQuality.lowOrientation;
+        const currentScore = currentQuality.score + (incomplete ? -1000 : 0) - criticalPanelIssues.length * 18;
+        const isAcceptable =
+          !incomplete &&
+          !currentQuality.lowDiversity &&
+          !currentQuality.lowSharpness &&
+          !currentQuality.lowOrientation &&
+          criticalPanelIssues.length === 0;
         if (!bestQuality || currentScore > bestQuality.score) {
           bestResult = current;
-          bestQuality = { ...currentQuality, score: currentScore };
+          bestQuality = { ...currentQuality, score: currentScore, criticalPanelIssues };
         }
         if (isAcceptable && bestResult) {
           if (attempt > 0) appendLog(`双参考三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
@@ -6626,7 +6689,7 @@ export function ComfyPipelinePanel() {
         }
         if (attempt < 4) {
           appendLog(
-          `双参考三视图候选 ${attempt + 1}/5 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
+          `双参考三视图候选 ${attempt + 1}/5 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && (currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}${currentQuality.lowOrientation && criticalPanelIssues.length > 0 ? " / " : ""}${criticalPanelIssues.length > 0 ? `关键面板异常 ${criticalPanelIssues.join("|")}` : ""}），继续重试：${name}`,
             "info"
           );
         }
@@ -6636,7 +6699,8 @@ export function ComfyPipelinePanel() {
           `双参考三视图多轮生成仍未达标（${[
             bestQuality.lowDiversity ? "视角过近" : "",
             bestQuality.lowSharpness ? `清晰度偏低(min=${(bestQuality.minSharpness ?? 0).toFixed(1)})` : "",
-            bestQuality.lowOrientation ? `视角异常(${bestQuality.orientationAlerts.join("|")})` : ""
+            bestQuality.lowOrientation ? `视角异常(${bestQuality.orientationAlerts.join("|")})` : "",
+            bestQuality.criticalPanelIssues.length > 0 ? `关键面板异常(${bestQuality.criticalPanelIssues.join("|")})` : ""
           ]
             .filter(Boolean)
             .join(" / ")}）。`
