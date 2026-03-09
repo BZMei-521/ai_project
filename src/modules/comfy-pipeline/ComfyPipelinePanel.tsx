@@ -207,6 +207,48 @@ function workflowContainsWanSamplerNodes(workflowJson: string): boolean {
   return nodeTypes.some((item) => item.includes("wan") || item.includes("moeksampler"));
 }
 
+function looksLikeHardcodedImageReferenceValue(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes("{{") && trimmed.includes("}}")) return false;
+  if (/^(image|upload)$/i.test(trimmed)) return false;
+  return (
+    /[\\/]/.test(trimmed) ||
+    /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(trimmed) ||
+    /^[a-f0-9]{16,}\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(trimmed)
+  );
+}
+
+function storyboardWorkflowHasHardcodedReferenceImages(workflowJson: string): boolean {
+  const trimmed = workflowJson.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    for (const node of Object.values(parsed)) {
+      if (!node || typeof node !== "object") continue;
+      const record = node as {
+        class_type?: string;
+        type?: string;
+        inputs?: Record<string, unknown>;
+        widgets_values?: unknown[];
+      };
+      const nodeType = String(record.class_type ?? record.type ?? "").trim();
+      if (nodeType !== "LoadImage") continue;
+      const inputImage = typeof record.inputs?.image === "string" ? record.inputs.image : "";
+      const widgetImage =
+        Array.isArray(record.widgets_values) && typeof record.widgets_values[0] === "string"
+          ? record.widgets_values[0]
+          : "";
+      if (looksLikeHardcodedImageReferenceValue(inputImage) || looksLikeHardcodedImageReferenceValue(widgetImage)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function normalizeWorkflowFingerprint(workflowJson: string): string {
   return workflowJson.replace(/\s+/g, "").trim();
 }
@@ -1833,9 +1875,13 @@ function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflo
   const usesSceneToken = workflowJson.includes("{{SCENE_REF_PATH}}");
   const usesCharacterToken =
     workflowJson.includes("{{CHAR1_PRIMARY_PATH}}") || workflowJson.includes("{{CHARACTER_FRONT_PATHS}}");
+  const hasHardcodedReferenceImages = storyboardWorkflowHasHardcodedReferenceImages(workflowJson);
 
   if (hasQwenTemplateNode) {
     warnings.push("检测到 Qwen/Fisher 图编辑节点。高一致性分镜不建议继续把它作为主链路。");
+  }
+  if (hasHardcodedReferenceImages) {
+    warnings.push("检测到写死图片文件名的 LoadImage 节点。当前工作流很可能还在使用旧测试参考图。");
   }
   if (!hasLoadImage || !usesSceneToken) {
     warnings.push("未检测到场景底图注入（LoadImage + {{SCENE_REF_PATH}}）。场景一致性会明显变弱。");
@@ -1922,7 +1968,8 @@ function loadSettings(): ComfySettings {
       (!parsedImageWorkflowJson.trim() ||
         isLegacyMixedStoryboardImageWorkflow(parsedImageWorkflowJson) ||
         workflowContainsWanSamplerNodes(parsedImageWorkflowJson) ||
-        workflowLooksLikeBuiltinStoryboardImageWorkflow(parsedImageWorkflowJson));
+        workflowLooksLikeBuiltinStoryboardImageWorkflow(parsedImageWorkflowJson) ||
+        storyboardWorkflowHasHardcodedReferenceImages(parsedImageWorkflowJson));
     const resolvedImageWorkflowJson =
       shouldUpgradeStoryboardWorkflow
         ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
@@ -8799,6 +8846,18 @@ export function ComfyPipelinePanel() {
         }));
         appendLog("成熟分镜模式检测到旧 Qwen 模板，已自动写入内置 scene-first + IPAdapter 分镜模板", "info");
         pushToast("已自动切换为内置成熟分镜模板", "success");
+      }
+      if (
+        (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
+        storyboardWorkflowHasHardcodedReferenceImages(runtimeSettings.imageWorkflowJson)
+      ) {
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
+        persistSettings((previous) => ({
+          ...previous,
+          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        }));
+        appendLog("检测到分镜工作流中写死了旧测试参考图，已自动切换为当前内置角色优先分镜模板", "info");
+        pushToast("检测到旧测试参考图工作流，已自动切换为内置分镜模板", "warning");
       }
       if (isLegacyMixedStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson)) {
         runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
