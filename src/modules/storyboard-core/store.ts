@@ -113,6 +113,7 @@ type StoryboardState = {
     characterFrontPath?: string;
     characterSidePath?: string;
     characterBackPath?: string;
+    characterAnchorModelName?: string;
     voiceProfile?: string;
     skyboxDescription?: string;
     skyboxTags?: string[];
@@ -130,6 +131,7 @@ type StoryboardState = {
         | "characterFrontPath"
         | "characterSidePath"
         | "characterBackPath"
+        | "characterAnchorModelName"
         | "voiceProfile"
         | "skyboxDescription"
         | "skyboxTags"
@@ -666,6 +668,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const front = input.characterFrontPath?.trim() ?? "";
       const side = input.characterSidePath?.trim() ?? "";
       const back = input.characterBackPath?.trim() ?? "";
+      const characterAnchorModelName = input.characterAnchorModelName?.trim() ?? "";
       const voiceProfile = input.voiceProfile?.trim() ?? "";
       const skyboxDescription = input.skyboxDescription?.trim() ?? "";
       const skyboxTags = (input.skyboxTags ?? []).map((item) => item.trim()).filter((item) => item.length > 0);
@@ -680,6 +683,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         characterFrontPath: input.type === "character" ? front : undefined,
         characterSidePath: input.type === "character" ? side || undefined : undefined,
         characterBackPath: input.type === "character" ? back || undefined : undefined,
+        characterAnchorModelName: input.type === "character" ? characterAnchorModelName || undefined : undefined,
         voiceProfile: input.type === "character" ? voiceProfile : undefined,
         skyboxDescription: input.type === "skybox" ? skyboxDescription : undefined,
         skyboxTags: input.type === "skybox" ? skyboxTags : undefined,
@@ -712,6 +716,10 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                 patch.characterBackPath !== undefined
                   ? patch.characterBackPath.trim()
                   : asset.characterBackPath,
+              characterAnchorModelName:
+                patch.characterAnchorModelName !== undefined
+                  ? patch.characterAnchorModelName.trim()
+                  : asset.characterAnchorModelName,
               voiceProfile:
                 patch.voiceProfile !== undefined
                   ? patch.voiceProfile.trim()

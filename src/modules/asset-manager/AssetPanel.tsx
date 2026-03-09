@@ -947,6 +947,7 @@ export function AssetPanel() {
   );
 
   const onAdd = () => {
+    const savedComfySettings = loadComfySettingsFromLocalStorage();
     const skyboxTags = skyboxTagsInput
       .split(",")
       .map((item) => item.trim())
@@ -959,6 +960,10 @@ export function AssetPanel() {
       characterFrontPath: tab === "character" ? frontPath : undefined,
       characterSidePath: tab === "character" ? sidePath : undefined,
       characterBackPath: tab === "character" ? backPath : undefined,
+      characterAnchorModelName:
+        tab === "character" && savedComfySettings
+          ? resolveCharacterAnchorModelForContext(savedComfySettings, characterDescription.trim() || name.trim())
+          : undefined,
       voiceProfile: tab === "character" ? voiceProfile : undefined,
       skyboxDescription: tab === "skybox" ? skyboxDescription : undefined,
       skyboxTags: tab === "skybox" ? skyboxTags : undefined,

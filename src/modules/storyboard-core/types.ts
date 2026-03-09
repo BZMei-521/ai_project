@@ -77,6 +77,7 @@ export type Asset = {
   characterFrontPath?: string;
   characterSidePath?: string;
   characterBackPath?: string;
+  characterAnchorModelName?: string;
   voiceProfile?: string;
   skyboxDescription?: string;
   skyboxTags?: string[];

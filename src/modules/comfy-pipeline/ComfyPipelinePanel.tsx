@@ -3206,6 +3206,7 @@ export function ComfyPipelinePanel() {
   const skyboxProvisionInFlightRef = useRef<Map<string, Promise<ProvisionCreateResult>>>(new Map());
   const scriptImportInFlightRef = useRef(false);
   const scriptImportPromiseRef = useRef<Promise<boolean> | null>(null);
+  const characterAnchorModelByNameRef = useRef<Map<string, string>>(new Map());
   const [scriptImportActive, setScriptImportActive] = useState(false);
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
@@ -6157,7 +6158,8 @@ export function ComfyPipelinePanel() {
     name: string,
     context: string,
     baseSeed: number,
-    existingFrontReferencePath = ""
+    existingFrontReferencePath = "",
+    preferredCharacterModel = ""
   ) => {
     const mode = resolveEffectiveAssetWorkflowMode(
       "character",
@@ -6165,7 +6167,9 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterWorkflowJson?.trim() ?? ""
     ) as CharacterAssetWorkflowMode;
     const workflowOverride = resolveCharacterWorkflowJson(runtimeSettings);
-    const requestedCharacterModel = await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图", context);
+    const requestedCharacterModel =
+      preferredCharacterModel.trim() ||
+      (await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图", context));
     const characterModelForWorkflow = requestedCharacterModel;
     const allowAutomaticFallbackRepair = false;
     const negativePrompt = appendNegativePrompt(
@@ -7161,6 +7165,10 @@ export function ComfyPipelinePanel() {
         }
         anchorPath = finalAnchorPath;
         if (anchorPath) {
+          const profileKey = normalizeEntityKey(profile.name);
+          if (profileKey && bestAnchorModel.trim()) {
+            characterAnchorModelByNameRef.current.set(profileKey, bestAnchorModel.trim());
+          }
           anchorPath = await normalizeCharacterAnchorBackground(anchorPath, "white");
           await cleanupGeneratedCharacterFamilies(
             [...generatedAnchorSourcePaths],
@@ -7183,6 +7191,10 @@ export function ComfyPipelinePanel() {
         characterFrontPath: (profile.frontPath || anchorPath || existingAsset?.characterFrontPath || nextFilePath).trim(),
         characterSidePath: (profile.sidePath || existingAsset?.characterSidePath || "").trim(),
         characterBackPath: (profile.backPath || existingAsset?.characterBackPath || "").trim(),
+        characterAnchorModelName:
+          (characterAnchorModelByNameRef.current.get(normalizeEntityKey(profile.name)) ||
+            existingAsset?.characterAnchorModelName ||
+            "").trim(),
         voiceProfile: (profile.voiceProfile || existingAsset?.voiceProfile || "").trim()
       };
       if (existingId) {
@@ -7289,7 +7301,9 @@ export function ComfyPipelinePanel() {
         filePath: reusableFrontReferencePath,
         characterFrontPath: reusableFrontReferencePath,
         characterSidePath: existingAsset?.characterSidePath?.trim() ?? "",
-        characterBackPath: existingAsset?.characterBackPath?.trim() ?? ""
+        characterBackPath: existingAsset?.characterBackPath?.trim() ?? "",
+        characterAnchorModelName:
+          (characterAnchorModelByNameRef.current.get(nameKey) || existingAsset?.characterAnchorModelName || "").trim()
       };
       if (existingId) {
         useStoryboardStore.getState().updateAsset(existingId, frontOnlyPatch);
@@ -7316,12 +7330,18 @@ export function ComfyPipelinePanel() {
         const seedBase = stableAssetSeed(
           `${name}|character_threeview_autocontinue|${normalizedContext}|${reusableFrontReferencePath}`
         );
+        const preferredCharacterModel = (
+          characterAnchorModelByNameRef.current.get(nameKey) ||
+          existingAsset?.characterAnchorModelName ||
+          ""
+        ).trim();
         const { front, side, back } = await generateCharacterThreeViews(
           runtimeSettings,
           name,
           normalizedContext,
           seedBase,
-          reusableFrontReferencePath
+          reusableFrontReferencePath,
+          preferredCharacterModel
         );
         const generatedFrontPath = (front.localPath || front.previewUrl || reusableFrontReferencePath).trim();
         const generatedSidePath = (side.localPath || side.previewUrl || "").trim();
@@ -7330,7 +7350,8 @@ export function ComfyPipelinePanel() {
           filePath: generatedFrontPath,
           characterFrontPath: generatedFrontPath,
           characterSidePath: generatedSidePath,
-          characterBackPath: generatedBackPath
+          characterBackPath: generatedBackPath,
+          characterAnchorModelName: preferredCharacterModel
         };
         if (created) {
           useStoryboardStore.getState().updateAsset(created, threeViewPatch);
