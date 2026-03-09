@@ -183,8 +183,9 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
   }
 };
 const CHARACTER_VIEW_HASH_SIZE = 8;
-const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 8;
+const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 6;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
+const CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 12;
 const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
@@ -4060,15 +4061,17 @@ export function ComfyPipelinePanel() {
     const nearDuplicatePairs = distances.filter((distance) => distance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD).length;
     const [frontSideDistance, frontBackDistance, sideBackDistance] = distances;
     const strictOrientationGapTooSmall =
-      frontSideDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 2 ||
-      frontBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 3 ||
-      sideBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1;
+      frontSideDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1 ||
+      frontBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1 ||
+      sideBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD;
     const lowDiversity =
       nearDuplicatePairs >= 2 ||
-      Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 2 ||
+      (Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1 &&
+        Math.min(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD) ||
       (strictOrientationGapTooSmall &&
         nearDuplicatePairs >= 1 &&
-        Math.min(frontSideDistance, frontBackDistance, sideBackDistance) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD);
+        Math.min(frontSideDistance, frontBackDistance, sideBackDistance) <=
+          Math.max(1, CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD - 1));
     return { inspected: true, lowDiversity, distances };
   };
 
@@ -4473,7 +4476,7 @@ export function ComfyPipelinePanel() {
     const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
     const avgSharpness =
       sharpnessValues.length > 0 ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length : null;
-    const lowSharpness = typeof minSharpness === "number" && minSharpness < CHARACTER_VIEW_MIN_SHARPNESS_SCORE;
+    const lowSharpness = typeof minSharpness === "number" && minSharpness < CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE;
     const orientationAlerts: string[] = [];
     if (typeof frontSymmetry === "number" && frontSymmetry < 0.66) {
       orientationAlerts.push(`front_symmetry_low=${frontSymmetry.toFixed(2)}`);
