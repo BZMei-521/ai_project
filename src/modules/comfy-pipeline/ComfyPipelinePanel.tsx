@@ -4978,7 +4978,14 @@ export function ComfyPipelinePanel() {
 
     const visited = new Uint8Array(mask.length);
     const queue = new Int32Array(mask.length);
-    const components: Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> = [];
+    const components: Array<{
+      area: number;
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+      pixels: number[];
+    }> = [];
     for (let start = 0; start < mask.length; start += 1) {
       if (mask[start] === 0 || visited[start] === 1) continue;
       let area = 0;
@@ -4988,11 +4995,13 @@ export function ComfyPipelinePanel() {
       let componentMinY = analysisSize;
       let componentMaxX = -1;
       let componentMaxY = -1;
+      const pixels: number[] = [];
       visited[start] = 1;
       queue[tail++] = start;
       while (head < tail) {
         const current = queue[head++];
         area += 1;
+        pixels.push(current);
         const x = current % analysisSize;
         const y = Math.floor(current / analysisSize);
         if (x < componentMinX) componentMinX = x;
@@ -5016,7 +5025,8 @@ export function ComfyPipelinePanel() {
         minX: componentMinX,
         minY: componentMinY,
         maxX: componentMaxX,
-        maxY: componentMaxY
+        maxY: componentMaxY,
+        pixels
       });
     }
     if (components.length <= 0) return pathOrUrl;
@@ -5053,59 +5063,50 @@ export function ComfyPipelinePanel() {
     const primaryRatio = primary.area / totalForeground;
     if (primaryRatio >= 0.985 && components.length <= 1) return pathOrUrl;
 
-    const margin = Math.max(4, Math.round(analysisSize * 0.05));
-    const cropMinX = Math.max(0, primary.minX - margin);
-    const cropMinY = Math.max(0, primary.minY - margin);
-    const cropMaxX = Math.min(analysisSize - 1, primary.maxX + margin);
-    const cropMaxY = Math.min(analysisSize - 1, primary.maxY + margin);
-    const sourceCropMinX = Math.max(0, Math.floor((cropMinX / analysisSize) * sourceWidth));
-    const sourceCropMinY = Math.max(0, Math.floor((cropMinY / analysisSize) * sourceHeight));
-    const sourceCropMaxX = Math.min(sourceWidth, Math.ceil(((cropMaxX + 1) / analysisSize) * sourceWidth));
-    const sourceCropMaxY = Math.min(sourceHeight, Math.ceil(((cropMaxY + 1) / analysisSize) * sourceHeight));
-    const cropWidth = Math.max(1, sourceCropMaxX - sourceCropMinX);
-    const cropHeight = Math.max(1, sourceCropMaxY - sourceCropMinY);
-    if (cropWidth >= sourceWidth - 2 && cropHeight >= sourceHeight - 2) return pathOrUrl;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = sourceWidth;
-    canvas.height = sourceHeight;
-    const context = canvas.getContext("2d");
-    if (!context) return pathOrUrl;
-    context.drawImage(image, 0, 0, sourceWidth, sourceHeight);
-    context.fillStyle = "rgb(236,236,236)";
-    components.forEach((component) => {
-      if (component === primary) return;
-      const componentMargin = Math.max(4, Math.round(analysisSize * 0.025));
-      const eraseMinX = Math.max(0, component.minX - componentMargin);
-      const eraseMinY = Math.max(0, component.minY - componentMargin);
-      const eraseMaxX = Math.min(analysisSize - 1, component.maxX + componentMargin);
-      const eraseMaxY = Math.min(analysisSize - 1, component.maxY + componentMargin);
-      const sourceEraseMinX = Math.max(0, Math.floor((eraseMinX / analysisSize) * sourceWidth));
-      const sourceEraseMinY = Math.max(0, Math.floor((eraseMinY / analysisSize) * sourceHeight));
-      const sourceEraseMaxX = Math.min(sourceWidth, Math.ceil(((eraseMaxX + 1) / analysisSize) * sourceWidth));
-      const sourceEraseMaxY = Math.min(sourceHeight, Math.ceil(((eraseMaxY + 1) / analysisSize) * sourceHeight));
-      const eraseWidth = Math.max(1, sourceEraseMaxX - sourceEraseMinX);
-      const eraseHeight = Math.max(1, sourceEraseMaxY - sourceEraseMinY);
-      context.fillRect(sourceEraseMinX, sourceEraseMinY, eraseWidth, eraseHeight);
+    const targetValue = backgroundGray >= 244 ? 250 : 236;
+    const primaryMask = new Uint8Array(mask.length);
+    primary.pixels.forEach((pixel) => {
+      primaryMask[pixel] = 1;
     });
+    const dilatedMask = new Uint8Array(mask.length);
+    const dilationRadius = 3;
+    primary.pixels.forEach((pixel) => {
+      const centerX = pixel % analysisSize;
+      const centerY = Math.floor(pixel / analysisSize);
+      for (let offsetY = -dilationRadius; offsetY <= dilationRadius; offsetY += 1) {
+        const y = centerY + offsetY;
+        if (y < 0 || y >= analysisSize) continue;
+        for (let offsetX = -dilationRadius; offsetX <= dilationRadius; offsetX += 1) {
+          const x = centerX + offsetX;
+          if (x < 0 || x >= analysisSize) continue;
+          if (offsetX * offsetX + offsetY * offsetY > dilationRadius * dilationRadius + 1) continue;
+          dilatedMask[y * analysisSize + x] = 1;
+        }
+      }
+    });
+
     const extractedCanvas = document.createElement("canvas");
     extractedCanvas.width = sourceWidth;
     extractedCanvas.height = sourceHeight;
     const extractedContext = extractedCanvas.getContext("2d");
     if (!extractedContext) return pathOrUrl;
-    extractedContext.fillStyle = "rgb(236,236,236)";
-    extractedContext.fillRect(0, 0, sourceWidth, sourceHeight);
-    extractedContext.drawImage(
-      canvas,
-      sourceCropMinX,
-      sourceCropMinY,
-      cropWidth,
-      cropHeight,
-      sourceCropMinX,
-      sourceCropMinY,
-      cropWidth,
-      cropHeight
-    );
+    extractedContext.drawImage(image, 0, 0, sourceWidth, sourceHeight);
+    const extractedFrame = extractedContext.getImageData(0, 0, sourceWidth, sourceHeight);
+    const extractedData = extractedFrame.data;
+    for (let y = 0; y < sourceHeight; y += 1) {
+      const analysisY = Math.min(analysisSize - 1, Math.floor((y / sourceHeight) * analysisSize));
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const analysisX = Math.min(analysisSize - 1, Math.floor((x / sourceWidth) * analysisSize));
+        const keep = dilatedMask[analysisY * analysisSize + analysisX] === 1;
+        if (keep) continue;
+        const index = (y * sourceWidth + x) * 4;
+        extractedData[index] = targetValue;
+        extractedData[index + 1] = targetValue;
+        extractedData[index + 2] = targetValue;
+        extractedData[index + 3] = 255;
+      }
+    }
+    extractedContext.putImageData(extractedFrame, 0, 0);
     const filePath = buildPrimarySubjectOutputPath(trimmed);
     if (!filePath) return pathOrUrl;
     const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
@@ -5116,9 +5117,25 @@ export function ComfyPipelinePanel() {
   };
 
   const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string) => {
-    const normalized = await normalizeCharacterAnchorBackground(pathOrUrl, "white");
-    const isolated = await isolateCharacterPrimarySubject(normalized);
-    return fitCharacterViewWithinCanvas(isolated, "front");
+    const normalized = (await normalizeCharacterAnchorBackground(pathOrUrl, "white")) || pathOrUrl;
+    const directPath = (await fitCharacterViewWithinCanvas(normalized, "front")) || normalized;
+    const directQuality = await evaluateFrontReferenceQuality(directPath);
+    const layout = await analyzeForegroundLayout(normalized);
+    const shouldIsolate =
+      layout != null &&
+      (layout.significantComponents > 1 ||
+        layout.mediumComponents > 3 ||
+        layout.secondaryForegroundRatio > 0.12 ||
+        layout.detachedForegroundRatio > 0.1 ||
+        layout.edgeForegroundRatio > 0.12);
+    if (!shouldIsolate || directQuality.acceptable) return directPath;
+    const isolatedRaw = await isolateCharacterPrimarySubject(normalized);
+    if (!isolatedRaw.trim() || isolatedRaw.trim() === normalized.trim()) return directPath;
+    const isolatedPath = (await fitCharacterViewWithinCanvas(isolatedRaw, "front")) || isolatedRaw;
+    const isolatedQuality = await evaluateFrontReferenceQuality(isolatedPath);
+    if (isolatedQuality.acceptable && !directQuality.acceptable) return isolatedPath;
+    if (directQuality.acceptable && !isolatedQuality.acceptable) return directPath;
+    return isolatedQuality.score > directQuality.score + 4 ? isolatedPath : directPath;
   };
 
   const prepareCharacterThreeViewPanelCandidate = async (
@@ -5127,6 +5144,9 @@ export function ComfyPipelinePanel() {
   ) => {
     const normalized =
       (await normalizeCharacterAnchorBackground(pathOrUrl, view === "front" ? "white" : "gray")) || pathOrUrl;
+    if (view === "front") {
+      return prepareCharacterFrontReferenceCandidate(normalized);
+    }
     const layout = await analyzeForegroundLayout(normalized);
     const shouldIsolate =
       layout != null &&
