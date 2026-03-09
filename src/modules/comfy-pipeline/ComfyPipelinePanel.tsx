@@ -701,7 +701,7 @@ function buildCharacterReferenceEditSingleViewWorkflowTemplateJson(checkpointNam
         cfg: 5.4,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.5,
+        denoise: 0.38,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -6276,6 +6276,9 @@ export function ComfyPipelinePanel() {
       characterAnchorRenderPreset
     );
     const generatedArtifactSourcePaths = new Set<string>();
+    const shouldPreferReferenceEditPrimary =
+      prefersRealisticCharacterAnchorModel(context) ||
+      characterModelForWorkflow.trim().toLowerCase() !== DEFAULT_CHARACTER_ADVANCED_UNET.trim().toLowerCase();
     const runReferenceEditFallbackThreeViews = async (seedBase: number) => {
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (!reusableFrontReferencePath) {
@@ -6642,6 +6645,24 @@ export function ComfyPipelinePanel() {
       throw new Error("双参考三视图生成失败：未获得有效候选输出");
     };
     try {
+      if (shouldPreferReferenceEditPrimary) {
+        appendLog(`角色三视图优先采用同模型单视角补全主链：${name}`, "info");
+        try {
+          const referenceEditResult = await runReferenceEditFallbackThreeViews(baseSeed + 50000);
+          await cleanupGeneratedCharacterFamilies(
+            [...generatedArtifactSourcePaths],
+            [
+              referenceEditResult.front.localPath || referenceEditResult.front.previewUrl || "",
+              referenceEditResult.side.localPath || referenceEditResult.side.previewUrl || "",
+              referenceEditResult.back.localPath || referenceEditResult.back.previewUrl || ""
+            ],
+            "角色三视图"
+          );
+          return referenceEditResult;
+        } catch (referenceEditError) {
+          appendLog(`同模型单视角补全未达标，回退尝试高级整板：${name}，${String(referenceEditError)}`, "info");
+        }
+      }
       const result = await runAdvancedThreeViewsWithAutoRetry(baseSeed);
       await cleanupGeneratedCharacterFamilies(
         [...generatedArtifactSourcePaths],
