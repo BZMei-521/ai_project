@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   DEFAULT_TOKEN_MAPPING,
   deleteGeneratedFileFamilies,
+  discoverComfyLocalDirs,
   generateShotAsset,
   generateSkyboxFaceUpdate,
   generateSkyboxFaces,
@@ -458,15 +459,40 @@ function isGeneratedCharacterViewPath(value: string): boolean {
 }
 
 async function ensureCharacterThreeViewLayoutReferenceFilename(comfySettings: ComfySettings): Promise<string> {
-  const inputDir = comfySettings.comfyInputDir.trim().replace(/[\\/]+$/, "");
-  if (!inputDir) {
+  const discovered = await discoverComfyLocalDirs().catch(() => ({
+    rootDir: "",
+    inputDir: "",
+    outputDir: ""
+  }));
+  const candidateInputDirs = Array.from(
+    new Set(
+      [
+        comfySettings.comfyInputDir.trim(),
+        discovered.inputDir.trim(),
+        comfySettings.comfyRootDir.trim() ? `${comfySettings.comfyRootDir.trim().replace(/[\\/]+$/, "")}/input` : "",
+        discovered.rootDir.trim() ? `${discovered.rootDir.trim().replace(/[\\/]+$/, "")}/input` : "",
+        comfySettings.outputDir.trim()
+          ? `${comfySettings.outputDir.trim().replace(/[\\/]+$/, "").replace(/[\\/]+output$/i, "")}/input`
+          : "",
+        discovered.outputDir.trim()
+          ? `${discovered.outputDir.trim().replace(/[\\/]+$/, "").replace(/[\\/]+output$/i, "")}/input`
+          : ""
+      ]
+        .map((value) => value.replace(/[\\/]+$/, ""))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+  if (candidateInputDirs.length <= 0) {
     throw new Error("角色三视图工作流需要 ComfyUI input 目录，但当前设置里没有 input 路径。");
   }
-  const targetPath = `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`;
-  await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
-    filePath: targetPath,
-    base64Data: CHARACTER_THREEVIEW_LAYOUT_REF_BASE64
-  });
+  await Promise.all(
+    candidateInputDirs.map((inputDir) =>
+      invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+        filePath: `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`,
+        base64Data: CHARACTER_THREEVIEW_LAYOUT_REF_BASE64
+      })
+    )
+  );
   return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
 }
 

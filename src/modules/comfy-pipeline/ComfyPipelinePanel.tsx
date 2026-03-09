@@ -5652,19 +5652,42 @@ export function ComfyPipelinePanel() {
   };
 
   const ensureCharacterThreeViewLayoutReferenceFilename = async (runtimeSettings: ComfySettings) => {
-    const discovered =
-      runtimeSettings.comfyInputDir.trim().length > 0
-        ? { inputDir: runtimeSettings.comfyInputDir.trim() }
-        : await discoverComfyLocalDirs().catch(() => ({ inputDir: "" }));
-    const inputDir = (runtimeSettings.comfyInputDir.trim() || discovered.inputDir || "").replace(/[\\/]+$/, "");
-    if (!inputDir) {
+    const discovered = await discoverComfyLocalDirs().catch(() => ({
+      rootDir: "",
+      inputDir: "",
+      outputDir: ""
+    }));
+    const candidateInputDirs = Array.from(
+      new Set(
+        [
+          runtimeSettings.comfyInputDir.trim(),
+          discovered.inputDir.trim(),
+          runtimeSettings.comfyRootDir.trim()
+            ? `${runtimeSettings.comfyRootDir.trim().replace(/[\\/]+$/, "")}/input`
+            : "",
+          discovered.rootDir.trim() ? `${discovered.rootDir.trim().replace(/[\\/]+$/, "")}/input` : "",
+          runtimeSettings.outputDir.trim()
+            ? `${runtimeSettings.outputDir.trim().replace(/[\\/]+$/, "").replace(/[\\/]+output$/i, "")}/input`
+            : "",
+          discovered.outputDir.trim()
+            ? `${discovered.outputDir.trim().replace(/[\\/]+$/, "").replace(/[\\/]+output$/i, "")}/input`
+            : ""
+        ]
+          .map((value) => value.replace(/[\\/]+$/, ""))
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    if (candidateInputDirs.length <= 0) {
       throw new Error("角色三视图工作流需要 ComfyUI input 目录，但当前未检测到 input 路径。");
     }
-    const targetPath = `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`;
-    await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
-      filePath: targetPath,
-      base64Data: CHARACTER_THREEVIEW_LAYOUT_REF_BASE64
-    });
+    await Promise.all(
+      candidateInputDirs.map((inputDir) =>
+        invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+          filePath: `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`,
+          base64Data: CHARACTER_THREEVIEW_LAYOUT_REF_BASE64
+        })
+      )
+    );
     return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
   };
 
