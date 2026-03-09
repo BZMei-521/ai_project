@@ -6322,9 +6322,27 @@ export function ComfyPipelinePanel() {
       characterAnchorRenderPreset
     );
     const generatedArtifactSourcePaths = new Set<string>();
-    const shouldPreferReferenceEditPrimary =
-      prefersRealisticCharacterAnchorModel(context) ||
-      characterModelForWorkflow.trim().toLowerCase() !== DEFAULT_CHARACTER_ADVANCED_UNET.trim().toLowerCase();
+    const shouldPreferReferenceEditPrimary = false;
+    const buildCharacterArtifactFamilySourcePaths = (paths: string[]) => {
+      const directories = uniqueEntities(
+        paths
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .map((value) => {
+            const normalized = value.replace(/\\/g, "/");
+            const index = normalized.lastIndexOf("/");
+            return index > 0 ? value.slice(0, index) : "";
+          })
+          .filter((value): value is string => Boolean(value))
+      );
+      const families = [
+        `character_orthoview_asset_char_${name}`,
+        `character_anchor_import_char_anchor_${name}`,
+        `character_anchor_cleanup_import_char_anchor_${name}`,
+        `character_anchor_asset_char_${name}`
+      ];
+      return directories.flatMap((directory) => families.map((family) => `${directory}/${family}`));
+    };
     const runReferenceEditFallbackThreeViews = async (seedBase: number) => {
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (!reusableFrontReferencePath) {
@@ -6714,7 +6732,12 @@ export function ComfyPipelinePanel() {
         try {
           const referenceEditResult = await runReferenceEditFallbackThreeViews(baseSeed + 50000);
           await cleanupGeneratedCharacterFamilies(
-            [...generatedArtifactSourcePaths],
+            [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([
+              referenceEditResult.front.localPath || referenceEditResult.front.previewUrl || "",
+              referenceEditResult.side.localPath || referenceEditResult.side.previewUrl || "",
+              referenceEditResult.back.localPath || referenceEditResult.back.previewUrl || "",
+              existingFrontReferencePath
+            ])],
             [
               referenceEditResult.front.localPath || referenceEditResult.front.previewUrl || "",
               referenceEditResult.side.localPath || referenceEditResult.side.previewUrl || "",
@@ -6729,7 +6752,12 @@ export function ComfyPipelinePanel() {
       }
       const result = await runAdvancedThreeViewsWithAutoRetry(baseSeed);
       await cleanupGeneratedCharacterFamilies(
-        [...generatedArtifactSourcePaths],
+        [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([
+          result.front.localPath || result.front.previewUrl || "",
+          result.side.localPath || result.side.previewUrl || "",
+          result.back.localPath || result.back.previewUrl || "",
+          existingFrontReferencePath
+        ])],
         [
           result.front.localPath || result.front.previewUrl || "",
           result.side.localPath || result.side.previewUrl || "",
@@ -6740,7 +6768,7 @@ export function ComfyPipelinePanel() {
       return result;
     } catch (error) {
       await cleanupGeneratedCharacterFamilies(
-        [...generatedArtifactSourcePaths],
+        [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([existingFrontReferencePath])],
         [existingFrontReferencePath],
         "角色三视图"
       );
