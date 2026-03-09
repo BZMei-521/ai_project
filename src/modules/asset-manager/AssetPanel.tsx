@@ -10,7 +10,7 @@ import {
 } from "../comfy-pipeline/comfyService";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-threeview-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-character-kontext-threeview-default.json";
-import CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.png?inline";
+import CHARACTER_THREEVIEW_LAYOUT_REF_BASE64 from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.base64";
 import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-panorama-default.json";
 import { invokeDesktopCommand, toDesktopMediaSource } from "../platform/desktopBridge";
@@ -457,39 +457,15 @@ function isGeneratedCharacterViewPath(value: string): boolean {
   );
 }
 
-function stripInlineDataUrlPrefix(raw: string): string {
-  return raw.replace(/^data:[^,]+,/, "");
-}
-
-async function encodeFetchedAssetAsBase64(assetRef: string): Promise<string> {
-  const trimmed = assetRef.trim();
-  if (!trimmed) throw new Error("角色三视图版式参考资源为空");
-  if (trimmed.startsWith("data:")) {
-    return stripInlineDataUrlPrefix(trimmed);
-  }
-  const response = await fetch(trimmed);
-  if (!response.ok) {
-    throw new Error(`读取角色三视图版式参考失败：HTTP ${response.status}`);
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
-}
-
 async function ensureCharacterThreeViewLayoutReferenceFilename(comfySettings: ComfySettings): Promise<string> {
   const inputDir = comfySettings.comfyInputDir.trim().replace(/[\\/]+$/, "");
   if (!inputDir) {
     throw new Error("角色三视图工作流需要 ComfyUI input 目录，但当前设置里没有 input 路径。");
   }
   const targetPath = `${inputDir}/${CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME}`;
-  const base64Data = await encodeFetchedAssetAsBase64(CHARACTER_THREEVIEW_LAYOUT_REF_DATA_URL);
   await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
     filePath: targetPath,
-    base64Data
+    base64Data: CHARACTER_THREEVIEW_LAYOUT_REF_BASE64
   });
   return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
 }
