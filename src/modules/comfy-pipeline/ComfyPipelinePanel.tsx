@@ -184,6 +184,7 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 };
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 6;
+const CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD = 18;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
 const CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 12;
@@ -4047,6 +4048,15 @@ export function ComfyPipelinePanel() {
     return count;
   };
 
+  const computeImageHashDistance = async (leftPathOrUrl: string, rightPathOrUrl: string): Promise<number | null> => {
+    const [leftHash, rightHash] = await Promise.all([
+      computeImageAverageHash(leftPathOrUrl),
+      computeImageAverageHash(rightPathOrUrl)
+    ]);
+    if (leftHash == null || rightHash == null) return null;
+    return hammingDistance64(leftHash, rightHash);
+  };
+
   const detectLowDiversityThreeViews = async (paths: string[]) => {
     const targets = paths.slice(0, 3);
     if (targets.length < 3) return { inspected: false, lowDiversity: false, distances: [] as number[] };
@@ -4457,7 +4467,7 @@ export function ComfyPipelinePanel() {
     return heightRatio > 0.72 || widthRatio > 0.52 || foregroundRatio > 0.18;
   };
 
-  const evaluateThreeViewQuality = async (paths: string[]) => {
+  const evaluateThreeViewQuality = async (paths: string[], referenceFrontPath = "") => {
     const diversity = await detectLowDiversityThreeViews(paths);
     const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
       (value): value is number => typeof value === "number" && Number.isFinite(value)
@@ -4478,6 +4488,9 @@ export function ComfyPipelinePanel() {
       sidePath ? analyzeCharacterTemplateAppearance(sidePath) : Promise.resolve(null),
       backPath ? analyzeCharacterTemplateAppearance(backPath) : Promise.resolve(null)
     ]);
+    const preparedReferenceFrontPath = referenceFrontPath.trim();
+    const frontReferenceDistance =
+      preparedReferenceFrontPath && frontPath ? await computeImageHashDistance(frontPath, preparedReferenceFrontPath) : null;
     const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
     const avgSharpness =
       sharpnessValues.length > 0 ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length : null;
@@ -4543,6 +4556,12 @@ export function ComfyPipelinePanel() {
         );
       }
     });
+    if (
+      typeof frontReferenceDistance === "number" &&
+      frontReferenceDistance > CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD
+    ) {
+      appearanceAlerts.push(`front_anchor_mismatch(hash=${frontReferenceDistance})`);
+    }
     const blockingLayoutAlerts = layoutAlerts.filter((alert) => {
       if (!alert.endsWith("_touching_edge")) return true;
       return alert.startsWith("front_");
@@ -4553,7 +4572,10 @@ export function ComfyPipelinePanel() {
       (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0) -
       ((orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0) ? 8 : 0) -
       (layoutAlerts.length > blockingLayoutAlerts.length ? 2 : 0) -
-      appearanceAlerts.length * 14;
+      appearanceAlerts.length * 14 -
+      (typeof frontReferenceDistance === "number"
+        ? Math.max(0, frontReferenceDistance - CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD) * 1.5
+        : 0);
     return {
       lowDiversity: diversity.inspected && diversity.lowDiversity,
       lowSharpness,
@@ -4567,6 +4589,7 @@ export function ComfyPipelinePanel() {
       minSharpness,
       avgSharpness,
       distances: diversity.distances,
+      frontReferenceDistance,
       score
     };
   };
@@ -5050,6 +5073,24 @@ export function ComfyPipelinePanel() {
     const normalized = await normalizeCharacterAnchorBackground(pathOrUrl, "white");
     const isolated = await isolateCharacterPrimarySubject(normalized);
     return fitCharacterViewWithinCanvas(isolated, "front");
+  };
+
+  const prepareCharacterThreeViewPanelCandidate = async (
+    pathOrUrl: string,
+    view: "front" | "side" | "back"
+  ) => {
+    const normalized =
+      (await normalizeCharacterAnchorBackground(pathOrUrl, view === "front" ? "white" : "gray")) || pathOrUrl;
+    const layout = await analyzeForegroundLayout(normalized);
+    const shouldIsolate =
+      layout != null &&
+      (layout.significantComponents > 1 ||
+        layout.mediumComponents > 4 ||
+        layout.secondaryForegroundRatio > 0.18 ||
+        layout.detachedForegroundRatio > 0.16 ||
+        layout.edgeForegroundRatio > 0.18);
+    const prepared = shouldIsolate ? await isolateCharacterPrimarySubject(normalized) : normalized;
+    return fitCharacterViewWithinCanvas(prepared, view);
   };
 
   const fitCharacterViewWithinCanvas = async (pathOrUrl: string, view: "front" | "side" | "back") => {
@@ -5896,6 +5937,7 @@ export function ComfyPipelinePanel() {
       `Character identity: ${name}`,
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       "Preserve the same face, hairstyle, body proportions, costume structure, garment layers, sleeve shape, belt placement, accessories, shoes or boots, colors, and silhouette from the first image.",
+      "Keep natural head size, stable facial proportions, clear eyes nose mouth placement, and undistorted face shape in all panels.",
       "Do not simplify the costume into a mannequin, base mesh, bodysuit, underwear, grey dummy, tactical uniform, or anatomy template.",
       "One character only, one front view, one side view, one back view, full body, feet visible, head visible, no crop, no extra panels, no text, no watermark.",
       "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
@@ -5918,6 +5960,7 @@ export function ComfyPipelinePanel() {
       "extra panel, fourth figure, lineup with many tiny characters, collage, poster layout, sprite sheet",
       "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose",
       "mannequin, faceless mannequin, wireframe body, anatomy template, croquis, 3d reference doll, grey dummy, base mesh, neutral bodysuit",
+      "deformed head, malformed face, collapsed face, doll face, toy face, tiny head, oversized head, missing facial features, blurred face, broken eyes, broken mouth",
       "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, swimsuit, bikini, lingerie, barefoot, exposed toes",
       "duplicate character, mirrored twin, merged body, duplicate limbs, extra arms, extra legs",
       "scene background, architecture, temple, palace, landscape, magic circle, petals, floral background"
@@ -6353,7 +6396,7 @@ export function ComfyPipelinePanel() {
         const [sideQuality, backQuality, combinedQuality] = await Promise.all([
           evaluateSingleCharacterViewQuality(sidePath, "side"),
           evaluateSingleCharacterViewQuality(backPath, "back"),
-          evaluateThreeViewQuality([normalizedFrontPath, sidePath, backPath])
+          evaluateThreeViewQuality([normalizedFrontPath, sidePath, backPath], normalizedFrontPath)
         ]);
         const issues = [
           ...sideQuality.issues.map((issue) => `side:${issue}`),
@@ -6536,9 +6579,9 @@ export function ComfyPipelinePanel() {
       }
       generatedArtifactSourcePaths.add(sheetPath);
       const split = await splitCharacterThreeViewSheet(sheetPath);
-      const frontPath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.frontPath), "front");
-      const sidePath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.sidePath), "side");
-      const backPath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.backPath), "back");
+      const frontPath = await prepareCharacterThreeViewPanelCandidate(split.frontPath, "front");
+      const sidePath = await prepareCharacterThreeViewPanelCandidate(split.sidePath, "side");
+      const backPath = await prepareCharacterThreeViewPanelCandidate(split.backPath, "back");
       return {
         front: {
           localPath: frontPath,
@@ -6551,7 +6594,8 @@ export function ComfyPipelinePanel() {
         back: {
           localPath: backPath,
           previewUrl: backPath
-        }
+        },
+        referenceFrontPath: frontAnchorPath
       };
     };
     const runAdvancedThreeViewsWithAutoRetry = async (seedBase: number) => {
@@ -6565,7 +6609,7 @@ export function ComfyPipelinePanel() {
           current.side.localPath || current.side.previewUrl,
           current.back.localPath || current.back.previewUrl
         ].filter((value): value is string => Boolean(value));
-        const currentQuality = await evaluateThreeViewQuality(currentPaths);
+        const currentQuality = await evaluateThreeViewQuality(currentPaths, current.referenceFrontPath);
         const incomplete = currentPaths.length < 3;
         const currentScore = currentQuality.score + (incomplete ? -1000 : 0);
         const isAcceptable = !incomplete && !currentQuality.lowDiversity && !currentQuality.lowSharpness && !currentQuality.lowOrientation;
@@ -6579,7 +6623,7 @@ export function ComfyPipelinePanel() {
         }
         if (attempt < 4) {
           appendLog(
-            `双参考三视图候选 ${attempt + 1}/5 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
+          `双参考三视图候选 ${attempt + 1}/5 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && currentQuality.lowOrientation ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}），继续重试：${name}`,
             "info"
           );
         }
