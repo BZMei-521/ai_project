@@ -4473,6 +4473,11 @@ export function ComfyPipelinePanel() {
       sidePath ? analyzeForegroundLayout(sidePath) : Promise.resolve(null),
       backPath ? analyzeForegroundLayout(backPath) : Promise.resolve(null)
     ]);
+    const [frontAppearance, sideAppearance, backAppearance] = await Promise.all([
+      frontPath ? analyzeCharacterTemplateAppearance(frontPath) : Promise.resolve(null),
+      sidePath ? analyzeCharacterTemplateAppearance(sidePath) : Promise.resolve(null),
+      backPath ? analyzeCharacterTemplateAppearance(backPath) : Promise.resolve(null)
+    ]);
     const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
     const avgSharpness =
       sharpnessValues.length > 0 ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length : null;
@@ -4488,6 +4493,7 @@ export function ComfyPipelinePanel() {
       orientationAlerts.push(`back_not_centered(sym=${backSymmetry.toFixed(2)})`);
     }
     const layoutAlerts: string[] = [];
+    const appearanceAlerts: string[] = [];
     (
       [
         ["front", frontLayout],
@@ -4518,21 +4524,41 @@ export function ComfyPipelinePanel() {
         layoutAlerts.push(`${label}_subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     });
+    (
+      [
+        ["front", frontAppearance],
+        ["side", sideAppearance],
+        ["back", backAppearance]
+      ] as const
+    ).forEach(([label, appearance]) => {
+      if (!appearance) return;
+      if (appearance.likelyTemplateFigure) {
+        appearanceAlerts.push(
+          `${label}_template_figure(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
+        );
+      }
+      if (appearance.likelyNudeFigure) {
+        appearanceAlerts.push(
+          `${label}_nude_like(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
+        );
+      }
+    });
     const blockingLayoutAlerts = layoutAlerts.filter((alert) => {
       if (!alert.endsWith("_touching_edge")) return true;
       return alert.startsWith("front_");
     });
-    const lowOrientation = orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0;
+    const lowOrientation = orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0 || appearanceAlerts.length > 0;
     const score =
       (avgSharpness ?? 0) +
       (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0) -
       ((orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0) ? 8 : 0) -
-      (layoutAlerts.length > blockingLayoutAlerts.length ? 2 : 0);
+      (layoutAlerts.length > blockingLayoutAlerts.length ? 2 : 0) -
+      appearanceAlerts.length * 14;
     return {
       lowDiversity: diversity.inspected && diversity.lowDiversity,
       lowSharpness,
       lowOrientation,
-      orientationAlerts: [...orientationAlerts, ...layoutAlerts],
+      orientationAlerts: [...orientationAlerts, ...layoutAlerts, ...appearanceAlerts],
       symmetry: {
         front: frontSymmetry,
         side: sideSymmetry,
