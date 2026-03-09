@@ -594,6 +594,8 @@ async function invokeCommand(cmd, args) {
       return writeBase64File(args?.filePath, args?.base64Data);
     case "copy_file_to":
       return copyFileTo(args?.sourcePath, args?.targetPath);
+    case "delete_generated_file_families":
+      return deleteGeneratedFileFamilies(args?.sourcePaths, args?.excludePaths);
     case "split_threeview_sheet":
       return splitThreeviewSheet(args?.sourcePath);
     case "export_animatic_from_frames":
@@ -830,6 +832,46 @@ async function copyFileTo(sourcePath, targetPath) {
   await ensureDir(path.dirname(target));
   await fs.copyFile(source, target);
   return { filePath: target };
+}
+
+async function deleteGeneratedFileFamilies(sourcePaths, excludePaths) {
+  const sources = Array.isArray(sourcePaths) ? sourcePaths : [];
+  const excludes = new Set(
+    (Array.isArray(excludePaths) ? excludePaths : [])
+      .map((value) => path.resolve(String(value || "")))
+      .filter(Boolean)
+  );
+  const grouped = new Map();
+  for (const item of sources) {
+    const resolved = path.resolve(String(item || ""));
+    if (!resolved) continue;
+    const parsed = path.parse(resolved);
+    if (!parsed.dir || !parsed.name) continue;
+    if (!grouped.has(parsed.dir)) {
+      grouped.set(parsed.dir, new Set());
+    }
+    grouped.get(parsed.dir).add(parsed.name);
+  }
+  const deletedPaths = [];
+  for (const [dir, prefixes] of grouped.entries()) {
+    const entries = await safeReadDir(dir);
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const candidatePath = path.join(dir, entry.name);
+      if (excludes.has(candidatePath)) continue;
+      let matches = false;
+      for (const prefix of prefixes.values()) {
+        if (entry.name.startsWith(prefix)) {
+          matches = true;
+          break;
+        }
+      }
+      if (!matches) continue;
+      await fs.unlink(candidatePath).catch(() => {});
+      deletedPaths.push(candidatePath);
+    }
+  }
+  return { deletedPaths };
 }
 
 async function splitThreeviewSheet(sourcePath) {

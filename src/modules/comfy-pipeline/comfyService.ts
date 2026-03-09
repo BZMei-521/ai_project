@@ -193,6 +193,10 @@ type FileWriteResult = {
   filePath: string;
 };
 
+type DeleteGeneratedFileFamiliesResult = {
+  deletedPaths: string[];
+};
+
 type ThreeViewSplitResult = {
   frontPath: string;
   sidePath: string;
@@ -292,6 +296,25 @@ async function invokeDesktop<T>(cmd: string, args?: Record<string, unknown>): Pr
     throw new Error("未检测到桌面运行环境。请使用 Tauri 桌面版或 Windows Web 启动脚本。");
   }
   return invokeDesktopCommand<T>(cmd, args);
+}
+
+export async function deleteGeneratedFileFamilies(sourcePaths: string[], excludePaths: string[] = []) {
+  if (!hasDesktopInvoke()) {
+    return { deletedPaths: [] };
+  }
+  const normalizedSourcePaths = sourcePaths
+    .map((value) => String(value || "").trim())
+    .filter((value): value is string => Boolean(value));
+  if (normalizedSourcePaths.length <= 0) {
+    return { deletedPaths: [] };
+  }
+  const normalizedExcludePaths = excludePaths
+    .map((value) => String(value || "").trim())
+    .filter((value): value is string => Boolean(value));
+  return invokeDesktop<DeleteGeneratedFileFamiliesResult>("delete_generated_file_families", {
+    sourcePaths: normalizedSourcePaths,
+    excludePaths: normalizedExcludePaths
+  });
 }
 
 function normalizeBaseUrl(raw: string): string {

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   DEFAULT_TOKEN_MAPPING,
+  deleteGeneratedFileFamilies,
   generateShotAsset,
   generateSkyboxFaceUpdate,
   generateSkyboxFaces,
@@ -54,6 +55,21 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 };
 
 const SKYBOX_FACES: SkyboxFace[] = ["front", "right", "back", "left", "up", "down"];
+
+async function cleanupGeneratedCharacterFamilies(sourcePaths: string[], keepPaths: string[]) {
+  const normalizedSourcePaths = Array.from(
+    new Set(sourcePaths.map((value) => value.trim()).filter((value): value is string => Boolean(value)))
+  );
+  if (normalizedSourcePaths.length <= 0) return;
+  const normalizedKeepPaths = Array.from(
+    new Set(keepPaths.map((value) => value.trim()).filter((value): value is string => Boolean(value)))
+  );
+  try {
+    await deleteGeneratedFileFamilies(normalizedSourcePaths, normalizedKeepPaths);
+  } catch (error) {
+    pushToast(`清理多余角色候选图失败：${String(error)}`, "warning");
+  }
+}
 
 function normalizeStoryInput(raw: string): string {
   return raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, " ").trim();
@@ -804,6 +820,7 @@ export function AssetPanel() {
     try {
       setBusy(true);
       const batchId = Date.now();
+      const generatedSourcePaths = new Set<string>();
       const characterModel = resolveMvAdapterCharacterModel(
         comfySettings.characterAssetModelName?.trim() || DEFAULT_CHARACTER_ASSET_MODEL
       );
@@ -847,6 +864,10 @@ export function AssetPanel() {
               }
             );
       const frontAnchorPath = front.localPath || front.previewUrl;
+      const generatedFrontPath = manualAnchorPath.length > 0 ? "" : frontAnchorPath;
+      if (generatedFrontPath) {
+        generatedSourcePaths.add(generatedFrontPath);
+      }
       if (!frontAnchorPath) {
         throw new Error("角色正视参考图生成成功，但没有可用输出路径");
       }
@@ -877,11 +898,17 @@ export function AssetPanel() {
         if (!sheetPath) {
           throw new Error("角色三视图整板生成成功，但没有可用输出路径");
         }
+        generatedSourcePaths.add(sheetPath);
         const split = await splitCharacterThreeViewSheet(sheetPath);
         setFrontPath(split.frontPath);
         setSidePath(split.sidePath);
         setBackPath(split.backPath);
         setFilePath(split.frontPath);
+        await cleanupGeneratedCharacterFamilies([...generatedSourcePaths], [
+          split.frontPath,
+          split.sidePath,
+          split.backPath
+        ]);
         pushToast(
           manualAnchorPath.length > 0
             ? "角色三视图生成完成，已使用现有人物正视图和固定版式参考"
@@ -893,6 +920,7 @@ export function AssetPanel() {
         setSidePath("");
         setBackPath("");
         setFilePath(frontAnchorPath);
+        await cleanupGeneratedCharacterFamilies([...generatedSourcePaths], [frontAnchorPath]);
         pushToast(`高级整板失败，已保留正视锚点并停止自动 fallback：${String(advancedError)}`, "warning");
       }
     } catch (error) {

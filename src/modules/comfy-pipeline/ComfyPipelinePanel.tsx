@@ -7,6 +7,7 @@ import {
   checkComfyModelHealth,
   concatShotVideos,
   defaultVideoGenerationMode,
+  deleteGeneratedFileFamilies,
   discoverComfyLocalDirs,
   discoverComfyEndpoints,
   DEFAULT_TOKEN_MAPPING,
@@ -4634,6 +4635,25 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, `_triptych_input_${attempt + 1}.png`);
   };
 
+  const cleanupGeneratedCharacterFamilies = async (
+    sourcePaths: string[],
+    keepPaths: string[],
+    logLabel: string
+  ) => {
+    const normalizedSourcePaths = uniqueEntities(
+      sourcePaths.map((value) => value.trim()).filter((value): value is string => Boolean(value))
+    );
+    if (normalizedSourcePaths.length <= 0) return;
+    const normalizedKeepPaths = uniqueEntities(
+      keepPaths.map((value) => value.trim()).filter((value): value is string => Boolean(value))
+    );
+    try {
+      await deleteGeneratedFileFamilies(normalizedSourcePaths, normalizedKeepPaths);
+    } catch (error) {
+      appendLog(`${logLabel}清理多余候选图失败：${String(error)}`, "error");
+    }
+  };
+
   const normalizeCharacterAnchorBackground = async (pathOrUrl: string, tone: "white" | "gray" = "gray") => {
     if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
     const trimmed = pathOrUrl.trim();
@@ -6004,6 +6024,7 @@ export function ComfyPipelinePanel() {
       runtimeSettings.characterTemplatePreset ?? "portrait",
       runtimeSettings.characterRenderPreset ?? "clean_reference"
     );
+    const generatedArtifactSourcePaths = new Set<string>();
     const runReferenceEditFallbackThreeViews = async (seedBase: number) => {
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (!reusableFrontReferencePath) {
@@ -6187,6 +6208,7 @@ export function ComfyPipelinePanel() {
       let bestReferenceScore = Number.NEGATIVE_INFINITY;
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (reusableFrontReferencePath) {
+        generatedArtifactSourcePaths.add(reusableFrontReferencePath);
         bestReference = {
           localPath: reusableFrontReferencePath,
           previewUrl: reusableFrontReferencePath
@@ -6215,6 +6237,9 @@ export function ComfyPipelinePanel() {
             }
           );
           const currentReferencePathRaw = currentReference.localPath || currentReference.previewUrl;
+          if (currentReferencePathRaw) {
+            generatedArtifactSourcePaths.add(currentReferencePathRaw);
+          }
           const currentReferencePath = currentReferencePathRaw
             ? await prepareCharacterFrontReferenceCandidate(currentReferencePathRaw)
             : "";
@@ -6301,6 +6326,7 @@ export function ComfyPipelinePanel() {
       if (!sheetPath) {
         throw new Error("角色三视图整板生成成功，但没有可用输出路径");
       }
+      generatedArtifactSourcePaths.add(sheetPath);
       const split = await splitCharacterThreeViewSheet(sheetPath);
       const frontPath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.frontPath), "front");
       const sidePath = await fitCharacterViewWithinCanvas(await normalizeCharacterAnchorBackground(split.sidePath), "side");
@@ -6364,8 +6390,23 @@ export function ComfyPipelinePanel() {
       throw new Error("双参考三视图生成失败：未获得有效候选输出");
     };
     try {
-      return await runAdvancedThreeViewsWithAutoRetry(baseSeed);
+      const result = await runAdvancedThreeViewsWithAutoRetry(baseSeed);
+      await cleanupGeneratedCharacterFamilies(
+        [...generatedArtifactSourcePaths],
+        [
+          result.front.localPath || result.front.previewUrl || "",
+          result.side.localPath || result.side.previewUrl || "",
+          result.back.localPath || result.back.previewUrl || ""
+        ],
+        "角色三视图"
+      );
+      return result;
     } catch (error) {
+      await cleanupGeneratedCharacterFamilies(
+        [...generatedArtifactSourcePaths],
+        [existingFrontReferencePath],
+        "角色三视图"
+      );
       if (!allowAutomaticFallbackRepair) {
         appendLog(`双参考三视图失败，已停止自动 fallback 以避免生成错误三视图：${name}`, "error");
         if (shouldFallbackAssetWorkflow(error)) {
@@ -6831,6 +6872,7 @@ export function ComfyPipelinePanel() {
         const baseSeed =
           profile.seed ??
           stableAssetSeed(`${profile.name}|character_anchor|${semanticContext}|${styleAnchor || "default"}`);
+        const generatedAnchorSourcePaths = new Set<string>();
         let bestAnchorPath = "";
         let bestAnchorScore = Number.NEGATIVE_INFINITY;
         let bestAnchorIssues: string[] = [];
@@ -6872,6 +6914,7 @@ export function ComfyPipelinePanel() {
             );
             const candidatePathRaw = (generated.localPath || generated.previewUrl || "").trim();
             if (!candidatePathRaw) continue;
+            generatedAnchorSourcePaths.add(candidatePathRaw);
             const candidatePath = await prepareCharacterFrontReferenceCandidate(candidatePathRaw);
             const quality = await evaluateFrontReferenceQuality(candidatePath);
             if (quality.score > bestAnchorScore) {
@@ -6896,6 +6939,11 @@ export function ComfyPipelinePanel() {
           if (acceptedAnchor) break;
         }
         if (!bestAnchorPath.trim()) {
+          await cleanupGeneratedCharacterFamilies(
+            [...generatedAnchorSourcePaths],
+            [],
+            `${sourceLabel}角色正视锚点`
+          );
           throw new Error(`${sourceLabel}角色正视锚点生成失败：${profile.name} 未获得可用输出`);
         }
         let finalAnchorPath = bestAnchorPath.trim();
@@ -6916,6 +6964,11 @@ export function ComfyPipelinePanel() {
           finalAnchorQuality = repairedAnchor.quality;
         }
         if (!finalAnchorQuality.acceptable) {
+          await cleanupGeneratedCharacterFamilies(
+            [...generatedAnchorSourcePaths],
+            [],
+            `${sourceLabel}角色正视锚点`
+          );
           throw new Error(
             `${sourceLabel}角色正视锚点未通过质检：${profile.name}（${(finalAnchorQuality.issues.length > 0 ? finalAnchorQuality.issues : bestAnchorIssues).join(" / ") || "非标准单人全身设定图"}）`
           );
@@ -6923,6 +6976,11 @@ export function ComfyPipelinePanel() {
         anchorPath = finalAnchorPath;
         if (anchorPath) {
           anchorPath = await normalizeCharacterAnchorBackground(anchorPath, "white");
+          await cleanupGeneratedCharacterFamilies(
+            [...generatedAnchorSourcePaths],
+            [anchorPath],
+            `${sourceLabel}角色正视锚点`
+          );
           appendLog(`${sourceLabel}角色正视锚点生成成功：${profile.name}`);
         }
       }

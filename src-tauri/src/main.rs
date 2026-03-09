@@ -170,6 +170,12 @@ struct ThreeViewSplitResult {
     back_path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DeleteGeneratedFileFamiliesResult {
+    deleted_paths: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ComfyPingResult {
@@ -2562,6 +2568,65 @@ fn copy_file_to(source_path: String, target_path: String) -> Result<FileWriteRes
 }
 
 #[tauri::command]
+fn delete_generated_file_families(
+    source_paths: Vec<String>,
+    exclude_paths: Option<Vec<String>>,
+) -> Result<DeleteGeneratedFileFamiliesResult, String> {
+    let excludes: HashSet<PathBuf> = exclude_paths
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| PathBuf::from(value.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect();
+
+    let mut grouped_prefixes: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    for raw_path in source_paths {
+        let path = PathBuf::from(raw_path.trim());
+        if path.as_os_str().is_empty() {
+            continue;
+        }
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if stem.trim().is_empty() {
+            continue;
+        }
+        grouped_prefixes
+            .entry(parent.to_path_buf())
+            .or_default()
+            .insert(stem.to_string());
+    }
+
+    let mut deleted_paths = Vec::new();
+    for (directory, prefixes) in grouped_prefixes {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let candidate_path = entry.path();
+            if !candidate_path.is_file() || excludes.contains(&candidate_path) {
+                continue;
+            }
+            let Some(file_name) = candidate_path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !prefixes.iter().any(|prefix| file_name.starts_with(prefix)) {
+                continue;
+            }
+            fs::remove_file(&candidate_path)
+                .map_err(|err| format!("Failed to delete generated file {}: {err}", candidate_path.to_string_lossy()))?;
+            deleted_paths.push(candidate_path.to_string_lossy().to_string());
+        }
+    }
+
+    Ok(DeleteGeneratedFileFamiliesResult { deleted_paths })
+}
+
+#[tauri::command]
 fn split_threeview_sheet(source_path: String) -> Result<ThreeViewSplitResult, String> {
     let source = PathBuf::from(source_path.trim());
     if !source.exists() || !source.is_file() {
@@ -2673,6 +2738,7 @@ fn main() {
             generate_local_video_from_images,
             write_base64_file,
             copy_file_to,
+            delete_generated_file_families,
             split_threeview_sheet,
             comfy_read_server_log_tail,
             comfy_ping,
