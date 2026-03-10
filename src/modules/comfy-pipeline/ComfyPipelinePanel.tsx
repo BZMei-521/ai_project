@@ -6115,16 +6115,20 @@ export function ComfyPipelinePanel() {
     const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
     const appearanceContext = translatedContext || sanitizedContext;
     const genderHint = inferCharacterGenderHint(context);
-    const backgroundPrompt = CHARACTER_BACKGROUND_PRESET_TEXT[settings.characterBackgroundPreset ?? "gray"];
     const styleProfile = resolveSharedVisualStyleProfile([context]);
     const styleHint = styleProfile.styleHint;
     const styleAnchor = styleProfile.styleAnchor;
     return mergePromptFragments([
-      "Recreate the same clothed character from the first image into exactly three full-body orthographic views arranged left to right as front, strict right side profile, and back.",
+      "Generate a stable professional orthographic character turnaround sheet for game development.",
+      "Exactly one consistent clothed human character must appear in exactly three full-body views arranged left to right as front view, strict right side view, and back view.",
+      "Orthographic camera only, no perspective distortion, no dramatic lens effect, no cinematic framing.",
+      "Neutral pose, arms relaxed down, feet parallel, consistent proportions across all three views.",
+      "Clean white background only, no floor props, no scenery, no layout decoration beyond a clean concept art turnaround presentation.",
+      "Concept art layout, production-ready character turnaround sheet, precise spacing, clear silhouette separation between panels.",
       genderHint === "female" ? "The character is a young adult woman." : genderHint === "male" ? "The character is a young adult man." : "",
       "Use the first reference image as the exact identity, face, hairstyle, costume, and silhouette source.",
-      "Use the second reference image only as the layout, spacing, panel order, grey background, framing, and orthographic presentation target.",
-      "Match the panel order and spacing of the second reference image: left panel front view, middle panel strict right profile, right panel back view.",
+      "Use the second reference image only as the layout, spacing, panel order, framing, and orthographic presentation target.",
+      "Match the panel order and spacing of the second reference image: left panel front view, middle panel strict right profile, right panel back view. Do not copy any extra figure, grey background, or decoration from the layout reference.",
       `Character identity: ${name}`,
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       "Preserve the same face, hairstyle, body proportions, costume structure, garment layers, sleeve shape, belt placement, accessories, shoes or boots, colors, and silhouette from the first image.",
@@ -6132,7 +6136,8 @@ export function ComfyPipelinePanel() {
       "Do not simplify the costume into a mannequin, base mesh, bodysuit, underwear, grey dummy, tactical uniform, or anatomy template.",
       "One character only, one front view, one side view, one back view, full body, feet visible, head visible, no crop, no extra panels, no text, no watermark.",
       "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
-      `${backgroundPrompt}，grey background，clean character turnaround sheet，studio reference board`,
+      "All three figures must read as the same person with matched costume details, matched silhouette, matched color placement, and matched scale.",
+      "Keep the board minimal and clean: white background, no inset heads, no extra sketches, no expression sheet, no costume variants, no prop callouts.",
       `Style hint: ${styleHint}`,
       styleAnchor ? `Global style anchor: ${styleAnchor}` : "",
       styleProfile.characterDirective,
@@ -6148,13 +6153,13 @@ export function ComfyPipelinePanel() {
       buildContextualCharacterNegativeHints(context),
       resolveSharedVisualStyleProfile([context]).styleNegative,
       "text, watermark, logo, annotation, label, callout, decorative border, inset portrait, extra icon",
-      "extra panel, fourth figure, lineup with many tiny characters, collage, poster layout, sprite sheet",
-      "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose",
+      "extra panel, fourth figure, fifth figure, lineup with many tiny characters, collage, poster layout, sprite sheet, expression sheet, costume sheet, prop sheet, contact sheet",
+      "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose, repeated same figure outside the three required views",
       "mannequin, faceless mannequin, wireframe body, anatomy template, croquis, 3d reference doll, grey dummy, base mesh, neutral bodysuit",
       "deformed head, malformed face, collapsed face, doll face, toy face, tiny head, oversized head, missing facial features, blurred face, broken eyes, broken mouth",
       "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, swimsuit, bikini, lingerie, barefoot, exposed toes",
-      "duplicate character, mirrored twin, merged body, duplicate limbs, extra arms, extra legs",
-      "scene background, architecture, temple, palace, landscape, magic circle, petals, floral background"
+      "duplicate character, mirrored twin, merged body, duplicate limbs, extra arms, extra legs, unrelated extra person, crowd, duo, pair, group shot",
+      "scene background, architecture, temple, palace, landscape, magic circle, petals, floral background, grey studio backdrop, gradient backdrop, dirty white background, speckled background"
     ]);
 
   const buildSceneImagePrompt = (sceneName: string, scenePrompt: string) => {
@@ -6220,6 +6225,16 @@ export function ComfyPipelinePanel() {
       trimmed.includes("character_threeview") ||
       trimmed.includes("character_mv_") ||
       trimmed.includes("character_orthoview_")
+    );
+  };
+
+  const isManagedCharacterArtifactPath = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return false;
+    return (
+      isGeneratedCharacterViewPath(trimmed) ||
+      trimmed.includes("character_anchor_") ||
+      trimmed.includes("import_char_anchor_")
     );
   };
 
@@ -6467,6 +6482,9 @@ export function ComfyPipelinePanel() {
       characterAnchorRenderPreset
     );
     const generatedArtifactSourcePaths = new Set<string>();
+    const managedExistingFrontReferencePath = isManagedCharacterArtifactPath(existingFrontReferencePath)
+      ? existingFrontReferencePath.trim()
+      : "";
     const shouldPreferReferenceEditPrimary = !looksLikeFluxKontextModelName(characterModelForWorkflow);
     const buildCharacterArtifactFamilySourcePaths = (paths: string[]) => {
       const directories = uniqueEntities(
@@ -6708,7 +6726,9 @@ export function ComfyPipelinePanel() {
       let bestReferenceScore = Number.NEGATIVE_INFINITY;
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (reusableFrontReferencePath) {
-        generatedArtifactSourcePaths.add(reusableFrontReferencePath);
+        if (managedExistingFrontReferencePath) {
+          generatedArtifactSourcePaths.add(managedExistingFrontReferencePath);
+        }
         bestReference = {
           localPath: reusableFrontReferencePath,
           previewUrl: reusableFrontReferencePath
@@ -6918,7 +6938,7 @@ export function ComfyPipelinePanel() {
               referenceEditResult.front.localPath || referenceEditResult.front.previewUrl || "",
               referenceEditResult.side.localPath || referenceEditResult.side.previewUrl || "",
               referenceEditResult.back.localPath || referenceEditResult.back.previewUrl || "",
-              existingFrontReferencePath
+              managedExistingFrontReferencePath
             ])],
             [
               referenceEditResult.front.localPath || referenceEditResult.front.previewUrl || "",
@@ -6932,13 +6952,14 @@ export function ComfyPipelinePanel() {
           appendLog(`同模型单视角补全未达标，回退尝试高级整板：${name}，${String(referenceEditError)}`, "info");
         }
       }
+      appendLog(`角色三视图采用直连流程：先生成合格 front 白底正面全身图，再生成双参考三视图整板：${name}`, "info");
       const result = await runAdvancedThreeViewsWithAutoRetry(baseSeed);
       await cleanupGeneratedCharacterFamilies(
         [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([
           result.front.localPath || result.front.previewUrl || "",
           result.side.localPath || result.side.previewUrl || "",
           result.back.localPath || result.back.previewUrl || "",
-          existingFrontReferencePath
+          managedExistingFrontReferencePath
         ])],
         [
           result.front.localPath || result.front.previewUrl || "",
@@ -6950,8 +6971,8 @@ export function ComfyPipelinePanel() {
       return result;
     } catch (error) {
       await cleanupGeneratedCharacterFamilies(
-        [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([existingFrontReferencePath])],
-        [existingFrontReferencePath],
+        [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([managedExistingFrontReferencePath])],
+        [managedExistingFrontReferencePath],
         "角色三视图"
       );
       if (!allowAutomaticFallbackRepair) {
@@ -7714,7 +7735,7 @@ export function ComfyPipelinePanel() {
         const generatedFrontPath = (front.localPath || front.previewUrl || reusableFrontReferencePath).trim();
         const generatedSidePath = (side.localPath || side.previewUrl || "").trim();
         const generatedBackPath = (back.localPath || back.previewUrl || "").trim();
-        const canonicalFrontPath = reusableFrontReferencePath.trim() || generatedFrontPath;
+        const canonicalFrontPath = generatedFrontPath || reusableFrontReferencePath.trim();
         const threeViewPatch = {
           filePath: canonicalFrontPath,
           characterFrontPath: canonicalFrontPath,

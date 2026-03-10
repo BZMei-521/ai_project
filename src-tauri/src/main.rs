@@ -2572,21 +2572,73 @@ fn delete_generated_file_families(
     source_paths: Vec<String>,
     exclude_paths: Option<Vec<String>>,
 ) -> Result<DeleteGeneratedFileFamiliesResult, String> {
+    fn strip_trailing_numbered_suffix(value: &str, marker: &str) -> Option<String> {
+        let (base, suffix) = value.rsplit_once(marker)?;
+        if suffix.is_empty() || !suffix.as_bytes().iter().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        Some(base.to_string())
+    }
+
+    fn strip_generated_run_suffixes(value: &str) -> Option<String> {
+        let bytes = value.as_bytes();
+        let mut end = value.len();
+        let mut removed_long_group = false;
+        loop {
+            let mut split = end;
+            while split > 0 && bytes[split - 1].is_ascii_digit() {
+                split -= 1;
+            }
+            if split == end || split == 0 || bytes[split - 1] != b'_' {
+                break;
+            }
+            let digit_count = end - split;
+            if !removed_long_group && digit_count < 4 {
+                break;
+            }
+            removed_long_group = true;
+            end = split - 1;
+        }
+        if removed_long_group {
+            Some(value[..end].to_string())
+        } else {
+            None
+        }
+    }
+
     fn normalize_generated_family_prefix(stem: &str) -> String {
         let mut normalized = stem.trim().to_string();
         if normalized.is_empty() {
             return normalized;
         }
-        for suffix in ["_front", "_side", "_back"] {
-            if normalized.ends_with(suffix) {
-                normalized.truncate(normalized.len() - suffix.len());
+        loop {
+            let before = normalized.clone();
+            for suffix in ["_front", "_side", "_back", "_flatbg", "_subject", "_framed"] {
+                if normalized.ends_with(suffix) {
+                    normalized.truncate(normalized.len() - suffix.len());
+                    break;
+                }
+            }
+            if let Some(stripped) = strip_trailing_numbered_suffix(&normalized, "_panel") {
+                normalized = stripped;
+            } else if let Some(stripped) = strip_trailing_numbered_suffix(&normalized, "_triptych_input_") {
+                normalized = stripped;
+            }
+            if normalized == before {
                 break;
             }
         }
         let scoped_family = [
             "asset_char_",
             "asset_panel_char_",
+            "import_char_anchor_",
             "threeview_sheet",
+            "character_anchor_import_char_anchor_",
+            "character_anchor_cleanup_import_char_anchor_",
+            "character_anchor_asset_char_",
+            "character_orthoview_asset_char_",
+            "character_mv_",
+            "character_threeview",
             "fallback_",
             "cleanup_",
             "reference_cleanup",
@@ -2594,13 +2646,11 @@ fn delete_generated_file_families(
         .iter()
         .any(|token| normalized.contains(token));
         if scoped_family {
-            let trimmed = normalized.trim_end_matches('_');
-            let mut split_index = trimmed.len();
-            while split_index > 0 && trimmed.as_bytes()[split_index - 1].is_ascii_digit() {
-                split_index -= 1;
-            }
-            if split_index < trimmed.len() && split_index > 0 && trimmed.as_bytes()[split_index - 1] == b'_' {
-                normalized = trimmed[..split_index - 1].to_string();
+            let trimmed = normalized.trim_end_matches('_').to_string();
+            if let Some(stripped) = strip_generated_run_suffixes(&trimmed) {
+                normalized = stripped;
+            } else {
+                normalized = trimmed;
             }
         }
         normalized
