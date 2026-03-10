@@ -194,6 +194,12 @@ const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FALLBACK_REPEAT_HASH_THRESHOLD = 4;
 const CHARACTER_FALLBACK_REPEAT_ABORT_STREAK = 1;
+const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 2;
+const CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL = 2;
+const CHARACTER_REFERENCE_MAX_ATTEMPTS = 2;
+const CHARACTER_THREEVIEW_MAX_RETRIES = 2;
+const CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS = 2;
+const CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS = 2;
 const CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS = [
   "blurry face",
   "smeared face",
@@ -6304,7 +6310,7 @@ export function ComfyPipelinePanel() {
     if (primary !== selectedModel) {
       appendLog(`${sourceLabel}自动切换角色正视锚点模型：${selectedModel} -> ${primary}`, "info");
     }
-    return ordered.slice(0, 4);
+    return ordered.slice(0, CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES);
   };
 
   const resolveCharacterAnchorRenderPreset = (
@@ -6525,7 +6531,7 @@ export function ComfyPipelinePanel() {
         let previousAttemptBestPath = "";
         let previousAttemptIssueSignature = "";
         let repeatedFailureStreak = 0;
-        for (let attempt = 0; attempt < 5; attempt += 1) {
+        for (let attempt = 0; attempt < CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS; attempt += 1) {
           const prompt = buildCharacterViewEditRetryPrompt(name, context, view, attempt);
           let attemptBestScore = Number.NEGATIVE_INFINITY;
           let attemptBestIssues: string[] = [];
@@ -6561,7 +6567,7 @@ export function ComfyPipelinePanel() {
             const candidatePaths = expandedPaths.length > 0 ? expandedPaths : [candidatePathRaw];
             if (expandedPaths.length >= 2) {
               appendLog(
-                `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 检测到多面板输出，已自动拆分单图：${name}`,
+                `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/${CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS} 检测到多面板输出，已自动拆分单图：${name}`,
                 "info"
               );
             }
@@ -6620,9 +6626,9 @@ export function ComfyPipelinePanel() {
               `单视角${view === "side" ? "侧视" : "背视"}连续输出近重复失败图（${attemptBestIssues.join(" / ") || "重复垃圾图"}），已提前停止重试`
             );
           }
-          if (attempt < 4) {
+          if (attempt < CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS - 1) {
             appendLog(
-              `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/5 未达标（${attemptBestIssues.join(" / ") || "视角不稳定"}），继续重试：${name}`,
+              `单视角${view === "side" ? "侧视" : "背视"}候选 ${attempt + 1}/${CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS} 未达标（${attemptBestIssues.join(" / ") || "视角不稳定"}），继续重试：${name}`,
               "info"
             );
           }
@@ -6644,7 +6650,7 @@ export function ComfyPipelinePanel() {
             minSharpness: number | null;
           }
         | null = null;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
+      for (let attempt = 0; attempt < CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS; attempt += 1) {
         let sidePath = "";
         let backPath = "";
         try {
@@ -6655,8 +6661,11 @@ export function ComfyPipelinePanel() {
           if (duplicateAbort) {
             throw viewError;
           }
-          if (attempt < 4) {
-            appendLog(`单视角补全第 ${attempt + 1}/5 轮失败（${String(viewError)}），继续重试：${name}`, "info");
+          if (attempt < CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS - 1) {
+            appendLog(
+              `单视角补全第 ${attempt + 1}/${CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS} 轮失败（${String(viewError)}），继续重试：${name}`,
+              "info"
+            );
           }
           continue;
         }
@@ -6711,8 +6720,11 @@ export function ComfyPipelinePanel() {
             }
           };
         }
-        if (attempt < 4) {
-          appendLog(`单视角参考补全第 ${attempt + 1}/5 轮未达标（${issues.join(" / ") || "三视图不稳定"}），继续重试：${name}`, "info");
+        if (attempt < CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS - 1) {
+          appendLog(
+            `单视角参考补全第 ${attempt + 1}/${CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS} 轮未达标（${issues.join(" / ") || "三视图不稳定"}），继续重试：${name}`,
+            "info"
+          );
         }
       }
       if (!bestCandidate) {
@@ -6736,7 +6748,7 @@ export function ComfyPipelinePanel() {
         bestReferenceScore = Number.POSITIVE_INFINITY;
         appendLog(`检测到已有角色正视锚点，直接复用：${name}`, "info");
       } else {
-        for (let attempt = 0; attempt < 5; attempt += 1) {
+        for (let attempt = 0; attempt < CHARACTER_REFERENCE_MAX_ATTEMPTS; attempt += 1) {
           const referenceSeed = seedBase + attempt * 997;
           const currentReference = await generateShotAsset(
             runtimeSettings,
@@ -6784,7 +6796,7 @@ export function ComfyPipelinePanel() {
             };
             break;
           }
-          if (attempt < 4) {
+          if (attempt < CHARACTER_REFERENCE_MAX_ATTEMPTS - 1) {
             appendLog(`参考正视图未达标（${currentReferenceQuality.issues.join(" / ")}），继续重试：${name}`, "info");
           }
         }
@@ -6874,7 +6886,7 @@ export function ComfyPipelinePanel() {
             criticalPanelIssues: string[];
           })
         | null = null;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
+      for (let attempt = 0; attempt < CHARACTER_THREEVIEW_MAX_RETRIES; attempt += 1) {
         const seed = seedBase + attempt * 7331;
         const current = await runAdvancedThreeViews(seed);
         const frontPath = current.front.localPath || current.front.previewUrl || "";
@@ -6907,9 +6919,9 @@ export function ComfyPipelinePanel() {
           if (attempt > 0) appendLog(`双参考三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
           return current;
         }
-        if (attempt < 4) {
+        if (attempt < CHARACTER_THREEVIEW_MAX_RETRIES - 1) {
           appendLog(
-          `双参考三视图候选 ${attempt + 1}/5 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && (currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}${currentQuality.lowOrientation && criticalPanelIssues.length > 0 ? " / " : ""}${criticalPanelIssues.length > 0 ? `关键面板异常 ${criticalPanelIssues.join("|")}` : ""}），继续重试：${name}`,
+          `双参考三视图候选 ${attempt + 1}/${CHARACTER_THREEVIEW_MAX_RETRIES} 未达标（${incomplete ? "输出数量不足" : ""}${incomplete && (currentQuality.lowDiversity || currentQuality.lowSharpness || currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowDiversity ? "视角过近" : ""}${currentQuality.lowDiversity && (currentQuality.lowSharpness || currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowSharpness ? `清晰度偏低 min=${(currentQuality.minSharpness ?? 0).toFixed(1)}` : ""}${(currentQuality.lowSharpness || currentQuality.lowDiversity) && (currentQuality.lowOrientation || criticalPanelIssues.length > 0) ? " / " : ""}${currentQuality.lowOrientation ? `视角异常 ${currentQuality.orientationAlerts.join("|")}` : ""}${currentQuality.lowOrientation && criticalPanelIssues.length > 0 ? " / " : ""}${criticalPanelIssues.length > 0 ? `关键面板异常 ${criticalPanelIssues.join("|")}` : ""}），继续重试：${name}`,
             "info"
           );
         }
@@ -7446,12 +7458,13 @@ export function ComfyPipelinePanel() {
         let bestAnchorIssues: string[] = [];
         let bestAnchorModel = resolveMvAdapterCharacterModel(requestedCharacterModels[0] || DEFAULT_CHARACTER_ASSET_MODEL);
         let acceptedAnchor = false;
-        for (let modelIndex = 0; modelIndex < requestedCharacterModels.length; modelIndex += 1) {
-          const characterModel = resolveMvAdapterCharacterModel(requestedCharacterModels[modelIndex] || DEFAULT_CHARACTER_ASSET_MODEL);
+        const anchorModelCandidates = requestedCharacterModels.slice(0, CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES);
+        for (let modelIndex = 0; modelIndex < anchorModelCandidates.length; modelIndex += 1) {
+          const characterModel = resolveMvAdapterCharacterModel(anchorModelCandidates[modelIndex] || DEFAULT_CHARACTER_ASSET_MODEL);
           let mannequinFailures = 0;
           if (modelIndex > 0) {
             appendLog(
-              `${sourceLabel}角色正视锚点切换备用模型：${requestedCharacterModels[modelIndex - 1]} -> ${characterModel}`,
+              `${sourceLabel}角色正视锚点切换备用模型：${anchorModelCandidates[modelIndex - 1]} -> ${characterModel}`,
               "info"
             );
           }
@@ -7461,7 +7474,7 @@ export function ComfyPipelinePanel() {
             runtimeSettings.characterTemplatePreset ?? "portrait",
             characterAnchorRenderPreset
           );
-          for (let attempt = 0; attempt < 5; attempt += 1) {
+          for (let attempt = 0; attempt < CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL; attempt += 1) {
             const generated = await generateShotAsset(
               runtimeSettings,
               makeAssetGenerationShot(
@@ -7507,11 +7520,11 @@ export function ComfyPipelinePanel() {
             } else {
               mannequinFailures = 0;
             }
-            if (mannequinFailures >= 2 && modelIndex < requestedCharacterModels.length - 1) {
+            if (mannequinFailures >= 2 && modelIndex < anchorModelCandidates.length - 1) {
               appendLog(`${sourceLabel}角色正视锚点连续命中灰模/模板人，提前切换下一个模型：${profile.name}`, "info");
               break;
             }
-            if (attempt < 4) {
+            if (attempt < CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL - 1) {
               appendLog(`${sourceLabel}角色正视锚点未达标（${quality.issues.join(" / ")}），继续重试：${profile.name}`, "info");
             }
           }
