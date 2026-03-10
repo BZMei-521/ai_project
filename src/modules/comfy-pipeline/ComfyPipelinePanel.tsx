@@ -6491,7 +6491,7 @@ export function ComfyPipelinePanel() {
     const managedExistingFrontReferencePath = isManagedCharacterArtifactPath(existingFrontReferencePath)
       ? existingFrontReferencePath.trim()
       : "";
-    const shouldPreferReferenceEditPrimary = !looksLikeFluxKontextModelName(characterModelForWorkflow);
+    const shouldPreferReferenceEditPrimary = false;
     const buildCharacterArtifactFamilySourcePaths = (paths: string[]) => {
       const directories = uniqueEntities(
         paths
@@ -6512,6 +6512,27 @@ export function ComfyPipelinePanel() {
       ];
       return directories.flatMap((directory) => families.map((family) => `${directory}/${family}`));
     };
+    const collectThreeViewAttemptPaths = (
+      result:
+        | {
+            front: { localPath?: string; previewUrl?: string };
+            side: { localPath?: string; previewUrl?: string };
+            back: { localPath?: string; previewUrl?: string };
+            sheetPath?: string;
+          }
+        | null
+        | undefined
+    ) =>
+      uniqueEntities(
+        [
+          result?.sheetPath || "",
+          result?.front.localPath || result?.front.previewUrl || "",
+          result?.side.localPath || result?.side.previewUrl || "",
+          result?.back.localPath || result?.back.previewUrl || ""
+        ]
+          .map((value) => value.trim())
+          .filter((value): value is string => Boolean(value))
+      );
     const runReferenceEditFallbackThreeViews = async (seedBase: number) => {
       const reusableFrontReferencePath = existingFrontReferencePath.trim();
       if (!reusableFrontReferencePath) {
@@ -6876,7 +6897,8 @@ export function ComfyPipelinePanel() {
           localPath: backPath,
           previewUrl: backPath
         },
-        referenceFrontPath: frontAnchorPath
+        referenceFrontPath: frontAnchorPath,
+        sheetPath
       };
     };
     const runAdvancedThreeViewsWithAutoRetry = async (seedBase: number) => {
@@ -6911,13 +6933,33 @@ export function ComfyPipelinePanel() {
           !currentQuality.lowSharpness &&
           !currentQuality.lowOrientation &&
           criticalPanelIssues.length === 0;
-        if (!bestQuality || currentScore > bestQuality.score) {
+        const previousBestResult: Awaited<ReturnType<typeof runAdvancedThreeViews>> | null = bestResult;
+        const shouldReplaceBest = !bestQuality || currentScore > bestQuality.score;
+        if (isAcceptable) {
+          if (previousBestResult && previousBestResult !== current) {
+            await cleanupGeneratedCharacterFamilies(
+              collectThreeViewAttemptPaths(previousBestResult),
+              [],
+              "角色三视图候选"
+            );
+          }
           bestResult = current;
           bestQuality = { ...currentQuality, score: currentScore, criticalPanelIssues };
-        }
-        if (isAcceptable && bestResult) {
           if (attempt > 0) appendLog(`双参考三视图经第 ${attempt + 1} 次重试后达到稳定阈值：${name}`, "info");
           return current;
+        }
+        if (shouldReplaceBest) {
+          if (previousBestResult && previousBestResult !== current) {
+            await cleanupGeneratedCharacterFamilies(
+              collectThreeViewAttemptPaths(previousBestResult),
+              [],
+              "角色三视图候选"
+            );
+          }
+          bestResult = current;
+          bestQuality = { ...currentQuality, score: currentScore, criticalPanelIssues };
+        } else {
+          await cleanupGeneratedCharacterFamilies(collectThreeViewAttemptPaths(current), [], "角色三视图候选");
         }
         if (attempt < CHARACTER_THREEVIEW_MAX_RETRIES - 1) {
           appendLog(
