@@ -192,6 +192,8 @@ const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
+const CHARACTER_FALLBACK_REPEAT_HASH_THRESHOLD = 4;
+const CHARACTER_FALLBACK_REPEAT_ABORT_STREAK = 1;
 const CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS = [
   "blurry face",
   "smeared face",
@@ -4728,6 +4730,20 @@ export function ComfyPipelinePanel() {
     return issues;
   };
 
+  const buildCharacterViewIssueSignature = (issues: string[]) =>
+    issues
+      .map((issue) => issue.replace(/\([^)]*\)/g, "").trim())
+      .filter(Boolean)
+      .sort()
+      .join("|");
+
+  const hasCriticalFallbackViewIssues = (issues: string[]) =>
+    issues.some((issue) =>
+      /(template_figure|nude_like|multi_blob|multi_cluster|secondary_fg=|detached_fg=|edge_clutter=|subject_too_small|side_not_profile|back_not_centered|sharpness_low)/i.test(
+        issue
+      )
+    );
+
   const evaluateImageSharpnessQuality = async (paths: string[], minSharpnessThreshold: number) => {
     const targets = paths.map((item) => item.trim()).filter((item) => item.length > 0);
     const sharpnessValues = (await Promise.all(targets.map((path) => computeImageSharpnessScore(path)))).filter(
@@ -6488,10 +6504,14 @@ export function ComfyPipelinePanel() {
               issues: string[];
             }
           | null = null;
+        let previousAttemptBestPath = "";
+        let previousAttemptIssueSignature = "";
+        let repeatedFailureStreak = 0;
         for (let attempt = 0; attempt < 5; attempt += 1) {
           const prompt = buildCharacterViewEditRetryPrompt(name, context, view, attempt);
           let attemptBestScore = Number.NEGATIVE_INFINITY;
           let attemptBestIssues: string[] = [];
+          let attemptBestPath = "";
           const generatedOutputs = await generateShotAssetOutputs(
             runtimeSettings,
             makeAssetGenerationShot(
@@ -6518,6 +6538,7 @@ export function ComfyPipelinePanel() {
           for (const generated of generatedOutputs) {
             const candidatePathRaw = generated.localPath || generated.previewUrl;
             if (!candidatePathRaw) continue;
+            generatedArtifactSourcePaths.add(candidatePathRaw);
             const expandedPaths = await expandCharacterViewCandidatePanels(candidatePathRaw);
             const candidatePaths = expandedPaths.length > 0 ? expandedPaths : [candidatePathRaw];
             if (expandedPaths.length >= 2) {
@@ -6534,6 +6555,7 @@ export function ComfyPipelinePanel() {
               if (quality.score > attemptBestScore) {
                 attemptBestScore = quality.score;
                 attemptBestIssues = quality.issues;
+                attemptBestPath = fittedPath;
               }
               if (!bestCandidate || quality.score > bestCandidate.score) {
                 bestCandidate = {
@@ -6552,6 +6574,33 @@ export function ComfyPipelinePanel() {
                 return fittedPath;
               }
             }
+          }
+          const issueSignature = buildCharacterViewIssueSignature(attemptBestIssues);
+          if (attemptBestPath && previousAttemptBestPath && hasCriticalFallbackViewIssues(attemptBestIssues)) {
+            const duplicateDistance = await computeImageHashDistance(attemptBestPath, previousAttemptBestPath);
+            if (
+              typeof duplicateDistance === "number" &&
+              duplicateDistance <= CHARACTER_FALLBACK_REPEAT_HASH_THRESHOLD &&
+              issueSignature &&
+              issueSignature === previousAttemptIssueSignature
+            ) {
+              repeatedFailureStreak += 1;
+            } else {
+              repeatedFailureStreak = 0;
+            }
+          } else {
+            repeatedFailureStreak = 0;
+          }
+          if (attemptBestPath) {
+            previousAttemptBestPath = attemptBestPath;
+          }
+          if (issueSignature) {
+            previousAttemptIssueSignature = issueSignature;
+          }
+          if (repeatedFailureStreak >= CHARACTER_FALLBACK_REPEAT_ABORT_STREAK) {
+            throw new Error(
+              `单视角${view === "side" ? "侧视" : "背视"}连续输出近重复失败图（${attemptBestIssues.join(" / ") || "重复垃圾图"}），已提前停止重试`
+            );
           }
           if (attempt < 4) {
             appendLog(
@@ -6584,6 +6633,10 @@ export function ComfyPipelinePanel() {
           sidePath = await runSingleViewFallback("side", seedBase + 9000 + attempt * 2000);
           backPath = await runSingleViewFallback("back", seedBase + 10000 + attempt * 2000);
         } catch (viewError) {
+          const duplicateAbort = String(viewError).includes("连续输出近重复失败图");
+          if (duplicateAbort) {
+            throw viewError;
+          }
           if (attempt < 4) {
             appendLog(`单视角补全第 ${attempt + 1}/5 轮失败（${String(viewError)}），继续重试：${name}`, "info");
           }
@@ -6664,7 +6717,7 @@ export function ComfyPipelinePanel() {
         appendLog(`检测到已有角色正视锚点，直接复用：${name}`, "info");
       } else {
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          const referenceSeed = seedBase;
+          const referenceSeed = seedBase + attempt * 997;
           const currentReference = await generateShotAsset(
             runtimeSettings,
             makeAssetGenerationShot(
