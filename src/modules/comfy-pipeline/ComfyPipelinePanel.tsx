@@ -7710,11 +7710,21 @@ export function ComfyPipelinePanel() {
         appendLog(`${sourceLabel}跳过角色资料：${profile.name} 缺少 anchor_image/front_path，且未提供 description`, "error");
         continue;
       }
+      const previousFrontPath = (existingAsset?.characterFrontPath || existingAsset?.filePath || "").trim();
       const nextFilePath =
         (profile.frontPath || anchorPath || existingAsset?.filePath || existingAsset?.characterFrontPath || "").trim();
       let nextFrontPath = (profile.frontPath || anchorPath || existingAsset?.characterFrontPath || nextFilePath).trim();
-      let nextSidePath = (profile.sidePath || existingAsset?.characterSidePath || "").trim();
-      let nextBackPath = (profile.backPath || existingAsset?.characterBackPath || "").trim();
+      const shouldResetStaleThreeViews =
+        nextFrontPath.length > 0 &&
+        nextFrontPath !== previousFrontPath &&
+        !profile.sidePath.trim() &&
+        !profile.backPath.trim();
+      let nextSidePath = (profile.sidePath || (shouldResetStaleThreeViews ? "" : existingAsset?.characterSidePath) || "").trim();
+      let nextBackPath = (profile.backPath || (shouldResetStaleThreeViews ? "" : existingAsset?.characterBackPath) || "").trim();
+
+      if (shouldResetStaleThreeViews) {
+        appendLog(`${sourceLabel}检测到角色正视锚点已更新，清空旧 side/back 以避免复用过期三视图：${profile.name}`, "info");
+      }
 
       const shouldAutoGenerateThreeView =
         semanticContext.trim().length > 0 &&
@@ -7871,8 +7881,8 @@ export function ComfyPipelinePanel() {
       const frontOnlyPatch = {
         filePath: reusableFrontReferencePath,
         characterFrontPath: reusableFrontReferencePath,
-        characterSidePath: existingAsset?.characterSidePath?.trim() ?? "",
-        characterBackPath: existingAsset?.characterBackPath?.trim() ?? "",
+        characterSidePath: "",
+        characterBackPath: "",
         characterAnchorModelName:
           (characterAnchorModelByNameRef.current.get(nameKey) || existingAsset?.characterAnchorModelName || "").trim()
       };
