@@ -38,7 +38,8 @@ import { AppToastHost, pushToast } from "../modules/ui/toastStore";
 import {
   selectShotStartFrame,
   selectFilteredShotsForCurrentSequence,
-  useStoryboardStore
+  useStoryboardStore,
+  type StoryboardSnapshot
 } from "../modules/storyboard-core/store";
 
 type AuxPanelSection = "shots" | "inspector" | "layers" | "audio" | "assets" | "health" | "pipeline";
@@ -86,6 +87,46 @@ const FOCUS_MODE_KEY = "storyboard-pro/focus-mode/v1";
 const LAYOUT_DEBUG_KEY = "storyboard-pro/layout-debug/v1";
 const MAIN_LAYOUT_KEY = "storyboard-pro/main-layout/v1";
 const TIMELINE_SPLIT_KEY = "storyboard-pro/timeline-split/v1";
+
+function snapshotRichnessScore(snapshot: Partial<StoryboardSnapshot> | null): number {
+  if (!snapshot) return Number.NEGATIVE_INFINITY;
+  const assetScore = (snapshot.assets ?? []).reduce((sum, asset) => {
+    if (!asset) return sum;
+    return (
+      sum +
+      ((asset.filePath?.trim() || "").length > 0 ? 2 : 0) +
+      ((asset.characterFrontPath?.trim() || "").length > 0 ? 3 : 0) +
+      ((asset.characterSidePath?.trim() || "").length > 0 ? 4 : 0) +
+      ((asset.characterBackPath?.trim() || "").length > 0 ? 4 : 0) +
+      ((asset.skyboxFaces?.front?.trim() || "").length > 0 ? 3 : 0)
+    );
+  }, 0);
+  const shotScore = (snapshot.shots ?? []).reduce((sum, shot) => {
+    if (!shot) return sum;
+    return (
+      sum +
+      ((shot.generatedImagePath?.trim() || "").length > 0 ? 5 : 0) +
+      ((shot.generatedVideoPath?.trim() || "").length > 0 ? 6 : 0) +
+      ((shot.characterRefs?.length ?? 0) > 0 ? 1 : 0) +
+      ((shot.sceneRefId?.trim() || "").length > 0 ? 1 : 0)
+    );
+  }, 0);
+  return assetScore * 10 + shotScore;
+}
+
+function choosePreferredStartupSnapshot(
+  desktopSnapshot: StoryboardSnapshot | null,
+  autosaveSnapshot: StoryboardSnapshot | null
+): StoryboardSnapshot | null {
+  if (!desktopSnapshot) return autosaveSnapshot;
+  if (!autosaveSnapshot) return desktopSnapshot;
+  if ((desktopSnapshot.project?.id ?? "") !== (autosaveSnapshot.project?.id ?? "")) {
+    return desktopSnapshot;
+  }
+  return snapshotRichnessScore(autosaveSnapshot) >= snapshotRichnessScore(desktopSnapshot)
+    ? autosaveSnapshot
+    : desktopSnapshot;
+}
 
 function loadAuxPanelState(): {
   open: boolean;
@@ -138,6 +179,7 @@ export function App() {
   const [projectLocation, setProjectLocation] = useState<string>("网页模式");
   const [saveState, setSaveState] = useState<string>("空闲");
   const mountedRef = useRef(false);
+  const desktopSyncReadyRef = useRef(false);
   const [workspaceProjects, setWorkspaceProjects] = useState<WorkspaceProjectEntry[]>([]);
   const [activeWorkspacePath, setActiveWorkspacePath] = useState<string>("");
   const [showRecoveryPanel, setShowRecoveryPanel] = useState(false);
@@ -288,10 +330,13 @@ export function App() {
       if (current) {
         setActiveWorkspacePath(current.path);
         setProjectLocation(current.path);
-        const snapshot = await loadSnapshotFromDesktop();
-        if (snapshot) {
-          hydrateFromSnapshot(snapshot);
+        const desktopSnapshot = await loadSnapshotFromDesktop();
+        const autosaveSnapshot = loadAutosaveSnapshot();
+        const preferredSnapshot = choosePreferredStartupSnapshot(desktopSnapshot, autosaveSnapshot);
+        if (preferredSnapshot) {
+          hydrateFromSnapshot(preferredSnapshot);
         }
+        desktopSyncReadyRef.current = true;
       }
     };
 
@@ -329,6 +374,44 @@ export function App() {
     currentSequenceId,
     layers,
     assets,
+    project,
+    selectedShotId,
+    sequences,
+    shotHistory,
+    shotStrokes,
+    shots
+  ]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    if (!activeWorkspacePath || !desktopSyncReadyRef.current) return;
+    const timerId = window.setTimeout(() => {
+      void saveSnapshotToDesktop({
+        project,
+        sequences,
+        currentSequenceId,
+        shots,
+        layers,
+        assets,
+        audioTracks,
+        selectedShotId,
+        activeLayerByShotId,
+        canvasTool,
+        exportSettings,
+        shotStrokes,
+        shotHistory
+      }).catch(() => undefined);
+    }, 1200);
+    return () => window.clearTimeout(timerId);
+  }, [
+    activeLayerByShotId,
+    activeWorkspacePath,
+    assets,
+    audioTracks,
+    canvasTool,
+    currentSequenceId,
+    exportSettings,
+    layers,
     project,
     selectedShotId,
     sequences,
@@ -377,6 +460,7 @@ export function App() {
       }
 
       hydrateFromSnapshot(snapshot);
+      desktopSyncReadyRef.current = true;
       setSaveState("已加载");
     } catch (error) {
       setSaveState(`加载失败：${String(error)}`);
@@ -418,6 +502,7 @@ export function App() {
         shotStrokes: snapshotAfterReset.shotStrokes,
         shotHistory: snapshotAfterReset.shotHistory
       });
+      desktopSyncReadyRef.current = true;
       setSaveState("项目已创建");
     } catch (error) {
       setSaveState(`创建项目失败：${String(error)}`);
@@ -437,6 +522,7 @@ export function App() {
       if (snapshot) {
         hydrateFromSnapshot(snapshot);
       }
+      desktopSyncReadyRef.current = true;
 
       const list = await listWorkspaceProjects();
       setWorkspaceProjects(list);
@@ -507,8 +593,10 @@ export function App() {
         if (snapshot) {
           hydrateFromSnapshot(snapshot);
         }
+        desktopSyncReadyRef.current = true;
       } else {
         setActiveWorkspacePath("");
+        desktopSyncReadyRef.current = false;
       }
       setSaveState("项目已删除");
     } catch (error) {
