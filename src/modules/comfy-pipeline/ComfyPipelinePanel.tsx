@@ -216,7 +216,7 @@ const CHARACTER_FALLBACK_REPEAT_ABORT_STREAK = 1;
 const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 2;
 const CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL = 2;
 const CHARACTER_REFERENCE_MAX_ATTEMPTS = 2;
-const CHARACTER_THREEVIEW_MAX_RETRIES = 2;
+const CHARACTER_THREEVIEW_MAX_RETRIES = 3;
 const CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS = 2;
 const CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS = 2;
 const CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS = [
@@ -4482,10 +4482,9 @@ export function ComfyPipelinePanel() {
       const footSkinRatio = footSkinPixels / foregroundPixels;
       const likelyTemplateFigure =
         foregroundPixels >= 180 &&
-        averageSaturation < 0.18 &&
-        averageChroma < 30 &&
-        lowColorRatio > 0.72 &&
-        nearGrayRatio > 0.48;
+        lowColorRatio > 0.78 &&
+        nearGrayRatio > 0.56 &&
+        ((averageSaturation < 0.12 && averageChroma < 22) || averageChroma < 14);
       const likelyNudeFigure =
         torsoSkinRatio > 0.22 || (skinExposureRatio > 0.68 && torsoSkinRatio > 0.08);
       const likelyBareFeet = footSkinRatio > 0.018 && skinExposureRatio > 0.08;
