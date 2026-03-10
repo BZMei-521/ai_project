@@ -112,11 +112,29 @@ const CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER = [
   "v1-5-pruned-emaonly-fp16.safetensors",
   "sd_xl_base_1.0.safetensors"
 ] as const;
-const CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER = [
-  "Qwen-Rapid-AIO-SFW-v5.safetensors",
-  "dreamshaper_8.safetensors",
+const CHARACTER_ANCHOR_MALE_MODEL_RECOMMEND_ORDER = [
   "realisticVisionV60B1_v51VAE.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
+  "dreamshaper_8.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors",
+  "animagine-xl-4.0.safetensors"
+] as const;
+const CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER = [
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "dreamshaper_8.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors",
+  "animagine-xl-4.0.safetensors"
+] as const;
+const CHARACTER_ANCHOR_REALISTIC_MALE_MODEL_RECOMMEND_ORDER = [
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "dreamshaper_8.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
   "v1-5-pruned-emaonly-fp16.safetensors",
   "sd_xl_base_1.0.safetensors",
   "animagine-xl-4.0.safetensors"
@@ -213,7 +231,7 @@ const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FALLBACK_REPEAT_HASH_THRESHOLD = 4;
 const CHARACTER_FALLBACK_REPEAT_ABORT_STREAK = 1;
-const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 2;
+const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 3;
 const CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL = 2;
 const CHARACTER_REFERENCE_MAX_ATTEMPTS = 2;
 const CHARACTER_THREEVIEW_MAX_RETRIES = 3;
@@ -536,6 +554,24 @@ function prefersRealisticCharacterAnchorModel(context: string): boolean {
   return /(写实|电影|影视|真人|实拍|摄影|写实风|realistic|cinematic|live action|photographic|photo real)/i.test(
     normalized
   );
+}
+
+function resolveCharacterAnchorRecommendOrder(context: string) {
+  const normalized = normalizeStoryInput(context).toLowerCase();
+  const femaleHint =
+    /(女声|女性|女子|女孩|姑娘|少女|woman|female|girl|young woman|长裙|裙装|她)/i.test(normalized);
+  const maleHint =
+    /(男声|男性|男子|男孩|少年|青年男子|man|male|boy|young man|他|胡须|络腮胡)/i.test(normalized);
+  const gender: "" | "female" | "male" = femaleHint && !maleHint ? "female" : maleHint && !femaleHint ? "male" : "";
+  if (prefersRealisticCharacterAnchorModel(context)) {
+    return gender === "male"
+      ? CHARACTER_ANCHOR_REALISTIC_MALE_MODEL_RECOMMEND_ORDER
+      : CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER;
+  }
+  if (gender === "male") {
+    return CHARACTER_ANCHOR_MALE_MODEL_RECOMMEND_ORDER;
+  }
+  return CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER;
 }
 
 function looksLikeAnimeModelName(name: string): boolean {
@@ -5671,6 +5707,9 @@ export function ComfyPipelinePanel() {
     if (/(写实|电影|影视|realistic|cinematic)/i.test(normalized)) {
       hints.push("anime style, chibi, cel shading");
     }
+    hints.push(
+      "neon rim light, red blue edge light, poster composition, glowing silhouette, ghosted duplicate figure, backlit shadow clone, fashion campaign poster"
+    );
     return hints.join(", ");
   };
 
@@ -6511,9 +6550,7 @@ export function ComfyPipelinePanel() {
     if (options.includes(selectedModel) && !shouldAutoUpgradeCharacterAnchorModel(selectedModel)) {
       return selectedModel;
     }
-    const recommendOrder = prefersRealisticCharacterAnchorModel(context)
-      ? CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER
-      : CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER;
+    const recommendOrder = resolveCharacterAnchorRecommendOrder(context);
     const recommended = pickFirstAvailableModel(recommendOrder, options);
     if (!recommended) return selectedModel;
     if (recommended !== selectedModel) {
@@ -6540,9 +6577,7 @@ export function ComfyPipelinePanel() {
     if (options.includes(selectedModel) && !shouldAutoUpgradeCharacterAnchorModel(selectedModel)) {
       return [selectedModel];
     }
-    const recommendOrder = prefersRealisticCharacterAnchorModel(context)
-      ? CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER
-      : CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER;
+    const recommendOrder = resolveCharacterAnchorRecommendOrder(context);
     const ordered = recommendOrder.filter((name, index) => options.includes(name) && recommendOrder.indexOf(name) === index);
     if (ordered.length <= 0) {
       return [selectedModel];
@@ -7746,6 +7781,7 @@ export function ComfyPipelinePanel() {
           const characterModel = resolveMvAdapterCharacterModel(anchorModelCandidates[modelIndex] || DEFAULT_CHARACTER_ASSET_MODEL);
           let mannequinFailures = 0;
           let nudityFailures = 0;
+          let glowPosterFailures = 0;
           if (modelIndex > 0) {
             appendLog(
               `${sourceLabel}角色正视锚点切换备用模型：${anchorModelCandidates[modelIndex - 1]} -> ${characterModel}`,
@@ -7804,6 +7840,11 @@ export function ComfyPipelinePanel() {
             } else {
               mannequinFailures = 0;
             }
+            if (quality.issues.some((issue) => issue.includes("霓虹海报") || issue.includes("发光模板人"))) {
+              glowPosterFailures += 1;
+            } else {
+              glowPosterFailures = 0;
+            }
             if (
               quality.issues.some(
                 (issue) => issue.includes("裸露过多") || issue.includes("裸模")
@@ -7815,6 +7856,10 @@ export function ComfyPipelinePanel() {
             }
             if (mannequinFailures >= 2 && modelIndex < anchorModelCandidates.length - 1) {
               appendLog(`${sourceLabel}角色正视锚点连续命中灰模/模板人，提前切换下一个模型：${profile.name}`, "info");
+              break;
+            }
+            if (glowPosterFailures >= 1 && modelIndex < anchorModelCandidates.length - 1) {
+              appendLog(`${sourceLabel}角色正视锚点命中霓虹海报/发光模板人，提前切换下一个模型：${profile.name}`, "info");
               break;
             }
             if (nudityFailures >= 1 && modelIndex < anchorModelCandidates.length - 1) {
