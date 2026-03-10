@@ -4762,6 +4762,13 @@ export function ComfyPipelinePanel() {
       .sort()
       .join("|");
 
+  const hasUnrepairableFrontAnchorIssues = (issues: string[]) =>
+    issues.some((issue) =>
+      /(角色像灰模或人体模板|裸露过多或疑似裸模|疑似赤脚|主体轮廓不像标准全身角色设定图|人物过小|疑似多主体\/多角度|存在额外设定页组件|主体外还有额外前景元素|画面含有额外设定页元素|边缘存在文字或装饰杂项|修复结果与原始角色锚点偏差过大)/u.test(
+        issue
+      )
+    );
+
   const hasCriticalFallbackViewIssues = (issues: string[]) =>
     issues.some((issue) =>
       /(template_figure|nude_like|multi_blob|multi_cluster|secondary_fg=|detached_fg=|edge_clutter=|subject_too_small|side_not_profile|back_not_centered|sharpness_low)/i.test(
@@ -5952,6 +5959,13 @@ export function ComfyPipelinePanel() {
             quality: bestQuality
           };
         }
+        if (hasUnrepairableFrontAnchorIssues(bestQuality.issues)) {
+          appendLog(`${logPrefix}检测到源图已跑偏为模板人/裸模/无效设定图，停止 cleanup 生成以避免产生垃圾图：${name}`, "info");
+          return {
+            path: bestPath,
+            quality: bestQuality
+          };
+        }
         try {
           const cleaned = await generateShotAsset(
             runtimeSettings,
@@ -6009,7 +6023,11 @@ export function ComfyPipelinePanel() {
         quality: bestQuality
       };
     } finally {
-      await cleanupGeneratedCharacterFamilies([...generatedCleanupSourcePaths], [bestPath], `${logPrefix}临时清图`);
+      await cleanupGeneratedCharacterFamilies(
+        [...generatedCleanupSourcePaths],
+        bestQuality.acceptable ? [bestPath] : [],
+        `${logPrefix}临时清图`
+      );
     }
   };
 
