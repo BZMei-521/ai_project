@@ -206,7 +206,7 @@ const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 6;
 const CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD = 18;
 const CHARACTER_FRONT_CLEANUP_SOURCE_MISMATCH_HAMMING_THRESHOLD = 18;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
-const CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE = 14;
+const CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE = 12.5;
 const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
@@ -4539,7 +4539,10 @@ export function ComfyPipelinePanel() {
     const minSharpness = sharpnessValues.length > 0 ? Math.min(...sharpnessValues) : null;
     const avgSharpness =
       sharpnessValues.length > 0 ? sharpnessValues.reduce((sum, value) => sum + value, 0) / sharpnessValues.length : null;
-    const lowSharpness = typeof minSharpness === "number" && minSharpness < CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE;
+    const lowSharpness =
+      typeof minSharpness === "number" &&
+      minSharpness < CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE &&
+      (typeof avgSharpness !== "number" || avgSharpness < CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE + 0.8);
     const orientationAlerts: string[] = [];
     if (typeof frontSymmetry === "number" && frontSymmetry < 0.66) {
       orientationAlerts.push(`front_symmetry_low=${frontSymmetry.toFixed(2)}`);
@@ -4578,7 +4581,8 @@ export function ComfyPipelinePanel() {
       if (isLayoutTooTight(layout, label)) {
         layoutAlerts.push(`${label}_touching_edge`);
       }
-      if (layout.bbox.heightRatio < 0.52) {
+      const minimumHeightRatio = label === "side" ? 0.44 : label === "back" ? 0.46 : 0.5;
+      if (layout.bbox.heightRatio < minimumHeightRatio) {
         layoutAlerts.push(`${label}_subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     });
@@ -4680,7 +4684,8 @@ export function ComfyPipelinePanel() {
       if (isLayoutTooTight(layout, view)) {
         issues.push("touching_edge");
       }
-      if (layout.bbox.heightRatio < 0.5) {
+      const minimumHeightRatio = view === "side" ? 0.44 : view === "back" ? 0.46 : 0.5;
+      if (layout.bbox.heightRatio < minimumHeightRatio) {
         issues.push(`subject_too_small(h=${layout.bbox.heightRatio.toFixed(2)})`);
       }
     }
