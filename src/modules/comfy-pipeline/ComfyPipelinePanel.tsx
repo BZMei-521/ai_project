@@ -5125,22 +5125,47 @@ export function ComfyPipelinePanel() {
   const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string) => {
     const normalized = (await normalizeCharacterAnchorBackground(pathOrUrl, "white")) || pathOrUrl;
     const directPath = (await fitCharacterViewWithinCanvas(normalized, "front")) || normalized;
-    const directQuality = await evaluateFrontReferenceQuality(directPath);
-    const layout = await analyzeForegroundLayout(normalized);
+    const [directQuality, sourceLayout, directLayout] = await Promise.all([
+      evaluateFrontReferenceQuality(directPath),
+      analyzeForegroundLayout(normalized),
+      analyzeForegroundLayout(directPath)
+    ]);
+    const computeClutterScore = (
+      layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
+    ) => {
+      if (!layout) return Number.POSITIVE_INFINITY;
+      return (
+        layout.secondaryForegroundRatio * 2.4 +
+        layout.detachedForegroundRatio * 2.2 +
+        layout.edgeForegroundRatio * 1.8 +
+        Math.max(0, layout.mediumComponents - 1) * 0.14 +
+        Math.max(0, layout.significantComponents - 1) * 0.28
+      );
+    };
     const shouldIsolate =
-      layout != null &&
-      (layout.significantComponents > 1 ||
-        layout.mediumComponents > 3 ||
-        layout.secondaryForegroundRatio > 0.12 ||
-        layout.detachedForegroundRatio > 0.1 ||
-        layout.edgeForegroundRatio > 0.12);
-    if (!shouldIsolate || directQuality.acceptable) return directPath;
+      sourceLayout != null &&
+      (sourceLayout.significantComponents > 1 ||
+        sourceLayout.mediumComponents > 3 ||
+        sourceLayout.secondaryForegroundRatio > 0.12 ||
+        sourceLayout.detachedForegroundRatio > 0.1 ||
+        sourceLayout.edgeForegroundRatio > 0.12);
+    if (!shouldIsolate) return directPath;
     const isolatedRaw = await isolateCharacterPrimarySubject(normalized);
     if (!isolatedRaw.trim() || isolatedRaw.trim() === normalized.trim()) return directPath;
     const isolatedPath = (await fitCharacterViewWithinCanvas(isolatedRaw, "front")) || isolatedRaw;
-    const isolatedQuality = await evaluateFrontReferenceQuality(isolatedPath);
+    const [isolatedQuality, isolatedLayout] = await Promise.all([
+      evaluateFrontReferenceQuality(isolatedPath),
+      analyzeForegroundLayout(isolatedPath)
+    ]);
+    const directClutter = computeClutterScore(directLayout);
+    const isolatedClutter = computeClutterScore(isolatedLayout);
     if (isolatedQuality.acceptable && !directQuality.acceptable) return isolatedPath;
     if (directQuality.acceptable && !isolatedQuality.acceptable) return directPath;
+    if (directQuality.acceptable && isolatedQuality.acceptable) {
+      if (isolatedClutter + 0.12 < directClutter) return isolatedPath;
+      return isolatedQuality.score > directQuality.score + 2 ? isolatedPath : directPath;
+    }
+    if (isolatedClutter + 0.08 < directClutter) return isolatedPath;
     return isolatedQuality.score > directQuality.score + 4 ? isolatedPath : directPath;
   };
 
