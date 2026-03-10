@@ -103,6 +103,24 @@ const CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER = [
   "sd_xl_base_1.0.safetensors",
   "animagine-xl-4.0.safetensors"
 ] as const;
+const CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER = [
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "animagine-xl-4.0.safetensors",
+  "dreamshaper_8.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors"
+] as const;
+const CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER = [
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "dreamshaper_8.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors",
+  "animagine-xl-4.0.safetensors"
+] as const;
 const SKYBOX_ASSET_MODEL_RECOMMEND_ORDER = [...SKYBOX_ASSET_MODEL_OPTIONS];
 type UnifiedVisualStyleKind = "anime" | "realistic" | "neutral";
 const DEFAULT_CHARACTER_ASSET_WORKFLOW_MODE: CharacterAssetWorkflowMode = "advanced_multiview";
@@ -5648,6 +5666,8 @@ export function ComfyPipelinePanel() {
         "禁止场景背景、建筑背景、花纹背景、魔法阵背景、海报背景、光效背景",
         "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
         "禁止裸体、禁止裸模、禁止赤脚、禁止裸足、禁止露胸、禁止露出躯干、禁止内衣态、禁止泳装态",
+        "胸口、腰腹、臀胯和大腿上部必须被服装完整覆盖，不允许深V、抹胸、露脐、透视薄纱、内衣外露",
+        "外套、长袍、连衣裙、上衣下装等服装层必须明确存在，不能退化成粉色肉色人体模板或简化纸片人",
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
         "五官必须清楚，双眼、鼻梁、嘴唇和下颌线都要可辨识，不允许糊脸、塌脸、脏污遮挡",
         "纯白背景必须干净均匀，不允许灰斑、脏点、漂浮灰块、边缘杂色",
@@ -6098,7 +6118,7 @@ export function ComfyPipelinePanel() {
     const templateConstraint =
       "mannequin, faceless mannequin, wireframe body, anatomy template, body template, pose guide, croquis, 3d reference doll, grey dummy, base mesh, turnaround chart, turnaround sheet, triptych, three figures, three bodies, figure lineup, model lineup, character lineup";
     const nudityConstraint =
-      "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, lingerie, bikini, swimsuit, barefoot, exposed toes";
+      "nude, naked, topless, exposed breasts, exposed nipples, exposed genitals, underwear only, lingerie, bikini, swimsuit, barefoot, exposed toes, deep cleavage, strapless dress, tube top, bare torso, bare midriff, transparent fabric over skin, body template colored like skin";
     const contextualConstraint = buildContextualCharacterNegativeHints(context);
     return `${baseNegativePrompt}, ${viewConstraint}, ${multiCharacterConstraint}, ${identityDriftConstraint}, ${cropConstraint}, ${anatomyConstraint}, ${poseOcclusionConstraint}, ${qualityConstraint}, ${environmentConstraint}, ${clutterConstraint}, ${templateConstraint}, ${nudityConstraint}${styleProfile.styleNegative ? `, ${styleProfile.styleNegative}` : ""}${contextualConstraint ? `, ${contextualConstraint}` : ""}`;
   };
@@ -6298,8 +6318,8 @@ export function ComfyPipelinePanel() {
       return selectedModel;
     }
     const recommendOrder = prefersRealisticCharacterAnchorModel(context)
-      ? CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER
-      : CHARACTER_ASSET_MODEL_RECOMMEND_ORDER;
+      ? CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER
+      : CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER;
     const recommended = pickFirstAvailableModel(recommendOrder, options);
     if (!recommended) return selectedModel;
     if (recommended !== selectedModel) {
@@ -6327,8 +6347,8 @@ export function ComfyPipelinePanel() {
       return [selectedModel];
     }
     const recommendOrder = prefersRealisticCharacterAnchorModel(context)
-      ? CHARACTER_ASSET_REALISTIC_MODEL_RECOMMEND_ORDER
-      : CHARACTER_ASSET_MODEL_RECOMMEND_ORDER;
+      ? CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER
+      : CHARACTER_ANCHOR_MODEL_RECOMMEND_ORDER;
     const ordered = recommendOrder.filter((name, index) => options.includes(name) && recommendOrder.indexOf(name) === index);
     if (ordered.length <= 0) {
       return [selectedModel];
@@ -6341,12 +6361,10 @@ export function ComfyPipelinePanel() {
   };
 
   const resolveCharacterAnchorRenderPreset = (
-    runtimeSettings: ComfySettings,
-    context = ""
+    _runtimeSettings: ComfySettings,
+    _context = ""
   ): "stable_fullbody" | "clean_reference" =>
-    prefersRealisticCharacterAnchorModel(context)
-      ? "stable_fullbody"
-      : runtimeSettings.characterRenderPreset ?? "clean_reference";
+    "clean_reference";
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
@@ -7532,6 +7550,7 @@ export function ComfyPipelinePanel() {
         for (let modelIndex = 0; modelIndex < anchorModelCandidates.length; modelIndex += 1) {
           const characterModel = resolveMvAdapterCharacterModel(anchorModelCandidates[modelIndex] || DEFAULT_CHARACTER_ASSET_MODEL);
           let mannequinFailures = 0;
+          let nudityFailures = 0;
           if (modelIndex > 0) {
             appendLog(
               `${sourceLabel}角色正视锚点切换备用模型：${anchorModelCandidates[modelIndex - 1]} -> ${characterModel}`,
@@ -7590,8 +7609,21 @@ export function ComfyPipelinePanel() {
             } else {
               mannequinFailures = 0;
             }
+            if (
+              quality.issues.some(
+                (issue) => issue.includes("裸露过多") || issue.includes("裸模") || issue.includes("疑似赤脚")
+              )
+            ) {
+              nudityFailures += 1;
+            } else {
+              nudityFailures = 0;
+            }
             if (mannequinFailures >= 2 && modelIndex < anchorModelCandidates.length - 1) {
               appendLog(`${sourceLabel}角色正视锚点连续命中灰模/模板人，提前切换下一个模型：${profile.name}`, "info");
+              break;
+            }
+            if (nudityFailures >= 1 && modelIndex < anchorModelCandidates.length - 1) {
+              appendLog(`${sourceLabel}角色正视锚点命中裸露/裸模风险，提前切换下一个模型：${profile.name}`, "info");
               break;
             }
             if (attempt < CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL - 1) {
