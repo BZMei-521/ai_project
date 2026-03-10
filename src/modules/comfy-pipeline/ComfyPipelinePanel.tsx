@@ -5261,7 +5261,7 @@ export function ComfyPipelinePanel() {
       sourceHeight > sourceWidth ? sourceHeight : Math.max(sourceHeight, Math.round(sourceWidth * 1.3125));
     const outputWidth = sourceWidth;
     const outputHeight = portraitTargetHeight;
-    const minimumHeightRatio = view === "side" ? 0.52 : view === "back" ? 0.54 : 0.62;
+    const minimumHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.6 : 0.66;
     const requiresRefit = isLayoutTooTight(layout, view) || sourceHeight <= sourceWidth || layout.bbox.heightRatio < minimumHeightRatio;
     if (!requiresRefit) return pathOrUrl;
     const bboxWidthPx = Math.max(1, layout.bbox.widthRatio * sourceWidth);
@@ -5269,9 +5269,9 @@ export function ComfyPipelinePanel() {
     const analysisSize = 128;
     const bboxCenterX = (((layout.bbox.minX + layout.bbox.maxX + 1) / 2) / analysisSize) * sourceWidth;
     const bboxCenterY = (((layout.bbox.minY + layout.bbox.maxY + 1) / 2) / analysisSize) * sourceHeight;
-    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.62 : 0.74;
-    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.42 : 0.54;
-    const maxScale = view === "front" ? 2.6 : view === "back" ? 2.6 : 2.4;
+    const targetHeightRatio = view === "side" ? 0.72 : view === "back" ? 0.74 : 0.8;
+    const targetWidthRatio = view === "side" ? 0.52 : view === "back" ? 0.58 : 0.64;
+    const maxScale = view === "front" ? 3.1 : view === "back" ? 3.2 : 3.3;
     const scale = Math.min(
       maxScale,
       (outputHeight * targetHeightRatio) / bboxHeightPx,
@@ -6170,7 +6170,7 @@ export function ComfyPipelinePanel() {
     return CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME;
   };
 
-  const buildCharacterThreeViewSheetPrompt = (name: string, context: string) => {
+  const buildCharacterThreeViewSheetPrompt = (name: string, context: string, attempt = 0) => {
     const sanitizedContext = sanitizeCharacterViewContext(context);
     const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
     const appearanceContext = translatedContext || sanitizedContext;
@@ -6178,6 +6178,12 @@ export function ComfyPipelinePanel() {
     const styleProfile = resolveSharedVisualStyleProfile([context]);
     const styleHint = styleProfile.styleHint;
     const styleAnchor = styleProfile.styleAnchor;
+    const retryTuning =
+      attempt <= 0
+        ? "Keep three readable full-body figures with clear spacing and stable panel order."
+        : attempt === 1
+          ? "Zoom in slightly. Each figure should occupy about 70% to 78% of its panel height. Middle panel must be a strict right profile with only one eye contour visible and nose pointing right."
+          : "Make the side panel a pure right-facing silhouette profile, not a near-front pose. Enlarge all three bodies, reduce empty margins, and keep the back panel strictly face-hidden.";
     return mergePromptFragments([
       "Generate a stable professional orthographic character turnaround sheet for game development.",
       "Exactly one consistent clothed human character must appear in exactly three full-body views arranged left to right as front view, strict right side view, and back view.",
@@ -6205,6 +6211,7 @@ export function ComfyPipelinePanel() {
       styleProfile.characterDirective,
       "The turnaround sheet must keep the same visual style language as the scene asset and storyboard frames.",
       "Do not invent a different art medium, genre, era, costume, props, or companion creature from the first image.",
+      retryTuning,
       "High detail, stable anatomy, strong costume preservation, consistent clothing folds and placement, production-ready character turnaround."
     ]);
   };
@@ -6808,7 +6815,7 @@ export function ComfyPipelinePanel() {
       }
       throw new Error(`单视角参考补全多轮生成仍未达标（${bestCandidate.issues.join(" / ") || "三视图不稳定"}）`);
     };
-    const runAdvancedThreeViews = async (seedBase: number) => {
+    const runAdvancedThreeViews = async (seedBase: number, attempt = 0) => {
       const layoutFilename = await ensureCharacterThreeViewLayoutReferenceFilename(runtimeSettings);
       let bestReference: Awaited<ReturnType<typeof generateShotAsset>> | null = null;
       let bestReferenceScore = Number.NEGATIVE_INFINITY;
@@ -6910,7 +6917,7 @@ export function ComfyPipelinePanel() {
         makeAssetGenerationShot(
           `asset_char_${name}_threeview_sheet`,
           `${name} 三视图整板`,
-          buildCharacterThreeViewSheetPrompt(name, context),
+              buildCharacterThreeViewSheetPrompt(name, context, attempt),
           "",
           seedBase + 101
         ),
@@ -6965,7 +6972,7 @@ export function ComfyPipelinePanel() {
         | null = null;
       for (let attempt = 0; attempt < CHARACTER_THREEVIEW_MAX_RETRIES; attempt += 1) {
         const seed = seedBase + attempt * 7331;
-        const current = await runAdvancedThreeViews(seed);
+        const current = await runAdvancedThreeViews(seed, attempt);
         const frontPath = current.front.localPath || current.front.previewUrl || "";
         const sidePath = current.side.localPath || current.side.previewUrl || "";
         const backPath = current.back.localPath || current.back.previewUrl || "";
