@@ -27,6 +27,62 @@ function canonicalAssetName(type: "character" | "scene" | "skybox", name: string
   return normalized.trim();
 }
 
+const CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE = "人物/{{ASSET_NAME_DIR}}";
+const SCENE_ASSET_OUTPUT_PREFIX_TEMPLATE = "场景/{{ASSET_NAME_DIR}}";
+
+type AssetOutputContext =
+  | {
+      kind: "character";
+      assetName: string;
+    }
+  | {
+      kind: "scene";
+      assetName: string;
+    };
+
+export function sanitizeOutputAssetFolderName(value: string, fallback = "未命名资源"): string {
+  const cleaned = value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  if (!cleaned) return fallback;
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(cleaned)) {
+    return `${fallback}_${cleaned}`;
+  }
+  return cleaned;
+}
+
+function extractCharacterAssetNameFromShot(shot: Shot): string {
+  const shotId = shot.id.trim();
+  if (!/^(asset_char_|asset_panel_char_|import_char_anchor_)/.test(shotId)) return "";
+  const fromTitle = shot.title
+    .trim()
+    .replace(
+      /\s*(正视参考修复|参考正视图|正视锚点|正视图|三视图整板|三视图|侧视补全|背视补全|侧视|背视)\s*$/u,
+      ""
+    )
+    .trim();
+  if (fromTitle) return fromTitle;
+  const fromId =
+    shotId.match(/^asset_char_(.+?)_(?:fallback_.+|reference(?:_\d+)?|threeview_sheet)$/)?.[1] ??
+    shotId.match(/^asset_panel_char_\d+_(.+)$/)?.[1] ??
+    "";
+  return fromId.trim();
+}
+
+function inferAssetOutputContextFromShot(shot: Shot): AssetOutputContext | null {
+  const characterName = extractCharacterAssetNameFromShot(shot);
+  if (characterName) {
+    return {
+      kind: "character",
+      assetName: sanitizeOutputAssetFolderName(characterName, "未命名人物")
+    };
+  }
+  return null;
+}
+
 function characterAssetReferenceScore(asset: Asset): number {
   let score = 0;
   if ((asset.characterFrontPath?.trim() || asset.filePath?.trim() || "").length > 0) score += 3;
@@ -814,6 +870,58 @@ function deepReplaceTokens(value: unknown, tokens: Record<string, string>): unkn
     return Object.fromEntries(entries);
   }
   return value;
+}
+
+function rewriteWorkflowFilenamePrefixes(
+  value: unknown,
+  rewrite: (prefix: string) => string
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteWorkflowFilenamePrefixes(item, rewrite));
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+      if (key === "filename_prefix" && typeof item === "string") {
+        return [key, rewrite(item)] as const;
+      }
+      return [key, rewriteWorkflowFilenamePrefixes(item, rewrite)] as const;
+    });
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
+function rewriteCharacterAssetFilenamePrefix(prefix: string): string {
+  const trimmed = prefix.trim();
+  if (!trimmed) return prefix;
+  if (trimmed.startsWith("人物/")) return trimmed;
+  if (/character_anchor_cleanup/i.test(trimmed)) {
+    return `${CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE}/character_anchor_cleanup_{{SHOT_ID}}`;
+  }
+  if (/character_anchor|character_threeview/i.test(trimmed)) {
+    return `${CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE}/character_anchor_{{SHOT_ID}}`;
+  }
+  if (/character_orthoview|character_mv/i.test(trimmed)) {
+    return `${CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE}/character_orthoview_{{SHOT_ID}}`;
+  }
+  return prefix;
+}
+
+function rewriteSkyboxFilenamePrefix(prefix: string): string {
+  const trimmed = prefix.trim();
+  if (!trimmed) return prefix;
+  if (trimmed.startsWith("场景/")) return trimmed;
+  if (/skybox_panorama/i.test(trimmed)) {
+    return `${SCENE_ASSET_OUTPUT_PREFIX_TEMPLATE}/skybox_panorama`;
+  }
+  const face = trimmed.match(/skybox_(front|right|back|left|up|down)/i)?.[1]?.toLowerCase();
+  if (face) {
+    return `${SCENE_ASSET_OUTPUT_PREFIX_TEMPLATE}/skybox_${face}`;
+  }
+  if (/skybox/i.test(trimmed)) {
+    return `${SCENE_ASSET_OUTPUT_PREFIX_TEMPLATE}/skybox_{{SHOT_ID}}`;
+  }
+  return prefix;
 }
 
 function isComfyNodeReferenceTuple(value: unknown): value is [string, unknown] {
@@ -3444,6 +3552,7 @@ function inferPromptTokens(
   assets: Asset[] = [],
   kind: "image" | "video" | "audio" = "image"
 ): Record<string, string> {
+  const assetOutputContext = inferAssetOutputContextFromShot(shot);
   const nextShot = allShots[index + 1];
   const mode = inferVideoMode(shot, nextShot);
   const promptBaseRaw = shot.storyPrompt?.trim() || shot.notes?.trim() || shot.title;
@@ -3622,6 +3731,7 @@ function inferPromptTokens(
     .join(", ");
   const effectiveStoryboardModel = resolveStoryboardImageModel(settings, characterAssets.length > 0);
   const baseTokens: Record<string, string> = {
+    ASSET_NAME_DIR: assetOutputContext?.assetName ?? "",
     SHOT_ID: shot.id,
     SHOT_TITLE: shot.title,
     SHOT_INDEX: String(index + 1),
@@ -5025,8 +5135,14 @@ export async function generateShotAsset(
         kind === "image" ? "请先导入图片工作流" : kind === "video" ? "请先导入视频工作流" : "请先导入配音工作流"
       );
     }
+    const assetOutputContext = inferAssetOutputContextFromShot(shot);
     const workflow = ensureWorkflowJson(workflowRaw);
-    const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
+    const rewrittenWorkflow =
+      assetOutputContext?.kind === "character"
+        ? (rewriteWorkflowFilenamePrefixes(workflow, rewriteCharacterAssetFilenamePrefix) as Record<string, unknown>)
+        : workflow;
+    const lipSyncSupport =
+      kind === "video" ? inspectWorkflowLipSyncSupportFromObject(rewrittenWorkflow, settings.tokenMapping) : null;
     let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets, kind);
     if (options?.tokenOverrides) {
       tokens = {
@@ -5053,7 +5169,7 @@ export async function generateShotAsset(
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
-    const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(workflow, "SaveImage");
+    const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
@@ -5061,8 +5177,8 @@ export async function generateShotAsset(
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
     }
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
-    applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
-    const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
+    applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     let objectInfo: Record<string, unknown> | undefined;
     try {
@@ -5148,8 +5264,14 @@ export async function generateShotAssetOutputs(
         kind === "image" ? "请先导入图片工作流" : kind === "video" ? "请先导入视频工作流" : "请先导入配音工作流"
       );
     }
+    const assetOutputContext = inferAssetOutputContextFromShot(shot);
     const workflow = ensureWorkflowJson(workflowRaw);
-    const lipSyncSupport = kind === "video" ? inspectWorkflowLipSyncSupportFromObject(workflow, settings.tokenMapping) : null;
+    const rewrittenWorkflow =
+      assetOutputContext?.kind === "character"
+        ? (rewriteWorkflowFilenamePrefixes(workflow, rewriteCharacterAssetFilenamePrefix) as Record<string, unknown>)
+        : workflow;
+    const lipSyncSupport =
+      kind === "video" ? inspectWorkflowLipSyncSupportFromObject(rewrittenWorkflow, settings.tokenMapping) : null;
     let tokens = inferPromptTokens(settings, shot, index, settings.tokenMapping, allShots, assets, kind);
     if (options?.tokenOverrides) {
       tokens = {
@@ -5176,15 +5298,15 @@ export async function generateShotAssetOutputs(
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
-    const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(workflow, "SaveImage");
+    const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
       stagedCharacterImages =
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
     }
-    applyDynamicCharacterRefsForImageWorkflow(workflow, stagedCharacterImages);
-    const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
+    applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     let objectInfo: Record<string, unknown> | undefined;
     try {
@@ -5272,13 +5394,15 @@ function buildSkyboxTokens(
   settings: ComfySettings,
   description: string,
   face: SkyboxFace,
-  eventPrompt?: string
+  eventPrompt?: string,
+  sceneName = ""
 ): Record<string, string> {
   const prompt = makeSkyboxPrompt(description, face, eventPrompt);
   const negativePrompt =
     settings.skyboxAssetNegativePrompt?.trim() ||
     "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal";
   const baseTokens: Record<string, string> = {
+    ASSET_NAME_DIR: sanitizeOutputAssetFolderName(sceneName || description, "未命名场景"),
     SHOT_ID: `skybox_${face}`,
     SHOT_TITLE: `Skybox ${face}`,
     SHOT_INDEX: "1",
@@ -5337,13 +5461,15 @@ function buildSkyboxTokens(
 function buildSkyboxPanoramaTokens(
   settings: ComfySettings,
   description: string,
-  eventPrompt?: string
+  eventPrompt?: string,
+  sceneName = ""
 ): Record<string, string> {
   const prompt = makeSkyboxPanoramaPrompt(description, eventPrompt);
   const negativePrompt =
     settings.skyboxAssetNegativePrompt?.trim() ||
     "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal";
   const baseTokens: Record<string, string> = {
+    ASSET_NAME_DIR: sanitizeOutputAssetFolderName(sceneName || description, "未命名场景"),
     SHOT_ID: "skybox_panorama",
     SHOT_TITLE: "Skybox Panorama",
     SHOT_INDEX: "1",
@@ -5412,13 +5538,17 @@ function pickSkyboxOutputByMarker(outputs: ComfyOutputAsset[], marker: string): 
 async function generateSkyboxPanoramaFaces(
   settings: ComfySettings,
   description: string,
-  eventPrompt?: string
+  eventPrompt?: string,
+  sceneName = ""
 ): Promise<SkyboxGenerationResult> {
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
 
-  const workflow = ensureWorkflowJson(workflowRaw);
-  const tokens = buildSkyboxPanoramaTokens(settings, description, eventPrompt);
+  const workflow = rewriteWorkflowFilenamePrefixes(
+    ensureWorkflowJson(workflowRaw),
+    rewriteSkyboxFilenamePrefix
+  ) as Record<string, unknown>;
+  const tokens = buildSkyboxPanoramaTokens(settings, description, eventPrompt, sceneName);
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);
@@ -5455,18 +5585,22 @@ async function generateSkyboxPanoramaFaces(
 
 export async function generateSkyboxFaces(
   settings: ComfySettings,
-  description: string
+  description: string,
+  sceneName = ""
 ): Promise<SkyboxGenerationResult> {
   if (settings.skyboxAssetWorkflowMode === "advanced_panorama") {
-    return generateSkyboxPanoramaFaces(settings, description);
+    return generateSkyboxPanoramaFaces(settings, description, undefined, sceneName);
   }
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
   const faces: Partial<Record<SkyboxFace, string>> = {};
   const previews: Partial<Record<SkyboxFace, string>> = {};
   for (const face of SKYBOX_FACES) {
-    const workflow = ensureWorkflowJson(workflowRaw);
-    const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face), "image");
+    const workflow = rewriteWorkflowFilenamePrefixes(
+      ensureWorkflowJson(workflowRaw),
+      rewriteSkyboxFilenamePrefix
+    ) as Record<string, unknown>;
+    const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face, undefined, sceneName), "image");
     applyDynamicCharacterRefsForImageWorkflow(workflow, []);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, "image", tokens);
@@ -5491,10 +5625,11 @@ export async function generateSkyboxFaceUpdate(
   settings: ComfySettings,
   description: string,
   face: SkyboxFace,
-  eventPrompt: string
+  eventPrompt: string,
+  sceneName = ""
 ): Promise<{ filePath: string; previewUrl: string }> {
   if (settings.skyboxAssetWorkflowMode === "advanced_panorama") {
-    const result = await generateSkyboxPanoramaFaces(settings, description, eventPrompt);
+    const result = await generateSkyboxPanoramaFaces(settings, description, eventPrompt, sceneName);
     const filePath = result.faces[face];
     const previewUrl = result.previews[face];
     if (!filePath || !previewUrl) throw new Error(`天空盒全景更新完成，但未找到 ${face} 面输出`);
@@ -5502,8 +5637,11 @@ export async function generateSkyboxFaceUpdate(
   }
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
-  const workflow = ensureWorkflowJson(workflowRaw);
-  const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face, eventPrompt), "image");
+  const workflow = rewriteWorkflowFilenamePrefixes(
+    ensureWorkflowJson(workflowRaw),
+    rewriteSkyboxFilenamePrefix
+  ) as Record<string, unknown>;
+  const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face, eventPrompt, sceneName), "image");
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);

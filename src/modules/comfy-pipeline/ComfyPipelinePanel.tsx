@@ -8052,7 +8052,8 @@ export function ComfyPipelinePanel() {
             ...runtimeSettings,
             skyboxWorkflowJson: skyboxWorkflow
           },
-          description
+          description,
+          sceneName
         );
         const firstPaths = listSkyboxPrimaryFacePaths(firstResult.faces);
         const firstHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(firstResult.faces);
@@ -8070,7 +8071,8 @@ export function ComfyPipelinePanel() {
               ...runtimeSettings,
               skyboxWorkflowJson: skyboxWorkflow
             },
-            retryDescription
+            retryDescription,
+            sceneName
           );
           const secondPaths = listSkyboxPrimaryFacePaths(secondResult.faces);
           const secondHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(secondResult.faces);
@@ -9058,7 +9060,8 @@ export function ComfyPipelinePanel() {
           ...runtimeSettings,
           skyboxWorkflowJson: skyboxWorkflow || runtimeSettings.imageWorkflowJson
         },
-        description
+        description,
+        "模板试跑河边"
       );
       upsertProvisionPreview({
         key: "skybox:__trial__",

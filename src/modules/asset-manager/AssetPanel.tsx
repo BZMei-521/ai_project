@@ -1128,7 +1128,7 @@ export function AssetPanel() {
     }
     try {
       setBusy(true);
-      const result = await generateSkyboxFaces(comfySettings, buildSkyboxDescription(desc, comfySettings));
+      const result = await generateSkyboxFaces(comfySettings, buildSkyboxDescription(desc, comfySettings), desc);
       setSkyboxFacePaths(result.faces);
       if (result.faces.front) setFilePath(result.faces.front);
       pushToast("天空盒六面生成完成", "success");
@@ -1156,7 +1156,7 @@ export function AssetPanel() {
     try {
       setBusy(true);
       const description = buildSkyboxDescription(asset.skyboxDescription?.trim() || asset.name, comfySettings);
-      const generated = await generateSkyboxFaceUpdate(comfySettings, description, face, eventPrompt);
+      const generated = await generateSkyboxFaceUpdate(comfySettings, description, face, eventPrompt, asset.name);
       const nextFaces = { ...(asset.skyboxFaces ?? {}), [face]: generated.filePath };
       const nextEvents = [
         ...(asset.skyboxUpdateEvents ?? []),
