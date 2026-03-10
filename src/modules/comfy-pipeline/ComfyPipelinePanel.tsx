@@ -480,6 +480,12 @@ function resolveMvAdapterFallbackModel(requestedModel: string): string {
   return resolveMvAdapterCharacterModel(requestedModel);
 }
 
+function looksLikeFluxKontextModelName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /(flux|kontext)/.test(normalized);
+}
+
 function prefersRealisticCharacterAnchorModel(context: string): boolean {
   const normalized = context.trim().toLowerCase();
   if (!normalized) return false;
@@ -6342,7 +6348,7 @@ export function ComfyPipelinePanel() {
       characterAnchorRenderPreset
     );
     const generatedArtifactSourcePaths = new Set<string>();
-    const shouldPreferReferenceEditPrimary = false;
+    const shouldPreferReferenceEditPrimary = !looksLikeFluxKontextModelName(characterModelForWorkflow);
     const buildCharacterArtifactFamilySourcePaths = (paths: string[]) => {
       const directories = uniqueEntities(
         paths
@@ -7552,9 +7558,10 @@ export function ComfyPipelinePanel() {
         const generatedFrontPath = (front.localPath || front.previewUrl || reusableFrontReferencePath).trim();
         const generatedSidePath = (side.localPath || side.previewUrl || "").trim();
         const generatedBackPath = (back.localPath || back.previewUrl || "").trim();
+        const canonicalFrontPath = reusableFrontReferencePath.trim() || generatedFrontPath;
         const threeViewPatch = {
-          filePath: generatedFrontPath,
-          characterFrontPath: generatedFrontPath,
+          filePath: canonicalFrontPath,
+          characterFrontPath: canonicalFrontPath,
           characterSidePath: generatedSidePath,
           characterBackPath: generatedBackPath,
           characterAnchorModelName: preferredCharacterModel
@@ -7572,7 +7579,7 @@ export function ComfyPipelinePanel() {
         appendLog(`角色三视图自动续跑成功：${name}`, "info");
         return {
           assetId: created,
-          previewPaths: [generatedFrontPath, generatedSidePath, generatedBackPath].filter(
+          previewPaths: [canonicalFrontPath, generatedSidePath, generatedBackPath].filter(
             (value): value is string => Boolean(value)
           ),
           reused: false,

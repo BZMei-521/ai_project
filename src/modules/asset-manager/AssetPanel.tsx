@@ -1085,12 +1085,12 @@ export function AssetPanel() {
         }
         generatedSourcePaths.add(sheetPath);
         const split = await splitCharacterThreeViewSheet(sheetPath);
-        setFrontPath(split.frontPath);
+        setFrontPath(frontAnchorPath);
         setSidePath(split.sidePath);
         setBackPath(split.backPath);
-        setFilePath(split.frontPath);
+        setFilePath(frontAnchorPath);
         await cleanupGeneratedCharacterFamilies([...generatedSourcePaths], [
-          split.frontPath,
+          frontAnchorPath,
           split.sidePath,
           split.backPath
         ]);
