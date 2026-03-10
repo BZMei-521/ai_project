@@ -4691,7 +4691,7 @@ async function waitForComfyOutput(
         (!options?.requirePersistentImageOutput || persistentImageOutputs.length > 0)
       ) {
         notify(1, "输出已生成");
-        return assets;
+        return options?.requirePersistentImageOutput ? persistentImageOutputs : assets;
       }
       if (promptHistory && isPromptCompleted(promptHistory)) {
         if (options?.requirePersistentImageOutput && assets.length > 0 && persistentImageOutputs.length === 0) {
