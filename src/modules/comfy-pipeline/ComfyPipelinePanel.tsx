@@ -3263,6 +3263,7 @@ export function ComfyPipelinePanel() {
   const scriptImportInFlightRef = useRef(false);
   const scriptImportPromiseRef = useRef<Promise<boolean> | null>(null);
   const characterAnchorModelByNameRef = useRef<Map<string, string>>(new Map());
+  const characterThreeViewFailedFrontByNameRef = useRef<Map<string, string>>(new Map());
   const [scriptImportActive, setScriptImportActive] = useState(false);
   const [settings, setSettings] = useState<ComfySettings>(() => loadSettings());
   const [skipExisting, setSkipExisting] = useState(true);
@@ -6198,9 +6199,11 @@ export function ComfyPipelinePanel() {
       "Use the first reference image as the exact identity, face, hairstyle, costume, and silhouette source.",
       "Use the second reference image only as the layout, spacing, panel order, framing, and orthographic presentation target.",
       "Match the panel order and spacing of the second reference image: left panel front view, middle panel strict right profile, right panel back view. Do not copy any extra figure, grey background, or decoration from the layout reference.",
+      "Each figure should occupy about 64% to 74% of the board height inside its own panel, with clear margins but never as tiny distant figures.",
       `Character identity: ${name}`,
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       "Preserve the same face, hairstyle, body proportions, costume structure, garment layers, sleeve shape, belt placement, accessories, shoes or boots, colors, and silhouette from the first image.",
+      "Preserve clothing color saturation and material contrast from the first image. Do not wash the character into a pale grey mannequin or low-color template.",
       "Keep natural head size, stable facial proportions, clear eyes nose mouth placement, and undistorted face shape in all panels.",
       "Do not simplify the costume into a mannequin, base mesh, bodysuit, underwear, grey dummy, tactical uniform, or anatomy template.",
       "One character only, one front view, one side view, one back view, full body, feet visible, head visible, no crop, no extra panels, no text, no watermark.",
@@ -6223,6 +6226,7 @@ export function ComfyPipelinePanel() {
       resolveSharedVisualStyleProfile([context]).styleNegative,
       "text, watermark, logo, annotation, label, callout, decorative border, inset portrait, extra icon",
       "extra panel, fourth figure, fifth figure, lineup with many tiny characters, collage, poster layout, sprite sheet, expression sheet, costume sheet, prop sheet, contact sheet",
+      "tiny figure, miniature character, subject too small, distant full body, washed out colors, desaturated clothing, pale grey mannequin",
       "three identical front views, semi profile, turned torso, front-facing side panel, face visible in back panel, duplicate front pose, repeated same figure outside the three required views",
       "mannequin, faceless mannequin, wireframe body, anatomy template, croquis, 3d reference doll, grey dummy, base mesh, neutral bodysuit",
       "deformed head, malformed face, collapsed face, doll face, toy face, tiny head, oversized head, missing facial features, blurred face, broken eyes, broken mouth",
@@ -7516,6 +7520,7 @@ export function ComfyPipelinePanel() {
     let updated = 0;
     let skipped = 0;
     for (const profile of profiles) {
+      const profileKey = normalizeEntityKey(profile.name);
       let anchorPath = (profile.anchorImagePath || profile.frontPath).trim();
       const semanticContext = mergeCharacterSemanticContext(profile.description, profile.voiceProfile);
       let bestAnchorModel = "";
@@ -7685,7 +7690,6 @@ export function ComfyPipelinePanel() {
         }
         anchorPath = finalAnchorPath;
         if (anchorPath) {
-          const profileKey = normalizeEntityKey(profile.name);
           if (profileKey && bestAnchorModel.trim()) {
             characterAnchorModelByNameRef.current.set(profileKey, bestAnchorModel.trim());
           }
@@ -7722,7 +7726,7 @@ export function ComfyPipelinePanel() {
         try {
           const preferredCharacterModel =
             bestAnchorModel.trim() ||
-            characterAnchorModelByNameRef.current.get(normalizeEntityKey(profile.name)) ||
+            characterAnchorModelByNameRef.current.get(profileKey) ||
             existingAsset?.characterAnchorModelName ||
             "";
           const seedBase =
@@ -7739,8 +7743,14 @@ export function ComfyPipelinePanel() {
           nextFrontPath = (threeView.front.localPath || threeView.front.previewUrl || nextFrontPath).trim();
           nextSidePath = (threeView.side.localPath || threeView.side.previewUrl || nextSidePath).trim();
           nextBackPath = (threeView.back.localPath || threeView.back.previewUrl || nextBackPath).trim();
+          if (profileKey) {
+            characterThreeViewFailedFrontByNameRef.current.delete(profileKey);
+          }
           appendLog(`${sourceLabel}角色三视图生成成功：${profile.name}`, "info");
         } catch (error) {
+          if (profileKey && nextFrontPath.trim()) {
+            characterThreeViewFailedFrontByNameRef.current.set(profileKey, nextFrontPath.trim());
+          }
           appendLog(`${sourceLabel}角色三视图生成失败，保留 front 锚点：${profile.name}，${String(error)}`, "error");
         }
       }
@@ -7884,6 +7894,16 @@ export function ComfyPipelinePanel() {
           viewState: "front"
         };
       }
+      const failedFrontPath = nameKey ? characterThreeViewFailedFrontByNameRef.current.get(nameKey) ?? "" : "";
+      if (failedFrontPath && failedFrontPath === reusableFrontReferencePath) {
+        appendLog(`角色 ${name} 在当前轮次已对同一 front 三视图失败，跳过重复自动续跑`, "info");
+        return {
+          assetId: created,
+          previewPaths: [reusableFrontReferencePath].filter((value): value is string => Boolean(value)),
+          reused: false,
+          viewState: "front"
+        };
+      }
       appendLog(`角色正视锚点已通过质检，开始自动续跑三视图：${name}`, "info");
       try {
         const seedBase = stableAssetSeed(
@@ -7923,6 +7943,9 @@ export function ComfyPipelinePanel() {
           });
           created = findAssetIdByName("character", name);
         }
+        if (nameKey) {
+          characterThreeViewFailedFrontByNameRef.current.delete(nameKey);
+        }
         appendLog(`角色三视图自动续跑成功：${name}`, "info");
         return {
           assetId: created,
@@ -7933,6 +7956,9 @@ export function ComfyPipelinePanel() {
           viewState: "threeview"
         };
       } catch (error) {
+        if (nameKey && reusableFrontReferencePath) {
+          characterThreeViewFailedFrontByNameRef.current.set(nameKey, reusableFrontReferencePath);
+        }
         appendLog(`角色三视图自动续跑失败，已保留 front 锚点：${name}，${String(error)}`, "error");
       }
       appendLog(`角色正视锚点已就绪：${name}`);
