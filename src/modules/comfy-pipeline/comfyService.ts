@@ -4796,7 +4796,12 @@ function scoreAudioOutputAsset(asset: ComfyOutputAsset): number {
   return score;
 }
 
-function selectOutputAsset(outputs: ComfyOutputAsset[], kind: "image" | "video" | "audio"): ComfyOutputAsset | null {
+function selectOutputAsset(
+  outputs: ComfyOutputAsset[],
+  kind: "image" | "video" | "audio",
+  shot?: Shot,
+  assetOutputContext: AssetOutputContext | null = null
+): ComfyOutputAsset | null {
   if (outputs.length === 0) return null;
   if (kind === "video") {
     const videos = outputs.filter((asset) => isVideoOutputAsset(asset));
@@ -4810,6 +4815,11 @@ function selectOutputAsset(outputs: ComfyOutputAsset[], kind: "image" | "video" 
   }
   const images = outputs.filter((asset) => !isVideoOutputAsset(asset) && !isAudioOutputAsset(asset));
   if (images.length === 0) return outputs[0] ?? null;
+  const normalizedShotId = shot?.id.trim().toLowerCase() ?? "";
+  const storyboardExpectedMarkers =
+    !assetOutputContext && normalizedShotId
+      ? [`image_asset_guided_${normalizedShotId}`, `shot_${normalizedShotId}`, normalizedShotId]
+      : [];
   return (
     images.sort((left, right) => {
       const leftType = String(left.type ?? "").toLowerCase();
@@ -4818,16 +4828,32 @@ function selectOutputAsset(outputs: ComfyOutputAsset[], kind: "image" | "video" 
       const rightSubfolder = String(right.subfolder ?? "").toLowerCase();
       const leftName = String(left.filename ?? "").toLowerCase();
       const rightName = String(right.filename ?? "").toLowerCase();
+      const leftMatchesStoryboardMarker =
+        storyboardExpectedMarkers.length > 0 &&
+        storyboardExpectedMarkers.some((marker) => leftName.includes(marker) || leftSubfolder.includes(marker));
+      const rightMatchesStoryboardMarker =
+        storyboardExpectedMarkers.length > 0 &&
+        storyboardExpectedMarkers.some((marker) => rightName.includes(marker) || rightSubfolder.includes(marker));
+      const leftStoryboardPenalty =
+        !assetOutputContext && /(character_anchor|character_orthoview|character_mv|skybox_)/.test(leftName) ? 120 : 0;
+      const rightStoryboardPenalty =
+        !assetOutputContext && /(character_anchor|character_orthoview|character_mv|skybox_)/.test(rightName) ? 120 : 0;
       const leftScore =
+        (leftMatchesStoryboardMarker ? 160 : 0) +
         (leftType === "output" ? 100 : 0) +
         (leftType === "temp" ? -20 : 0) +
         (leftSubfolder.includes("storyboard") ? 20 : 0) +
-        (/character_orthoview|skybox_|image_asset_|shot_/.test(leftName) ? 10 : 0);
+        (/image_asset_|shot_/.test(leftName) ? 20 : 0) +
+        (/character_orthoview|skybox_/.test(leftName) ? 6 : 0) -
+        leftStoryboardPenalty;
       const rightScore =
+        (rightMatchesStoryboardMarker ? 160 : 0) +
         (rightType === "output" ? 100 : 0) +
         (rightType === "temp" ? -20 : 0) +
         (rightSubfolder.includes("storyboard") ? 20 : 0) +
-        (/character_orthoview|skybox_|image_asset_|shot_/.test(rightName) ? 10 : 0);
+        (/image_asset_|shot_/.test(rightName) ? 20 : 0) +
+        (/character_orthoview|skybox_/.test(rightName) ? 6 : 0) -
+        rightStoryboardPenalty;
       return rightScore - leftScore;
     })[0] ?? null
   );
@@ -5191,7 +5217,7 @@ export async function generateShotAsset(
     const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress, {
       requirePersistentImageOutput
     });
-    const chosen = selectOutputAsset(outputs, kind);
+    const chosen = selectOutputAsset(outputs, kind, shot, assetOutputContext);
     if (!chosen) {
       if (kind === "video") {
         const names = outputs.map((item) => item.filename).join(", ");

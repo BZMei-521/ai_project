@@ -4792,6 +4792,14 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const isInvalidStoryboardStillPath = (pathOrUrl: string) => {
+    const normalized = pathOrUrl.trim().toLowerCase();
+    if (!normalized) return false;
+    return /(character_anchor|character_orthoview|character_mv|skybox_(front|right|back|left|up|down|panorama))/i.test(
+      normalized
+    );
+  };
+
   const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
     const [sharpness, symmetry, layout, appearance] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
@@ -9475,6 +9483,9 @@ export function ComfyPipelinePanel() {
           }
         });
         const firstImagePath = firstOutput.localPath || firstOutput.previewUrl;
+        if (isInvalidStoryboardStillPath(firstImagePath)) {
+          throw new Error(`分镜图输出命中了角色/场景参考图而不是镜头成片：${firstImagePath}`);
+        }
         const firstQuality = await evaluateImageSharpnessQuality([firstImagePath], STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE);
         if (!firstQuality.lowSharpness) {
           output = firstOutput;
@@ -9498,6 +9509,9 @@ export function ComfyPipelinePanel() {
             }
           });
           const secondImagePath = secondOutput.localPath || secondOutput.previewUrl;
+          if (isInvalidStoryboardStillPath(secondImagePath)) {
+            throw new Error(`分镜图重试仍命中了角色/场景参考图而不是镜头成片：${secondImagePath}`);
+          }
           const secondQuality = await evaluateImageSharpnessQuality([secondImagePath], STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE);
           const chooseSecond = secondQuality.score >= firstQuality.score;
           appendLog(
@@ -9831,6 +9845,9 @@ export function ComfyPipelinePanel() {
         const shot = latestShotsForRun[index];
         if (retryFailedOnly && imageStatusByShot[shot.id] !== "failed") continue;
         if (skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
+          if (isInvalidStoryboardStillPath(shot.generatedImagePath)) {
+            appendLog(`检测到已有分镜图实际指向角色/场景参考图，将自动重建：${shot.title}`, "info");
+          } else {
           const existingQuality = await evaluateImageSharpnessQuality(
             [shot.generatedImagePath],
             STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE
@@ -9843,6 +9860,7 @@ export function ComfyPipelinePanel() {
             `检测到已有分镜图清晰度偏低（min=${(existingQuality.minSharpness ?? 0).toFixed(1)}），将自动重建：${shot.title}`,
             "info"
           );
+          }
         }
         attemptedCount += 1;
         setPipelineState(`生成分镜图：${shot.title} (${index + 1}/${latestShotsForRun.length})`);
