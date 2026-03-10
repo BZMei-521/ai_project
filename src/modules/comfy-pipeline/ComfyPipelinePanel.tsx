@@ -4124,19 +4124,10 @@ export function ComfyPipelinePanel() {
       hammingDistance64(sideHash, backHash)
     ];
     const nearDuplicatePairs = distances.filter((distance) => distance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD).length;
-    const [frontSideDistance, frontBackDistance, sideBackDistance] = distances;
-    const strictOrientationGapTooSmall =
-      frontSideDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1 ||
-      frontBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1 ||
-      sideBackDistance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD;
     const lowDiversity =
       nearDuplicatePairs >= 2 ||
       (Math.max(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 1 &&
-        Math.min(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD) ||
-      (strictOrientationGapTooSmall &&
-        nearDuplicatePairs >= 1 &&
-        Math.min(frontSideDistance, frontBackDistance, sideBackDistance) <=
-          Math.max(1, CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD - 1));
+        Math.min(...distances) <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD);
     return { inspected: true, lowDiversity, distances };
   };
 
