@@ -4800,13 +4800,19 @@ export function ComfyPipelinePanel() {
     );
   };
 
+  const isInvalidStoryboardReferencePath = (pathOrUrl: string) => {
+    const normalized = pathOrUrl.trim().toLowerCase();
+    if (!normalized) return false;
+    return /(character_anchor|character_orthoview|character_mv)/i.test(normalized);
+  };
+
   const shouldBypassAssetGuidedStoryboard = (shot: Shot, assetsForShot: Asset[], runtimeSettings: ComfySettings) => {
     const currentStoryboardMode =
       runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
     if (currentStoryboardMode !== "mature_asset_guided") return false;
     const referencePreview = resolveShotReferencePreview(shot, assetsForShot);
     const primaryScenePath = referencePreview.scene?.thumbs.find((item) => item.trim().length > 0) ?? "";
-    return !primaryScenePath || isInvalidStoryboardStillPath(primaryScenePath);
+    return !primaryScenePath || isInvalidStoryboardReferencePath(primaryScenePath);
   };
 
   const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
