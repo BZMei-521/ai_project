@@ -4711,12 +4711,18 @@ export function ComfyPipelinePanel() {
       ] as const
     ).forEach(([label, appearance]) => {
       if (!appearance) return;
-      if (appearance.likelyTemplateFigure) {
+      const severeTemplateFigure =
+        appearance.likelyTemplateFigure &&
+        (label === "front" || appearance.averageSaturation < 0.1 || appearance.averageChroma < 10);
+      const severeNudeLike =
+        appearance.likelyNudeFigure &&
+        (label === "front" || appearance.torsoSkinRatio > 0.3 || appearance.skinExposureRatio > 0.55);
+      if (severeTemplateFigure) {
         appearanceAlerts.push(
           `${label}_template_figure(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
         );
       }
-      if (appearance.likelyNudeFigure) {
+      if (severeNudeLike) {
         appearanceAlerts.push(
           `${label}_nude_like(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
         );
@@ -4724,7 +4730,7 @@ export function ComfyPipelinePanel() {
     });
     if (
       typeof frontReferenceDistance === "number" &&
-      frontReferenceDistance > CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD
+      frontReferenceDistance > CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD + 8
     ) {
       appearanceAlerts.push(`front_anchor_mismatch(hash=${frontReferenceDistance})`);
     }
@@ -4738,7 +4744,7 @@ export function ComfyPipelinePanel() {
       (diversity.inspected ? diversity.distances.reduce((sum, value) => sum + value, 0) / Math.max(1, diversity.distances.length) : 0) -
       ((orientationAlerts.length > 0 || blockingLayoutAlerts.length > 0) ? 8 : 0) -
       (layoutAlerts.length > blockingLayoutAlerts.length ? 2 : 0) -
-      appearanceAlerts.length * 14 -
+      appearanceAlerts.length * 10 -
       (typeof frontReferenceDistance === "number"
         ? Math.max(0, frontReferenceDistance - CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD) * 1.5
         : 0);
@@ -6408,6 +6414,7 @@ export function ComfyPipelinePanel() {
       genderHint === "female" ? "The character is a young adult woman." : genderHint === "male" ? "The character is a young adult man." : "",
       "Use the first reference image as the exact identity, face, hairstyle, costume, and silhouette source.",
       "Use the second reference image only as the layout, spacing, panel order, framing, and orthographic presentation target.",
+      "The front panel must stay very close to the first reference image in face shape, hairline, costume color placement, silhouette, and overall identity. Do not redesign or stylize the front panel away from the first reference.",
       "Match the panel order and spacing of the second reference image: left panel front view, middle panel strict right profile, right panel back view. Do not copy any extra figure, grey background, or decoration from the layout reference.",
       "Each figure should occupy about 64% to 74% of the board height inside its own panel, with clear margins but never as tiny distant figures.",
       `Character identity: ${name}`,
