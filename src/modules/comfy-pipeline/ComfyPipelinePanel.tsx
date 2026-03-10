@@ -4486,7 +4486,7 @@ export function ComfyPipelinePanel() {
         lowColorRatio > 0.72 &&
         nearGrayRatio > 0.48;
       const likelyNudeFigure =
-        skinExposureRatio > 0.58 || torsoSkinRatio > 0.13 || (skinExposureRatio > 0.42 && footSkinRatio > 0.015);
+        torsoSkinRatio > 0.22 || (skinExposureRatio > 0.68 && torsoSkinRatio > 0.08);
       const likelyBareFeet = footSkinRatio > 0.018 && skinExposureRatio > 0.08;
       return {
         averageSaturation,
@@ -4764,7 +4764,7 @@ export function ComfyPipelinePanel() {
 
   const hasUnrepairableFrontAnchorIssues = (issues: string[]) =>
     issues.some((issue) =>
-      /(角色像灰模或人体模板|裸露过多或疑似裸模|疑似赤脚|主体轮廓不像标准全身角色设定图|人物过小|疑似多主体\/多角度|存在额外设定页组件|主体外还有额外前景元素|画面含有额外设定页元素|边缘存在文字或装饰杂项|修复结果与原始角色锚点偏差过大)/u.test(
+      /(角色像灰模或人体模板|裸露过多或疑似裸模|主体轮廓不像标准全身角色设定图|人物过小|疑似多主体\/多角度|存在额外设定页组件|主体外还有额外前景元素|画面含有额外设定页元素|边缘存在文字或装饰杂项|修复结果与原始角色锚点偏差过大)/u.test(
         issue
       )
     );
@@ -4842,7 +4842,6 @@ export function ComfyPipelinePanel() {
       appearance?.likelyNudeFigure
         ? `裸露过多或疑似裸模(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
         : "",
-      appearance?.likelyBareFeet ? `疑似赤脚(foot=${appearance.footSkinRatio.toFixed(2)})` : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
@@ -4864,7 +4863,6 @@ export function ComfyPipelinePanel() {
       (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
-      (appearance?.likelyBareFeet ? 22 : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
@@ -7629,7 +7627,7 @@ export function ComfyPipelinePanel() {
             }
             if (
               quality.issues.some(
-                (issue) => issue.includes("裸露过多") || issue.includes("裸模") || issue.includes("疑似赤脚")
+                (issue) => issue.includes("裸露过多") || issue.includes("裸模")
               )
             ) {
               nudityFailures += 1;
