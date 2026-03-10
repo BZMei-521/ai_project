@@ -188,10 +188,27 @@ const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 6;
 const CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD = 18;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
 const CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE = 14;
-const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 12;
+const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY = 0.72;
 const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
+const CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS = [
+  "blurry face",
+  "smeared face",
+  "soft facial features",
+  "unclear eyes",
+  "blurred eyes",
+  "blurred nose",
+  "blurred mouth",
+  "dirty white background",
+  "grey stains",
+  "floating grey blobs",
+  "floating smudge",
+  "artifact blotches",
+  "speckled background",
+  "color noise",
+  "monochrome smears"
+];
 
 function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
   const normalized = workflowJson.replace(/\s+/g, "");
@@ -5215,9 +5232,9 @@ export function ComfyPipelinePanel() {
     const analysisSize = 128;
     const bboxCenterX = (((layout.bbox.minX + layout.bbox.maxX + 1) / 2) / analysisSize) * sourceWidth;
     const bboxCenterY = (((layout.bbox.minY + layout.bbox.maxY + 1) / 2) / analysisSize) * sourceHeight;
-    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.62 : 0.78;
-    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.42 : 0.58;
-    const maxScale = view === "front" ? 4.6 : view === "back" ? 2.6 : 2.4;
+    const targetHeightRatio = view === "side" ? 0.58 : view === "back" ? 0.62 : 0.74;
+    const targetWidthRatio = view === "side" ? 0.34 : view === "back" ? 0.42 : 0.54;
+    const maxScale = view === "front" ? 2.6 : view === "back" ? 2.6 : 2.4;
     const scale = Math.min(
       maxScale,
       (outputHeight * targetHeightRatio) / bboxHeightPx,
@@ -5581,6 +5598,8 @@ export function ComfyPipelinePanel() {
         "single character, solo, exactly one human character",
         "one complete human body with head, torso, two arms, two hands, two legs, two feet",
         "real human face, natural facial features, realistic skin tone, visible hairstyle, visible clothing layers",
+        "sharp face, crisp facial features, clearly separated eyes, eyebrows, nose bridge, lips, and jawline",
+        "face remains readable in a full-body frame, no smeared facial details, no muddy facial shadows",
         "front-facing full-body character image",
         "single isolated character on a pure white background",
         "clean studio full-body standing character",
@@ -5607,6 +5626,8 @@ export function ComfyPipelinePanel() {
         "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
         "禁止裸体、禁止裸模、禁止赤脚、禁止裸足、禁止露胸、禁止露出躯干、禁止内衣态、禁止泳装态",
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
+        "五官必须清楚，双眼、鼻梁、嘴唇和下颌线都要可辨识，不允许糊脸、塌脸、脏污遮挡",
+        "纯白背景必须干净均匀，不允许灰斑、脏点、漂浮灰块、边缘杂色",
         "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人",
         "必须与后续三视图和场景保持同一画风与材质表现，不允许换成另一种渲染风格",
         "必须是正常穿衣的人类角色，不是服装模特假人，不是 mannequin，不是 fashion doll，不是 anatomy template",
@@ -5740,9 +5761,11 @@ export function ComfyPipelinePanel() {
           : attempt === 2
           ? "补充要求：必须是标准单人摄影棚参照图，人物完整站在画面中央，主体占画面高度约 68% 到 76%，头顶和鞋底留白适中，绝不允许贴边。camera slightly closer, full body entirely inside frame, balanced white margin, larger subject."
           : "补充要求：严格单人全身白底参照图，主体占画面高度约 70% 到 78%，角色居中，边距均匀，不是设定页，不是海报，不是多人排表。single centered full-body character on pure white background, subject large in frame, even margins, not a character sheet.";
+    const faceDetailInstruction =
+      "补充要求：脸部区域必须清楚，双眼、眉毛、鼻梁、嘴唇和下颌线都要稳定可辨识；不允许糊脸、脏脸、灰脸、无五官。face must stay crisp, readable, and detailed.";
     const cleanupInstruction =
-      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons.";
-    return mergePromptFragments([basePrompt, retryTuning, cleanupInstruction]);
+      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs.";
+    return mergePromptFragments([basePrompt, retryTuning, faceDetailInstruction, cleanupInstruction]);
   };
 
   const buildFrontAnchorCleanupPrompt = (name: string, context: string, attempt: number) => {
@@ -5759,10 +5782,12 @@ export function ComfyPipelinePanel() {
       buildCharacterViewPrompt(name, sanitizedContext, "front"),
       "Use the input image as the exact identity and costume source. Do not redesign the character.",
       "Preserve the original outfit layers, trims, colors, hairstyle silhouette, and accessories from the source image.",
+      "Recover crisp facial features: clear eyes, eyebrows, nose bridge, lips, jawline, and readable face proportions.",
       "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
       "Do not remove clothing. Do not expose chest, torso, underwear, or feet. Keep shoes or boots visible.",
       appearanceContext ? `Keep these appearance details: ${appearanceContext}` : "",
       "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
+      "Clean the background into one uniform pure white backdrop. Remove grey stains, detached blobs, floating smudges, and random color noise.",
       "Keep exactly one centered full-body human character, front-facing, head-to-toe visible, pure white background.",
       retryTuning
     ]);
@@ -5822,48 +5847,101 @@ export function ComfyPipelinePanel() {
     shotPrefix: string,
     logPrefix: string
   ) => {
-    void runtimeSettings;
-    void name;
-    void context;
-    void checkpointName;
-    void negativePrompt;
-    void seedBase;
-    void shotPrefix;
     let bestPath = (await prepareCharacterFrontReferenceCandidate(candidatePath)) || candidatePath;
     let bestQuality = await evaluateFrontReferenceQuality(bestPath);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const cleanupSourcePath = bestPath.trim() || candidatePath;
-      const variants = await expandCharacterViewCandidatePanels(cleanupSourcePath);
-      let attemptBestPath = bestPath;
-      let attemptBestQuality = bestQuality;
-      for (const variant of variants) {
-        let repairedPath = await prepareCharacterFrontReferenceCandidate(variant);
-        if (attempt > 0) {
-          repairedPath = await prepareCharacterFrontReferenceCandidate(repairedPath);
-        }
-        const repairedQuality = await evaluateFrontReferenceQuality(repairedPath);
-        if (repairedQuality.score > attemptBestQuality.score) {
-          attemptBestPath = repairedPath;
-          attemptBestQuality = repairedQuality;
-        }
-      }
-      bestPath = attemptBestPath;
-      bestQuality = attemptBestQuality;
-      if (bestQuality.acceptable) {
-        appendLog(`${logPrefix}经清理修复后达标：${name}`, "info");
-        return {
-          path: bestPath,
-          quality: bestQuality
-        };
-      }
-      if (attempt < 2) {
-        appendLog(`${logPrefix}未达标（${bestQuality.issues.join(" / ")}），继续修复：${name}`, "info");
-      }
-    }
-    return {
-      path: bestPath,
-      quality: bestQuality
+    const cleanupWorkflow = buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName);
+    const cleanupNegativePrompt = appendNegativePrompt(negativePrompt, CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS);
+    const generatedCleanupSourcePaths = new Set<string>();
+    const trackGeneratedCleanupPath = (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      generatedCleanupSourcePaths.add(trimmed);
     };
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const cleanupSourcePath = bestPath.trim() || candidatePath;
+        const variants = await expandCharacterViewCandidatePanels(cleanupSourcePath);
+        let attemptBestPath = bestPath;
+        let attemptBestQuality = bestQuality;
+        for (const variant of variants) {
+          let repairedPath = await prepareCharacterFrontReferenceCandidate(variant);
+          if (attempt > 0) {
+            repairedPath = await prepareCharacterFrontReferenceCandidate(repairedPath);
+          }
+          const repairedQuality = await evaluateFrontReferenceQuality(repairedPath);
+          if (repairedQuality.score > attemptBestQuality.score) {
+            attemptBestPath = repairedPath;
+            attemptBestQuality = repairedQuality;
+          }
+        }
+        bestPath = attemptBestPath;
+        bestQuality = attemptBestQuality;
+        if (bestQuality.acceptable) {
+          appendLog(`${logPrefix}经清理修复后达标：${name}`, "info");
+          return {
+            path: bestPath,
+            quality: bestQuality
+          };
+        }
+        try {
+          const cleaned = await generateShotAsset(
+            runtimeSettings,
+            makeAssetGenerationShot(
+              `${shotPrefix}_cleanup_${attempt + 1}`,
+              `${name} 正视参考修复`,
+              buildFrontAnchorCleanupPrompt(name, context, attempt),
+              "",
+              seedBase + 4000 + attempt * 977
+            ),
+            0,
+            "image",
+            [],
+            [],
+            {
+              workflowJsonOverride: cleanupWorkflow,
+              tokenOverrides: {
+                FRAME_IMAGE_PATH: cleanupSourcePath,
+                NEGATIVE_PROMPT: cleanupNegativePrompt
+              }
+            }
+          );
+          const cleanupPathRaw = cleaned.localPath || cleaned.previewUrl || "";
+          if (cleanupPathRaw) {
+            trackGeneratedCleanupPath(cleanupPathRaw);
+            const cleanupVariants = await expandCharacterViewCandidatePanels(cleanupPathRaw);
+            const cleanupCandidates = cleanupVariants.length > 0 ? cleanupVariants : [cleanupPathRaw];
+            for (const cleanupCandidate of cleanupCandidates) {
+              trackGeneratedCleanupPath(cleanupCandidate);
+              const preparedCleanupPath = await prepareCharacterFrontReferenceCandidate(cleanupCandidate);
+              trackGeneratedCleanupPath(preparedCleanupPath);
+              const preparedCleanupQuality = await evaluateFrontReferenceQuality(preparedCleanupPath);
+              if (preparedCleanupQuality.score > bestQuality.score) {
+                bestPath = preparedCleanupPath;
+                bestQuality = preparedCleanupQuality;
+              }
+              if (preparedCleanupQuality.acceptable) {
+                appendLog(`${logPrefix}经生成式清图修复后达标：${name}`, "info");
+                return {
+                  path: preparedCleanupPath,
+                  quality: preparedCleanupQuality
+                };
+              }
+            }
+          }
+        } catch (cleanupError) {
+          appendLog(`${logPrefix}生成式清图失败，继续保留最佳候选：${String(cleanupError)}`, "info");
+        }
+        if (attempt < 2) {
+          appendLog(`${logPrefix}未达标（${bestQuality.issues.join(" / ")}），继续修复：${name}`, "info");
+        }
+      }
+      return {
+        path: bestPath,
+        quality: bestQuality
+      };
+    } finally {
+      await cleanupGeneratedCharacterFamilies([...generatedCleanupSourcePaths], [bestPath], `${logPrefix}临时清图`);
+    }
   };
 
   const buildCharacterFallbackSheetPrompt = (name: string, context: string, attempt: number) => {
