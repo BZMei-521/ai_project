@@ -4419,6 +4419,9 @@ export function ComfyPipelinePanel() {
       let skinPixels = 0;
       let torsoSkinPixels = 0;
       let footSkinPixels = 0;
+      let darkPixels = 0;
+      let vividAccentPixels = 0;
+      let strongRedBlueAccentPixels = 0;
       for (let index = 0; index < data.length; index += 4) {
         const r = data[index] ?? 0;
         const g = data[index + 1] ?? 0;
@@ -4435,6 +4438,17 @@ export function ComfyPipelinePanel() {
         const saturation = maxChannel > 0 ? chroma / maxChannel : 0;
         saturationSum += saturation;
         chromaSum += chroma;
+        if (maxChannel < 42) {
+          darkPixels += 1;
+        }
+        const strongRedAccent = r > 156 && r > g + 42 && r > b + 42;
+        const strongBlueAccent = b > 156 && b > r + 26 && b > g + 22;
+        if (strongRedAccent || strongBlueAccent) {
+          strongRedBlueAccentPixels += 1;
+        }
+        if (maxChannel > 178 && chroma > 86) {
+          vividAccentPixels += 1;
+        }
         if (saturation < 0.18 || chroma < 28) {
           lowColorPixels += 1;
         }
@@ -4471,6 +4485,9 @@ export function ComfyPipelinePanel() {
       const skinExposureRatio = skinPixels / foregroundPixels;
       const torsoSkinRatio = torsoSkinPixels / foregroundPixels;
       const footSkinRatio = footSkinPixels / foregroundPixels;
+      const darkRatio = darkPixels / foregroundPixels;
+      const vividAccentRatio = vividAccentPixels / foregroundPixels;
+      const strongRedBlueAccentRatio = strongRedBlueAccentPixels / foregroundPixels;
       const likelyTemplateFigure =
         foregroundPixels >= 180 &&
         lowColorRatio > 0.78 &&
@@ -4479,6 +4496,11 @@ export function ComfyPipelinePanel() {
       const likelyNudeFigure =
         torsoSkinRatio > 0.22 || (skinExposureRatio > 0.68 && torsoSkinRatio > 0.08);
       const likelyBareFeet = footSkinRatio > 0.018 && skinExposureRatio > 0.08;
+      const likelyGlowPosterFigure =
+        foregroundPixels >= 180 &&
+        darkRatio > 0.08 &&
+        averageChroma > 26 &&
+        (strongRedBlueAccentRatio > 0.08 || vividAccentRatio > 0.18);
       return {
         averageSaturation,
         averageChroma,
@@ -4487,9 +4509,68 @@ export function ComfyPipelinePanel() {
         skinExposureRatio,
         torsoSkinRatio,
         footSkinRatio,
+        darkRatio,
+        vividAccentRatio,
+        strongRedBlueAccentRatio,
         likelyTemplateFigure,
         likelyNudeFigure,
-        likelyBareFeet
+        likelyBareFeet,
+        likelyGlowPosterFigure
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const analyzeScenePlateAppearance = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const size = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0, size, size);
+      const data = context.getImageData(0, 0, size, size).data;
+      let brightNeutralPixels = 0;
+      let skyBluePixels = 0;
+      let vegetationGreenPixels = 0;
+      let warmSunsetPixels = 0;
+      let waterBluePixels = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        const r = data[index] ?? 0;
+        const g = data[index + 1] ?? 0;
+        const b = data[index + 2] ?? 0;
+        const maxChannel = Math.max(r, g, b);
+        const minChannel = Math.min(r, g, b);
+        const chroma = maxChannel - minChannel;
+        if (maxChannel > 186 && chroma < 24) {
+          brightNeutralPixels += 1;
+        }
+        if (b > 118 && b > r + 12 && b > g + 6) {
+          skyBluePixels += 1;
+        }
+        if (g > 92 && g > r + 14 && g > b + 10) {
+          vegetationGreenPixels += 1;
+        }
+        if (r > 138 && g > 94 && r > b + 32) {
+          warmSunsetPixels += 1;
+        }
+        if (b > 86 && g > 72 && b > r + 8 && chroma > 18) {
+          waterBluePixels += 1;
+        }
+      }
+      const totalPixels = size * size;
+      return {
+        brightNeutralRatio: brightNeutralPixels / totalPixels,
+        skyBlueRatio: skyBluePixels / totalPixels,
+        vegetationGreenRatio: vegetationGreenPixels / totalPixels,
+        warmSunsetRatio: warmSunsetPixels / totalPixels,
+        waterBlueRatio: waterBluePixels / totalPixels
       };
     } catch {
       return null;
@@ -4841,22 +4922,25 @@ export function ComfyPipelinePanel() {
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
-      layout && layout.mediumComponents > 3
+      layout && layout.mediumComponents > 1
         ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
         : "",
-      layout && layout.secondaryForegroundRatio > 0.22
+      layout && layout.secondaryForegroundRatio > 0.12
         ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
         : "",
-      layout && layout.detachedForegroundRatio > 0.22
+      layout && layout.detachedForegroundRatio > 0.1
         ? `画面含有额外设定页元素(detached=${layout.detachedForegroundRatio.toFixed(2)})`
         : "",
-      layout && layout.edgeForegroundRatio > 0.24
+      layout && layout.edgeForegroundRatio > 0.18
         ? `边缘存在文字或装饰杂项(edge=${layout.edgeForegroundRatio.toFixed(2)})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
       layout && layout.bbox.heightRatio < 0.48 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       appearance?.likelyTemplateFigure
         ? `角色像灰模或人体模板(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
+        : "",
+      appearance?.likelyGlowPosterFigure
+        ? `角色像霓虹海报/发光模板人(accent=${appearance.strongRedBlueAccentRatio.toFixed(2)},dark=${appearance.darkRatio.toFixed(2)})`
         : "",
       appearance?.likelyNudeFigure
         ? `裸露过多或疑似裸模(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
@@ -4874,13 +4958,14 @@ export function ComfyPipelinePanel() {
       (layout?.significantComponents && layout.significantComponents > 1
         ? 40 + (layout.significantComponents - 1) * 16
         : 0) +
-      (layout?.mediumComponents && layout.mediumComponents > 3 ? 14 + (layout.mediumComponents - 3) * 10 : 0) +
-      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.16) * 180 : 0) +
-      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.14) * 170 : 0) +
-      (layout ? Math.max(0, layout.edgeForegroundRatio - 0.1) * 140 : 0) +
+      (layout?.mediumComponents && layout.mediumComponents > 1 ? 18 + (layout.mediumComponents - 1) * 12 : 0) +
+      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.1) * 210 : 0) +
+      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.08) * 190 : 0) +
+      (layout ? Math.max(0, layout.edgeForegroundRatio - 0.08) * 150 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
       (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
+      (appearance?.likelyGlowPosterFigure ? 74 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
@@ -5648,6 +5733,65 @@ export function ComfyPipelinePanel() {
     return resolveSharedVisualStyleProfile(contexts).styleHint;
   };
 
+  const buildSceneSemanticGuidance = (sceneName: string, scenePrompt: string) => {
+    const text = `${sceneName} ${scenePrompt}`.toLowerCase();
+    const promptHints: string[] = [];
+    const negativeHints: string[] = [];
+    const expectsRiverside = /(河边|江边|河岸|江岸|河畔|水边|溪边|岸边|riverbank|riverside|shore|waterfront|riverside)/i.test(
+      text
+    );
+    const prefersOutdoor =
+      /(河|江|湖|海|岸|滩|桥|山|林|原|野|天空|户外|外景|傍晚|黄昏|夕阳|街|城|river|lake|sea|shore|mountain|forest|outdoor|exterior|street|city|dusk|sunset|evening)/i.test(
+        text
+      ) && !/(室内|内景|大厅|房间|走廊|展厅|中庭|屋内|室中|indoor|interior|atrium|lobby|hall|room|corridor|gallery|showroom)/i.test(text);
+    if (prefersOutdoor) {
+      promptHints.push("必须是纯户外环境空间，不是室内大厅，不是中庭，不是展厅，不是白色建筑内景。");
+      negativeHints.push("indoor", "interior", "atrium", "lobby", "gallery", "showroom", "museum interior", "white hall");
+    }
+    if (expectsRiverside) {
+      promptHints.push(
+        "必须明确表现河岸/江边环境：可见水面、岸线、滩石、芦苇或沿岸植被，天空开阔，空间是自然河边而不是建筑室内。"
+      );
+      negativeHints.push("marble atrium", "indoor courtyard", "modern lobby", "empty white interior", "glass hall");
+    }
+    if (/(傍晚|黄昏|暮色|夕阳|晚霞|dusk|sunset|evening)/i.test(text)) {
+      promptHints.push("光线必须是傍晚/黄昏自然天光，允许暖色夕照与冷暖交替的自然天空光。");
+    }
+    return {
+      promptHints,
+      negativeHints,
+      prefersOutdoor,
+      expectsRiverside
+    };
+  };
+
+  const evaluateSkyboxSemanticQuality = async (paths: string[], sceneName: string, scenePrompt: string) => {
+    const primaryPath = paths.find((item) => item.trim().length > 0) ?? "";
+    if (!primaryPath) return { acceptable: false, issues: ["缺少天空盒主面"] };
+    const guidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
+    const appearance = await analyzeScenePlateAppearance(primaryPath);
+    if (!appearance) return { acceptable: true, issues: [] as string[] };
+    const issues: string[] = [];
+    const naturalRatio =
+      appearance.skyBlueRatio + appearance.vegetationGreenRatio + appearance.warmSunsetRatio + appearance.waterBlueRatio;
+    const likelyIndoorAtrium = appearance.brightNeutralRatio > 0.7 && naturalRatio < 0.08;
+    const likelyMissingRiverbankCues = guidance.expectsRiverside && naturalRatio < 0.11;
+    if (guidance.prefersOutdoor && likelyIndoorAtrium) {
+      issues.push(
+        `场景语义疑似跑偏成室内中庭/展厅(neutral=${appearance.brightNeutralRatio.toFixed(2)},natural=${naturalRatio.toFixed(2)})`
+      );
+    }
+    if (likelyMissingRiverbankCues) {
+      issues.push(
+        `河边/江边场景缺少自然水岸线索(sky=${appearance.skyBlueRatio.toFixed(2)},green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
+      );
+    }
+    return {
+      acceptable: issues.length === 0,
+      issues
+    };
+  };
+
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
     if (view === "front") {
       const sanitizedContext = sanitizeCharacterAnchorContext(context);
@@ -5698,6 +5842,8 @@ export function ComfyPipelinePanel() {
         "保持同一角色身份，脸型、发型、体型、服装款式与配色稳定，不要变成另一人",
         "必须与后续三视图和场景保持同一画风与材质表现，不允许换成另一种渲染风格",
         "必须是正常穿衣的人类角色，不是服装模特假人，不是 mannequin，不是 fashion doll，不是 anatomy template",
+        "禁止霓虹轮廓光、禁止红蓝边缘光、禁止舞台海报光效、禁止发光披风、禁止灵体残影、禁止第二个半透明人影",
+        "禁止时尚海报构图、禁止戏剧化大片海报、禁止角色背后出现虚化分身或剪影",
         "不是设定板，不是人设页，不是 collage，不是 lineup，不是 triptych"
       ]);
       return `${core}。严格要求：${constraints}。`;
@@ -5831,7 +5977,7 @@ export function ComfyPipelinePanel() {
     const faceDetailInstruction =
       "补充要求：脸部区域必须清楚，双眼、眉毛、鼻梁、嘴唇和下颌线都要稳定可辨识；不允许糊脸、脏脸、灰脸、无五官。face must stay crisp, readable, and detailed.";
     const cleanupInstruction =
-      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs.";
+      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。禁止霓虹轮廓光、禁止红蓝边缘光、禁止发光残影、禁止海报式背后分身。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs, no neon rim light, no ghost silhouettes.";
     return mergePromptFragments([basePrompt, retryTuning, faceDetailInstruction, cleanupInstruction]);
   };
 
@@ -5851,6 +5997,7 @@ export function ComfyPipelinePanel() {
       "Preserve the original outfit layers, trims, colors, hairstyle silhouette, and accessories from the source image.",
       "Recover crisp facial features: clear eyes, eyebrows, nose bridge, lips, jawline, and readable face proportions.",
       "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
+      "Do not stylize the character into a neon poster, a rim-lit silhouette, a ghosted figure, a stage-lit fashion campaign, or a glowing spectral body.",
       "Do not remove clothing. Do not expose chest, torso, underwear, or feet. Keep shoes or boots visible.",
       appearanceContext ? `Keep these appearance details: ${appearanceContext}` : "",
       "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
@@ -6285,6 +6432,7 @@ export function ComfyPipelinePanel() {
     const styleProfile = resolveSharedVisualStyleProfile([sceneName, scenePrompt]);
     const styleAnchor = styleProfile.styleAnchor;
     const styleHint = styleProfile.styleHint;
+    const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
     return `${mergePromptFragments([
       prompt,
       presetPrompt,
@@ -6295,6 +6443,7 @@ export function ComfyPipelinePanel() {
       "保持地平线与垂直结构稳定，避免几何扭曲",
       "画面清晰锐利，可支持后续角色合成",
       "符合真实空间与物理逻辑",
+      ...semanticGuidance.promptHints,
       styleProfile.sceneDirective,
       `风格倾向：${styleHint}`,
       styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
@@ -8046,12 +8195,15 @@ export function ComfyPipelinePanel() {
 
     const task: Promise<ProvisionCreateResult> = (async () => {
       const existingId = findAssetIdByName("skybox", sceneName);
+      const sanitizedScenePrompt = stripCharacterMentions(scenePrompt, characterNames);
+      const normalizedScenePrompt = sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt);
       if (existingId) {
         const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
         const primaryPaths = listSkyboxPrimaryFacePaths(asset?.skyboxFaces);
         const hasCompleteFaces = hasCompleteSkyboxPrimaryFaces(asset?.skyboxFaces);
         const qualityCheck = await evaluateImageSharpnessQuality(primaryPaths, SKYBOX_MIN_SHARPNESS_SCORE);
-        const shouldForceRegenerate = !hasCompleteFaces || qualityCheck.lowSharpness;
+        const semanticCheck = await evaluateSkyboxSemanticQuality(primaryPaths, sceneName, normalizedScenePrompt);
+        const shouldForceRegenerate = !hasCompleteFaces || qualityCheck.lowSharpness || !semanticCheck.acceptable;
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
@@ -8068,12 +8220,14 @@ export function ComfyPipelinePanel() {
             "info"
           );
         }
+        if (!semanticCheck.acceptable) {
+          appendLog(`检测到天空盒语义跑偏（${semanticCheck.issues.join(" / ")}），已自动重建：${sceneName}`, "info");
+        }
         appendLog(`检测到旧版或异常天空盒资产，已自动重建：${sceneName}`, "info");
       }
-      const sanitizedScenePrompt = stripCharacterMentions(scenePrompt, characterNames);
       const description = buildSkyboxDescription(
         sceneName,
-        sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt)
+        normalizedScenePrompt
       );
       const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
       const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
@@ -8096,14 +8250,21 @@ export function ComfyPipelinePanel() {
         const firstPaths = listSkyboxPrimaryFacePaths(firstResult.faces);
         const firstHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(firstResult.faces);
         const firstQuality = await evaluateImageSharpnessQuality(firstPaths, SKYBOX_MIN_SHARPNESS_SCORE);
-        if (firstHasCompleteFaces && !firstQuality.lowSharpness) {
+        const firstSemantic = await evaluateSkyboxSemanticQuality(firstPaths, sceneName, normalizedScenePrompt);
+        if (firstHasCompleteFaces && !firstQuality.lowSharpness && firstSemantic.acceptable) {
           result = firstResult;
         } else {
           appendLog(
-            `天空盒首轮结果不稳定（${firstHasCompleteFaces ? "" : "主方向缺失"}${!firstHasCompleteFaces && firstQuality.lowSharpness ? " / " : ""}${firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : ""}），自动重试一次：${sceneName}`,
+            `天空盒首轮结果不稳定（${[
+              !firstHasCompleteFaces ? "主方向缺失" : "",
+              firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : "",
+              !firstSemantic.acceptable ? firstSemantic.issues.join(" / ") : ""
+            ]
+              .filter(Boolean)
+              .join(" / ")}），自动重试一次：${sceneName}`,
             "info"
           );
-          const retryDescription = `${description}。补充要求：输出清晰锐利、边界明确、结构无扭曲、纹理完整、避免模糊。`;
+          const retryDescription = `${description}。补充要求：输出清晰锐利、边界明确、结构无扭曲、纹理完整、避免模糊。禁止跑偏成室内大厅、中庭、展厅、白色建筑内景；必须严格贴合场景名描述。`;
           const secondResult = await generateSkyboxFaces(
             {
               ...runtimeSettings,
@@ -8115,8 +8276,11 @@ export function ComfyPipelinePanel() {
           const secondPaths = listSkyboxPrimaryFacePaths(secondResult.faces);
           const secondHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(secondResult.faces);
           const secondQuality = await evaluateImageSharpnessQuality(secondPaths, SKYBOX_MIN_SHARPNESS_SCORE);
-          const firstScore = firstQuality.score + (firstHasCompleteFaces ? 0 : -1000);
-          const secondScore = secondQuality.score + (secondHasCompleteFaces ? 0 : -1000);
+          const secondSemantic = await evaluateSkyboxSemanticQuality(secondPaths, sceneName, normalizedScenePrompt);
+          const firstScore =
+            firstQuality.score + (firstHasCompleteFaces ? 0 : -1000) + (firstSemantic.acceptable ? 0 : -600);
+          const secondScore =
+            secondQuality.score + (secondHasCompleteFaces ? 0 : -1000) + (secondSemantic.acceptable ? 0 : -600);
           const chooseSecond = secondScore >= firstScore;
           appendLog(
             `天空盒自动优选结果：${sceneName} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstScore.toFixed(2)} / 重试分数 ${secondScore.toFixed(2)}）`,

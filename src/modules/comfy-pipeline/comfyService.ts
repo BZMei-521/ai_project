@@ -5416,6 +5416,23 @@ function makeSkyboxPanoramaPrompt(description: string, eventPrompt?: string): st
   return `${base}\n局部事件更新：${event}`;
 }
 
+function buildSkyboxNegativePrompt(sceneName: string, description: string, baseNegativePrompt: string): string {
+  const text = `${sceneName} ${description}`.toLowerCase();
+  const extras: string[] = [];
+  const prefersOutdoor =
+    /(河|江|湖|海|岸|滩|桥|山|林|原|野|天空|户外|外景|傍晚|黄昏|夕阳|river|lake|sea|shore|mountain|forest|outdoor|exterior|dusk|sunset|evening)/i.test(
+      text
+    ) && !/(室内|内景|大厅|房间|走廊|展厅|中庭|indoor|interior|atrium|lobby|hall|room|corridor|gallery|showroom)/i.test(text);
+  if (prefersOutdoor) {
+    extras.push("indoor", "interior", "atrium", "lobby", "gallery", "showroom", "museum interior", "white hall");
+  }
+  if (/(河边|江边|河岸|江岸|河畔|水边|岸边|riverbank|riverside|shore|waterfront)/i.test(text)) {
+    extras.push("marble atrium", "modern lobby", "empty white interior", "glass hall", "indoor courtyard");
+  }
+  const merged = [baseNegativePrompt.trim(), ...extras].filter(Boolean).join(", ");
+  return merged.trim();
+}
+
 function buildSkyboxTokens(
   settings: ComfySettings,
   description: string,
@@ -5424,9 +5441,12 @@ function buildSkyboxTokens(
   sceneName = ""
 ): Record<string, string> {
   const prompt = makeSkyboxPrompt(description, face, eventPrompt);
-  const negativePrompt =
+  const negativePrompt = buildSkyboxNegativePrompt(
+    sceneName,
+    description,
     settings.skyboxAssetNegativePrompt?.trim() ||
-    "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal";
+      "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal"
+  );
   const baseTokens: Record<string, string> = {
     ASSET_NAME_DIR: sanitizeOutputAssetFolderName(sceneName || description, "未命名场景"),
     SHOT_ID: `skybox_${face}`,
@@ -5491,9 +5511,12 @@ function buildSkyboxPanoramaTokens(
   sceneName = ""
 ): Record<string, string> {
   const prompt = makeSkyboxPanoramaPrompt(description, eventPrompt);
-  const negativePrompt =
+  const negativePrompt = buildSkyboxNegativePrompt(
+    sceneName,
+    description,
     settings.skyboxAssetNegativePrompt?.trim() ||
-    "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal";
+      "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal"
+  );
   const baseTokens: Record<string, string> = {
     ASSET_NAME_DIR: sanitizeOutputAssetFolderName(sceneName || description, "未命名场景"),
     SHOT_ID: "skybox_panorama",
