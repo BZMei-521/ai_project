@@ -7414,6 +7414,8 @@ export function ComfyPipelinePanel() {
     let skipped = 0;
     for (const profile of profiles) {
       let anchorPath = (profile.anchorImagePath || profile.frontPath).trim();
+      const semanticContext = mergeCharacterSemanticContext(profile.description, profile.voiceProfile);
+      let bestAnchorModel = "";
       const existingId = findAssetIdByName("character", profile.name);
       const existingAsset = existingId
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId && item.type === "character")
@@ -7436,7 +7438,6 @@ export function ComfyPipelinePanel() {
         continue;
       }
       if (!anchorPath && profile.description.trim().length > 0) {
-        const semanticContext = mergeCharacterSemanticContext(profile.description, profile.voiceProfile);
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
         const requestedCharacterModels = await resolveRuntimeCharacterAnchorModelCandidates(
           runtimeSettings,
@@ -7456,7 +7457,7 @@ export function ComfyPipelinePanel() {
         let bestAnchorPath = "";
         let bestAnchorScore = Number.NEGATIVE_INFINITY;
         let bestAnchorIssues: string[] = [];
-        let bestAnchorModel = resolveMvAdapterCharacterModel(requestedCharacterModels[0] || DEFAULT_CHARACTER_ASSET_MODEL);
+        bestAnchorModel = resolveMvAdapterCharacterModel(requestedCharacterModels[0] || DEFAULT_CHARACTER_ASSET_MODEL);
         let acceptedAnchor = false;
         const anchorModelCandidates = requestedCharacterModels.slice(0, CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES);
         for (let modelIndex = 0; modelIndex < anchorModelCandidates.length; modelIndex += 1) {
@@ -7588,11 +7589,50 @@ export function ComfyPipelinePanel() {
       }
       const nextFilePath =
         (profile.frontPath || anchorPath || existingAsset?.filePath || existingAsset?.characterFrontPath || "").trim();
+      let nextFrontPath = (profile.frontPath || anchorPath || existingAsset?.characterFrontPath || nextFilePath).trim();
+      let nextSidePath = (profile.sidePath || existingAsset?.characterSidePath || "").trim();
+      let nextBackPath = (profile.backPath || existingAsset?.characterBackPath || "").trim();
+
+      const shouldAutoGenerateThreeView =
+        semanticContext.trim().length > 0 &&
+        nextFrontPath.length > 0 &&
+        !profile.sidePath.trim() &&
+        !profile.backPath.trim() &&
+        !(nextSidePath && nextBackPath);
+
+      if (shouldAutoGenerateThreeView) {
+        appendLog(`${sourceLabel}角色正视锚点已就绪，开始直接生成三视图：${profile.name}`, "info");
+        try {
+          const preferredCharacterModel =
+            bestAnchorModel.trim() ||
+            characterAnchorModelByNameRef.current.get(normalizeEntityKey(profile.name)) ||
+            existingAsset?.characterAnchorModelName ||
+            "";
+          const seedBase =
+            profile.seed ??
+            stableAssetSeed(`${profile.name}|import_character_threeview|${semanticContext}|${nextFrontPath}`);
+          const threeView = await generateCharacterThreeViews(
+            runtimeSettings,
+            profile.name,
+            semanticContext,
+            seedBase,
+            nextFrontPath,
+            preferredCharacterModel
+          );
+          nextFrontPath = (threeView.front.localPath || threeView.front.previewUrl || nextFrontPath).trim();
+          nextSidePath = (threeView.side.localPath || threeView.side.previewUrl || nextSidePath).trim();
+          nextBackPath = (threeView.back.localPath || threeView.back.previewUrl || nextBackPath).trim();
+          appendLog(`${sourceLabel}角色三视图生成成功：${profile.name}`, "info");
+        } catch (error) {
+          appendLog(`${sourceLabel}角色三视图生成失败，保留 front 锚点：${profile.name}，${String(error)}`, "error");
+        }
+      }
+
       const patch = {
-        filePath: nextFilePath,
-        characterFrontPath: (profile.frontPath || anchorPath || existingAsset?.characterFrontPath || nextFilePath).trim(),
-        characterSidePath: (profile.sidePath || existingAsset?.characterSidePath || "").trim(),
-        characterBackPath: (profile.backPath || existingAsset?.characterBackPath || "").trim(),
+        filePath: nextFrontPath || nextFilePath,
+        characterFrontPath: nextFrontPath,
+        characterSidePath: nextSidePath,
+        characterBackPath: nextBackPath,
         characterAnchorModelName:
           (characterAnchorModelByNameRef.current.get(normalizeEntityKey(profile.name)) ||
             existingAsset?.characterAnchorModelName ||
