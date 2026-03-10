@@ -3558,12 +3558,12 @@ function inferPromptTokens(
   const nextScenePrompt = toNextScenePrompt(promptBase);
   const videoPrompt = toVideoPrompt(shot, mode);
   const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
+  const continuitySceneSeedPath = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
   const storyboardFrameSeedPath =
     kind === "image"
       ? (
-          (characterDriven ? normalizedChar1PrimaryPath : "") ||
           sceneRefPath ||
-          normalizedChar1PrimaryPath ||
+          continuitySceneSeedPath ||
           defaultFramePath
         )
       : defaultFramePath;
