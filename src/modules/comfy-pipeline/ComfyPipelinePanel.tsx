@@ -9689,7 +9689,11 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const onGenerateImages = async (retryFailedOnly = false, skipProvision = false): Promise<boolean> => {
+  const onGenerateImages = async (
+    retryFailedOnly = false,
+    skipProvision = false,
+    forceRegenerateAll = false
+  ): Promise<boolean> => {
     try {
       if (phase === "running") {
         appendLog("分镜图生成被跳过：当前已有任务在运行", "error");
@@ -9840,11 +9844,11 @@ export function ComfyPipelinePanel() {
       let successCount = 0;
       let attemptedCount = 0;
       let skippedCount = 0;
-      appendLog(retryFailedOnly ? "开始重试失败分镜图" : "开始生成分镜图");
+      appendLog(forceRegenerateAll ? "开始重新生成全部分镜图" : retryFailedOnly ? "开始重试失败分镜图" : "开始生成分镜图");
       for (let index = 0; index < latestShotsForRun.length; index += 1) {
         const shot = latestShotsForRun[index];
         if (retryFailedOnly && imageStatusByShot[shot.id] !== "failed") continue;
-        if (skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
+        if (!forceRegenerateAll && skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
           if (isInvalidStoryboardStillPath(shot.generatedImagePath)) {
             appendLog(`检测到已有分镜图实际指向角色/场景参考图，将自动重建：${shot.title}`, "info");
           } else {
@@ -9863,21 +9867,30 @@ export function ComfyPipelinePanel() {
           }
         }
         attemptedCount += 1;
+        if (forceRegenerateAll && shot.generatedImagePath?.trim()) {
+          updateShotFields(shot.id, { generatedImagePath: "" });
+        }
         setPipelineState(`生成分镜图：${shot.title} (${index + 1}/${latestShotsForRun.length})`);
-        const ok = await onGenerateSingle("image", shot.id, retryFailedOnly, runtimeSettings);
+        const ok = await onGenerateSingle("image", shot.id, retryFailedOnly || forceRegenerateAll, runtimeSettings);
         if (ok) successCount += 1;
       }
       setPipelineState(retryFailedOnly ? "分镜图失败项重试完成" : "分镜图生成完成");
       appendLog(
         retryFailedOnly
           ? `分镜图失败重试完成，成功 ${successCount} 条，尝试 ${attemptedCount} 条`
-          : `分镜图生成完成，成功 ${successCount} 条，尝试 ${attemptedCount} 条，跳过 ${skippedCount} 条`
+          : forceRegenerateAll
+            ? `分镜图重新生成完成，成功 ${successCount} 条，尝试 ${attemptedCount} 条`
+            : `分镜图生成完成，成功 ${successCount} 条，尝试 ${attemptedCount} 条，跳过 ${skippedCount} 条`
       );
-      if (!retryFailedOnly && attemptedCount === 0 && skippedCount > 0) {
+      if (!retryFailedOnly && !forceRegenerateAll && attemptedCount === 0 && skippedCount > 0) {
         appendLog("本轮分镜图未重新生成：全部镜头已存在分镜图且启用了“跳过已生成”", "error");
       }
       pushToast(
-        retryFailedOnly ? `分镜图重试完成，成功 ${successCount} 条` : `分镜图生成完成，成功 ${successCount} 条`,
+        retryFailedOnly
+          ? `分镜图重试完成，成功 ${successCount} 条`
+          : forceRegenerateAll
+            ? `分镜图重新生成完成，成功 ${successCount} 条`
+            : `分镜图生成完成，成功 ${successCount} 条`,
         "success"
       );
       const readyImageCount = getScopedShotsSnapshot().filter((item) => item.generatedImagePath?.trim()).length;
@@ -12858,6 +12871,14 @@ export function ComfyPipelinePanel() {
           <div className="timeline-actions comfy-main-actions">
             <button className="btn-ghost" disabled={phase === "running" || scriptImportActive} onClick={() => void onGenerateImages()} type="button">
               生成分镜图
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={phase === "running" || scriptImportActive}
+              onClick={() => void onGenerateImages(false, false, true)}
+              type="button"
+            >
+              重新生成全部分镜图
             </button>
             <button className="btn-ghost" disabled={phase === "running" || scriptImportActive} onClick={() => void onGenerateVideos()} type="button">
               生成镜头视频
