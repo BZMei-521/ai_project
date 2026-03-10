@@ -4800,6 +4800,15 @@ export function ComfyPipelinePanel() {
     );
   };
 
+  const shouldBypassAssetGuidedStoryboard = (shot: Shot, assetsForShot: Asset[], runtimeSettings: ComfySettings) => {
+    const currentStoryboardMode =
+      runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+    if (currentStoryboardMode !== "mature_asset_guided") return false;
+    const referencePreview = resolveShotReferencePreview(shot, assetsForShot);
+    const primaryScenePath = referencePreview.scene?.thumbs.find((item) => item.trim().length > 0) ?? "";
+    return !primaryScenePath || isInvalidStoryboardStillPath(primaryScenePath);
+  };
+
   const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
     const [sharpness, symmetry, layout, appearance] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
@@ -9476,7 +9485,24 @@ export function ComfyPipelinePanel() {
       }
       let output: { previewUrl: string; localPath: string };
       if (kind === "image") {
+        const shouldUseEmergencyStoryboardWorkflow = shouldBypassAssetGuidedStoryboard(shot, latestAssets, assetRuntimeSettings);
+        const imageWorkflowOverride = shouldUseEmergencyStoryboardWorkflow
+          ? buildEmergencyStoryboardImageWorkflowTemplateJson(
+              pickCheckpointFromWorkflowJson(assetRuntimeSettings.imageWorkflowJson) ||
+                assetRuntimeSettings.characterAssetModelName?.trim() ||
+                DEFAULT_CHARACTER_ASSET_MODEL,
+              assetRuntimeSettings.renderWidth ?? project.width,
+              assetRuntimeSettings.renderHeight ?? project.height
+            )
+          : undefined;
+        if (shouldUseEmergencyStoryboardWorkflow) {
+          appendLog(
+            `镜头 ${shot.title} 缺少可用场景参考图，已临时跳过 scene-first 资产约束模板并改用应急分镜模板重生，避免把角色/脏参考图当成场景底板。`,
+            "info"
+          );
+        }
         const firstOutput = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, "image", latestScopedShots, latestAssets, {
+          workflowJsonOverride: imageWorkflowOverride,
           onProgress: (progress, message) => {
             const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
             setPipelineState(`分镜图生成中：${shot.title}（${pct}%）${message ? ` · ${message}` : ""}`);
@@ -9500,6 +9526,7 @@ export function ComfyPipelinePanel() {
               : stableAssetSeed(`${shot.id}|${shot.title}|storyboard_image`);
           const seedToken = assetRuntimeSettings.tokenMapping.seed?.trim() || "SEED";
           const secondOutput = await generateShotAsset(assetRuntimeSettings, shot, shotIndex, "image", latestScopedShots, latestAssets, {
+            workflowJsonOverride: imageWorkflowOverride,
             tokenOverrides: {
               [seedToken]: String(retrySeedBase + 9173)
             },
