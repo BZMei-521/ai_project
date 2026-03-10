@@ -186,6 +186,7 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
 const CHARACTER_VIEW_HASH_SIZE = 8;
 const CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD = 6;
 const CHARACTER_FRONT_REFERENCE_MISMATCH_HAMMING_THRESHOLD = 18;
+const CHARACTER_FRONT_CLEANUP_SOURCE_MISMATCH_HAMMING_THRESHOLD = 18;
 const CHARACTER_VIEW_MIN_SHARPNESS_SCORE = 18;
 const CHARACTER_THREEVIEW_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE = 14;
@@ -5870,7 +5871,33 @@ export function ComfyPipelinePanel() {
     logPrefix: string
   ) => {
     let bestPath = (await prepareCharacterFrontReferenceCandidate(candidatePath)) || candidatePath;
-    let bestQuality = await evaluateFrontReferenceQuality(bestPath);
+    const identityReferencePath = bestPath;
+    const evaluateRepairCandidateQuality = async (pathOrUrl: string) => {
+      const quality = await evaluateFrontReferenceQuality(pathOrUrl);
+      const preparedPath = pathOrUrl.trim();
+      const identityDistance =
+        preparedPath && identityReferencePath
+          ? await computeImageHashDistance(preparedPath, identityReferencePath)
+          : null;
+      const identityMismatch =
+        typeof identityDistance === "number" &&
+        identityDistance > CHARACTER_FRONT_CLEANUP_SOURCE_MISMATCH_HAMMING_THRESHOLD;
+      const issues = [
+        ...quality.issues,
+        identityMismatch ? `修复结果与原始角色锚点偏差过大(hash=${identityDistance})` : ""
+      ].filter(Boolean);
+      return {
+        ...quality,
+        acceptable: quality.acceptable && !identityMismatch,
+        issues,
+        score:
+          quality.score -
+          (identityMismatch
+            ? 80 + (identityDistance - CHARACTER_FRONT_CLEANUP_SOURCE_MISMATCH_HAMMING_THRESHOLD) * 3
+            : 0)
+      };
+    };
+    let bestQuality = await evaluateRepairCandidateQuality(bestPath);
     const cleanupWorkflow = buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName);
     const cleanupNegativePrompt = appendNegativePrompt(negativePrompt, CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS);
     const generatedCleanupSourcePaths = new Set<string>();
@@ -5890,7 +5917,7 @@ export function ComfyPipelinePanel() {
           if (attempt > 0) {
             repairedPath = await prepareCharacterFrontReferenceCandidate(repairedPath);
           }
-          const repairedQuality = await evaluateFrontReferenceQuality(repairedPath);
+          const repairedQuality = await evaluateRepairCandidateQuality(repairedPath);
           if (repairedQuality.score > attemptBestQuality.score) {
             attemptBestPath = repairedPath;
             attemptBestQuality = repairedQuality;
@@ -5936,7 +5963,7 @@ export function ComfyPipelinePanel() {
               trackGeneratedCleanupPath(cleanupCandidate);
               const preparedCleanupPath = await prepareCharacterFrontReferenceCandidate(cleanupCandidate);
               trackGeneratedCleanupPath(preparedCleanupPath);
-              const preparedCleanupQuality = await evaluateFrontReferenceQuality(preparedCleanupPath);
+              const preparedCleanupQuality = await evaluateRepairCandidateQuality(preparedCleanupPath);
               if (preparedCleanupQuality.score > bestQuality.score) {
                 bestPath = preparedCleanupPath;
                 bestQuality = preparedCleanupQuality;
