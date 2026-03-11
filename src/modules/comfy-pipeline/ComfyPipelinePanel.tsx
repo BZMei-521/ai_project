@@ -5306,18 +5306,16 @@ export function ComfyPipelinePanel() {
       front: { localPath?: string; previewUrl?: string };
       side: { localPath?: string; previewUrl?: string };
       back: { localPath?: string; previewUrl?: string };
-      referenceFrontPath?: string;
     }
   >(
     name: string,
     result: T
   ): Promise<T> => {
     const frontSource = (result.front.localPath || result.front.previewUrl || "").trim();
-    const preferredFrontSource = (result.referenceFrontPath || frontSource).trim();
     const sideSource = (result.side.localPath || result.side.previewUrl || "").trim();
     const backSource = (result.back.localPath || result.back.previewUrl || "").trim();
     const [frontPath, sidePath, backPath] = await Promise.all([
-      persistCanonicalCharacterAssetView(name, "front", preferredFrontSource),
+      persistCanonicalCharacterAssetView(name, "front", frontSource),
       persistCanonicalCharacterAssetView(name, "side", sideSource),
       persistCanonicalCharacterAssetView(name, "back", backSource)
     ]);
@@ -5325,8 +5323,8 @@ export function ComfyPipelinePanel() {
       ...result,
       front: {
         ...result.front,
-        localPath: frontPath || preferredFrontSource || result.front.localPath,
-        previewUrl: frontPath || preferredFrontSource || result.front.previewUrl
+        localPath: frontPath || result.front.localPath,
+        previewUrl: frontPath || result.front.previewUrl
       },
       side: {
         ...result.side,
