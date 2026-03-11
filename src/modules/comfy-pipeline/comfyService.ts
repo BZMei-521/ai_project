@@ -1,5 +1,5 @@
 import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
-import { invokeDesktopCommand, isDesktopRuntime } from "../platform/desktopBridge";
+import { invokeDesktopCommand, isDesktopRuntime, toDesktopMediaSource } from "../platform/desktopBridge";
 import STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
 
 function normalizeEntityKey(value: string): string {
@@ -2676,6 +2676,9 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
       `Lock character identity for ${characterNames.join(", ")}; keep face, hair, costume, silhouette, proportions, and colors consistent, and choose ${preferredCharacterView || "front/side/back"} appearance according to the shot angle.`
     );
     pieces.push("Never output an empty environment plate when character references are provided.");
+    pieces.push(
+      "Characters must be naturally integrated into the scene with grounded feet, matched perspective, matched grayscale/lighting, and contact shadows; never paste a flat character sheet or white-background cutout on top of the scene."
+    );
   }
   pieces.push(
     "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
@@ -2698,6 +2701,9 @@ function buildQwenSlotInstruction(
     .map((item, index) => {
       const slot = `Reference slot ${index + 1}`;
       const label = item.label?.trim() ?? "";
+      if (label === "scene_character_composite") {
+        return `${slot} is a pre-composited scene-and-character layout guide; keep the character grounded in the environment, preserve approximate subject placement, and refine it into one coherent cinematic frame instead of copying it as a flat overlay.`;
+      }
       if (item.role === "scene_primary" || item.role === "scene_secondary") {
         return `${slot} is the binding environment reference${label ? ` (${label})` : ""}; keep location layout and camera direction aligned to it.`;
       }
@@ -2997,18 +3003,203 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   return [...characters.slice(0, 2), ...continuity].slice(0, 3);
 }
 
+function canProcessStoryboardReferenceImages(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
+async function loadReferenceImageElement(pathOrUrl: string): Promise<HTMLImageElement | null> {
+  if (!canProcessStoryboardReferenceImages()) return null;
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed) return null;
+  const source = /^data:|^https?:|^blob:|^file:/i.test(trimmed) ? trimmed : toDesktopMediaSource(trimmed);
+  if (!source) return null;
+  return await new Promise<HTMLImageElement | null>((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = source;
+  });
+}
+
+function estimateBorderBackgroundColor(context: CanvasRenderingContext2D, width: number, height: number) {
+  const frame = context.getImageData(0, 0, width, height);
+  const data = frame.data;
+  const step = Math.max(1, Math.floor(Math.min(width, height) / 96));
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let count = 0;
+  const sample = (x: number, y: number) => {
+    const index = (y * width + x) * 4;
+    sumR += data[index] ?? 0;
+    sumG += data[index + 1] ?? 0;
+    sumB += data[index + 2] ?? 0;
+    count += 1;
+  };
+  for (let x = 0; x < width; x += step) {
+    sample(x, 0);
+    sample(x, Math.max(0, height - 1));
+  }
+  for (let y = step; y < height - step; y += step) {
+    sample(0, y);
+    sample(Math.max(0, width - 1), y);
+  }
+  return {
+    r: count > 0 ? sumR / count : 255,
+    g: count > 0 ? sumG / count : 255,
+    b: count > 0 ? sumB / count : 255
+  };
+}
+
+async function buildCharacterCutoutCanvas(pathOrUrl: string): Promise<HTMLCanvasElement | null> {
+  const image = await loadReferenceImageElement(pathOrUrl);
+  if (!image) return null;
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (width <= 0 || height <= 0) return null;
+  const workCanvas = document.createElement("canvas");
+  workCanvas.width = width;
+  workCanvas.height = height;
+  const context = workCanvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(image, 0, 0, width, height);
+  const frame = context.getImageData(0, 0, width, height);
+  const data = frame.data;
+  const background = estimateBorderBackgroundColor(context, width, height);
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let index = 0; index < data.length; index += 4) {
+    const dr = (data[index] ?? 0) - background.r;
+    const dg = (data[index + 1] ?? 0) - background.g;
+    const db = (data[index + 2] ?? 0) - background.b;
+    const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+    const alpha = distance <= 28 ? 0 : distance >= 58 ? 255 : Math.round(((distance - 28) / 30) * 255);
+    data[index + 3] = alpha;
+    if (alpha <= 0) continue;
+    const pixel = index / 4;
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (maxX < minX || maxY < minY) return null;
+  context.putImageData(frame, 0, 0);
+  const padding = Math.max(8, Math.round(Math.min(width, height) * 0.03));
+  const cropX = Math.max(0, minX - padding);
+  const cropY = Math.max(0, minY - padding);
+  const cropWidth = Math.min(width - cropX, maxX - minX + 1 + padding * 2);
+  const cropHeight = Math.min(height - cropY, maxY - minY + 1 + padding * 2);
+  const cutoutCanvas = document.createElement("canvas");
+  cutoutCanvas.width = cropWidth;
+  cutoutCanvas.height = cropHeight;
+  const cutoutContext = cutoutCanvas.getContext("2d");
+  if (!cutoutContext) return null;
+  cutoutContext.drawImage(workCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+  return cutoutCanvas;
+}
+
+function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
+  const isWide = containsAnyKeyword(corpus, ["远景", "大全景", "全景", "建立镜头", "wide shot", "establishing"]);
+  const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot"]);
+  if (count >= 2) {
+    if (isWide) return 0.34;
+    if (isClose) return 0.48;
+    return 0.4;
+  }
+  if (isWide) return 0.42;
+  if (isClose) return 0.62;
+  return 0.52;
+}
+
+async function buildStoryboardCompositeReference(
+  settings: ComfySettings,
+  shot: Shot,
+  refs: WeightedImageRef[],
+  inputDir: string
+): Promise<WeightedImageRef | null> {
+  if (!canProcessStoryboardReferenceImages()) return null;
+  const sceneRef = refs.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const characterRefs = refs.filter((item) => item.role.startsWith("character_")).slice(0, 2);
+  if (!sceneRef || characterRefs.length === 0) return null;
+  const sceneImage = await loadReferenceImageElement(sceneRef.source);
+  if (!sceneImage) return null;
+  const sceneWidth = sceneImage.naturalWidth || sceneImage.width;
+  const sceneHeight = sceneImage.naturalHeight || sceneImage.height;
+  if (sceneWidth <= 0 || sceneHeight <= 0) return null;
+
+  const cutouts = (
+    await Promise.all(characterRefs.map(async (item) => ({ ref: item, canvas: await buildCharacterCutoutCanvas(item.source) })))
+  ).filter((entry): entry is { ref: WeightedImageRef; canvas: HTMLCanvasElement } => Boolean(entry.canvas));
+  if (cutouts.length === 0) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = sceneWidth;
+  canvas.height = sceneHeight;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(sceneImage, 0, 0, sceneWidth, sceneHeight);
+
+  const floorY = sceneHeight * 0.92;
+  const heightRatio = inferStoryboardCompositeHeightRatio(shot, cutouts.length);
+  const centerXs = cutouts.length >= 2 ? [0.36, 0.64] : [0.5];
+  cutouts.forEach(({ canvas: cutout }, index) => {
+    const targetHeight = sceneHeight * (heightRatio - index * 0.02);
+    const scale = targetHeight / Math.max(1, cutout.height);
+    const drawWidth = cutout.width * scale;
+    const drawHeight = cutout.height * scale;
+    const centerX = (centerXs[index] ?? 0.5) * sceneWidth;
+    const drawX = Math.round(centerX - drawWidth / 2);
+    const drawY = Math.round(floorY - drawHeight);
+    context.save();
+    context.fillStyle = "rgba(0,0,0,0.16)";
+    context.beginPath();
+    context.ellipse(centerX, floorY + 3, Math.max(18, drawWidth * 0.18), Math.max(8, drawWidth * 0.06), 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
+  });
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filePath = `${inputDir}/shot_${safeShotId}_scene_character_composite.png`;
+  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath,
+    base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  });
+  if (!result.filePath) return null;
+  return {
+    source: result.filePath,
+    weight: 0.98,
+    priority: 500,
+    bucket: `scene_composite:${shot.id}`,
+    label: "scene_character_composite",
+    role: "scene_primary"
+  };
+}
+
 async function stageCharacterReferenceImages(
   settings: ComfySettings,
   shot: Shot,
   refs: WeightedImageRef[]
 ): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
-  const selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(refs));
+  let selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(refs));
   if (selectedRefs.length === 0) return [];
   const inputDir = inferComfyInputDir(settings);
   if (!inputDir) {
     // Degrade gracefully when input directory is unknown.
     // Generation can still continue without dynamic reference image injection.
     return [];
+  }
+  const compositeRef = await buildStoryboardCompositeReference(settings, shot, selectedRefs, inputDir);
+  if (compositeRef) {
+    selectedRefs = [
+      compositeRef,
+      ...selectedRefs.filter((item) => item.role.startsWith("character_")).slice(0, 2)
+    ].slice(0, 3);
   }
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
