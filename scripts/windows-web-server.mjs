@@ -1485,6 +1485,8 @@ async function comfyDiscoverEndpoints() {
 async function comfyDiscoverLocalDirs() {
   const home = os.homedir();
   const roots = [
+    path.resolve(projectRoot, "..", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
+    path.resolve(projectRoot, "..", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "..", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.join(home, "Documents", "ComfyUI"),

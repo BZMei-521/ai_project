@@ -10039,6 +10039,48 @@ export function ComfyPipelinePanel() {
       }
       const shotsForRun = getScopedShotsSnapshot();
       let runtimeSettings = settings;
+      const localDirs = await discoverComfyLocalDirs().catch(() => ({
+        rootDir: "",
+        inputDir: "",
+        outputDir: ""
+      }));
+      const correctedPathLabels: string[] = [];
+      if (
+        shouldAdoptDiscoveredComfyPath(runtimeSettings.comfyRootDir, localDirs.rootDir) ||
+        shouldAdoptDiscoveredComfyPath(runtimeSettings.comfyInputDir, localDirs.inputDir) ||
+        shouldAdoptDiscoveredComfyPath(runtimeSettings.outputDir, localDirs.outputDir)
+      ) {
+        runtimeSettings = {
+          ...runtimeSettings,
+          comfyRootDir: shouldAdoptDiscoveredComfyPath(runtimeSettings.comfyRootDir, localDirs.rootDir)
+            ? localDirs.rootDir
+            : runtimeSettings.comfyRootDir,
+          comfyInputDir: shouldAdoptDiscoveredComfyPath(runtimeSettings.comfyInputDir, localDirs.inputDir)
+            ? localDirs.inputDir
+            : runtimeSettings.comfyInputDir,
+          outputDir: shouldAdoptDiscoveredComfyPath(runtimeSettings.outputDir, localDirs.outputDir)
+            ? localDirs.outputDir
+            : runtimeSettings.outputDir
+        };
+        if (runtimeSettings.comfyRootDir === localDirs.rootDir && localDirs.rootDir) {
+          correctedPathLabels.push(`根目录: ${localDirs.rootDir}`);
+        }
+        if (runtimeSettings.comfyInputDir === localDirs.inputDir && localDirs.inputDir) {
+          correctedPathLabels.push(`input: ${localDirs.inputDir}`);
+        }
+        if (runtimeSettings.outputDir === localDirs.outputDir && localDirs.outputDir) {
+          correctedPathLabels.push(`output: ${localDirs.outputDir}`);
+        }
+        persistSettings((previous) => ({
+          ...previous,
+          comfyRootDir: runtimeSettings.comfyRootDir,
+          comfyInputDir: runtimeSettings.comfyInputDir,
+          outputDir: runtimeSettings.outputDir
+        }));
+      }
+      if (correctedPathLabels.length > 0) {
+        appendLog(`分镜生成前已自动修正 Comfy 路径：${correctedPathLabels.join("；")}`, "info");
+      }
       if (workflowsAreCoupled(runtimeSettings.imageWorkflowJson ?? "", runtimeSettings.videoWorkflowJson ?? "")) {
         runtimeSettings = {
           ...runtimeSettings,
