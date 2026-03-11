@@ -5325,12 +5325,20 @@ export function ComfyPipelinePanel() {
     let sumR = 0;
     let sumG = 0;
     let sumB = 0;
+    let sumLuma = 0;
+    let sumLumaSq = 0;
     let count = 0;
     const sample = (x: number, y: number) => {
       const index = (y * canvas.width + x) * 4;
-      sumR += data[index] ?? 0;
-      sumG += data[index + 1] ?? 0;
-      sumB += data[index + 2] ?? 0;
+      const r = data[index] ?? 0;
+      const g = data[index + 1] ?? 0;
+      const b = data[index + 2] ?? 0;
+      const luma = r * 0.299 + g * 0.587 + b * 0.114;
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      sumLuma += luma;
+      sumLumaSq += luma * luma;
       count += 1;
     };
     for (let x = 0; x < canvas.width; x += step) {
@@ -5345,17 +5353,44 @@ export function ComfyPipelinePanel() {
     const bgR = sumR / count;
     const bgG = sumG / count;
     const bgB = sumB / count;
+    const bgBrightness = (bgR + bgG + bgB) / 3;
+    const bgChroma = Math.max(bgR, bgG, bgB) - Math.min(bgR, bgG, bgB);
+    const borderLumaMean = sumLuma / count;
+    const borderLumaVariance = Math.max(0, sumLumaSq / count - borderLumaMean * borderLumaMean);
+    const borderLumaStd = Math.sqrt(borderLumaVariance);
     const targetValue = tone === "white" ? 250 : 236;
     const targetR = targetValue;
     const targetG = targetValue;
     const targetB = targetValue;
+    const backgroundAlreadyClean =
+      borderLumaStd <= 8 &&
+      bgChroma <= 14 &&
+      Math.abs(bgBrightness - targetValue) <= (tone === "white" ? 10 : 12);
+    if (backgroundAlreadyClean) return pathOrUrl;
     let replaced = 0;
+    let inspected = 0;
+    const closenessThreshold = tone === "white" ? 28 : 26;
+    const minimumBrightness = tone === "white" ? 176 : 150;
+    const brightnessSlack = tone === "white" ? 20 : 18;
+    const chromaThreshold = tone === "white" ? 26 : 24;
     for (let index = 0; index < data.length; index += 4) {
-      const dr = (data[index] ?? 0) - bgR;
-      const dg = (data[index + 1] ?? 0) - bgG;
-      const db = (data[index + 2] ?? 0) - bgB;
+      const r = data[index] ?? 0;
+      const g = data[index + 1] ?? 0;
+      const b = data[index + 2] ?? 0;
+      const dr = r - bgR;
+      const dg = g - bgG;
+      const db = b - bgB;
       const distance = Math.sqrt(dr * dr + dg * dg + db * db);
-      if (distance <= 42) {
+      const maxChannel = Math.max(r, g, b);
+      const minChannel = Math.min(r, g, b);
+      const chroma = maxChannel - minChannel;
+      const brightness = (r + g + b) / 3;
+      inspected += 1;
+      const looksLikeBackground =
+        distance <= closenessThreshold &&
+        chroma <= chromaThreshold &&
+        brightness >= Math.max(minimumBrightness, bgBrightness - brightnessSlack);
+      if (looksLikeBackground) {
         data[index] = targetR;
         data[index + 1] = targetG;
         data[index + 2] = targetB;
@@ -5364,6 +5399,8 @@ export function ComfyPipelinePanel() {
       }
     }
     if (replaced <= 0) return pathOrUrl;
+    const replacedRatio = inspected > 0 ? replaced / inspected : 0;
+    if (replacedRatio < 0.02) return pathOrUrl;
     context.putImageData(frame, 0, 0);
     const dataUrl = canvas.toDataURL("image/png");
     const filePath = buildNormalizedAnchorOutputPath(trimmed);
