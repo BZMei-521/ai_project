@@ -5312,6 +5312,21 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const clearCanonicalCharacterAssetViews = async (
+    name: string,
+    views: Array<"front" | "side" | "back">
+  ) => {
+    const targets = views
+      .map((view) => buildCanonicalCharacterAssetViewPath(name, view))
+      .filter((value): value is string => Boolean(value));
+    if (targets.length <= 0) return;
+    try {
+      await deleteGeneratedFileFamilies(targets, []);
+    } catch {
+      // Ignore cleanup failures; regeneration can still continue.
+    }
+  };
+
   const persistCanonicalCharacterThreeViews = async <
     T extends {
       front: { localPath?: string; previewUrl?: string };
@@ -8326,6 +8341,7 @@ export function ComfyPipelinePanel() {
         continue;
       }
       if (!anchorPath && profile.description.trim().length > 0) {
+        await clearCanonicalCharacterAssetViews(profile.name, ["front"]);
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
         const requestedCharacterModels = await resolveRuntimeCharacterAnchorModelCandidates(
           runtimeSettings,
