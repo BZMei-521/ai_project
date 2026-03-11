@@ -8528,6 +8528,7 @@ export function ComfyPipelinePanel() {
       if (shouldAutoGenerateThreeView) {
         appendLog(`${sourceLabel}角色正视锚点已就绪，开始直接生成三视图：${profile.name}`, "info");
         try {
+          const approvedFrontPath = nextFrontPath.trim();
           const preferredCharacterModel =
             bestAnchorModel.trim() ||
             characterAnchorModelByNameRef.current.get(profileKey) ||
@@ -8541,10 +8542,10 @@ export function ComfyPipelinePanel() {
             profile.name,
             semanticContext,
             seedBase,
-            nextFrontPath,
+            approvedFrontPath,
             preferredCharacterModel
           );
-          nextFrontPath = (threeView.front.localPath || threeView.front.previewUrl || nextFrontPath).trim();
+          nextFrontPath = approvedFrontPath || nextFrontPath;
           nextSidePath = (threeView.side.localPath || threeView.side.previewUrl || nextSidePath).trim();
           nextBackPath = (threeView.back.localPath || threeView.back.previewUrl || nextBackPath).trim();
           if (profileKey) {
@@ -8785,7 +8786,7 @@ export function ComfyPipelinePanel() {
           reusableFrontReferencePath,
           preferredCharacterModel
         );
-        const generatedFrontPath = (front.localPath || front.previewUrl || reusableFrontReferencePath).trim();
+        const generatedFrontPath = reusableFrontReferencePath.trim();
         const generatedSidePath = (side.localPath || side.previewUrl || "").trim();
         const generatedBackPath = (back.localPath || back.previewUrl || "").trim();
         const canonicalFrontPath = generatedFrontPath || reusableFrontReferencePath.trim();
