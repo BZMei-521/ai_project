@@ -5160,6 +5160,7 @@ export function ComfyPipelinePanel() {
       typeof symmetry === "number" && symmetry < CHARACTER_FRONT_REFERENCE_MIN_SYMMETRY;
     const bboxAspect =
       layout && layout.bbox.heightRatio > 0 ? layout.bbox.widthRatio / layout.bbox.heightRatio : null;
+    const extraMediumComponents = layout ? Math.max(0, layout.mediumComponents - 1) : 0;
     const abnormalFullBodySilhouette =
       layout
         ? layout.bbox.widthRatio < 0.08 ||
@@ -5173,7 +5174,7 @@ export function ComfyPipelinePanel() {
     const sceneBlockLikeLayout = isFrontSceneBlockLikeLayout(layout);
     const clutteredFrontLayout =
       layout != null &&
-      (layout.mediumComponents > 0 ||
+      (extraMediumComponents > 0 ||
         layout.secondaryForegroundRatio > 0.06 ||
         layout.detachedForegroundRatio > 0.04 ||
         layout.edgeForegroundRatio > 0.12);
@@ -5187,8 +5188,8 @@ export function ComfyPipelinePanel() {
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
-      layout && layout.mediumComponents > 0
-        ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
+      layout && extraMediumComponents > 0
+        ? `存在额外设定页组件(cluster=${extraMediumComponents})`
         : "",
       layout && layout.secondaryForegroundRatio > 0.06
         ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
@@ -5202,7 +5203,7 @@ export function ComfyPipelinePanel() {
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
       layout && layout.bbox.heightRatio < 0.56 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       clutteredFrontLayout && layout
-        ? `前景装饰或悬浮附加物过多(cluster=${layout.mediumComponents},secondary=${layout.secondaryForegroundRatio.toFixed(2)},detached=${layout.detachedForegroundRatio.toFixed(2)})`
+        ? `前景装饰或悬浮附加物过多(cluster=${extraMediumComponents},secondary=${layout.secondaryForegroundRatio.toFixed(2)},detached=${layout.detachedForegroundRatio.toFixed(2)})`
         : "",
       appearance?.likelyTemplateFigure
         ? `角色像灰模或人体模板(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
@@ -5226,7 +5227,7 @@ export function ComfyPipelinePanel() {
       (layout?.significantComponents && layout.significantComponents > 1
         ? 40 + (layout.significantComponents - 1) * 16
         : 0) +
-      (layout?.mediumComponents && layout.mediumComponents > 0 ? 26 + layout.mediumComponents * 14 : 0) +
+      (extraMediumComponents > 0 ? 26 + extraMediumComponents * 14 : 0) +
       (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.04) * 260 : 0) +
       (layout ? Math.max(0, layout.detachedForegroundRatio - 0.03) * 240 : 0) +
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.08) * 180 : 0) +
