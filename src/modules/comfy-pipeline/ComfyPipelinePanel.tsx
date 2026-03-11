@@ -128,6 +128,12 @@ const CHARACTER_ANCHOR_MALE_MODEL_RECOMMEND_ORDER = [
   "sd_xl_base_1.0.safetensors",
   "animagine-xl-4.0.safetensors"
 ] as const;
+const CHARACTER_ANCHOR_ANIME_MODEL_RECOMMEND_ORDER = [
+  "animagine-xl-4.0.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "dreamshaper_8.safetensors",
+  "sd_xl_base_1.0.safetensors"
+] as const;
 const CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER = [
   "realisticVisionV60B1_v51VAE.safetensors",
   "juggernautXL_v8Rundiffusion.safetensors",
@@ -598,7 +604,7 @@ function prefersRealisticCharacterAnchorModel(context: string): boolean {
   );
 }
 
-function resolveCharacterAnchorRecommendOrder(context: string) {
+function resolveCharacterAnchorRecommendOrder(context: string): readonly string[] {
   const normalized = normalizeStoryInput(context).toLowerCase();
   const femaleHint =
     /(女声|女性|女子|女孩|姑娘|少女|woman|female|girl|young woman|长裙|裙装|她)/i.test(normalized);
@@ -607,7 +613,7 @@ function resolveCharacterAnchorRecommendOrder(context: string) {
   const gender: "" | "female" | "male" = femaleHint && !maleHint ? "female" : maleHint && !femaleHint ? "male" : "";
   const visualStyleKind = inferVisualStyleKindFromText(context);
   if (visualStyleKind === "anime") {
-    return CHARACTER_ASSET_MODEL_RECOMMEND_ORDER;
+    return CHARACTER_ANCHOR_ANIME_MODEL_RECOMMEND_ORDER;
   }
   if (prefersRealisticCharacterAnchorModel(context)) {
     return gender === "male"
@@ -6035,18 +6041,23 @@ export function ComfyPipelinePanel() {
       const styleProfile = resolveSharedVisualStyleProfile([context]);
       const styleHint = styleProfile.styleHint;
       const styleAnchor = styleProfile.styleAnchor;
+      const isAnimeStyle = styleProfile.kind === "anime";
       const core = mergePromptFragments([
         "masterpiece, best quality, high detail",
         genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
         "single character, solo, exactly one human character",
         "one complete human body with head, torso, two arms, two hands, two legs, two feet",
-        "real human face, natural facial features, realistic skin tone, visible hairstyle, visible clothing layers",
+        isAnimeStyle
+          ? "modern donghua character design, natural 2D facial features, clean readable eyes nose mouth, visible hairstyle, visible clothing layers"
+          : "real human face, natural facial features, realistic skin tone, visible hairstyle, visible clothing layers",
         "sharp face, crisp facial features, clearly separated eyes, eyebrows, nose bridge, lips, and jawline",
         "face remains readable in a full-body frame, no smeared facial details, no muddy facial shadows",
         "front-facing full-body character image",
         "single isolated character on a pure white background",
         "clean studio full-body standing character",
-        "real dressed human person, not mannequin, not fashion doll, not body template",
+        isAnimeStyle
+          ? "fully dressed modern donghua character, not mannequin, not fashion doll, not body template, not paper doll"
+          : "real dressed human person, not mannequin, not fashion doll, not body template",
         "one person only, one body only, one angle only",
         "centered composition, head-to-toe fully visible, generous blank margin on all sides",
         "plain white seamless backdrop only, no floor props, no scenery, no layout board",
@@ -6069,7 +6080,7 @@ export function ComfyPipelinePanel() {
         "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
         "禁止裸体、禁止裸模、禁止赤脚、禁止裸足、禁止露胸、禁止露出躯干、禁止内衣态、禁止泳装态",
         "胸口、腰腹、臀胯和大腿上部必须被服装完整覆盖，不允许深V、抹胸、露脐、透视薄纱、内衣外露",
-        "外套、长袍、连衣裙、上衣下装等服装层必须明确存在，不能退化成粉色肉色人体模板或简化纸片人",
+        "外套、长袍、连衣裙、上衣下装等服装层必须明确存在，必须看见领口、袖口、腰线、裙摆或衣摆等服装结构，不能退化成粉色肉色人体模板或简化纸片人",
         "角色高度约占画面 62% 到 72%，头顶和鞋底都必须留白",
         "五官必须清楚，双眼、鼻梁、嘴唇和下颌线都要可辨识，不允许糊脸、塌脸、脏污遮挡",
         "纯白背景必须干净均匀，不允许灰斑、脏点、漂浮灰块、边缘杂色",
