@@ -4696,6 +4696,62 @@ function workflowHasNodeType(workflow: Record<string, unknown>, targetType: stri
   });
 }
 
+function adaptBuiltinStoryboardWorkflowForShot(
+  workflow: Record<string, unknown>,
+  tokens: Record<string, string>
+): void {
+  const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
+  const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
+  const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
+  const hasCharacters = char1PrimaryPath.length > 0 || char2PrimaryPath.length > 0;
+  const hasSceneRef = sceneRefPath.length > 0;
+  if (!hasCharacters || !hasSceneRef) return;
+
+  const samplerNode = workflow["13"];
+  const sceneAdapterNode = workflow["17"];
+  const latentNode = workflow["3"];
+  const char1AdapterNode = workflow["8"];
+  const char2AdapterNode = workflow["12"];
+  if (
+    !samplerNode ||
+    !sceneAdapterNode ||
+    !latentNode ||
+    typeof samplerNode !== "object" ||
+    typeof sceneAdapterNode !== "object" ||
+    typeof latentNode !== "object"
+  ) {
+    return;
+  }
+
+  const samplerClass = String((samplerNode as Record<string, unknown>).class_type ?? "").trim();
+  const sceneAdapterClass = String((sceneAdapterNode as Record<string, unknown>).class_type ?? "").trim();
+  if (samplerClass !== "KSampler" || sceneAdapterClass !== "IPAdapterAdvanced") return;
+
+  const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
+  const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
+
+  workflow["3"] = {
+    inputs: {
+      width: renderWidth,
+      height: renderHeight,
+      batch_size: 1
+    },
+    class_type: "EmptyLatentImage"
+  };
+
+  const updateAdapterWeight = (node: unknown, fallbackWeight: number) => {
+    if (!node || typeof node !== "object") return;
+    const inputs = (node as Record<string, unknown>).inputs;
+    if (!inputs || typeof inputs !== "object") return;
+    (inputs as Record<string, unknown>).weight = fallbackWeight;
+    (inputs as Record<string, unknown>).end_at = 0.9;
+  };
+
+  updateAdapterWeight(sceneAdapterNode, 0.34);
+  updateAdapterWeight(char1AdapterNode, 1.08);
+  updateAdapterWeight(char2AdapterNode, 0.96);
+}
+
 function getPromptStatus(raw: unknown): ComfyPromptStatus | null {
   if (!raw || typeof raw !== "object") return null;
   const status = (raw as Record<string, unknown>).status;
@@ -5342,6 +5398,9 @@ export async function generateShotAsset(
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
+    if (kind === "image") {
+      adaptBuiltinStoryboardWorkflowForShot(built, tokens);
+    }
     applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     let objectInfo: Record<string, unknown> | undefined;
     try {
