@@ -6516,6 +6516,10 @@ export function ComfyPipelinePanel() {
     const styleProfile = resolveSharedVisualStyleProfile([context]);
     const styleHint = styleProfile.styleHint;
     const styleAnchor = styleProfile.styleAnchor;
+    const animeTurnaroundDirective =
+      styleProfile.kind === "anime"
+        ? "Render as a clean 2D guoman turnaround sheet with stable anime line art, cel-shaded clothing shapes, and clearly separated costume blocks. Never degrade into mannequin skin-tone bodies, grey dummy figures, or semi-nude fashion forms."
+        : "";
     const retryTuning =
       attempt <= 0
         ? "Keep three readable full-body figures with clear spacing and stable panel order."
@@ -6529,18 +6533,19 @@ export function ComfyPipelinePanel() {
       "Neutral pose, arms relaxed down, feet parallel, consistent proportions across all three views.",
       "Clean white background only, no floor props, no scenery, no layout decoration beyond a clean concept art turnaround presentation.",
       "Concept art layout, production-ready character turnaround sheet, precise spacing, clear silhouette separation between panels.",
+      animeTurnaroundDirective,
       genderHint === "female" ? "The character is a young adult woman." : genderHint === "male" ? "The character is a young adult man." : "",
       "Use the first reference image as the exact identity, face, hairstyle, costume, and silhouette source.",
       "Use the second reference image only as the layout, spacing, panel order, framing, and orthographic presentation target.",
       "The front panel must stay very close to the first reference image in face shape, hairline, costume color placement, silhouette, and overall identity. Do not redesign or stylize the front panel away from the first reference.",
       "Match the panel order and spacing of the second reference image: left panel front view, middle panel strict right profile, right panel back view. Do not copy any extra figure, grey background, or decoration from the layout reference.",
-      "Each figure should occupy about 64% to 74% of the board height inside its own panel, with clear margins but never as tiny distant figures.",
+      "Each figure should occupy about 72% to 82% of the board height inside its own panel, with clear margins but never as tiny distant figures.",
       `Character identity: ${name}`,
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
       "Preserve the same face, hairstyle, body proportions, costume structure, garment layers, sleeve shape, belt placement, accessories, shoes or boots, colors, and silhouette from the first image.",
       "Preserve clothing color saturation and material contrast from the first image. Do not wash the character into a pale grey mannequin or low-color template.",
       "Keep natural head size, stable facial proportions, clear eyes nose mouth placement, and undistorted face shape in all panels.",
-      "Do not simplify the costume into a mannequin, base mesh, bodysuit, underwear, grey dummy, tactical uniform, or anatomy template.",
+      "Do not simplify the costume into a mannequin, base mesh, bodysuit, underwear, grey dummy, tactical uniform, anatomy template, or skin-colored blank dress form.",
       "One character only, one front view, one side view, one back view, full body, feet visible, head visible, no crop, no extra panels, no text, no watermark.",
       "The side view must be a strict right-facing profile. The back view must show no face. The front view must face camera.",
       "All three figures must read as the same person with matched costume details, matched silhouette, matched color placement, and matched scale.",
@@ -6854,7 +6859,9 @@ export function ComfyPipelinePanel() {
       preferredCharacterModel.trim() ||
       (await resolveRuntimeCharacterAnchorModel(runtimeSettings, "角色三视图", context));
     const characterModelForWorkflow = requestedCharacterModel;
-    const allowAutomaticFallbackRepair = false;
+    const threeViewStyleProfile = resolveSharedVisualStyleProfile([context]);
+    const preferAnimeReferenceEdit = threeViewStyleProfile.kind === "anime";
+    const allowAutomaticFallbackRepair = preferAnimeReferenceEdit;
     const negativePrompt = appendNegativePrompt(
       runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
       [
@@ -6890,7 +6897,7 @@ export function ComfyPipelinePanel() {
     const managedExistingFrontReferencePath = isManagedCharacterArtifactPath(existingFrontReferencePath)
       ? existingFrontReferencePath.trim()
       : "";
-    const shouldPreferReferenceEditPrimary = false;
+    const shouldPreferReferenceEditPrimary = preferAnimeReferenceEdit;
     const buildCharacterArtifactFamilySourcePaths = (paths: string[]) => {
       const directories = uniqueEntities(
         paths
