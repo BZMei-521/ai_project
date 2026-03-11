@@ -1335,24 +1335,29 @@ export function explainStoryboardVideoModeByMatureCase(
 function applyGlobalStyleToTokens(
   settings: ComfySettings,
   tokens: Record<string, string>,
-  kind: "image" | "video" | "audio"
+  kind: "image" | "video" | "audio",
+  scope: "storyboard" | "character_asset" | "scene_asset" = "storyboard"
 ): Record<string, string> {
   const visualStyle = normalizePromptBody(settings.globalVisualStylePrompt ?? "");
   const styleNegative = normalizePromptBody(settings.globalStyleNegativePrompt ?? "");
   if (!visualStyle && !styleNegative) return tokens;
 
   const next = { ...tokens };
+  const shouldInjectVisualStyle = scope !== "character_asset";
+  const shouldInjectStyleNegative = scope !== "character_asset";
   if (visualStyle) {
-    if (kind === "image") {
+    if (kind === "image" && shouldInjectVisualStyle) {
       next.PROMPT = appendPromptSection(next.PROMPT ?? "", "全局视觉风格锚点", visualStyle);
       next.NEXT_SCENE_PROMPT = appendPromptSection(next.NEXT_SCENE_PROMPT ?? "", "全局视觉风格锚点", visualStyle);
     }
-    if (kind === "video") {
+    if (kind === "video" && shouldInjectVisualStyle) {
       next.VIDEO_PROMPT = appendPromptSection(next.VIDEO_PROMPT ?? "", "全局视觉风格锚点", visualStyle);
     }
-    next.GLOBAL_VISUAL_STYLE = visualStyle;
+    if (shouldInjectVisualStyle) {
+      next.GLOBAL_VISUAL_STYLE = visualStyle;
+    }
   }
-  if (styleNegative && kind !== "audio") {
+  if (styleNegative && kind !== "audio" && shouldInjectStyleNegative) {
     next.NEGATIVE_PROMPT = appendNegativePrompt(next.NEGATIVE_PROMPT ?? "", styleNegative);
     next.GLOBAL_STYLE_NEGATIVE = styleNegative;
   }
@@ -5669,7 +5674,13 @@ export async function generateShotAsset(
         )
       };
     }
-    tokens = applyGlobalStyleToTokens(settings, tokens, kind);
+    const styleScope =
+      assetOutputContext?.kind === "character"
+        ? "character_asset"
+        : assetOutputContext?.kind === "scene"
+          ? "scene_asset"
+          : "storyboard";
+    tokens = applyGlobalStyleToTokens(settings, tokens, kind, styleScope);
     if (kind === "video") {
       if (lipSyncSupport?.usesDialogueAudioPathToken) {
         tokens = await stageDialogueAudioTokens(
