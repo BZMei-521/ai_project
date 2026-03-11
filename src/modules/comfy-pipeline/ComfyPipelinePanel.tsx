@@ -6130,6 +6130,52 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const resolveCharacterAnchorStyleProfile = (contexts: string[] = []) => {
+    const shared = resolveSharedVisualStyleProfile(contexts);
+    if (shared.kind === "anime") {
+      return {
+        kind: shared.kind,
+        styleHint:
+          "modern guoman character reference art, restrained 2D line art, clean cel shading, mature non-cute proportions",
+        styleAnchor:
+          "clean modern donghua character reference art, one isolated full-body person, plain white studio background, model-sheet clarity, no scenery, no crowd, no poster layout",
+        styleNegative: mergePromptFragments([
+          shared.styleNegative,
+          "scene background, crowd scene, park scene, forest scene, stadium, audience, event photo, group portrait, team photo, class photo, poster card, landscape card, scenery inside white background"
+        ]),
+        characterDirective:
+          "Character reference art only. Keep one isolated full-body character on a plain studio background. No narrative scene, no crowd, no poster composition, no layout board."
+      };
+    }
+    if (shared.kind === "realistic") {
+      return {
+        kind: shared.kind,
+        styleHint:
+          "clean realistic character reference art, one isolated full-body person, plain studio setup, no scene narration",
+        styleAnchor:
+          "single full-body character reference, plain white studio background, isolated subject, no scenery, no crowd, no poster layout",
+        styleNegative: mergePromptFragments([
+          shared.styleNegative,
+          "scene background, crowd scene, event photo, group portrait, team photo, class photo, poster card, landscape card"
+        ]),
+        characterDirective:
+          "Character reference art only. Keep one isolated full-body person on a plain studio background. No narrative scene, no crowd, no poster composition, no layout board."
+      };
+    }
+    return {
+      kind: shared.kind,
+      styleHint: "clean character reference art, isolated single subject, plain studio background",
+      styleAnchor:
+        "single full-body character reference, plain background, isolated subject, no scenery, no crowd, no poster layout",
+      styleNegative: mergePromptFragments([
+        shared.styleNegative,
+        "scene background, crowd scene, group portrait, team photo, poster card, landscape card"
+      ]),
+      characterDirective:
+        "Character reference art only. Keep one isolated full-body character on a plain background. No narrative scene, no crowd, no poster composition, no layout board."
+    };
+  };
+
   const resolvePipelineVisualStyleHint = (contexts: string[] = []) => {
     return resolveSharedVisualStyleProfile(contexts).styleHint;
   };
@@ -6199,7 +6245,7 @@ export function ComfyPipelinePanel() {
       const translatedContext = buildTranslatedCharacterAppearanceContext(context, true);
       const appearanceContext = translatedContext || sanitizedContext;
       const genderHint = inferCharacterGenderHint(context);
-      const styleProfile = resolveSharedVisualStyleProfile([context]);
+      const styleProfile = resolveCharacterAnchorStyleProfile([context]);
       const styleHint = styleProfile.styleHint;
       const styleAnchor = styleProfile.styleAnchor;
       const isAnimeStyle = styleProfile.kind === "anime";
@@ -6218,6 +6264,7 @@ export function ComfyPipelinePanel() {
         "front-facing full-body character image",
         "single isolated character on a pure white background",
         "clean studio full-body standing character",
+        "character reference art only, not a scene card, not a poster card, not a crowd photograph",
         isAnimeStyle
           ? "fully dressed modern donghua character, not mannequin, not fashion doll, not body template, not paper doll"
           : "real dressed human person, not mannequin, not fashion doll, not body template",
@@ -6270,7 +6317,7 @@ export function ComfyPipelinePanel() {
     const translatedContext = buildTranslatedCharacterAppearanceContext(context, false);
     const appearanceContext = translatedContext || sanitizedContext;
     const genderHint = inferCharacterGenderHint(context);
-    const styleProfile = resolveSharedVisualStyleProfile([context]);
+    const styleProfile = resolveCharacterAnchorStyleProfile([context]);
     const styleHint = styleProfile.styleHint;
     const styleAnchor = styleProfile.styleAnchor;
     const framingInstruction =
@@ -6403,6 +6450,7 @@ export function ComfyPipelinePanel() {
       isAnimeStyle
         ? "modern donghua character design, restrained 2D facial features, clear outfit layers"
         : "clean character design, clear facial features, complete outfit",
+      "character reference art only, isolated studio reference, not a scene card, not a poster card, not a crowd photograph",
       likelyDressCharacter
         ? "opaque long-sleeve dress with clearly visible collar, cuffs, waist belt, skirt hem, and fabric folds; clothing must not look like skin or bodysuit"
         : "complete clothed outfit with clear garment layers and visible fabric structure",
@@ -6445,6 +6493,7 @@ export function ComfyPipelinePanel() {
     const sanitizedContext = sanitizeCharacterAnchorContext(context);
     const translatedContext = buildTranslatedCharacterAppearanceContext(context, true);
     const appearanceContext = translatedContext || sanitizedContext;
+    const styleProfile = resolveCharacterAnchorStyleProfile([context]);
     const retryTuning =
       attempt <= 0
         ? "Use the input image as the identity source and clean it into one centered full-body front-view character."
@@ -6455,6 +6504,9 @@ export function ComfyPipelinePanel() {
       buildCharacterViewPrompt(name, sanitizedContext, "front"),
       "Use the input image as the exact identity and costume source. Do not redesign the character.",
       "Preserve the original outfit layers, trims, colors, hairstyle silhouette, and accessories from the source image.",
+      `Style hint: ${styleProfile.styleHint}`,
+      styleProfile.styleAnchor ? `Global style anchor: ${styleProfile.styleAnchor}` : "",
+      styleProfile.characterDirective,
       "Recover crisp facial features: clear eyes, eyebrows, nose bridge, lips, jawline, and readable face proportions.",
       "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
       "Do not stylize the character into a neon poster, a rim-lit silhouette, a ghosted figure, a stage-lit fashion campaign, or a glowing spectral body.",
@@ -6735,7 +6787,8 @@ export function ComfyPipelinePanel() {
     ]);
 
   const buildCharacterViewNegativePrompt = (view: "front" | "side" | "back", baseNegativePrompt: string, context = "") => {
-    const styleProfile = resolveSharedVisualStyleProfile([context]);
+    const styleProfile =
+      view === "front" ? resolveCharacterAnchorStyleProfile([context]) : resolveSharedVisualStyleProfile([context]);
     const viewConstraint =
       view === "front"
         ? "side profile, side view, back view, rear view, three quarter view, 3/4 view, turned torso"
@@ -6755,7 +6808,7 @@ export function ComfyPipelinePanel() {
     const qualityConstraint =
       "lowres, blurry, out of focus, jpeg artifacts, noisy texture, over-smoothed skin, ugly face, distorted face, text watermark, logo, dramatic perspective, foreshortening, fisheye lens, dutch angle, low angle shot, high angle shot, photo background clutter";
     const environmentConstraint =
-      "architecture, building, temple, pagoda, palace exterior, blueprint, floor plan, site plan, campus aerial render, throne, statue, environment concept art, landscape sheet, aerial view, bird's-eye view, top-down view, moodboard, picture-in-picture, inset panels, magic circle, petals, floral background, ornate background, decorative frame, poster background, scene background, gradient backdrop";
+      "architecture, building, temple, pagoda, palace exterior, blueprint, floor plan, site plan, campus aerial render, throne, statue, environment concept art, landscape sheet, aerial view, bird's-eye view, top-down view, moodboard, picture-in-picture, inset panels, magic circle, petals, floral background, ornate background, decorative frame, poster background, scene background, gradient backdrop, group portrait, team photo, class photo, event photo, stadium crowd, audience, sports field";
     const clutterConstraint =
       "floating pet, mascot, familiar, companion creature, extra weapon, orbiting ornament, detached accessory, inset portrait, face inset, eyes inset, annotation text, label text, callout line, design notes, character bio text";
     const templateConstraint =
