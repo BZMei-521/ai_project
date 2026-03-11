@@ -5201,7 +5201,7 @@ export function ComfyPipelinePanel() {
         ? `边缘存在文字或装饰杂项(edge=${layout.edgeForegroundRatio.toFixed(2)})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.56 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      layout && layout.bbox.heightRatio < 0.54 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
       clutteredFrontLayout && layout
         ? `前景装饰或悬浮附加物过多(cluster=${extraMediumComponents},secondary=${layout.secondaryForegroundRatio.toFixed(2)},detached=${layout.detachedForegroundRatio.toFixed(2)})`
         : "",
@@ -5235,7 +5235,7 @@ export function ComfyPipelinePanel() {
       (lineupLikeLayout ? 86 : 0) +
       (clutteredFrontLayout ? 44 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
-      (layout && layout.bbox.heightRatio < 0.56 ? (0.56 - layout.bbox.heightRatio) * 120 : 0) +
+      (layout && layout.bbox.heightRatio < 0.54 ? (0.54 - layout.bbox.heightRatio) * 120 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (appearance?.likelyGlowPosterFigure ? 74 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
