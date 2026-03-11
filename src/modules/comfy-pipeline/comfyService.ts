@@ -2693,6 +2693,7 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     "Generate one coherent cinematic shot in the same world. Do not redesign the environment, do not change character identity, and do not ignore any provided reference image."
   );
   pieces.push("When a previous-scene frame is provided, match its composition language, grayscale contrast, and environment styling first, then preserve character identity within that same visual treatment.");
+  pieces.push("Ignore any accidental UI panels, inset cards, split-screen blocks, text labels, borders, or watermark-like artifacts that may appear inside reference frames; they are not part of the scene.");
   return pieces.join(" ");
 }
 
@@ -2923,7 +2924,9 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   });
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
-  const primaryScene = ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const primaryScene =
+    ordered.find((item) => item.role === "continuity_scene") ??
+    ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
   pushUniqueWeightedRef(selected, usedSources, primaryScene);
   const usedCharacterBuckets = new Set<string>();
   const characters = ordered.filter((item) => item.role.startsWith("character_"));
@@ -3132,6 +3135,7 @@ async function buildStoryboardCompositeReference(
 ): Promise<WeightedImageRef | null> {
   if (!canProcessStoryboardReferenceImages()) return null;
   const continuitySceneRef = refs.find((item) => item.role === "continuity_scene");
+  if (continuitySceneRef) return null;
   const sceneRef = continuitySceneRef ?? refs.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
   const characterRefs = refs.filter((item) => item.role.startsWith("character_")).slice(0, 2);
   if (!sceneRef || characterRefs.length === 0) return null;
@@ -3190,6 +3194,39 @@ async function buildStoryboardCompositeReference(
   };
 }
 
+async function buildCharacterIdentityCropReference(
+  shot: Shot,
+  ref: WeightedImageRef,
+  inputDir: string,
+  index: number
+): Promise<WeightedImageRef | null> {
+  if (!canProcessStoryboardReferenceImages()) return null;
+  const cutout = await buildCharacterCutoutCanvas(ref.source);
+  if (!cutout) return null;
+  const cropY = 0;
+  const cropHeight = Math.max(1, Math.round(cutout.height * 0.62));
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = cutout.width;
+  cropCanvas.height = cropHeight;
+  const context = cropCanvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(cutout, 0, cropY, cutout.width, cropHeight, 0, 0, cutout.width, cropHeight);
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filePath = `${inputDir}/shot_${safeShotId}_identity_crop_${index + 1}.png`;
+  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath,
+    base64Data: cropCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  });
+  if (!result.filePath) return null;
+  return {
+    ...ref,
+    source: result.filePath,
+    weight: Math.min(ref.weight, 0.72),
+    priority: Math.max(220, ref.priority - 60),
+    label: `${ref.label}:identity_crop`
+  };
+}
+
 async function stageCharacterReferenceImages(
   settings: ComfySettings,
   shot: Shot,
@@ -3209,6 +3246,23 @@ async function stageCharacterReferenceImages(
       compositeRef,
       ...selectedRefs.filter((item) => item.role.startsWith("character_")).slice(0, 2)
     ].slice(0, 3);
+  }
+  const hasContinuityScene = selectedRefs.some((item) => item.role === "continuity_scene");
+  if (hasContinuityScene) {
+    const adjusted: WeightedImageRef[] = [];
+    for (let index = 0; index < selectedRefs.length; index += 1) {
+      const item = selectedRefs[index]!;
+      if (item.role === "scene_primary" || item.role === "scene_secondary") {
+        continue;
+      }
+      if (item.role.startsWith("character_")) {
+        const identityCrop = await buildCharacterIdentityCropReference(shot, item, inputDir, index);
+        adjusted.push(identityCrop ?? item);
+        continue;
+      }
+      adjusted.push(item);
+    }
+    selectedRefs = adjusted.slice(0, 3);
   }
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
