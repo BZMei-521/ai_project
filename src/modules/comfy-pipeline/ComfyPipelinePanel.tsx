@@ -4707,6 +4707,36 @@ export function ComfyPipelinePanel() {
     return heightRatio > 0.72 || widthRatio > 0.52 || foregroundRatio > 0.18;
   };
 
+  const isFrontLineupLikeLayout = (
+    layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
+  ) => {
+    if (!layout) return false;
+    const {
+      significantComponents,
+      mediumComponents,
+      bbox,
+      foregroundRatio,
+      primaryComponentRatio,
+      secondaryForegroundRatio,
+      detachedForegroundRatio,
+      edgeForegroundRatio
+    } = layout;
+    const tinySpreadAcrossBoard =
+      bbox.widthRatio > 0.44 &&
+      bbox.heightRatio < 0.62 &&
+      foregroundRatio < 0.16 &&
+      primaryComponentRatio < 0.78;
+    const scatteredMultiFigureBoard =
+      mediumComponents > 3 ||
+      significantComponents > 2 ||
+      (mediumComponents > 1 &&
+        (secondaryForegroundRatio > 0.18 || detachedForegroundRatio > 0.15 || edgeForegroundRatio > 0.18));
+    const fragmentedPrimary =
+      primaryComponentRatio < 0.66 &&
+      (secondaryForegroundRatio > 0.18 || detachedForegroundRatio > 0.16 || mediumComponents > 2);
+    return tinySpreadAcrossBoard || scatteredMultiFigureBoard || fragmentedPrimary;
+  };
+
   const evaluateThreeViewQuality = async (paths: string[], referenceFrontPath = "") => {
     const diversity = await detectLowDiversityThreeViews(paths);
     const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
@@ -5085,7 +5115,11 @@ export function ComfyPipelinePanel() {
           (layout.bbox.widthRatio > 0.94 && layout.foregroundRatio > 0.26) ||
           (typeof bboxAspect === "number" && (bboxAspect > 1.4 || bboxAspect < 0.1))
         : false;
+    const lineupLikeLayout = isFrontLineupLikeLayout(layout);
     const layoutIssues = [
+      lineupLikeLayout && layout
+        ? `疑似整页小人排表(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},primary=${layout.primaryComponentRatio.toFixed(2)})`
+        : "",
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
@@ -5129,6 +5163,7 @@ export function ComfyPipelinePanel() {
       (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.1) * 210 : 0) +
       (layout ? Math.max(0, layout.detachedForegroundRatio - 0.08) * 190 : 0) +
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.08) * 150 : 0) +
+      (lineupLikeLayout ? 86 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
       (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
@@ -5534,6 +5569,7 @@ export function ComfyPipelinePanel() {
       analyzeForegroundLayout(normalized),
       analyzeForegroundLayout(directPath)
     ]);
+    const sourceLooksLikeLineup = isFrontLineupLikeLayout(sourceLayout);
     const computeClutterScore = (
       layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
     ) => {
@@ -5550,27 +5586,43 @@ export function ComfyPipelinePanel() {
       sourceLayout != null &&
       (sourceLayout.significantComponents > 1 ||
         sourceLayout.mediumComponents > 3 ||
+        sourceLooksLikeLineup ||
         sourceLayout.secondaryForegroundRatio > 0.12 ||
         sourceLayout.detachedForegroundRatio > 0.1 ||
         sourceLayout.edgeForegroundRatio > 0.12);
     if (!shouldIsolate) return directPath;
     const isolatedRaw = await isolateCharacterPrimarySubject(normalized);
     if (!isolatedRaw.trim() || isolatedRaw.trim() === normalized.trim()) return directPath;
-    const isolatedPath = (await fitCharacterViewWithinCanvas(isolatedRaw, "front")) || isolatedRaw;
-    const [isolatedQuality, isolatedLayout] = await Promise.all([
-      evaluateFrontReferenceQuality(isolatedPath),
-      analyzeForegroundLayout(isolatedPath)
+    const [isolatedRawLayout, isolatedPath] = await Promise.all([
+      analyzeForegroundLayout(isolatedRaw),
+      fitCharacterViewWithinCanvas(isolatedRaw, "front")
     ]);
+    const preparedIsolatedPath = isolatedPath || isolatedRaw;
+    const [isolatedQuality, isolatedLayout] = await Promise.all([
+      evaluateFrontReferenceQuality(preparedIsolatedPath),
+      analyzeForegroundLayout(preparedIsolatedPath)
+    ]);
+    const isolatedFromTinyLineup =
+      sourceLooksLikeLineup &&
+      (!isolatedRawLayout ||
+        isolatedRawLayout.bbox.heightRatio < 0.5 ||
+        isolatedRawLayout.primaryComponentRatio < 0.82 ||
+        isolatedRawLayout.mediumComponents > 1 ||
+        isolatedRawLayout.secondaryForegroundRatio > 0.08 ||
+        isolatedRawLayout.detachedForegroundRatio > 0.08);
+    if (isolatedFromTinyLineup) {
+      return directPath;
+    }
     const directClutter = computeClutterScore(directLayout);
     const isolatedClutter = computeClutterScore(isolatedLayout);
-    if (isolatedQuality.acceptable && !directQuality.acceptable) return isolatedPath;
+    if (isolatedQuality.acceptable && !directQuality.acceptable) return preparedIsolatedPath;
     if (directQuality.acceptable && !isolatedQuality.acceptable) return directPath;
     if (directQuality.acceptable && isolatedQuality.acceptable) {
-      if (isolatedClutter + 0.12 < directClutter) return isolatedPath;
-      return isolatedQuality.score > directQuality.score + 2 ? isolatedPath : directPath;
+      if (isolatedClutter + 0.12 < directClutter) return preparedIsolatedPath;
+      return isolatedQuality.score > directQuality.score + 2 ? preparedIsolatedPath : directPath;
     }
-    if (isolatedClutter + 0.08 < directClutter) return isolatedPath;
-    return isolatedQuality.score > directQuality.score + 4 ? isolatedPath : directPath;
+    if (isolatedClutter + 0.08 < directClutter) return preparedIsolatedPath;
+    return isolatedQuality.score > directQuality.score + 4 ? preparedIsolatedPath : directPath;
   };
 
   const prepareCharacterThreeViewPanelCandidate = async (
@@ -6248,7 +6300,7 @@ export function ComfyPipelinePanel() {
     const faceDetailInstruction =
       "补充要求：脸部区域必须清楚，双眼、眉毛、鼻梁、嘴唇和下颌线都要稳定可辨识；不允许糊脸、脏脸、灰脸、无五官。face must stay crisp, readable, and detailed.";
     const cleanupInstruction =
-      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。禁止霓虹轮廓光、禁止红蓝边缘光、禁止发光残影、禁止海报式背后分身。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs, no neon rim light, no ghost silhouettes.";
+      "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。禁止霓虹轮廓光、禁止红蓝边缘光、禁止发光残影、禁止海报式背后分身。禁止整页小人阵列、禁止多个远处小人并排、禁止 lineup 小人排表、禁止角色缩成一排 miniature figures。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs, no neon rim light, no ghost silhouettes, no tiny lineup of miniature figures.";
     return mergePromptFragments([basePrompt, retryTuning, animeFemaleInstruction, faceDetailInstruction, cleanupInstruction]);
   };
 
@@ -6270,6 +6322,7 @@ export function ComfyPipelinePanel() {
       "Do not simplify the character into a mannequin, a neutral bodysuit, a wireframe body, an anatomy guide, a base mesh, or a clay model.",
       "Do not stylize the character into a neon poster, a rim-lit silhouette, a ghosted figure, a stage-lit fashion campaign, or a glowing spectral body.",
       "Do not remove clothing. Do not expose chest, torso, underwear, or feet. Keep shoes or boots visible.",
+      "Do not create a lineup of many tiny figures, repeated mini characters, a sheet of distant people, or multiple small bodies spread across the page.",
       appearanceContext ? `Keep these appearance details: ${appearanceContext}` : "",
       "Remove all extra figures, lineups, inset portraits, floating accessories, decorative motifs, annotation text, and sheet layout elements.",
       "Clean the background into one uniform pure white backdrop. Remove grey stains, detached blobs, floating smudges, and random color noise.",
