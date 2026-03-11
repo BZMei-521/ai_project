@@ -1670,7 +1670,29 @@ function findMatchingAssetId(
     .sort((a, b) => b.score - a.score || b.preference - a.preference || a.index - b.index);
   const best = scored[0];
   const threshold = type === "character" ? 0.72 : 0.58;
-  return best && best.score >= threshold ? best.id : "";
+  if (best && best.score >= threshold) return best.id;
+
+  if (type === "character" && canonicalKey) {
+    const prefixMatches = allAssets
+      .map((asset, index) => ({
+        id: asset.id,
+        canonical: canonicalAssetName(type, asset.name),
+        preference: assetReferencePreferenceScore(type, asset),
+        index
+      }))
+      .filter((item) => item.canonical && (item.canonical.startsWith(canonicalKey) || item.canonical.includes(canonicalKey)))
+      .sort((a, b) => b.preference - a.preference || a.canonical.length - b.canonical.length || a.index - b.index);
+    if (prefixMatches.length === 1) return prefixMatches[0]!.id;
+    if (
+      prefixMatches.length > 1 &&
+      prefixMatches[0]!.canonical.startsWith(canonicalKey) &&
+      !prefixMatches[1]!.canonical.startsWith(canonicalKey)
+    ) {
+      return prefixMatches[0]!.id;
+    }
+  }
+
+  return "";
 }
 
 function summarizeAssetProvisionPlan(
