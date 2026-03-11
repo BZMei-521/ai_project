@@ -185,9 +185,9 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, lineup sheet, sprite sheet, costume lineup, many tiny characters, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, magic circle, petals, floral background, ornate background, poster background, decorative frame, vehicle, train, locomotive, car, bus, aircraft, tank, mech, robot, machinery, technical drawing, manuscript page, calligraphy page, sepia sketch page, ancient painting scan, old paper illustration, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
 const DEFAULT_GLOBAL_VISUAL_STYLE_PROMPT =
-  "2D国漫风格，干净利落的二维动画分镜画面，统一赛璐璐平涂与柔和灰阶明暗，线条清晰稳定，角色与场景共用同一套国漫美术语言，避免写实照片感与3D渲染感，画面像成熟国产二维动画项目的正式分镜关键帧。";
+  "2D国漫风格，参考《一人之下》这类现代国漫动画的分镜气质：写实但不过分写真的人物比例，克制干净的线条，低饱和偏冷暖平衡的配色，赛璐璐为主并带少量柔和体积明暗，角色与场景共用同一套现代国漫美术语言。画面要像成熟国产二维动画项目的正式分镜关键帧，避免日系萌系、Q版糖水感、厚涂概念图感、写实照片感与3D渲染感。";
 const DEFAULT_GLOBAL_STYLE_NEGATIVE_PROMPT =
-  "photorealistic, realistic photo, live action, 3d render, cgi, blender render, unreal engine, octane render, plastic skin, volumetric realistic lighting, painterly oil painting, watercolor wash, sketch page, manga panel, comic page layout, ui overlay, inset card, text box, split screen, collage, sticker cutout, white background character sheet";
+  "photorealistic, realistic photo, live action, 3d render, cgi, blender render, unreal engine, octane render, plastic skin, volumetric realistic lighting, painterly oil painting, watercolor wash, sketch page, manga panel, comic page layout, ui overlay, inset card, text box, split screen, collage, sticker cutout, white background character sheet, chibi, super deformed, moe anime, idol poster, glossy fashion anime, overly cute face, pastel candy colors, overly saturated cel anime, soft shoujo sparkles, exaggerated manga speed lines";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，单张角色展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，单张角色展示",
@@ -5925,31 +5925,31 @@ export function ComfyPipelinePanel() {
       ].find((item): item is UnifiedVisualStyleKind => Boolean(item)) ?? "neutral";
     const baseAnchor =
       kind === "anime"
-        ? "统一二次元角色设定与场景插画风，清晰线稿，平滑上色，人物与场景共享同一渲染方式，禁止写实摄影感。"
+        ? "统一现代国漫角色设定与场景插画风，整体气质接近《一人之下》这类现代国漫：人物比例写实克制，线条干净利落，低饱和冷暖平衡配色，赛璐璐上色配合少量柔和体积明暗，人物与场景共享同一渲染方式，禁止写实摄影感与萌系糖水感。"
         : kind === "realistic"
           ? "统一写实影视概念美术风，人物与场景共享同一写实材质、自然光影和电影级色彩，禁止二次元卡通感。"
           : "统一概念美术风，人物与场景共享同一材质语言、光影系统与色彩倾向。";
     const styleHint =
       kind === "anime"
-        ? "二次元设定插画风，线稿清晰，平滑上色，人物与场景同一渲染方式"
+        ? "现代国漫插画风，接近《一人之下》的克制线条与低饱和配色，人物与场景同一渲染方式"
         : kind === "realistic"
           ? "写实影视概念风，人物与场景同一写实材质、自然光影和电影色彩"
           : "统一概念美术风，人物与场景同一材质表现与光影语言";
     const styleNegative =
       kind === "anime"
-        ? "photorealistic, live action, cinematic photo, realistic skin pores, photography, 3d render, clay render"
+        ? "photorealistic, live action, cinematic photo, realistic skin pores, photography, 3d render, clay render, chibi, moe anime, idol poster, candy pastel, super deformed, glossy fashion anime"
         : kind === "realistic"
           ? "anime, manga, cel shading, cartoon, chibi, flat illustration, mascot style, toon render"
           : "";
     const characterDirective =
       kind === "anime"
-        ? "人物必须保持统一二次元角色设定插画风，服装、发型和肤色都按同一插画质感表现，禁止写实摄影感。"
+        ? "人物必须保持统一现代国漫角色设定插画风，观感接近《一人之下》这类现代国漫：脸型与五官克制自然，服装层次简洁明确，发型和肤色按同一插画质感表现，禁止写实摄影感、萌系偶像感和Q版夸张变形。"
         : kind === "realistic"
           ? "人物必须保持统一写实影视概念风，服装材质、肤色和面部都按真实材质与自然光影表现，禁止卡通化。"
           : "人物必须保持统一概念美术风，服装、脸部和材质表现保持同一渲染语言。";
     const sceneDirective =
       kind === "anime"
-        ? "场景必须与角色三视图保持同一二次元插画风，环境线条、上色和明暗方式要与人物一致，禁止写实照片感。"
+        ? "场景必须与角色三视图保持同一现代国漫插画风，整体气质接近《一人之下》这类现代国漫：结构清楚、透视稳定、配色克制、环境上色和明暗方式与人物一致，禁止写实照片感、日系萌系背景和厚涂概念图漂移。"
         : kind === "realistic"
           ? "场景必须与角色三视图保持同一写实影视概念风，环境材质、空间光影和色彩都要与人物一致，禁止二次元平涂感。"
           : "场景必须与角色三视图保持同一概念美术风，环境材质、光影与人物表现一致。";

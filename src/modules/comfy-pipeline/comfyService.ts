@@ -2661,6 +2661,14 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
       pieces.push(
         "Do not drift into realistic cinema, grayscale photography, painterly concept art, or 3D render look; keep the result flat-to-semi-flat 2D animation art with readable silhouettes."
       );
+      if (/一人之下/.test(globalVisualStyle)) {
+        pieces.push(
+          "Favor a modern Chinese donghua look similar to The Outcast: restrained realistic proportions, crisp controlled linework, subdued balanced palette, grounded urban-fantasy mood, and mature non-cute facial design."
+        );
+        pieces.push(
+          "Avoid chibi, moe, glossy idol-anime, candy pastel, exaggerated manga comedy, or overly decorative fantasy styling."
+        );
+      }
     }
   }
   if (currentShotTitle) {
