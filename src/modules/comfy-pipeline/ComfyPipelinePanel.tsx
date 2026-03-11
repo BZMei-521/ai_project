@@ -132,7 +132,9 @@ const CHARACTER_ANCHOR_ANIME_MODEL_RECOMMEND_ORDER = [
   "animagine-xl-4.0.safetensors",
   "v1-5-pruned-emaonly-fp16.safetensors",
   "dreamshaper_8.safetensors",
-  "sd_xl_base_1.0.safetensors"
+  "sd_xl_base_1.0.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors"
 ] as const;
 const CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER = [
   "realisticVisionV60B1_v51VAE.safetensors",
@@ -5978,6 +5980,9 @@ export function ComfyPipelinePanel() {
     [/(写实电影人物设定|写实电影风|写实影视风|写实影视人物|写实|电影感|影视感|cinematic)/gi, "realistic cinematic character design"],
     [/(二十出头|二十岁左右|20岁左右|early twenties)/gi, "young adult in early twenties"],
     [/(二十五岁左右|二十五岁|25岁左右)/gi, "young adult around twenty five"],
+    [/(浅灰蓝长袖连衣裙)/gi, "muted blue gray long-sleeve dress with visible fabric structure"],
+    [/(深色腰带)/gi, "dark waist belt"],
+    [/(整齐刘海)/gi, "neat straight bangs"],
     [/(黑色长发)/gi, "long black hair"],
     [/(黑色短发)/gi, "short black hair"],
     [/(白色长发)/gi, "long white hair"],
@@ -6375,8 +6380,43 @@ export function ComfyPipelinePanel() {
     return `${core}。严格要求：${constraints}。`;
   };
 
+  const buildStrictFrontAnchorPrompt = (name: string, context: string, attempt: number) => {
+    const sanitizedContext = sanitizeCharacterAnchorContext(context);
+    const translatedContext = buildTranslatedCharacterAppearanceContext(context, true);
+    const appearanceContext = translatedContext || sanitizedContext;
+    const genderHint = inferCharacterGenderHint(context);
+    const styleProfile = resolveSharedVisualStyleProfile([context]);
+    const isAnimeStyle = styleProfile.kind === "anime";
+    const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(context);
+    const retryTuning =
+      attempt <= 0
+        ? "single centered full-body character, white studio background, one person only"
+        : attempt === 1
+          ? "camera slightly closer, subject fills about 70 percent of image height, full body still fully visible"
+          : "strict clean character anchor, one isolated person, no crowd, no scenery, no layout board";
+    return mergePromptFragments([
+      "masterpiece, best quality, high detail",
+      "single character, solo, one person only, full-body standing character, centered composition",
+      genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
+      "pure white studio background, no scenery, no crowd, no extra objects, no layout board",
+      "front-facing, head to toe visible, hands visible, feet visible, balanced margins",
+      isAnimeStyle
+        ? "modern donghua character design, restrained 2D facial features, clear outfit layers"
+        : "clean character design, clear facial features, complete outfit",
+      likelyDressCharacter
+        ? "opaque long-sleeve dress with clearly visible collar, cuffs, waist belt, skirt hem, and fabric folds; clothing must not look like skin or bodysuit"
+        : "complete clothed outfit with clear garment layers and visible fabric structure",
+      `角色：${name}`,
+      `风格倾向：${styleProfile.styleHint}`,
+      styleProfile.styleAnchor ? `全局画风锚点：${styleProfile.styleAnchor}` : "",
+      styleProfile.characterDirective,
+      appearanceContext ? `Appearance details: ${appearanceContext}` : "",
+      retryTuning
+    ]);
+  };
+
   const buildFrontAnchorRetryPrompt = (name: string, context: string, attempt: number) => {
-    const basePrompt = buildCharacterViewPrompt(name, sanitizeCharacterAnchorContext(context), "front");
+    const basePrompt = buildStrictFrontAnchorPrompt(name, sanitizeCharacterAnchorContext(context), attempt);
     const normalized = normalizeStoryInput(context);
     const isAnimeFemale = inferCharacterGenderHint(normalized) === "female" && inferVisualStyleKindFromText(normalized) === "anime";
     const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(normalized);
