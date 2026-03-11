@@ -604,6 +604,10 @@ function resolveCharacterAnchorRecommendOrder(context: string) {
   const maleHint =
     /(男声|男性|男子|男孩|少年|青年男子|man|male|boy|young man|他|胡须|络腮胡)/i.test(normalized);
   const gender: "" | "female" | "male" = femaleHint && !maleHint ? "female" : maleHint && !femaleHint ? "male" : "";
+  const visualStyleKind = inferVisualStyleKindFromText(context);
+  if (visualStyleKind === "anime") {
+    return CHARACTER_ASSET_MODEL_RECOMMEND_ORDER;
+  }
   if (prefersRealisticCharacterAnchorModel(context)) {
     return gender === "male"
       ? CHARACTER_ANCHOR_REALISTIC_MALE_MODEL_RECOMMEND_ORDER
@@ -632,7 +636,7 @@ function looksLikeRealisticModelName(name: string): boolean {
 function inferVisualStyleKindFromText(text: string): UnifiedVisualStyleKind | "" {
   const normalized = text.trim().toLowerCase();
   if (!normalized) return "";
-  if (/(二次元|动漫|动画|插画|日系|赛璐璐|平涂|anime|manga|illustration|cel shading|toon|cartoon)/i.test(normalized)) {
+  if (/(国漫|二维|2d|二次元|动漫|动画|插画|日系|赛璐璐|平涂|anime|manga|illustration|cel shading|toon|cartoon)/i.test(normalized)) {
     return "anime";
   }
   if (/(写实|电影|影视|真人|实拍|摄影|真实|cinematic|realistic|photographic|photo real|live action)/i.test(normalized)) {
@@ -6712,9 +6716,9 @@ export function ComfyPipelinePanel() {
 
   const resolveCharacterAnchorRenderPreset = (
     _runtimeSettings: ComfySettings,
-    _context = ""
+    context = ""
   ): "stable_fullbody" | "clean_reference" =>
-    "clean_reference";
+    inferVisualStyleKindFromText(context) === "anime" ? "stable_fullbody" : "clean_reference";
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
@@ -9087,16 +9091,24 @@ export function ComfyPipelinePanel() {
           normalizeImportedCharacterProfiles(parsed),
           normalizeImportedCharacterProfilesFromShots(parsed)
         );
-        await upsertImportedCharacterAssets(profiles, "脚本导入", settings, {
-          preferReuseExisting: skipExisting
-        });
         const normalized = normalizeImportedShotsWithProfiles(parsed);
         const items = applyImportedShotItems(
           applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
         );
         pushToast(`已导入 ${items.length} 个镜头`, "success");
         appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
-        await autoProvisionAssetsForImportedShots(items, settings, profiles);
+        try {
+          await upsertImportedCharacterAssets(profiles, "脚本导入", settings, {
+            preferReuseExisting: skipExisting
+          });
+        } catch (error) {
+          appendLog(`脚本导入角色资产预热失败，转入镜头导入后自动资产阶段继续处理：${String(error)}`, "error");
+        }
+        try {
+          await autoProvisionAssetsForImportedShots(items, settings, profiles);
+        } catch (error) {
+          appendLog(`导入后自动资产阶段失败：${String(error)}`, "error");
+        }
         return true;
       } catch (error) {
         pushToast(`导入失败：${String(error)}`, "error");
