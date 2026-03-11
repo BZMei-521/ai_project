@@ -2679,6 +2679,9 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     pieces.push(
       "Characters must be naturally integrated into the scene with grounded feet, matched perspective, matched grayscale/lighting, and contact shadows; never paste a flat character sheet or white-background cutout on top of the scene."
     );
+    pieces.push(
+      "Use the raw character reference images only for identity and costume fidelity. Do not copy their flat shading, white-background illustration look, or reference-sheet rendering style into the final storyboard frame."
+    );
   }
   pieces.push(
     "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
@@ -2689,6 +2692,7 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   pieces.push(
     "Generate one coherent cinematic shot in the same world. Do not redesign the environment, do not change character identity, and do not ignore any provided reference image."
   );
+  pieces.push("When a previous-scene frame is provided, match its composition language, grayscale contrast, and environment styling first, then preserve character identity within that same visual treatment.");
   return pieces.join(" ");
 }
 
@@ -2834,34 +2838,31 @@ function extractImageReferenceSources(
     return refs;
   });
   const continuityRefs: WeightedImageRef[] = [];
-  // Continuity image hints are useful only when hard asset refs are missing.
-  if (sceneRefs.length === 0 && characterRefs.length === 0) {
-    const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
-    if (previousSceneImage) {
-      continuityRefs.push({
-        source: previousSceneImage,
-        weight: 0.26,
-        priority: 110,
-        bucket: "continuity:scene",
-        label: continuityPlan.previousSceneShot?.title
-          ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
-          : "continuity_scene",
-        role: "continuity_scene"
-      });
-    }
-    const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
-    if (previousCharacterImage) {
-      continuityRefs.push({
-        source: previousCharacterImage,
-        weight: 0.3,
-        priority: 120,
-        bucket: "continuity:character",
-        label: continuityPlan.previousCharacterShot?.title
-          ? `continuity_character:${continuityPlan.previousCharacterShot.title}`
-          : "continuity_character",
-        role: "continuity_character"
-      });
-    }
+  const previousSceneImage = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
+  if (previousSceneImage) {
+    continuityRefs.push({
+      source: previousSceneImage,
+      weight: sceneRefs.length > 0 ? 0.88 : 0.36,
+      priority: sceneRefs.length > 0 ? 430 : 110,
+      bucket: "continuity:scene",
+      label: continuityPlan.previousSceneShot?.title
+        ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
+        : "continuity_scene",
+      role: "continuity_scene"
+    });
+  }
+  const previousCharacterImage = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
+  if (previousCharacterImage) {
+    continuityRefs.push({
+      source: previousCharacterImage,
+      weight: characterRefs.length > 0 ? 0.34 : 0.3,
+      priority: characterRefs.length > 0 ? 240 : 120,
+      bucket: "continuity:character",
+      label: continuityPlan.previousCharacterShot?.title
+        ? `continuity_character:${continuityPlan.previousCharacterShot.title}`
+        : "continuity_character",
+      role: "continuity_character"
+    });
   }
   const merged = [...characterRefs, ...sceneRefs, ...continuityRefs].filter((item) => item.source.trim().length > 0);
   const deduped = new Map<string, WeightedImageRef>();
@@ -2988,16 +2989,23 @@ function shouldLeadWithSceneReference(shot: Shot): boolean {
 
 function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
   if (refs.length <= 1) return refs;
+  const composite = refs.filter((item) => item.label === "scene_character_composite");
   const characters = refs.filter((item) => item.role.startsWith("character_"));
   const scenes = refs.filter((item) => item.role === "scene_primary" || item.role === "scene_secondary");
   const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
+  const continuityScene = continuity.filter((item) => item.role === "continuity_scene");
+  const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
   // Always keep environment anchor first when a scene/skybox reference exists.
+  if (composite.length > 0 && continuityScene.length > 0) {
+    return [...composite.slice(0, 1), ...continuityScene.slice(0, 1), ...characters.slice(0, 1), ...scenes, ...continuityCharacter].slice(0, 3);
+  }
+  if (continuityScene.length > 0 && scenes.length > 0) {
+    return [...continuityScene.slice(0, 1), ...scenes.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter].slice(0, 3);
+  }
   if (scenes.length > 0) {
     return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1)].slice(0, 3);
   }
   if (shouldLeadWithSceneReference(shot)) {
-    const continuityScene = continuity.filter((item) => item.role === "continuity_scene");
-    const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
     return [...continuityScene, ...characters.slice(0, 2), ...continuityCharacter].slice(0, 3);
   }
   return [...characters.slice(0, 2), ...continuity].slice(0, 3);
@@ -3123,7 +3131,8 @@ async function buildStoryboardCompositeReference(
   inputDir: string
 ): Promise<WeightedImageRef | null> {
   if (!canProcessStoryboardReferenceImages()) return null;
-  const sceneRef = refs.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const continuitySceneRef = refs.find((item) => item.role === "continuity_scene");
+  const sceneRef = continuitySceneRef ?? refs.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
   const characterRefs = refs.filter((item) => item.role.startsWith("character_")).slice(0, 2);
   if (!sceneRef || characterRefs.length === 0) return null;
   const sceneImage = await loadReferenceImageElement(sceneRef.source);
