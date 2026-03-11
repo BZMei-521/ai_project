@@ -1,5 +1,6 @@
 import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
 import { invokeDesktopCommand, isDesktopRuntime } from "../platform/desktopBridge";
+import STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
 
 function normalizeEntityKey(value: string): string {
   return value.trim().replace(/\s+/g, "").toLowerCase();
@@ -39,6 +40,8 @@ type AssetOutputContext =
       kind: "scene";
       assetName: string;
     };
+
+const STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_OBJECT);
 
 export function sanitizeOutputAssetFolderName(value: string, fallback = "未命名资源"): string {
   const cleaned = value
@@ -4752,6 +4755,22 @@ function adaptBuiltinStoryboardWorkflowForShot(
   updateAdapterWeight(char2AdapterNode, 0.96);
 }
 
+function shouldRouteStoryboardStillToFisher(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>,
+  stagedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"] }>
+): boolean {
+  if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") !== "mature_asset_guided") return false;
+  const hasSceneRef = String(tokens.SCENE_REF_PATH ?? "").trim().length > 0;
+  const hasCharacterRef =
+    String(tokens.CHAR1_PRIMARY_PATH ?? "").trim().length > 0 ||
+    String(tokens.CHAR2_PRIMARY_PATH ?? "").trim().length > 0 ||
+    stagedImageRefs.some((item) => String(item.role ?? "").startsWith("character_"));
+  if (!hasSceneRef || !hasCharacterRef) return false;
+  return isCharacterDrivenShot(shot) || Boolean(shot.dialogue?.trim()) || (shot.characterRefs?.length ?? 0) > 0;
+}
+
 function getPromptStatus(raw: unknown): ComfyPromptStatus | null {
   if (!raw || typeof raw !== "object") return null;
   const status = (raw as Record<string, unknown>).status;
@@ -5356,7 +5375,7 @@ export async function generateShotAsset(
     }
     const assetOutputContext = inferAssetOutputContextFromShot(shot);
     const workflow = ensureWorkflowJson(workflowRaw);
-    const rewrittenWorkflow =
+    let rewrittenWorkflow =
       assetOutputContext?.kind === "character"
         ? (rewriteWorkflowFilenamePrefixes(workflow, rewriteCharacterAssetFilenamePrefix) as Record<string, unknown>)
         : workflow;
@@ -5394,6 +5413,9 @@ export async function generateShotAsset(
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
       stagedCharacterImages =
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
+      if (shouldRouteStoryboardStillToFisher(settings, shot, tokens, stagedCharacterImages)) {
+        rewrittenWorkflow = ensureWorkflowJson(STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_JSON);
+      }
     }
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
