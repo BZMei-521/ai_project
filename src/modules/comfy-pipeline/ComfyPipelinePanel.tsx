@@ -216,7 +216,7 @@ const SKYBOX_NEGATIVE_PRESET_TEXT: Record<"day_exterior" | "night_exterior" | "i
 };
 const DEFAULT_SKYBOX_NEGATIVE_PROMPT = SKYBOX_NEGATIVE_PRESET_TEXT.day_exterior;
 const CHARACTER_RENDER_PRESET_CONFIG: Record<
-  "stable_fullbody" | "clean_reference",
+  "stable_fullbody" | "clean_reference" | "strict_anchor",
   { label: string; seed: number; steps: number; cfg: number; sampler_name: string; scheduler: string }
 > = {
   stable_fullbody: {
@@ -234,6 +234,14 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
     cfg: 5.6,
     sampler_name: "dpmpp_2m",
     scheduler: "karras"
+  },
+  strict_anchor: {
+    label: "严格正视锚点",
+    seed: 303003,
+    steps: 40,
+    cfg: 7.2,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras"
   }
 };
 const CHARACTER_VIEW_HASH_SIZE = 8;
@@ -248,7 +256,7 @@ const SKYBOX_MIN_SHARPNESS_SCORE = 14;
 const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FALLBACK_REPEAT_HASH_THRESHOLD = 4;
 const CHARACTER_FALLBACK_REPEAT_ABORT_STREAK = 1;
-const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 3;
+const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 5;
 const CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL = 2;
 const CHARACTER_REFERENCE_MAX_ATTEMPTS = 2;
 const CHARACTER_THREEVIEW_MAX_RETRIES = 3;
@@ -270,6 +278,28 @@ const CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS = [
   "speckled background",
   "color noise",
   "monochrome smears"
+];
+const CHARACTER_FRONT_ANCHOR_NEGATIVE_HINTS = [
+  "audience",
+  "stadium crowd",
+  "bleachers",
+  "sports field",
+  "football field",
+  "soccer field",
+  "team photo",
+  "class photo",
+  "graduation photo",
+  "group portrait",
+  "school ceremony",
+  "concert crowd",
+  "stage performance",
+  "park crowd",
+  "forest crowd",
+  "crowd card",
+  "people in background",
+  "lawn background",
+  "grass field",
+  "outdoor event"
 ];
 
 function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
@@ -674,7 +704,7 @@ function resolveCharacterFallbackSheetSize(checkpointName: string): { width: num
 function buildCharacterWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
-  renderPreset: "stable_fullbody" | "clean_reference"
+  renderPreset: "stable_fullbody" | "clean_reference" | "strict_anchor"
 ): string {
   const template = cloneJson(CHARACTER_THREEVIEW_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
@@ -702,7 +732,7 @@ function buildCharacterWorkflowTemplateJson(
 function buildCharacterReferenceWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
-  renderPreset: "stable_fullbody" | "clean_reference"
+  renderPreset: "stable_fullbody" | "clean_reference" | "strict_anchor"
 ): string {
   const template = JSON.parse(
     buildCharacterWorkflowTemplateJson(checkpointName, preset, renderPreset)
@@ -714,7 +744,7 @@ function buildCharacterReferenceWorkflowTemplateJson(
 }
 
 function buildCharacterAdvancedWorkflowTemplateJson(
-  renderPreset: "stable_fullbody" | "clean_reference"
+  renderPreset: "stable_fullbody" | "clean_reference" | "strict_anchor"
 ): string {
   const template = cloneJson(CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT) as {
     nodes?: Array<{ id?: number; widgets_values?: unknown[] }>;
@@ -2280,7 +2310,9 @@ function loadSettings(): ComfySettings {
           ? parsed.characterTemplatePreset
           : "portrait",
       characterRenderPreset:
-        parsed.characterRenderPreset === "clean_reference" || parsed.characterRenderPreset === "stable_fullbody"
+        parsed.characterRenderPreset === "clean_reference" ||
+        parsed.characterRenderPreset === "stable_fullbody" ||
+        parsed.characterRenderPreset === "strict_anchor"
           ? parsed.characterRenderPreset
           : "clean_reference",
       characterBackgroundPreset:
@@ -6169,6 +6201,7 @@ export function ComfyPipelinePanel() {
       const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(context);
       const core = mergePromptFragments([
         "masterpiece, best quality, high detail",
+        "(single character:1.5), (solo:1.5), (one full-body standing character:1.45), (white studio background:1.4)",
         genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
         "single character, solo, exactly one human character",
         "one complete human body with head, torso, two arms, two hands, two legs, two feet",
@@ -6947,8 +6980,8 @@ export function ComfyPipelinePanel() {
   const resolveCharacterAnchorRenderPreset = (
     _runtimeSettings: ComfySettings,
     context = ""
-  ): "stable_fullbody" | "clean_reference" =>
-    inferVisualStyleKindFromText(context) === "anime" ? "stable_fullbody" : "clean_reference";
+  ): "stable_fullbody" | "clean_reference" | "strict_anchor" =>
+    inferVisualStyleKindFromText(context) === "anime" ? "strict_anchor" : "strict_anchor";
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
@@ -7791,7 +7824,7 @@ export function ComfyPipelinePanel() {
     // Front-anchor generation still uses the regular checkpoint flow; three-view board generation itself is fixed to the local dual-reference template.
     const characterModel = ONE_CLICK_SDXL_CHARACTER_MODEL;
     const skyboxModel = profile === "sd15" ? ONE_CLICK_SD15_SKYBOX_MODEL : ONE_CLICK_SDXL_SKYBOX_MODEL;
-    const characterRenderPreset: "stable_fullbody" | "clean_reference" = "clean_reference";
+    const characterRenderPreset: "stable_fullbody" | "clean_reference" | "strict_anchor" = "clean_reference";
     const characterTemplatePreset: "portrait" | "square" = "portrait";
     persistSettings((previous) => {
       const previousRoot = previous.comfyRootDir.trim();
@@ -8181,10 +8214,13 @@ export function ComfyPipelinePanel() {
           sourceLabel,
           semanticContext
         );
-        const negativePrompt = buildCharacterViewNegativePrompt(
-          "front",
-          runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
-          semanticContext
+        const negativePrompt = appendNegativePrompt(
+          buildCharacterViewNegativePrompt(
+            "front",
+            runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+            semanticContext
+          ),
+          CHARACTER_FRONT_ANCHOR_NEGATIVE_HINTS
         );
         const styleAnchor = normalizeStyleAnchor(settings.globalVisualStylePrompt ?? "");
         const baseSeed =
@@ -11696,7 +11732,7 @@ export function ComfyPipelinePanel() {
             onChange={(event) =>
               persistSettings((previous) => ({
                 ...previous,
-                characterRenderPreset: event.target.value as "stable_fullbody" | "clean_reference"
+                characterRenderPreset: event.target.value as "stable_fullbody" | "clean_reference" | "strict_anchor"
               }))
             }
             value={settings.characterRenderPreset ?? "clean_reference"}

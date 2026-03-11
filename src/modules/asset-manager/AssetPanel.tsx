@@ -41,7 +41,7 @@ type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
 type UnifiedVisualStyleKind = "anime" | "realistic" | "neutral";
 
 const CHARACTER_RENDER_PRESET_CONFIG: Record<
-  "stable_fullbody" | "clean_reference",
+  "stable_fullbody" | "clean_reference" | "strict_anchor",
   { steps: number; cfg: number; sampler_name: string; scheduler: string }
 > = {
   stable_fullbody: {
@@ -53,6 +53,12 @@ const CHARACTER_RENDER_PRESET_CONFIG: Record<
   clean_reference: {
     steps: 34,
     cfg: 5.6,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras"
+  },
+  strict_anchor: {
+    steps: 40,
+    cfg: 7.2,
     sampler_name: "dpmpp_2m",
     scheduler: "karras"
   }
@@ -122,10 +128,10 @@ function prefersRealisticCharacterAnchorModel(context: string): boolean {
 function resolveCharacterAnchorRenderPreset(
   comfySettings: ComfySettings,
   context: string
-): "stable_fullbody" | "clean_reference" {
+): "stable_fullbody" | "clean_reference" | "strict_anchor" {
   return prefersRealisticCharacterAnchorModel(context)
-    ? "stable_fullbody"
-    : comfySettings.characterRenderPreset ?? "clean_reference";
+    ? "strict_anchor"
+    : (comfySettings.characterRenderPreset ?? "clean_reference");
 }
 
 function resolveCharacterAnchorModelForContext(comfySettings: ComfySettings, context: string): string {
@@ -263,7 +269,7 @@ function resolveCharacterFallbackSheetSize(checkpointName: string): { width: num
 function buildCharacterWorkflowTemplateJson(
   checkpointName: string,
   preset: "portrait" | "square",
-  renderPreset: "stable_fullbody" | "clean_reference"
+  renderPreset: "stable_fullbody" | "clean_reference" | "strict_anchor"
 ): string {
   const template = cloneJson(CHARACTER_THREEVIEW_WORKFLOW_OBJECT) as Record<string, { inputs?: Record<string, unknown> }>;
   if (template["1"]?.inputs) {
@@ -289,7 +295,7 @@ function buildCharacterWorkflowTemplateJson(
 }
 
 function buildCharacterAdvancedWorkflowTemplateJson(
-  renderPreset: "stable_fullbody" | "clean_reference"
+  renderPreset: "stable_fullbody" | "clean_reference" | "strict_anchor"
 ): string {
   const template = cloneJson(CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT) as {
     nodes?: Array<{ id?: number; widgets_values?: unknown[] }>;
@@ -832,7 +838,9 @@ function loadComfySettingsFromLocalStorage(): ComfySettings | null {
         ? parsed.characterTemplatePreset
         : "portrait";
     const characterRenderPreset =
-      parsed.characterRenderPreset === "stable_fullbody" || parsed.characterRenderPreset === "clean_reference"
+      parsed.characterRenderPreset === "stable_fullbody" ||
+      parsed.characterRenderPreset === "clean_reference" ||
+      parsed.characterRenderPreset === "strict_anchor"
         ? parsed.characterRenderPreset
         : "clean_reference";
     const skyboxTemplatePreset =

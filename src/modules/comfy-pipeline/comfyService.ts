@@ -200,7 +200,7 @@ export type ComfySettings = {
   characterAssetModelName?: string;
   skyboxAssetModelName?: string;
   characterTemplatePreset?: "portrait" | "square";
-  characterRenderPreset?: "stable_fullbody" | "clean_reference";
+  characterRenderPreset?: "stable_fullbody" | "clean_reference" | "strict_anchor";
   characterBackgroundPreset?: "white" | "gray" | "studio";
   skyboxTemplatePreset?: "wide" | "square";
   skyboxPromptPreset?: "day_exterior" | "night_exterior" | "interior";
