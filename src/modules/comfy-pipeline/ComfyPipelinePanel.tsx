@@ -183,6 +183,10 @@ const SKYBOX_ADVANCED_NODE_TYPES = [
 ] as const;
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, lineup sheet, sprite sheet, costume lineup, many tiny characters, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes, architecture, building, blueprint, floor plan, site plan, temple, pagoda, throne, statue, environment concept sheet, moodboard, UI frame, panel layout, aerial view, bird's-eye view, top-down view, magic circle, petals, floral background, ornate background, poster background, decorative frame, vehicle, train, locomotive, car, bus, aircraft, tank, mech, robot, machinery, technical drawing, manuscript page, calligraphy page, sepia sketch page, ancient painting scan, old paper illustration, nude, naked, nsfw, underwear, lingerie, bikini, swimsuit, leotard, topless, shirtless, bare chest, exposed breasts, exposed nipples";
+const DEFAULT_GLOBAL_VISUAL_STYLE_PROMPT =
+  "2D国漫风格，干净利落的二维动画分镜画面，统一赛璐璐平涂与柔和灰阶明暗，线条清晰稳定，角色与场景共用同一套国漫美术语言，避免写实照片感与3D渲染感，画面像成熟国产二维动画项目的正式分镜关键帧。";
+const DEFAULT_GLOBAL_STYLE_NEGATIVE_PROMPT =
+  "photorealistic, realistic photo, live action, 3d render, cgi, blender render, unreal engine, octane render, plastic skin, volumetric realistic lighting, painterly oil painting, watercolor wash, sketch page, manga panel, comic page layout, ui overlay, inset card, text box, split screen, collage, sticker cutout, white background character sheet";
 const CHARACTER_BACKGROUND_PRESET_TEXT: Record<"white" | "gray" | "studio", string> = {
   white: "纯白背景，无地面杂物，无环境叙事元素，单张角色展示",
   gray: "中性浅灰背景，无地面杂物，无环境叙事元素，单张角色展示",
@@ -2179,8 +2183,8 @@ function loadSettings(): ComfySettings {
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
-      globalVisualStylePrompt: "",
-      globalStyleNegativePrompt: "",
+      globalVisualStylePrompt: DEFAULT_GLOBAL_VISUAL_STYLE_PROMPT,
+      globalStyleNegativePrompt: DEFAULT_GLOBAL_STYLE_NEGATIVE_PROMPT,
       videoGenerationMode: defaultVideoGenerationMode(),
       tokenMapping: { ...DEFAULT_TOKEN_MAPPING }
     };
@@ -2301,9 +2305,13 @@ function loadSettings(): ComfySettings {
       audioWorkflowJson: typeof parsed.audioWorkflowJson === "string" ? parsed.audioWorkflowJson : "",
       soundWorkflowJson: typeof parsed.soundWorkflowJson === "string" ? parsed.soundWorkflowJson : "",
       globalVisualStylePrompt:
-        typeof parsed.globalVisualStylePrompt === "string" ? parsed.globalVisualStylePrompt : "",
+        typeof parsed.globalVisualStylePrompt === "string" && parsed.globalVisualStylePrompt.trim().length > 0
+          ? parsed.globalVisualStylePrompt
+          : DEFAULT_GLOBAL_VISUAL_STYLE_PROMPT,
       globalStyleNegativePrompt:
-        typeof parsed.globalStyleNegativePrompt === "string" ? parsed.globalStyleNegativePrompt : "",
+        typeof parsed.globalStyleNegativePrompt === "string" && parsed.globalStyleNegativePrompt.trim().length > 0
+          ? parsed.globalStyleNegativePrompt
+          : DEFAULT_GLOBAL_STYLE_NEGATIVE_PROMPT,
       videoGenerationMode: parsed.videoGenerationMode ?? defaultVideoGenerationMode(),
       tokenMapping: {
         ...DEFAULT_TOKEN_MAPPING,
@@ -2338,8 +2346,8 @@ function loadSettings(): ComfySettings {
       skyboxAssetNegativePrompt: DEFAULT_SKYBOX_NEGATIVE_PROMPT,
       audioWorkflowJson: "",
       soundWorkflowJson: "",
-      globalVisualStylePrompt: "",
-      globalStyleNegativePrompt: "",
+      globalVisualStylePrompt: DEFAULT_GLOBAL_VISUAL_STYLE_PROMPT,
+      globalStyleNegativePrompt: DEFAULT_GLOBAL_STYLE_NEGATIVE_PROMPT,
       videoGenerationMode: defaultVideoGenerationMode(),
       tokenMapping: { ...DEFAULT_TOKEN_MAPPING }
     };
