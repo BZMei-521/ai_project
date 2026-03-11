@@ -8216,6 +8216,7 @@ export function ComfyPipelinePanel() {
             characterAnchorRenderPreset
           );
           for (let attempt = 0; attempt < CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL; attempt += 1) {
+            const attemptSeed = baseSeed + modelIndex * 1009 + attempt * 131;
             const generated = await generateShotAsset(
               runtimeSettings,
               makeAssetGenerationShot(
@@ -8223,7 +8224,7 @@ export function ComfyPipelinePanel() {
                 `${profile.name} 正视锚点`,
                 buildFrontAnchorRetryPrompt(profile.name, semanticContext, attempt),
                 "",
-                baseSeed
+                attemptSeed
               ),
               0,
               "image",
