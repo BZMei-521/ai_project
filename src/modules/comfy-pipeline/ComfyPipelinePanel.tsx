@@ -7820,6 +7820,17 @@ export function ComfyPipelinePanel() {
       .map((value) => value?.trim() ?? "")
       .filter((value): value is string => Boolean(value));
 
+  const filterMissingLocalPaths = async (paths: string[]): Promise<Set<string>> => {
+    const candidates = uniqueEntities(paths.map((value) => value.trim()).filter(Boolean));
+    if (candidates.length === 0) return new Set<string>();
+    try {
+      const missing = await invokeDesktopCommand<string[]>("find_missing_paths", { paths: candidates });
+      return new Set((missing ?? []).map((value) => value.trim()).filter(Boolean));
+    } catch {
+      return new Set<string>();
+    }
+  };
+
   const hasProvisionReadyCharacterAnchorAsset = (asset: Asset | null | undefined) =>
     Boolean(resolveExistingCharacterAnchorPath(asset));
 
@@ -8196,10 +8207,18 @@ export function ComfyPipelinePanel() {
       const existingAsset = existingId
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId)
         : null;
-      const reusableFrontReferencePath = resolveExistingCharacterAnchorPath(existingAsset);
+      const normalizedContext = context.trim();
+      const initialFrontReferencePath = resolveExistingCharacterAnchorPath(existingAsset);
+      const initialPreviewPaths = listCharacterThreeViewPaths(existingAsset);
+      const missingPaths = await filterMissingLocalPaths([initialFrontReferencePath, ...initialPreviewPaths]);
+      if (existingAsset && missingPaths.size > 0) {
+        appendLog(`检测到角色资产缺图，已转入自动修复：${name}`, "info");
+      }
+      const reusableFrontReferencePath =
+        initialFrontReferencePath && !missingPaths.has(initialFrontReferencePath) ? initialFrontReferencePath : "";
+      const previewPaths = initialPreviewPaths.filter((item) => !missingPaths.has(item));
       if (existingId) {
-        const previewPaths = listCharacterThreeViewPaths(existingAsset);
-        if (hasProvisionReadyCharacterThreeViewAsset(existingAsset)) {
+        if (previewPaths.length >= 3) {
           return {
             assetId: existingId,
             previewPaths:
@@ -8208,6 +8227,50 @@ export function ComfyPipelinePanel() {
                 : [reusableFrontReferencePath].filter((value): value is string => Boolean(value)),
             reused: true,
             viewState: "threeview"
+          };
+        }
+      }
+      if (!reusableFrontReferencePath && normalizedContext) {
+        appendLog(`角色 front 缺失，开始按脚本描述自动重建：${name}`, "info");
+        await upsertImportedCharacterAssets(
+          [
+            {
+              name,
+              anchorImagePath: "",
+              frontPath: "",
+              sidePath: "",
+              backPath: "",
+              description: normalizedContext,
+              voiceProfile: existingAsset?.voiceProfile?.trim() || ""
+            }
+          ],
+          "自动资产阶段",
+          runtimeSettings
+        );
+        const recoveredAsset = findAssetByName("character", name);
+        const recoveredFrontReferencePath = resolveExistingCharacterAnchorPath(recoveredAsset);
+        const recoveredPreviewPaths = listCharacterThreeViewPaths(recoveredAsset);
+        const recoveredMissingPaths = await filterMissingLocalPaths([recoveredFrontReferencePath, ...recoveredPreviewPaths]);
+        const recoveredUsableFront =
+          recoveredFrontReferencePath && !recoveredMissingPaths.has(recoveredFrontReferencePath)
+            ? recoveredFrontReferencePath
+            : "";
+        const recoveredUsablePreviewPaths = recoveredPreviewPaths.filter((item) => !recoveredMissingPaths.has(item));
+        if (existingId && recoveredUsablePreviewPaths.length >= 3) {
+          return {
+            assetId: existingId,
+            previewPaths: recoveredUsablePreviewPaths,
+            reused: false,
+            viewState: "threeview"
+          };
+        }
+        if (recoveredUsableFront) {
+          return {
+            assetId: existingId || findAssetIdByName("character", name),
+            previewPaths:
+              recoveredUsablePreviewPaths.length > 0 ? recoveredUsablePreviewPaths : [recoveredUsableFront],
+            reused: false,
+            viewState: recoveredUsablePreviewPaths.length >= 3 ? "threeview" : "front"
           };
         }
       }
@@ -8234,7 +8297,6 @@ export function ComfyPipelinePanel() {
         });
       }
       let created = existingId || findAssetIdByName("character", name);
-      const normalizedContext = context.trim();
       if (!normalizedContext) {
         appendLog(`角色正视锚点已就绪：${name}`);
         return {
