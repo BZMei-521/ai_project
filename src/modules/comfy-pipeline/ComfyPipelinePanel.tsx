@@ -319,6 +319,36 @@ function storyboardWorkflowHasHardcodedReferenceImages(workflowJson: string): bo
   return false;
 }
 
+function workflowLooksLikeCharacterThreeViewStoryboardMisuse(workflowJson: string): boolean {
+  const trimmed = workflowJson.trim();
+  if (!trimmed) return false;
+  const normalized = trimmed.replace(/\s+/g, "").toLowerCase();
+  if (
+    normalized.includes("character_orthoview") ||
+    normalized.includes("character_mv") ||
+    normalized.includes("three_view") ||
+    normalized.includes("three-view")
+  ) {
+    return true;
+  }
+  const nodeTypes = collectWorkflowNodeTypesForHeuristics(trimmed).map((item) => item.toLowerCase());
+  const hasImageBatchMulti = nodeTypes.includes("imagebatchmulti");
+  const hasOpenpose = nodeTypes.some((item) => item.includes("openpose"));
+  const hasIpAdapter = nodeTypes.some((item) => item.includes("ipadapter"));
+  const hasStoryboardSceneToken = trimmed.includes("{{SCENE_REF_PATH}}");
+  const hasStoryboardCharacterTokens =
+    trimmed.includes("{{CHAR1_PRIMARY_PATH}}") ||
+    trimmed.includes("{{CHAR1_SECONDARY_PATH}}") ||
+    trimmed.includes("{{CHAR2_PRIMARY_PATH}}");
+  if (hasImageBatchMulti && hasIpAdapter && !hasStoryboardSceneToken && !hasStoryboardCharacterTokens) {
+    return true;
+  }
+  if (hasOpenpose && hasImageBatchMulti && storyboardWorkflowHasHardcodedReferenceImages(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
 function normalizeWorkflowFingerprint(workflowJson: string): string {
   return workflowJson.replace(/\s+/g, "").trim();
 }
@@ -10029,6 +10059,20 @@ export function ComfyPipelinePanel() {
         }));
         appendLog("成熟分镜模式检测到旧 Qwen 模板，已自动写入内置 scene-first + IPAdapter 分镜模板", "info");
         pushToast("已自动切换为内置成熟分镜模板", "success");
+      }
+      if (workflowLooksLikeCharacterThreeViewStoryboardMisuse(runtimeSettings.imageWorkflowJson)) {
+        runtimeSettings = {
+          ...runtimeSettings,
+          storyboardImageWorkflowMode: "mature_asset_guided",
+          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        };
+        persistSettings((previous) => ({
+          ...previous,
+          storyboardImageWorkflowMode: "mature_asset_guided",
+          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        }));
+        appendLog("检测到当前图片工作流实际是角色三视图/three_view 资产工作流，已自动切回内置成熟分镜模板，避免把三视图整板当分镜图输出。", "info");
+        pushToast("检测到误用三视图工作流，已自动切换成熟分镜模板", "warning");
       }
       if (
         (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
