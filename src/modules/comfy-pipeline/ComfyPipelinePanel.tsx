@@ -5171,6 +5171,12 @@ export function ComfyPipelinePanel() {
         : false;
     const lineupLikeLayout = isFrontLineupLikeLayout(layout);
     const sceneBlockLikeLayout = isFrontSceneBlockLikeLayout(layout);
+    const clutteredFrontLayout =
+      layout != null &&
+      (layout.mediumComponents > 0 ||
+        layout.secondaryForegroundRatio > 0.06 ||
+        layout.detachedForegroundRatio > 0.04 ||
+        layout.edgeForegroundRatio > 0.12);
     const layoutIssues = [
       sceneBlockLikeLayout && layout
         ? `疑似场景块或群像卡片(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
@@ -5181,20 +5187,23 @@ export function ComfyPipelinePanel() {
       layout?.significantComponents && layout.significantComponents > 1
         ? `疑似多主体/多角度(blob=${layout.significantComponents})`
         : "",
-      layout && layout.mediumComponents > 1
+      layout && layout.mediumComponents > 0
         ? `存在额外设定页组件(cluster=${layout.mediumComponents})`
         : "",
-      layout && layout.secondaryForegroundRatio > 0.12
+      layout && layout.secondaryForegroundRatio > 0.06
         ? `主体外还有额外前景元素(secondary=${layout.secondaryForegroundRatio.toFixed(2)})`
         : "",
-      layout && layout.detachedForegroundRatio > 0.1
+      layout && layout.detachedForegroundRatio > 0.04
         ? `画面含有额外设定页元素(detached=${layout.detachedForegroundRatio.toFixed(2)})`
         : "",
-      layout && layout.edgeForegroundRatio > 0.18
+      layout && layout.edgeForegroundRatio > 0.12
         ? `边缘存在文字或装饰杂项(edge=${layout.edgeForegroundRatio.toFixed(2)})`
         : "",
       layout && isLayoutTooTight(layout, "reference_front") ? "人物贴边或裁切" : "",
-      layout && layout.bbox.heightRatio < 0.48 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      layout && layout.bbox.heightRatio < 0.56 ? `人物过小(h=${layout.bbox.heightRatio.toFixed(2)})` : "",
+      clutteredFrontLayout && layout
+        ? `前景装饰或悬浮附加物过多(cluster=${layout.mediumComponents},secondary=${layout.secondaryForegroundRatio.toFixed(2)},detached=${layout.detachedForegroundRatio.toFixed(2)})`
+        : "",
       appearance?.likelyTemplateFigure
         ? `角色像灰模或人体模板(sat=${appearance.averageSaturation.toFixed(2)},chroma=${appearance.averageChroma.toFixed(1)})`
         : "",
@@ -5217,14 +5226,15 @@ export function ComfyPipelinePanel() {
       (layout?.significantComponents && layout.significantComponents > 1
         ? 40 + (layout.significantComponents - 1) * 16
         : 0) +
-      (layout?.mediumComponents && layout.mediumComponents > 1 ? 18 + (layout.mediumComponents - 1) * 12 : 0) +
-      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.1) * 210 : 0) +
-      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.08) * 190 : 0) +
-      (layout ? Math.max(0, layout.edgeForegroundRatio - 0.08) * 150 : 0) +
+      (layout?.mediumComponents && layout.mediumComponents > 0 ? 26 + layout.mediumComponents * 14 : 0) +
+      (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.04) * 260 : 0) +
+      (layout ? Math.max(0, layout.detachedForegroundRatio - 0.03) * 240 : 0) +
+      (layout ? Math.max(0, layout.edgeForegroundRatio - 0.08) * 180 : 0) +
       (sceneBlockLikeLayout ? 96 : 0) +
       (lineupLikeLayout ? 86 : 0) +
+      (clutteredFrontLayout ? 44 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
-      (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
+      (layout && layout.bbox.heightRatio < 0.56 ? (0.56 - layout.bbox.heightRatio) * 120 : 0) +
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (appearance?.likelyGlowPosterFigure ? 74 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
