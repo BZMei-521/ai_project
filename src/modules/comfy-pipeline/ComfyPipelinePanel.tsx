@@ -5902,11 +5902,21 @@ export function ComfyPipelinePanel() {
     if (/(长裙|长袍|斗篷|披风|古风|仙侠|dress|robe|cloak|cape)/i.test(normalized)) {
       hints.push("camouflage, camo pattern, military uniform, tactical vest, tactical gear, body armor, combat gear, modern soldier outfit");
     }
+    if (/(连衣裙|长裙|裙装|dress|skirt)/i.test(normalized)) {
+      hints.push(
+        "strapless dress, sleeveless dress, tube dress, spaghetti strap, bare shoulders, bare upper arms, skin-tight bodysuit, leotard, mannequin dress form, flesh-colored dress, translucent fabric"
+      );
+    }
     if (/(靴|鞋|boots|shoes)/i.test(normalized)) {
       hints.push("barefoot, exposed toes, naked feet");
     }
     if (/(写实|电影|影视|realistic|cinematic)/i.test(normalized)) {
       hints.push("anime style, chibi, cel shading");
+    }
+    if (/(国漫|一人之下|二维|2d|动漫|动画|anime|donghua)/i.test(normalized)) {
+      hints.push(
+        "grey mannequin, monochrome mannequin, skin-colored bodysuit, blank template body, neon poster girl, idol poster, glossy anime pinup, candy pastel moe, chibi"
+      );
     }
     hints.push(
       "neon rim light, red blue edge light, poster composition, glowing silhouette, ghosted duplicate figure, backlit shadow clone, fashion campaign poster"
@@ -6042,6 +6052,7 @@ export function ComfyPipelinePanel() {
       const styleHint = styleProfile.styleHint;
       const styleAnchor = styleProfile.styleAnchor;
       const isAnimeStyle = styleProfile.kind === "anime";
+      const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(context);
       const core = mergePromptFragments([
         "masterpiece, best quality, high detail",
         genderHint === "female" ? "young adult woman" : genderHint === "male" ? "young adult man" : "",
@@ -6063,6 +6074,12 @@ export function ComfyPipelinePanel() {
         "plain white seamless backdrop only, no floor props, no scenery, no layout board",
         "neutral standing pose, arms relaxed down, hands visible, feet parallel, complete shoes visible",
         "fully clothed, complete outfit, hairstyle and costume clearly visible",
+        isAnimeStyle && genderHint === "female"
+          ? "mature modern donghua heroine design, nonsexualized, natural proportions, restrained facial style, not childish, not idol-poster glamour"
+          : "",
+        isAnimeStyle && genderHint === "female" && likelyDressCharacter
+          ? "opaque long-sleeve dress or layered dress silhouette with clearly visible collar, cuffs, waist seam, and skirt hem; clothing must read as fabric, not skin-colored template"
+          : "",
         `角色：${name}`,
         `风格倾向：${styleHint}`,
         styleAnchor ? `全局画风锚点：${styleAnchor}` : "",
@@ -6211,6 +6228,9 @@ export function ComfyPipelinePanel() {
 
   const buildFrontAnchorRetryPrompt = (name: string, context: string, attempt: number) => {
     const basePrompt = buildCharacterViewPrompt(name, sanitizeCharacterAnchorContext(context), "front");
+    const normalized = normalizeStoryInput(context);
+    const isAnimeFemale = inferCharacterGenderHint(normalized) === "female" && inferVisualStyleKindFromText(normalized) === "anime";
+    const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(normalized);
     const retryTuning =
       attempt <= 0
         ? ""
@@ -6219,11 +6239,17 @@ export function ComfyPipelinePanel() {
           : attempt === 2
           ? "补充要求：必须是标准单人摄影棚参照图，人物完整站在画面中央，主体占画面高度约 68% 到 76%，头顶和鞋底留白适中，绝不允许贴边。camera slightly closer, full body entirely inside frame, balanced white margin, larger subject."
           : "补充要求：严格单人全身白底参照图，主体占画面高度约 70% 到 78%，角色居中，边距均匀，不是设定页，不是海报，不是多人排表。single centered full-body character on pure white background, subject large in frame, even margins, not a character sheet.";
+    const animeFemaleInstruction =
+      isAnimeFemale && likelyDressCharacter
+        ? "补充要求：这是现代国漫女性角色正视锚点，不允许灰模、裸模、时装海报女模特效果。必须穿着清楚可辨识的长袖连衣裙或分层裙装，领口、袖口、腰带或腰线、裙摆层次明确，服装颜色与皮肤有明显区分，肩膀和上臂必须被衣料覆盖。"
+        : isAnimeFemale
+          ? "补充要求：这是现代国漫女性角色正视锚点，不允许灰模、裸模、时装海报女模特效果，必须是成熟克制的角色设定图而不是偶像海报。"
+          : "";
     const faceDetailInstruction =
       "补充要求：脸部区域必须清楚，双眼、眉毛、鼻梁、嘴唇和下颌线都要稳定可辨识；不允许糊脸、脏脸、灰脸、无五官。face must stay crisp, readable, and detailed.";
     const cleanupInstruction =
       "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。禁止霓虹轮廓光、禁止红蓝边缘光、禁止发光残影、禁止海报式背后分身。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs, no neon rim light, no ghost silhouettes.";
-    return mergePromptFragments([basePrompt, retryTuning, faceDetailInstruction, cleanupInstruction]);
+    return mergePromptFragments([basePrompt, retryTuning, animeFemaleInstruction, faceDetailInstruction, cleanupInstruction]);
   };
 
   const buildFrontAnchorCleanupPrompt = (name: string, context: string, attempt: number) => {
