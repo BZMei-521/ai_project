@@ -119,6 +119,66 @@ function normalizeCharacterAssetRefId(
   return (canonicalKey && canonicalCharacterMap.get(canonicalKey)) || asset.id;
 }
 
+function compactTextParts(...parts: Array<string | string[] | undefined>): string {
+  return parts
+    .flatMap((part) => (Array.isArray(part) ? part : [part]))
+    .map((part) => (typeof part === "string" ? part.trim() : ""))
+    .filter((part) => part.length > 0)
+    .join("\n");
+}
+
+function resolveCharacterAssetIdByName(
+  assets: Asset[],
+  canonicalCharacterMap: Map<string, string>,
+  candidate?: string
+): string {
+  const raw = candidate?.trim() ?? "";
+  if (!raw) return "";
+  const normalizedRaw = normalizeEntityKey(raw);
+  const canonicalKey = canonicalAssetName("character", raw);
+  for (const asset of assets) {
+    if (asset.type !== "character") continue;
+    if (normalizeEntityKey(asset.name) === normalizedRaw) {
+      return normalizeCharacterAssetRefId(assets, canonicalCharacterMap, asset.id);
+    }
+  }
+  if (canonicalKey && canonicalCharacterMap.has(canonicalKey)) {
+    return canonicalCharacterMap.get(canonicalKey) ?? "";
+  }
+  for (const asset of assets) {
+    if (asset.type !== "character") continue;
+    const assetCanonical = canonicalAssetName("character", asset.name);
+    if (!assetCanonical) continue;
+    if (
+      assetCanonical === canonicalKey ||
+      assetCanonical.includes(canonicalKey) ||
+      canonicalKey.includes(assetCanonical)
+    ) {
+      return normalizeCharacterAssetRefId(assets, canonicalCharacterMap, asset.id);
+    }
+  }
+  return "";
+}
+
+function shotLooksCharacterDrivenInComfy(shot: Shot): boolean {
+  const corpus = compactTextParts(
+    shot.title,
+    shot.storyPrompt,
+    shot.notes,
+    shot.dialogue,
+    shot.tags,
+    shot.sourceCharacterNames
+  );
+  return (
+    Boolean(shot.dialogue.trim()) ||
+    (shot.characterRefs?.length ?? 0) > 0 ||
+    (shot.sourceCharacterNames?.length ?? 0) > 0 ||
+    /人物|角色|对白|对峙|挥拳|冲拳|出拳|闪避|反击|回头|看向|转身|走向|逼近|交手|fight|punch|kick|dodge|duel|face[- ]?off/i.test(
+      corpus
+    )
+  );
+}
+
 export type ComfySettings = {
   baseUrl: string;
   outputDir: string;
@@ -3617,15 +3677,42 @@ function inferPromptTokens(
     sceneAsset?.type === "skybox"
       ? skyboxFacePaths[0] || sceneAsset.skyboxFaces?.front || sceneAsset.filePath
       : sceneAsset?.filePath ?? "";
-  const resolvedCharacterAssets: Asset[] = [];
-  const seenCharacterIds = new Set<string>();
+  const shotCharacterContext = compactTextParts(
+    shot.title,
+    shot.storyPrompt,
+    shot.notes,
+    shot.dialogue,
+    shot.sourceCharacterNames
+  );
+  const inferredCharacterRefIds: string[] = [];
+  const pushCharacterRefId = (candidateId?: string) => {
+    const normalizedId = normalizeCharacterAssetRefId(assets, canonicalCharacterMap, candidateId);
+    if (!normalizedId || inferredCharacterRefIds.includes(normalizedId)) return;
+    inferredCharacterRefIds.push(normalizedId);
+  };
   for (const refId of shot.characterRefs ?? []) {
-    const trimmedId = normalizeCharacterAssetRefId(assets, canonicalCharacterMap, refId);
-    if (!trimmedId || seenCharacterIds.has(trimmedId)) continue;
-    const matched = assets.find((item) => item.id === trimmedId && item.type === "character");
-    if (!matched) continue;
-    seenCharacterIds.add(trimmedId);
-    resolvedCharacterAssets.push(matched);
+    pushCharacterRefId(refId);
+  }
+  for (const name of shot.sourceCharacterNames ?? []) {
+    pushCharacterRefId(resolveCharacterAssetIdByName(assets, canonicalCharacterMap, name));
+  }
+  for (const asset of characterAssetsAll) {
+    const assetName = asset.name.trim();
+    if (!assetName || !shotCharacterContext.includes(assetName)) continue;
+    pushCharacterRefId(asset.id);
+  }
+  if (inferredCharacterRefIds.length === 0 && shotLooksCharacterDrivenInComfy(shot)) {
+    if (characterAssetsAll.length === 1) {
+      pushCharacterRefId(characterAssetsAll[0]?.id);
+    } else if (characterAssetsAll.length === 2) {
+      pushCharacterRefId(characterAssetsAll[0]?.id);
+      pushCharacterRefId(characterAssetsAll[1]?.id);
+    }
+  }
+  const resolvedCharacterAssets: Asset[] = [];
+  for (const refId of inferredCharacterRefIds) {
+    const matched = assets.find((item) => item.id === refId && item.type === "character");
+    if (matched) resolvedCharacterAssets.push(matched);
   }
   const characterAssets = selectStoryboardCharacterAssets(shot, resolvedCharacterAssets);
   const continuityPlan = inferShotContinuityPlan(shot, index, allShots);
