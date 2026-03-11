@@ -42,6 +42,10 @@ import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-charact
 import CHARACTER_THREEVIEW_LAYOUT_REF_BASE64 from "./presets/assets/character-threeview-layout-ref.base64";
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "./presets/asset-skybox-panorama-default.json";
+import {
+  safeStorageGetItem,
+  safeStorageSetItem
+} from "../platform/safeStorage";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
@@ -2124,7 +2128,7 @@ function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflo
 }
 
 function loadSettings(): ComfySettings {
-  const raw = localStorage.getItem(SETTINGS_KEY);
+  const raw = safeStorageGetItem(SETTINGS_KEY);
   if (!raw) {
     return {
       baseUrl: "http://127.0.0.1:8188",
@@ -2321,7 +2325,7 @@ function loadSettings(): ComfySettings {
 }
 
 function loadImportPresets(): ImportProvisionPreset[] {
-  const raw = localStorage.getItem(IMPORT_PRESETS_KEY);
+  const raw = safeStorageGetItem(IMPORT_PRESETS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as ImportProvisionPreset[];
@@ -2350,11 +2354,11 @@ function loadImportPresets(): ImportProvisionPreset[] {
 }
 
 function persistImportPresets(presets: ImportProvisionPreset[]): void {
-  localStorage.setItem(IMPORT_PRESETS_KEY, JSON.stringify(presets));
+  safeStorageSetItem(IMPORT_PRESETS_KEY, JSON.stringify(presets));
 }
 
 function loadImportPresetAutoApply(): boolean {
-  return localStorage.getItem(IMPORT_PRESET_AUTO_APPLY_KEY) === "1";
+  return safeStorageGetItem(IMPORT_PRESET_AUTO_APPLY_KEY) === "1";
 }
 
 function formatImportPresetScope(scope: ImportProvisionPreset["scope"]): string {
@@ -3543,7 +3547,7 @@ export function ComfyPipelinePanel() {
   const persistSettings = (next: ComfySettings | ((previous: ComfySettings) => ComfySettings)) => {
     setSettings((previous) => {
       const resolved = typeof next === "function" ? (next as (prev: ComfySettings) => ComfySettings)(previous) : next;
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(resolved));
+      safeStorageSetItem(SETTINGS_KEY, JSON.stringify(resolved));
       return resolved;
     });
   };
@@ -3994,7 +3998,7 @@ export function ComfyPipelinePanel() {
   };
 
   useEffect(() => {
-    localStorage.setItem(IMPORT_PRESET_AUTO_APPLY_KEY, autoApplyImportedPreset ? "1" : "0");
+    safeStorageSetItem(IMPORT_PRESET_AUTO_APPLY_KEY, autoApplyImportedPreset ? "1" : "0");
   }, [autoApplyImportedPreset]);
 
   useEffect(() => {

@@ -15,6 +15,7 @@ import CHARACTER_THREEVIEW_LAYOUT_REF_BASE64 from "../comfy-pipeline/presets/ass
 import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-panorama-default.json";
 import { invokeDesktopCommand, toDesktopMediaSource } from "../platform/desktopBridge";
+import { safeStorageGetItem } from "../platform/safeStorage";
 import { useStoryboardStore } from "../storyboard-core/store";
 import type { AssetType, Shot, SkyboxFace } from "../storyboard-core/types";
 import { confirmDialog } from "../ui/dialogStore";
@@ -818,7 +819,7 @@ function resolveManualCharacterAnchor(frontPath: string, filePath: string): stri
 }
 
 function loadComfySettingsFromLocalStorage(): ComfySettings | null {
-  const raw = localStorage.getItem(SETTINGS_KEY);
+  const raw = safeStorageGetItem(SETTINGS_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<ComfySettings>;

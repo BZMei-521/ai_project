@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { safeStorageRemoveItem, safeStorageSetItem } from "../modules/platform/safeStorage";
 
 type Props = {
   children: ReactNode;
@@ -31,11 +32,7 @@ export class AppErrorBoundary extends Component<Props, State> {
       stack: error.stack || "",
       componentStack: errorInfo.componentStack || ""
     };
-    try {
-      localStorage.setItem(CRASH_LOG_KEY, JSON.stringify(payload));
-    } catch {
-      // Ignore storage errors.
-    }
+    safeStorageSetItem(CRASH_LOG_KEY, JSON.stringify(payload));
     console.error("[AppErrorBoundary] Unhandled render error", payload);
   }
 
@@ -52,11 +49,7 @@ export class AppErrorBoundary extends Component<Props, State> {
       "storyboard-pro/aux-panel-state/v1"
     ];
     for (const key of keys) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        // Ignore storage errors.
-      }
+      safeStorageRemoveItem(key);
     }
     this.onReload();
   };
@@ -88,4 +81,3 @@ export class AppErrorBoundary extends Component<Props, State> {
     );
   }
 }
-

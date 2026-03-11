@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { pushToast } from "../ui/toastStore";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
+import { safeStorageGetItem, safeStorageSetItem } from "../platform/safeStorage";
 import {
   selectShotStartFrame,
   useStoryboardStore
@@ -71,7 +72,7 @@ function toAbsoluteLocalPath(raw: string | undefined): string {
 
 function loadComfyOutputDir(): string {
   if (typeof window === "undefined") return "";
-  const raw = window.localStorage.getItem(COMFY_SETTINGS_KEY);
+  const raw = safeStorageGetItem(COMFY_SETTINGS_KEY);
   if (!raw) return "";
   try {
     const parsed = JSON.parse(raw) as { outputDir?: string };
@@ -101,7 +102,7 @@ export function StoryboardPreviewPanel() {
   const setCurrentFrame = useStoryboardStore((state) => state.setCurrentFrame);
   const [previewShotWidth, setPreviewShotWidth] = useState<number>(() => {
     if (typeof window === "undefined") return 176;
-    const saved = Number(window.localStorage.getItem(PREVIEW_SHOT_WIDTH_KEY));
+    const saved = Number(safeStorageGetItem(PREVIEW_SHOT_WIDTH_KEY));
     if (!Number.isFinite(saved)) return 176;
     return Math.max(MIN_PREVIEW_SHOT_WIDTH, Math.min(MAX_PREVIEW_SHOT_WIDTH, saved));
   });
@@ -171,7 +172,7 @@ export function StoryboardPreviewPanel() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(PREVIEW_SHOT_WIDTH_KEY, String(previewShotWidth));
+    safeStorageSetItem(PREVIEW_SHOT_WIDTH_KEY, String(previewShotWidth));
   }, [previewShotWidth]);
 
   const onSelectShot = (shotId: string, sequenceId: string) => {

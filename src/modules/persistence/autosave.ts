@@ -1,4 +1,9 @@
 import type { StoryboardSnapshot } from "../storyboard-core/store";
+import {
+  safeStorageGetItem,
+  safeStorageRemoveItem,
+  safeStorageSetItem
+} from "../platform/safeStorage";
 
 const AUTOSAVE_KEY = "storyboard-pro/autosave/history/v1";
 const SESSION_MARKER_KEY = "storyboard-pro/session-active/v1";
@@ -10,7 +15,7 @@ export type AutosaveEntry = {
 };
 
 function readHistory(): AutosaveEntry[] {
-  const raw = localStorage.getItem(AUTOSAVE_KEY);
+  const raw = safeStorageGetItem(AUTOSAVE_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as AutosaveEntry[];
@@ -22,7 +27,7 @@ function readHistory(): AutosaveEntry[] {
 }
 
 function writeHistory(history: AutosaveEntry[]): void {
-  localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(history));
+  safeStorageSetItem(AUTOSAVE_KEY, JSON.stringify(history));
 }
 
 export function saveAutosaveSnapshot(
@@ -62,15 +67,15 @@ export function deleteAutosaveSnapshotById(id: string): void {
 }
 
 export function clearAutosaveHistory(): void {
-  localStorage.removeItem(AUTOSAVE_KEY);
+  safeStorageRemoveItem(AUTOSAVE_KEY);
 }
 
 export function beginSessionAndDetectUncleanExit(): boolean {
-  const hadMarker = !!localStorage.getItem(SESSION_MARKER_KEY);
-  localStorage.setItem(SESSION_MARKER_KEY, String(Date.now()));
+  const hadMarker = !!safeStorageGetItem(SESSION_MARKER_KEY);
+  safeStorageSetItem(SESSION_MARKER_KEY, String(Date.now()));
   return hadMarker;
 }
 
 export function endSession(): void {
-  localStorage.removeItem(SESSION_MARKER_KEY);
+  safeStorageRemoveItem(SESSION_MARKER_KEY);
 }

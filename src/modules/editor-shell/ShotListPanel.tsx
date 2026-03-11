@@ -8,6 +8,7 @@ import {
 import { confirmDialog, promptDialog } from "../ui/dialogStore";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
 import { inferSkyboxReferencePlan } from "../comfy-pipeline/comfyService";
+import { safeStorageGetItem, safeStorageSetItem } from "../platform/safeStorage";
 
 export function ShotListPanel() {
   const shots = useStoryboardStore(selectFilteredShotsForCurrentSequence);
@@ -52,7 +53,7 @@ export function ShotListPanel() {
   const [batchDurationInput, setBatchDurationInput] = useState<string>("");
   const [batchTagInput, setBatchTagInput] = useState<string>("");
   const [cardDensity, setCardDensity] = useState<"comfortable" | "compact">(
-    () => (localStorage.getItem("storyboard-pro/shot-density") === "compact" ? "compact" : "comfortable")
+    () => (safeStorageGetItem("storyboard-pro/shot-density") === "compact" ? "compact" : "comfortable")
   );
   const maxDuration = Math.max(1, ...shots.map((shot) => shot.durationFrames));
   const totalDuration = shots.reduce((sum, shot) => sum + shot.durationFrames, 0);
@@ -144,7 +145,7 @@ export function ShotListPanel() {
   }, [selectedShotId]);
 
   useEffect(() => {
-    localStorage.setItem("storyboard-pro/shot-density", cardDensity);
+    safeStorageSetItem("storyboard-pro/shot-density", cardDensity);
   }, [cardDensity]);
 
   return (

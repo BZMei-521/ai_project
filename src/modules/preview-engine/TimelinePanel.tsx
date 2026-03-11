@@ -8,6 +8,11 @@ import {
 import { confirmDialog, promptDialog } from "../ui/dialogStore";
 import { pushToast } from "../ui/toastStore";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
+import {
+  safeStorageGetItem,
+  safeStorageRemoveItem,
+  safeStorageSetItem
+} from "../platform/safeStorage";
 
 type ExportJobStatus =
   | "pending"
@@ -282,7 +287,7 @@ export function TimelinePanel() {
   }, [exportSettings.fps, exportSettings.height, exportSettings.videoBitrateKbps, exportSettings.width]);
 
   useEffect(() => {
-    const raw = localStorage.getItem(EXPORT_QUEUE_STORAGE_KEY);
+    const raw = safeStorageGetItem(EXPORT_QUEUE_STORAGE_KEY);
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as {
@@ -311,12 +316,12 @@ export function TimelinePanel() {
         setDefaultMaxAutoRetries(Math.max(0, Math.min(5, Math.round(parsed.defaultMaxAutoRetries))));
       }
     } catch {
-      localStorage.removeItem(EXPORT_QUEUE_STORAGE_KEY);
+      safeStorageRemoveItem(EXPORT_QUEUE_STORAGE_KEY);
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
+    safeStorageSetItem(
       EXPORT_QUEUE_STORAGE_KEY,
       JSON.stringify({
         jobs: exportJobs,
@@ -336,7 +341,7 @@ export function TimelinePanel() {
   }, []);
 
   useEffect(() => {
-    const raw = localStorage.getItem(`${TIMELINE_MARKER_STORAGE_KEY}:${project.id}`);
+    const raw = safeStorageGetItem(`${TIMELINE_MARKER_STORAGE_KEY}:${project.id}`);
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as TimelineMarker[];
@@ -351,12 +356,12 @@ export function TimelinePanel() {
         .sort((a, b) => a.frame - b.frame);
       setMarkers(normalized);
     } catch {
-      localStorage.removeItem(`${TIMELINE_MARKER_STORAGE_KEY}:${project.id}`);
+      safeStorageRemoveItem(`${TIMELINE_MARKER_STORAGE_KEY}:${project.id}`);
     }
   }, [project.id]);
 
   useEffect(() => {
-    const raw = localStorage.getItem(TIMELINE_PANEL_PREFS_STORAGE_KEY);
+    const raw = safeStorageGetItem(TIMELINE_PANEL_PREFS_STORAGE_KEY);
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as {
@@ -390,19 +395,19 @@ export function TimelinePanel() {
         );
       }
     } catch {
-      localStorage.removeItem(TIMELINE_PANEL_PREFS_STORAGE_KEY);
+      safeStorageRemoveItem(TIMELINE_PANEL_PREFS_STORAGE_KEY);
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
+    safeStorageSetItem(
       `${TIMELINE_MARKER_STORAGE_KEY}:${project.id}`,
       JSON.stringify(markers)
     );
   }, [markers, project.id]);
 
   useEffect(() => {
-    localStorage.setItem(
+    safeStorageSetItem(
       TIMELINE_PANEL_PREFS_STORAGE_KEY,
       JSON.stringify({
         autoExpandPanels,

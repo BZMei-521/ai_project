@@ -36,6 +36,10 @@ import { AudioTrackPanel } from "../modules/preview-engine/AudioTrackPanel";
 import { AppDialogHost, confirmDialog, promptDialog } from "../modules/ui/dialogStore";
 import { AppToastHost, pushToast } from "../modules/ui/toastStore";
 import {
+  safeStorageGetItem,
+  safeStorageSetItem
+} from "../modules/platform/safeStorage";
+import {
   selectShotStartFrame,
   selectFilteredShotsForCurrentSequence,
   useStoryboardStore,
@@ -136,7 +140,7 @@ function loadAuxPanelState(): {
   if (typeof window === "undefined") {
     return { open: false, pinned: false, section: "pipeline" };
   }
-  const raw = localStorage.getItem(AUX_PANEL_STATE_KEY);
+  const raw = safeStorageGetItem(AUX_PANEL_STATE_KEY);
   if (!raw) return { open: false, pinned: false, section: "pipeline" };
   try {
     const parsed = JSON.parse(raw) as Partial<{
@@ -191,20 +195,20 @@ export function App() {
   const [auxPanelPinned, setAuxPanelPinned] = useState(() => loadAuxPanelState().pinned);
   const [focusMode, setFocusMode] = useState(() => {
     if (typeof window === "undefined") return false;
-    return localStorage.getItem(FOCUS_MODE_KEY) === "1";
+    return safeStorageGetItem(FOCUS_MODE_KEY) === "1";
   });
   const [layoutDebug, setLayoutDebug] = useState(() => {
     if (!import.meta.env.DEV || typeof window === "undefined") return false;
-    return localStorage.getItem(LAYOUT_DEBUG_KEY) === "1";
+    return safeStorageGetItem(LAYOUT_DEBUG_KEY) === "1";
   });
   const [canvasPriorityLayout, setCanvasPriorityLayout] = useState(() => {
     if (typeof window === "undefined") return true;
-    const saved = localStorage.getItem(MAIN_LAYOUT_KEY);
+    const saved = safeStorageGetItem(MAIN_LAYOUT_KEY);
     return saved ? saved === "canvas" : true;
   });
   const [timelineSplitPercent, setTimelineSplitPercent] = useState<number | null>(() => {
     if (typeof window === "undefined") return null;
-    const raw = localStorage.getItem(TIMELINE_SPLIT_KEY);
+    const raw = safeStorageGetItem(TIMELINE_SPLIT_KEY);
     if (!raw) return null;
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return null;
@@ -747,12 +751,12 @@ export function App() {
   };
 
   useEffect(() => {
-    const hidden = localStorage.getItem("storyboard-pro/onboarding-hidden") === "1";
+    const hidden = safeStorageGetItem("storyboard-pro/onboarding-hidden") === "1";
     if (hidden) setShowOnboardingPanel(false);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
+    safeStorageSetItem(
       AUX_PANEL_STATE_KEY,
       JSON.stringify({
         open: auxPanelOpen,
@@ -763,21 +767,21 @@ export function App() {
   }, [auxPanelOpen, auxPanelPinned, auxPanelSection]);
 
   useEffect(() => {
-    localStorage.setItem(FOCUS_MODE_KEY, focusMode ? "1" : "0");
+    safeStorageSetItem(FOCUS_MODE_KEY, focusMode ? "1" : "0");
   }, [focusMode]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    localStorage.setItem(LAYOUT_DEBUG_KEY, layoutDebug ? "1" : "0");
+    safeStorageSetItem(LAYOUT_DEBUG_KEY, layoutDebug ? "1" : "0");
   }, [layoutDebug]);
 
   useEffect(() => {
-    localStorage.setItem(MAIN_LAYOUT_KEY, canvasPriorityLayout ? "canvas" : "balanced");
+    safeStorageSetItem(MAIN_LAYOUT_KEY, canvasPriorityLayout ? "canvas" : "balanced");
   }, [canvasPriorityLayout]);
 
   useEffect(() => {
     if (timelineSplitPercent === null) return;
-    localStorage.setItem(TIMELINE_SPLIT_KEY, String(timelineSplitPercent));
+    safeStorageSetItem(TIMELINE_SPLIT_KEY, String(timelineSplitPercent));
   }, [timelineSplitPercent]);
 
   useEffect(() => {
@@ -1090,7 +1094,7 @@ export function App() {
             <button
               onClick={() => {
                 setShowOnboardingPanel(false);
-                localStorage.setItem("storyboard-pro/onboarding-hidden", "1");
+                safeStorageSetItem("storyboard-pro/onboarding-hidden", "1");
               }}
               type="button"
             >
