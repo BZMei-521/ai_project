@@ -4737,6 +4737,23 @@ export function ComfyPipelinePanel() {
     return tinySpreadAcrossBoard || scatteredMultiFigureBoard || fragmentedPrimary;
   };
 
+  const isFrontSceneBlockLikeLayout = (
+    layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
+  ) => {
+    if (!layout) return false;
+    const bboxAspect = layout.bbox.heightRatio > 0 ? layout.bbox.widthRatio / layout.bbox.heightRatio : 0;
+    return (
+      layout.primaryComponentRatio > 0.88 &&
+      layout.secondaryForegroundRatio < 0.08 &&
+      layout.detachedForegroundRatio < 0.08 &&
+      layout.bbox.widthRatio > 0.58 &&
+      layout.bbox.heightRatio > 0.54 &&
+      layout.foregroundRatio > 0.26 &&
+      bboxAspect > 0.78 &&
+      bboxAspect < 1.24
+    );
+  };
+
   const evaluateThreeViewQuality = async (paths: string[], referenceFrontPath = "") => {
     const diversity = await detectLowDiversityThreeViews(paths);
     const sharpnessValues = (await Promise.all(paths.slice(0, 3).map((path) => computeImageSharpnessScore(path)))).filter(
@@ -4991,10 +5008,13 @@ export function ComfyPipelinePanel() {
 
   const hasUnrepairableFrontAnchorIssues = (issues: string[]) =>
     issues.some((issue) =>
-      /(角色像灰模或人体模板|裸露过多或疑似裸模|主体轮廓不像标准全身角色设定图|人物过小|疑似多主体\/多角度|存在额外设定页组件|主体外还有额外前景元素|画面含有额外设定页元素|边缘存在文字或装饰杂项|修复结果与原始角色锚点偏差过大)/u.test(
+      /(角色像灰模或人体模板|裸露过多或疑似裸模|主体轮廓不像标准全身角色设定图|人物过小|疑似多主体\/多角度|疑似场景块或群像卡片|存在额外设定页组件|主体外还有额外前景元素|画面含有额外设定页元素|边缘存在文字或装饰杂项|修复结果与原始角色锚点偏差过大)/u.test(
         issue
       )
     );
+
+  const hasCrowdOrSceneFrontIssues = (issues: string[]) =>
+    issues.some((issue) => /(疑似场景块或群像卡片|疑似整页小人排表|疑似多主体\/多角度)/u.test(issue));
 
   const hasCriticalFallbackViewIssues = (issues: string[]) =>
     issues.some((issue) =>
@@ -5116,7 +5136,11 @@ export function ComfyPipelinePanel() {
           (typeof bboxAspect === "number" && (bboxAspect > 1.4 || bboxAspect < 0.1))
         : false;
     const lineupLikeLayout = isFrontLineupLikeLayout(layout);
+    const sceneBlockLikeLayout = isFrontSceneBlockLikeLayout(layout);
     const layoutIssues = [
+      sceneBlockLikeLayout && layout
+        ? `疑似场景块或群像卡片(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
+        : "",
       lineupLikeLayout && layout
         ? `疑似整页小人排表(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},primary=${layout.primaryComponentRatio.toFixed(2)})`
         : "",
@@ -5163,6 +5187,7 @@ export function ComfyPipelinePanel() {
       (layout ? Math.max(0, layout.secondaryForegroundRatio - 0.1) * 210 : 0) +
       (layout ? Math.max(0, layout.detachedForegroundRatio - 0.08) * 190 : 0) +
       (layout ? Math.max(0, layout.edgeForegroundRatio - 0.08) * 150 : 0) +
+      (sceneBlockLikeLayout ? 96 : 0) +
       (lineupLikeLayout ? 86 : 0) +
       (layout && isLayoutTooTight(layout, "reference_front") ? 24 : 0) +
       (layout && layout.bbox.heightRatio < 0.48 ? (0.48 - layout.bbox.heightRatio) * 90 : 0) +
@@ -6161,6 +6186,7 @@ export function ComfyPipelinePanel() {
         "one person only, one body only, one angle only",
         "centered composition, head-to-toe fully visible, generous blank margin on all sides",
         "plain white seamless backdrop only, no floor props, no scenery, no layout board",
+        "not a crowd scene, not a street photo, not a park scene, not a forest scene, not a crowd card",
         "neutral standing pose, arms relaxed down, hands visible, feet parallel, complete shoes visible",
         "fully clothed, complete outfit, hairstyle and costume clearly visible",
         isAnimeStyle && genderHint === "female"
@@ -6183,6 +6209,7 @@ export function ComfyPipelinePanel() {
         "禁止漂浮宠物、悬浮武器、伴生物、额外道具、漂浮挂件",
         "禁止抽象色块、禁止水彩斑点、禁止漂浮符号、禁止独立图标、禁止单独头部、禁止动物头像、禁止吉祥物头像",
         "禁止场景背景、建筑背景、花纹背景、魔法阵背景、海报背景、光效背景",
+        "禁止群像、禁止人群、禁止街景、禁止树林或公园场景、禁止把整块场景卡片放进白底画面",
         "禁止半身、胸像、特写、裁切、贴边、俯拍、仰拍、广角透视、鱼眼",
         "禁止裸体、禁止裸模、禁止赤脚、禁止裸足、禁止露胸、禁止露出躯干、禁止内衣态、禁止泳装态",
         "胸口、腰腹、臀胯和大腿上部必须被服装完整覆盖，不允许深V、抹胸、露脐、透视薄纱、内衣外露",
@@ -8126,6 +8153,7 @@ export function ComfyPipelinePanel() {
           let mannequinFailures = 0;
           let nudityFailures = 0;
           let glowPosterFailures = 0;
+          let crowdSceneFailures = 0;
           if (modelIndex > 0) {
             appendLog(
               `${sourceLabel}角色正视锚点切换备用模型：${anchorModelCandidates[modelIndex - 1]} -> ${characterModel}`,
@@ -8198,6 +8226,11 @@ export function ComfyPipelinePanel() {
             } else {
               nudityFailures = 0;
             }
+            if (hasCrowdOrSceneFrontIssues(quality.issues)) {
+              crowdSceneFailures += 1;
+            } else {
+              crowdSceneFailures = 0;
+            }
             if (mannequinFailures >= 2 && modelIndex < anchorModelCandidates.length - 1) {
               appendLog(`${sourceLabel}角色正视锚点连续命中灰模/模板人，提前切换下一个模型：${profile.name}`, "info");
               break;
@@ -8208,6 +8241,10 @@ export function ComfyPipelinePanel() {
             }
             if (nudityFailures >= 1 && modelIndex < anchorModelCandidates.length - 1) {
               appendLog(`${sourceLabel}角色正视锚点命中裸露/裸模风险，提前切换下一个模型：${profile.name}`, "info");
+              break;
+            }
+            if (crowdSceneFailures >= 1 && modelIndex < anchorModelCandidates.length - 1) {
+              appendLog(`${sourceLabel}角色正视锚点命中场景块/群像污染，提前切换下一个模型：${profile.name}`, "info");
               break;
             }
             if (attempt < CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL - 1) {
