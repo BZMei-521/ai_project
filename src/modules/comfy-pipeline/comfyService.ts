@@ -2647,9 +2647,21 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   const previousSceneTitle = tokens.PREV_SCENE_SHOT_TITLE?.trim() ?? "";
   const previousCharacterTitle = tokens.PREV_CHARACTER_SHOT_TITLE?.trim() ?? "";
   const globalVisualStyle = tokens.GLOBAL_VISUAL_STYLE?.trim() ?? "";
+  const currentShotTitle = tokens.SHOT_TITLE?.trim() ?? "";
   const pieces = ["Treat every provided input image as a binding reference, not optional inspiration."];
   if (globalVisualStyle) {
     pieces.push(`Keep one unified visual style across every shot: ${globalVisualStyle}.`);
+    if (/2d|二维|国漫|动画/i.test(globalVisualStyle)) {
+      pieces.push(
+        "Render the final image as a polished 2D Chinese animation storyboard keyframe with clean line art, cel-shaded forms, unified stylization between characters and environment, and zero photorealistic or live-action texture."
+      );
+      pieces.push(
+        "Do not drift into realistic cinema, grayscale photography, painterly concept art, or 3D render look; keep the result flat-to-semi-flat 2D animation art with readable silhouettes."
+      );
+    }
+  }
+  if (currentShotTitle) {
+    pieces.push(`Current shot objective is ${currentShotTitle}; the framing and action of this shot must visibly differ when the script asks for a new angle, distance, reaction, walk, reverse, or dialogue beat.`);
   }
   if (previousSceneTitle) {
     pieces.push(
@@ -2692,7 +2704,9 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
   pieces.push(
     "Generate one coherent cinematic shot in the same world. Do not redesign the environment, do not change character identity, and do not ignore any provided reference image."
   );
-  pieces.push("When a previous-scene frame is provided, match its composition language, grayscale contrast, and environment styling first, then preserve character identity within that same visual treatment.");
+  pieces.push(
+    "When a previous-scene frame is provided, use it only to preserve scene style, lighting family, and landmark placement; do not clone its exact framing or composition if the current shot prompt asks for a different camera distance, angle, or body action."
+  );
   pieces.push("Ignore any accidental UI panels, inset cards, split-screen blocks, text labels, borders, or watermark-like artifacts that may appear inside reference frames; they are not part of the scene.");
   return pieces.join(" ");
 }
@@ -2843,8 +2857,8 @@ function extractImageReferenceSources(
   if (previousSceneImage) {
     continuityRefs.push({
       source: previousSceneImage,
-      weight: sceneRefs.length > 0 ? 0.88 : 0.36,
-      priority: sceneRefs.length > 0 ? 430 : 110,
+      weight: sceneRefs.length > 0 ? 0.34 : 0.36,
+      priority: sceneRefs.length > 0 ? 185 : 110,
       bucket: "continuity:scene",
       label: continuityPlan.previousSceneShot?.title
         ? `continuity_scene:${continuityPlan.previousSceneShot.title}`
@@ -2925,8 +2939,8 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
   const primaryScene =
-    ordered.find((item) => item.role === "continuity_scene") ??
-    ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+    ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary") ??
+    ordered.find((item) => item.role === "continuity_scene");
   pushUniqueWeightedRef(selected, usedSources, primaryScene);
   const usedCharacterBuckets = new Set<string>();
   const characters = ordered.filter((item) => item.role.startsWith("character_"));
@@ -3000,10 +3014,10 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
   // Always keep environment anchor first when a scene/skybox reference exists.
   if (composite.length > 0 && continuityScene.length > 0) {
-    return [...composite.slice(0, 1), ...continuityScene.slice(0, 1), ...characters.slice(0, 1), ...scenes, ...continuityCharacter].slice(0, 3);
+    return [...composite.slice(0, 1), ...characters.slice(0, 2), ...continuityScene.slice(0, 1), ...scenes, ...continuityCharacter].slice(0, 3);
   }
   if (continuityScene.length > 0 && scenes.length > 0) {
-    return [...continuityScene.slice(0, 1), ...scenes.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter].slice(0, 3);
+    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuityScene.slice(0, 1), ...continuityCharacter].slice(0, 3);
   }
   if (scenes.length > 0) {
     return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1)].slice(0, 3);
@@ -3252,7 +3266,7 @@ async function stageCharacterReferenceImages(
     const adjusted: WeightedImageRef[] = [];
     for (let index = 0; index < selectedRefs.length; index += 1) {
       const item = selectedRefs[index]!;
-      if (item.role === "scene_primary" || item.role === "scene_secondary") {
+      if (item.role === "scene_secondary") {
         continue;
       }
       if (item.role.startsWith("character_")) {
