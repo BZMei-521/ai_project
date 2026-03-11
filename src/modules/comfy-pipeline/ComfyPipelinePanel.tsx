@@ -4926,6 +4926,53 @@ export function ComfyPipelinePanel() {
     );
   };
 
+  const extractPathOrUrlFilenameCandidates = (pathOrUrl: string) => {
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return [];
+    const candidates = new Set<string>();
+    const pushCandidate = (value: string) => {
+      const normalized = value.trim().toLowerCase();
+      if (normalized) candidates.add(normalized);
+    };
+    const addPathBasename = (value: string) => {
+      const normalized = value.replace(/\\/g, "/");
+      const basename = normalized.split("/").pop() ?? "";
+      pushCandidate(basename);
+    };
+
+    try {
+      const url = new URL(trimmed);
+      const filename = url.searchParams.get("filename");
+      if (filename) addPathBasename(decodeURIComponent(filename));
+      addPathBasename(decodeURIComponent(url.pathname));
+    } catch {
+      addPathBasename(trimmed.split(/[?#]/, 1)[0] ?? trimmed);
+    }
+
+    return [...candidates];
+  };
+
+  const isLikelyRawStoryboardReferenceFilename = (filename: string) =>
+    /^(front|side|back)\.(png|jpe?g|webp|bmp)$/i.test(filename) ||
+    /(three[_-]?view|orthoview|character_(anchor|mv)|skybox_(front|right|back|left|up|down|panorama))/i.test(filename);
+
+  const isInvalidStoryboardStillCandidate = (pathOrUrl: string, shot: Shot, assetsForShot: Asset[]) => {
+    if (isInvalidStoryboardStillPath(pathOrUrl)) return true;
+    const filenameCandidates = extractPathOrUrlFilenameCandidates(pathOrUrl);
+    if (filenameCandidates.some((item) => isLikelyRawStoryboardReferenceFilename(item))) {
+      return true;
+    }
+    const preview = resolveShotReferencePreview(shot, assetsForShot);
+    const referenceNames = new Set<string>();
+    preview.characters.forEach((item) =>
+      item.thumbs.forEach((thumb) => extractPathOrUrlFilenameCandidates(thumb).forEach((name) => referenceNames.add(name)))
+    );
+    preview.scene?.thumbs.forEach((thumb) =>
+      extractPathOrUrlFilenameCandidates(thumb).forEach((name) => referenceNames.add(name))
+    );
+    return filenameCandidates.some((item) => referenceNames.has(item));
+  };
+
   const isInvalidStoryboardReferencePath = (pathOrUrl: string) => {
     const normalized = pathOrUrl.trim().toLowerCase();
     if (!normalized) return false;
@@ -9734,7 +9781,7 @@ export function ComfyPipelinePanel() {
           }
         });
         const firstImagePath = firstOutput.localPath || firstOutput.previewUrl;
-        if (isInvalidStoryboardStillPath(firstImagePath)) {
+        if (isInvalidStoryboardStillCandidate(firstImagePath, shot, latestAssets)) {
           throw new Error(`分镜图输出命中了角色/场景参考图而不是镜头成片：${firstImagePath}`);
         }
         const firstQuality = await evaluateImageSharpnessQuality([firstImagePath], STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE);
@@ -9761,7 +9808,7 @@ export function ComfyPipelinePanel() {
             }
           });
           const secondImagePath = secondOutput.localPath || secondOutput.previewUrl;
-          if (isInvalidStoryboardStillPath(secondImagePath)) {
+          if (isInvalidStoryboardStillCandidate(secondImagePath, shot, latestAssets)) {
             throw new Error(`分镜图重试仍命中了角色/场景参考图而不是镜头成片：${secondImagePath}`);
           }
           const secondQuality = await evaluateImageSharpnessQuality([secondImagePath], STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE);
@@ -10096,12 +10143,13 @@ export function ComfyPipelinePanel() {
       let successCount = 0;
       let attemptedCount = 0;
       let skippedCount = 0;
+      const latestAssetsForRun = useStoryboardStore.getState().assets;
       appendLog(forceRegenerateAll ? "开始重新生成全部分镜图" : retryFailedOnly ? "开始重试失败分镜图" : "开始生成分镜图");
       for (let index = 0; index < latestShotsForRun.length; index += 1) {
         const shot = latestShotsForRun[index];
         if (retryFailedOnly && imageStatusByShot[shot.id] !== "failed") continue;
         if (!forceRegenerateAll && skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
-          if (isInvalidStoryboardStillPath(shot.generatedImagePath)) {
+          if (isInvalidStoryboardStillCandidate(shot.generatedImagePath, shot, latestAssetsForRun)) {
             appendLog(`检测到已有分镜图实际指向角色/场景参考图，将自动重建：${shot.title}`, "info");
           } else {
           const existingQuality = await evaluateImageSharpnessQuality(
