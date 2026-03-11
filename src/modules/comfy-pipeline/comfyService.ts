@@ -28,7 +28,7 @@ function canonicalAssetName(type: "character" | "scene" | "skybox", name: string
   return normalized.trim();
 }
 
-const CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE = "人物/{{ASSET_NAME_DIR}}";
+const CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE = ".storyboard-cache/人物/{{ASSET_NAME_DIR}}";
 const SCENE_ASSET_OUTPUT_PREFIX_TEMPLATE = "场景/{{ASSET_NAME_DIR}}";
 
 type AssetOutputContext =
@@ -957,7 +957,10 @@ function rewriteWorkflowFilenamePrefixes(
 function rewriteCharacterAssetFilenamePrefix(prefix: string): string {
   const trimmed = prefix.trim();
   if (!trimmed) return prefix;
-  if (trimmed.startsWith("人物/")) return trimmed;
+  if (trimmed.startsWith(".storyboard-cache/人物/")) return trimmed;
+  if (trimmed.startsWith("人物/")) {
+    return trimmed.replace(/^人物\//, ".storyboard-cache/人物/");
+  }
   if (/character_anchor_cleanup/i.test(trimmed)) {
     return `${CHARACTER_ASSET_OUTPUT_PREFIX_TEMPLATE}/character_anchor_cleanup_{{SHOT_ID}}`;
   }

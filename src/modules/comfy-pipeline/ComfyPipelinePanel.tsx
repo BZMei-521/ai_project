@@ -23,6 +23,7 @@ import {
   inspectWorkflowDependencies,
   listComfyCheckpointOptions,
   pingComfyWithDetail,
+  sanitizeOutputAssetFolderName,
   splitCharacterThreeViewSheet,
   stripLocalMotionPresetToken,
   validateWorkflowJsonSyntax,
@@ -5168,6 +5169,76 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, `_panel${panelIndex}.png`);
   };
 
+  const buildCanonicalCharacterAssetDir = (name: string) => {
+    const outputRoot = settings.outputDir.trim().replace(/[\\/]+$/, "");
+    if (!outputRoot) return "";
+    return `${outputRoot}/人物/${sanitizeOutputAssetFolderName(name, "未命名人物")}`;
+  };
+
+  const buildCanonicalCharacterAssetViewPath = (name: string, view: "front" | "side" | "back") => {
+    const directory = buildCanonicalCharacterAssetDir(name);
+    if (!directory) return "";
+    return `${directory}/${view}.png`;
+  };
+
+  const persistCanonicalCharacterAssetView = async (
+    name: string,
+    view: "front" | "side" | "back",
+    sourcePath: string
+  ) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return sourcePath;
+    const targetPath = buildCanonicalCharacterAssetViewPath(name, view);
+    if (!targetPath) return sourcePath;
+    try {
+      const copied = await invokeDesktopCommand<{ filePath: string }>("copy_file_to", {
+        sourcePath: trimmed,
+        targetPath
+      });
+      return copied.filePath?.trim() || sourcePath;
+    } catch {
+      return sourcePath;
+    }
+  };
+
+  const persistCanonicalCharacterThreeViews = async <
+    T extends {
+      front: { localPath?: string; previewUrl?: string };
+      side: { localPath?: string; previewUrl?: string };
+      back: { localPath?: string; previewUrl?: string };
+    }
+  >(
+    name: string,
+    result: T
+  ): Promise<T> => {
+    const frontSource = (result.front.localPath || result.front.previewUrl || "").trim();
+    const sideSource = (result.side.localPath || result.side.previewUrl || "").trim();
+    const backSource = (result.back.localPath || result.back.previewUrl || "").trim();
+    const [frontPath, sidePath, backPath] = await Promise.all([
+      persistCanonicalCharacterAssetView(name, "front", frontSource),
+      persistCanonicalCharacterAssetView(name, "side", sideSource),
+      persistCanonicalCharacterAssetView(name, "back", backSource)
+    ]);
+    return {
+      ...result,
+      front: {
+        ...result.front,
+        localPath: frontPath || result.front.localPath,
+        previewUrl: frontPath || result.front.previewUrl
+      },
+      side: {
+        ...result.side,
+        localPath: sidePath || result.side.localPath,
+        previewUrl: sidePath || result.side.previewUrl
+      },
+      back: {
+        ...result.back,
+        localPath: backPath || result.back.localPath,
+        previewUrl: backPath || result.back.previewUrl
+      }
+    };
+  };
+
   const buildCharacterFallbackTriptychInputPath = (sourcePath: string, attempt: number) => {
     const trimmed = sourcePath.trim();
     if (!trimmed) return "";
@@ -7392,7 +7463,10 @@ export function ComfyPipelinePanel() {
       if (shouldPreferReferenceEditPrimary) {
         appendLog(`角色三视图优先采用同模型单视角补全主链：${name}`, "info");
         try {
-          const referenceEditResult = await runReferenceEditFallbackThreeViews(baseSeed + 50000);
+          const referenceEditResult = await persistCanonicalCharacterThreeViews(
+            name,
+            await runReferenceEditFallbackThreeViews(baseSeed + 50000)
+          );
           await cleanupGeneratedCharacterFamilies(
             [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([
               referenceEditResult.front.localPath || referenceEditResult.front.previewUrl || "",
@@ -7413,7 +7487,7 @@ export function ComfyPipelinePanel() {
         }
       }
       appendLog(`角色三视图采用直连流程：先生成合格 front 白底正面全身图，再生成双参考三视图整板：${name}`, "info");
-      const result = await runAdvancedThreeViewsWithAutoRetry(baseSeed);
+      const result = await persistCanonicalCharacterThreeViews(name, await runAdvancedThreeViewsWithAutoRetry(baseSeed));
       await cleanupGeneratedCharacterFamilies(
         [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([
           result.front.localPath || result.front.previewUrl || "",
@@ -7453,7 +7527,7 @@ export function ComfyPipelinePanel() {
         "info"
       );
       try {
-        return await runReferenceEditFallbackThreeViews(baseSeed + 50000);
+        return await persistCanonicalCharacterThreeViews(name, await runReferenceEditFallbackThreeViews(baseSeed + 50000));
       } catch (fallbackError) {
         if (shouldFallbackAssetWorkflow(error)) {
           throw new Error(
@@ -8056,6 +8130,7 @@ export function ComfyPipelinePanel() {
             characterAnchorModelByNameRef.current.set(profileKey, bestAnchorModel.trim());
           }
           anchorPath = await normalizeCharacterAnchorBackground(anchorPath, "white");
+          anchorPath = await persistCanonicalCharacterAssetView(profile.name, "front", anchorPath);
           await cleanupGeneratedCharacterFamilies(
             [...generatedAnchorSourcePaths],
             [anchorPath],
