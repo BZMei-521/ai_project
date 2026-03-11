@@ -8076,6 +8076,43 @@ export function ComfyPipelinePanel() {
   const hasProvisionReadyCharacterThreeViewAsset = (asset: Asset | null | undefined) =>
     Boolean(asset?.characterFrontPath?.trim() && asset?.characterSidePath?.trim() && asset?.characterBackPath?.trim());
 
+  const inspectReusableCharacterAssetPaths = async (asset: Asset | null | undefined) => {
+    const frontPath = (asset?.characterFrontPath?.trim() || asset?.filePath?.trim() || "").trim();
+    const sidePath = asset?.characterSidePath?.trim() || "";
+    const backPath = asset?.characterBackPath?.trim() || "";
+    const existingPaths = [frontPath, sidePath, backPath].filter((value): value is string => Boolean(value));
+    const missingPaths = await filterMissingLocalPaths(existingPaths);
+    const usableFrontPath = frontPath && !missingPaths.has(frontPath) ? frontPath : "";
+    const usableSidePath = sidePath && !missingPaths.has(sidePath) ? sidePath : "";
+    const usableBackPath = backPath && !missingPaths.has(backPath) ? backPath : "";
+
+    const [frontQuality, sideQuality, backQuality] = await Promise.all([
+      usableFrontPath ? evaluateFrontReferenceQuality(usableFrontPath) : Promise.resolve(null),
+      usableSidePath ? evaluateSingleCharacterViewQuality(usableSidePath, "side") : Promise.resolve(null),
+      usableBackPath ? evaluateSingleCharacterViewQuality(usableBackPath, "back") : Promise.resolve(null)
+    ]);
+
+    const frontValid = Boolean(usableFrontPath && frontQuality?.acceptable);
+    const sideValid = Boolean(usableSidePath && sideQuality?.acceptable);
+    const backValid = Boolean(usableBackPath && backQuality?.acceptable);
+    const issues = [
+      ...(usableFrontPath && !frontValid ? (frontQuality?.issues ?? []).map((issue) => `front:${issue}`) : []),
+      ...(usableSidePath && !sideValid ? (sideQuality?.issues ?? []).map((issue) => `side:${issue}`) : []),
+      ...(usableBackPath && !backValid ? (backQuality?.issues ?? []).map((issue) => `back:${issue}`) : [])
+    ];
+
+    return {
+      usableFrontPath: frontValid ? usableFrontPath : "",
+      usableSidePath: sideValid ? usableSidePath : "",
+      usableBackPath: backValid ? usableBackPath : "",
+      issues,
+      invalidFront: Boolean(usableFrontPath && !frontValid),
+      invalidSide: Boolean(usableSidePath && !sideValid),
+      invalidBack: Boolean(usableBackPath && !backValid),
+      hadAnyInvalid: Boolean((usableFrontPath && !frontValid) || (usableSidePath && !sideValid) || (usableBackPath && !backValid))
+    };
+  };
+
   const findProvisionReadyCharacterAnchorAssetIdByName = (name: string) => {
     const asset = findAssetByName("character", name);
     return asset && hasProvisionReadyCharacterAnchorAsset(asset) ? asset.id : "";
@@ -8114,7 +8151,19 @@ export function ComfyPipelinePanel() {
           profile.sidePath.trim() ||
           profile.backPath.trim()
       );
-      if (options?.preferReuseExisting && existingAsset && hasProvisionReadyCharacterThreeViewAsset(existingAsset) && !hasExplicitVisualPaths) {
+      const existingAssetQuality = existingAsset ? await inspectReusableCharacterAssetPaths(existingAsset) : null;
+      if (existingAsset && existingAssetQuality?.hadAnyInvalid) {
+        appendLog(`${sourceLabel}检测到角色旧资产质检未通过，已放弃复用并准备重建：${profile.name}（${existingAssetQuality.issues.join(" / ") || "角色资产失效"}）`, "info");
+      }
+      if (
+        options?.preferReuseExisting &&
+        existingAsset &&
+        existingAssetQuality &&
+        existingAssetQuality.usableFrontPath &&
+        existingAssetQuality.usableSidePath &&
+        existingAssetQuality.usableBackPath &&
+        !hasExplicitVisualPaths
+      ) {
         const nextVoiceProfile = (profile.voiceProfile || existingAsset.voiceProfile || "").trim();
         if (nextVoiceProfile && nextVoiceProfile !== (existingAsset.voiceProfile ?? "").trim()) {
           updateAsset(existingId!, { voiceProfile: nextVoiceProfile });
@@ -8458,8 +8507,16 @@ export function ComfyPipelinePanel() {
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId)
         : null;
       const normalizedContext = context.trim();
-      const initialFrontReferencePath = resolveExistingCharacterAnchorPath(existingAsset);
-      const initialPreviewPaths = listCharacterThreeViewPaths(existingAsset);
+      const initialAssetQuality = await inspectReusableCharacterAssetPaths(existingAsset);
+      const initialFrontReferencePath = initialAssetQuality.usableFrontPath;
+      const initialPreviewPaths = [
+        initialAssetQuality.usableFrontPath,
+        initialAssetQuality.usableSidePath,
+        initialAssetQuality.usableBackPath
+      ].filter((value): value is string => Boolean(value));
+      if (existingAsset && initialAssetQuality.hadAnyInvalid) {
+        appendLog(`检测到角色旧资产质检未通过，已转入自动修复：${name}（${initialAssetQuality.issues.join(" / ") || "角色资产失效"}）`, "info");
+      }
       const missingPaths = await filterMissingLocalPaths([initialFrontReferencePath, ...initialPreviewPaths]);
       if (existingAsset && missingPaths.size > 0) {
         appendLog(`检测到角色资产缺图，已转入自动修复：${name}`, "info");
