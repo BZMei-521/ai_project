@@ -2246,7 +2246,8 @@ function assetPathForCharacterView(asset: Asset | undefined, view: CharacterRefe
 function inferStoryboardReferenceWeights(
   shot: Shot,
   hasSceneRef: boolean,
-  hasSecondCharacter: boolean
+  hasSecondCharacter: boolean,
+  hasSceneContinuityFrame: boolean
 ): {
   char1Primary: number;
   char1Secondary: number;
@@ -2257,6 +2258,46 @@ function inferStoryboardReferenceWeights(
 } {
   const characterDriven = isCharacterDrivenShot(shot);
   const sceneLed = hasSceneRef && shouldLeadWithSceneReference(shot);
+  if (sceneLed && hasSceneContinuityFrame && hasSecondCharacter) {
+    if (characterDriven) {
+      return {
+        char1Primary: 0.94,
+        char1Secondary: 0.1,
+        char2Primary: 0.9,
+        denoise: 0.24,
+        steps: 28,
+        cfg: 4.8
+      };
+    }
+    return {
+      char1Primary: 0.8,
+      char1Secondary: 0.06,
+      char2Primary: 0.76,
+      denoise: 0.26,
+      steps: 26,
+      cfg: 4.9
+    };
+  }
+  if (sceneLed && hasSceneContinuityFrame) {
+    if (characterDriven) {
+      return {
+        char1Primary: 0.97,
+        char1Secondary: 0.12,
+        char2Primary: 0,
+        denoise: 0.22,
+        steps: 28,
+        cfg: 4.8
+      };
+    }
+    return {
+      char1Primary: 0.82,
+      char1Secondary: 0.06,
+      char2Primary: 0,
+      denoise: 0.25,
+      steps: 26,
+      cfg: 4.9
+    };
+  }
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
@@ -2437,7 +2478,7 @@ function buildShotReferenceDirective(
     lines.push("人物-场景物理约束：人物脚部与地面接触关系自然，接触阴影方向与场景主光一致，不允许漂浮、穿模、比例失真。");
     lines.push("人物风格硬约束：禁止把角色改成室内写真、自拍、时装摆拍、裸露画面或无关陌生人，必须保持参考角色的身份与服装。");
   }
-  if (continuityDirective && !sceneAsset && characterAssets.length === 0) {
+  if (continuityDirective) {
     lines.push(continuityDirective);
   }
   if (lines.length > 0) {
@@ -3614,10 +3655,20 @@ function inferPromptTokens(
     char1SecondaryPath ||
     char1PrimaryPath ||
     "";
-  const storyboardWeights = inferStoryboardReferenceWeights(shot, Boolean(sceneRefPath), Boolean(charSlots[1]));
-  const characterDriven = isCharacterDrivenShot(shot);
   const hasCharacters = characterAssets.length > 0;
   const hasSecondCharacter = Boolean(charSlots[1]);
+  const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
+  const continuitySceneSeedPath = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
+  const shouldPreferContinuitySeed =
+    kind === "image" &&
+    continuitySceneSeedPath.length > 0 &&
+    (Boolean(sceneRefPath) || shouldLeadWithSceneReference(shot) || hasCharacters);
+  const storyboardWeights = inferStoryboardReferenceWeights(
+    shot,
+    Boolean(sceneRefPath),
+    Boolean(charSlots[1]),
+    shouldPreferContinuitySeed
+  );
   const useSecondaryCharacterView = shouldUseSecondaryCharacterView(shot) && !hasSecondCharacter;
   const normalizedChar1PrimaryPath = char1PrimaryPath.trim();
   const normalizedChar1SecondaryPath = char1SecondaryPath.trim();
@@ -3666,11 +3717,10 @@ function inferPromptTokens(
     .join("\n");
   const nextScenePrompt = toNextScenePrompt(promptBase);
   const videoPrompt = toVideoPrompt(shot, mode);
-  const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
-  const continuitySceneSeedPath = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
   const storyboardFrameSeedPath =
     kind === "image"
       ? (
+          (shouldPreferContinuitySeed ? continuitySceneSeedPath : "") ||
           sceneRefPath ||
           continuitySceneSeedPath ||
           defaultFramePath

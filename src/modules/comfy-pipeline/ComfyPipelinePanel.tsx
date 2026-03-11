@@ -36,6 +36,7 @@ import {
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
 import STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT from "./presets/storyboard-image-asset-guided-v1.json";
+import DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_OBJECT from "../../../examples/river-continuity-test/river_continuity_test_shot_script.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-kontext-threeview-default.json";
 import CHARACTER_THREEVIEW_LAYOUT_REF_BASE64 from "./presets/assets/character-threeview-layout-ref.base64";
@@ -45,6 +46,7 @@ import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "./presets/asset-skybox-panorama-def
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT);
+const DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_JSON = JSON.stringify(DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_OBJECT, null, 2);
 const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
 type CharacterAssetWorkflowMode = "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
@@ -291,7 +293,8 @@ function storyboardWorkflowHasHardcodedReferenceImages(workflowJson: string): bo
   if (!trimmed) return false;
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    for (const node of Object.values(parsed)) {
+    const rawNodes = Array.isArray(parsed.nodes) ? parsed.nodes : Object.values(parsed);
+    for (const node of rawNodes) {
       if (!node || typeof node !== "object") continue;
       const record = node as {
         class_type?: string;
@@ -3278,7 +3281,7 @@ export function ComfyPipelinePanel() {
   const updateAudioTrack = useStoryboardStore((state) => state.updateAudioTrack);
   const removeAudioTrack = useStoryboardStore((state) => state.removeAudioTrack);
   const [storyText, setStoryText] = useState("");
-  const [scriptText, setScriptText] = useState("");
+  const [scriptText, setScriptText] = useState(DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_JSON);
   const [autoProvisionAssets, setAutoProvisionAssets] = useState(true);
   const [storyCharacterOverrides, setStoryCharacterOverrides] = useState<Record<string, string>>({});
   const [storySkyboxOverrides, setStorySkyboxOverrides] = useState<Record<string, string>>({});
