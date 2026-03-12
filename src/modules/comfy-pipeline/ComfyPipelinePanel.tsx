@@ -7971,18 +7971,7 @@ export function ComfyPipelinePanel() {
       appendLog(`角色三视图采用直连流程：先生成合格 front 白底正面全身图，再生成双参考三视图整板：${name}`, "info");
       const advancedResult = await runAdvancedThreeViewsWithAutoRetry(baseSeed);
       const advancedFrontPanelPath = advancedResult.front.localPath || advancedResult.front.previewUrl || "";
-      const canonicalAdvancedResult =
-        advancedResult.referenceFrontPath?.trim()
-          ? {
-              ...advancedResult,
-              front: {
-                ...advancedResult.front,
-                localPath: advancedResult.referenceFrontPath.trim(),
-                previewUrl: advancedResult.referenceFrontPath.trim()
-              }
-            }
-          : advancedResult;
-      const result = await persistCanonicalCharacterThreeViews(name, canonicalAdvancedResult);
+      const result = await persistCanonicalCharacterThreeViews(name, advancedResult);
       await cleanupGeneratedCharacterFamilies(
         [...generatedArtifactSourcePaths, ...buildCharacterArtifactFamilySourcePaths([
           advancedFrontPanelPath,
@@ -8991,7 +8980,7 @@ export function ComfyPipelinePanel() {
           reusableFrontReferencePath,
           preferredCharacterModel
         );
-        const generatedFrontPath = reusableFrontReferencePath.trim();
+        const generatedFrontPath = (front.localPath || front.previewUrl || "").trim();
         const generatedSidePath = (side.localPath || side.previewUrl || "").trim();
         const generatedBackPath = (back.localPath || back.previewUrl || "").trim();
         const canonicalFrontPath = generatedFrontPath || reusableFrontReferencePath.trim();
