@@ -7316,11 +7316,12 @@ export function ComfyPipelinePanel() {
   const buildSkyboxDescription = (sceneName: string, scenePrompt: string) => {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
     const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
-    const styleProfile = resolveSharedVisualStyleProfile([sceneName, scenePrompt]);
-    const styleHint = styleProfile.styleHint;
     const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
     const riverHardAnchor = semanticGuidance.expectsRiverside
       ? "自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；镜头接近人眼平视，禁止鸟瞰航拍；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区、海滨城市和海景公寓；禁止洞穴、神像、奇幻遗迹。"
+      : "";
+    const riverEnglishAnchor = semanticGuidance.expectsRiverside
+      ? "ground-level inland riverside environment, calm river water, visible shoreline, willow trees, stone riverbank path, old stone bridge, opposite bank silhouette, outdoor only, no people, no buildings as main subject"
       : "";
     return `${mergePromptFragments([
       prompt,
@@ -7334,9 +7335,9 @@ export function ComfyPipelinePanel() {
       "符合真实空间与物理逻辑",
       "这是纯环境底板，不是角色插画，不是叙事海报，不是节庆场景，不允许人物入镜",
       riverHardAnchor,
+      riverEnglishAnchor,
       ...semanticGuidance.promptHints,
-      styleProfile.sceneDirective,
-      `风格倾向：${styleHint}`
+      "pure environment plate, not storyboard character art, not concept sheet, not technical sketch"
     ])}。`;
   };
 
@@ -7593,7 +7594,7 @@ export function ComfyPipelinePanel() {
     }
     const riversideModel =
       pickFirstAvailableModel(
-        ["sd_xl_base_1.0.safetensors", "dreamshaper_8.safetensors", "architecturerealmix_v11.safetensors"],
+        ["dreamshaper_8.safetensors", "sd_xl_base_1.0.safetensors", "architecturerealmix_v11.safetensors"],
         options
       ) || selectedModel;
     if (riversideModel !== selectedModel) {
