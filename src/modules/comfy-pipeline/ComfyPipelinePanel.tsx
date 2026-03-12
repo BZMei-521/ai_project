@@ -4670,6 +4670,105 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const analyzeFrontContextConsistency = async (
+    pathOrUrl: string,
+    context: string,
+    layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
+  ) => {
+    const normalizedContext = normalizeStoryInput(context);
+    if (!normalizedContext || !layout || typeof window === "undefined" || typeof document === "undefined") return null;
+    const expectsDarkHair = /(黑色(?:中长|长|短)?发|黑发|乌黑|black hair)/i.test(normalizedContext);
+    const expectsBlueGrayOutfit = /(浅灰蓝|灰蓝|蓝灰|blue gray|blue-grey|muted blue gray)/i.test(normalizedContext);
+    if (!expectsDarkHair && !expectsBlueGrayOutfit) return null;
+    const src = toDesktopMediaSource(pathOrUrl);
+    if (!src) return null;
+    try {
+      const image = await loadImageForHash(src);
+      const size = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context2d = canvas.getContext("2d");
+      if (!context2d) return null;
+      context2d.drawImage(image, 0, 0, size, size);
+      const data = context2d.getImageData(0, 0, size, size).data;
+      let borderR = 0;
+      let borderG = 0;
+      let borderB = 0;
+      let borderCount = 0;
+      const sampleBorder = (x: number, y: number) => {
+        const index = (y * size + x) * 4;
+        borderR += data[index] ?? 0;
+        borderG += data[index + 1] ?? 0;
+        borderB += data[index + 2] ?? 0;
+        borderCount += 1;
+      };
+      for (let x = 0; x < size; x += 1) {
+        sampleBorder(x, 0);
+        sampleBorder(x, size - 1);
+      }
+      for (let y = 1; y < size - 1; y += 1) {
+        sampleBorder(0, y);
+        sampleBorder(size - 1, y);
+      }
+      if (borderCount <= 0) return null;
+      const bgR = borderR / borderCount;
+      const bgG = borderG / borderCount;
+      const bgB = borderB / borderCount;
+      const bboxWidth = Math.max(1, layout.bbox.maxX - layout.bbox.minX + 1);
+      const bboxHeight = Math.max(1, layout.bbox.maxY - layout.bbox.minY + 1);
+      let headForeground = 0;
+      let headDark = 0;
+      let headBrightNeutral = 0;
+      let outfitForeground = 0;
+      let outfitBlueGray = 0;
+      let outfitWhite = 0;
+      for (let y = layout.bbox.minY; y <= layout.bbox.maxY; y += 1) {
+        for (let x = layout.bbox.minX; x <= layout.bbox.maxX; x += 1) {
+          const pixelIndex = (y * size + x) * 4;
+          const r = data[pixelIndex] ?? 0;
+          const g = data[pixelIndex + 1] ?? 0;
+          const b = data[pixelIndex + 2] ?? 0;
+          const distance = Math.sqrt((r - bgR) ** 2 + (g - bgG) ** 2 + (b - bgB) ** 2);
+          if (distance < 38) continue;
+          const relX = (x - layout.bbox.minX) / bboxWidth;
+          const relY = (y - layout.bbox.minY) / bboxHeight;
+          const maxChannel = Math.max(r, g, b);
+          const minChannel = Math.min(r, g, b);
+          const chroma = maxChannel - minChannel;
+          if (relY <= 0.3 && relX >= 0.18 && relX <= 0.82) {
+            headForeground += 1;
+            if (maxChannel < 86) headDark += 1;
+            if (maxChannel > 176 && chroma < 34) headBrightNeutral += 1;
+          }
+          if (relY >= 0.24 && relY <= 0.82 && relX >= 0.12 && relX <= 0.88) {
+            outfitForeground += 1;
+            const isBlueGray =
+              b >= r + 4 &&
+              g >= r &&
+              maxChannel >= 70 &&
+              chroma >= 10 &&
+              chroma <= 80 &&
+              Math.abs(b - g) <= 42;
+            const isWhiteGarment = maxChannel > 178 && chroma < 32;
+            if (isBlueGray) outfitBlueGray += 1;
+            if (isWhiteGarment) outfitWhite += 1;
+          }
+        }
+      }
+      return {
+        expectsDarkHair,
+        expectsBlueGrayOutfit,
+        headDarkRatio: headForeground > 0 ? headDark / headForeground : 0,
+        headBrightNeutralRatio: headForeground > 0 ? headBrightNeutral / headForeground : 0,
+        outfitBlueGrayRatio: outfitForeground > 0 ? outfitBlueGray / outfitForeground : 0,
+        outfitWhiteRatio: outfitForeground > 0 ? outfitWhite / outfitForeground : 0
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const analyzeScenePlateAppearance = async (pathOrUrl: string) => {
     if (typeof window === "undefined" || typeof document === "undefined") return null;
     const src = toDesktopMediaSource(pathOrUrl);
@@ -5147,13 +5246,14 @@ export function ComfyPipelinePanel() {
     return !primaryScenePath || isInvalidStoryboardReferencePath(primaryScenePath);
   };
 
-  const evaluateFrontReferenceQuality = async (pathOrUrl: string) => {
+  const evaluateFrontReferenceQuality = async (pathOrUrl: string, context = "") => {
     const [sharpness, symmetry, layout, appearance] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
       computeHorizontalMirrorSimilarity(pathOrUrl),
       analyzeForegroundLayout(pathOrUrl),
       analyzeCharacterTemplateAppearance(pathOrUrl)
     ]);
+    const semanticAppearance = await analyzeFrontContextConsistency(pathOrUrl, context, layout);
     const lowSharpness =
       typeof sharpness === "number" && sharpness < CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE;
     const lowSymmetry =
@@ -5214,6 +5314,15 @@ export function ComfyPipelinePanel() {
       appearance?.likelyNudeFigure
         ? `裸露过多或疑似裸模(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
         : "",
+      semanticAppearance?.expectsDarkHair &&
+      semanticAppearance.headBrightNeutralRatio > 0.16 &&
+      semanticAppearance.headDarkRatio < 0.34
+        ? `发色与描述不符(head_dark=${semanticAppearance.headDarkRatio.toFixed(2)},head_light=${semanticAppearance.headBrightNeutralRatio.toFixed(2)})`
+        : "",
+      semanticAppearance?.expectsBlueGrayOutfit &&
+      (semanticAppearance.outfitBlueGrayRatio < 0.08 || semanticAppearance.outfitWhiteRatio > 0.24)
+        ? `服装主色与描述不符(blue_gray=${semanticAppearance.outfitBlueGrayRatio.toFixed(2)},white=${semanticAppearance.outfitWhiteRatio.toFixed(2)})`
+        : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
@@ -5239,6 +5348,15 @@ export function ComfyPipelinePanel() {
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (appearance?.likelyGlowPosterFigure ? 74 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
+      (semanticAppearance?.expectsDarkHair &&
+      semanticAppearance.headBrightNeutralRatio > 0.16 &&
+      semanticAppearance.headDarkRatio < 0.34
+        ? 62
+        : 0) +
+      (semanticAppearance?.expectsBlueGrayOutfit &&
+      (semanticAppearance.outfitBlueGrayRatio < 0.08 || semanticAppearance.outfitWhiteRatio > 0.24)
+        ? 58
+        : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
@@ -5683,11 +5801,11 @@ export function ComfyPipelinePanel() {
     return result.filePath || pathOrUrl;
   };
 
-  const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string) => {
+  const prepareCharacterFrontReferenceCandidate = async (pathOrUrl: string, context = "") => {
     const normalized = (await normalizeCharacterAnchorBackground(pathOrUrl, "white")) || pathOrUrl;
     const directPath = (await fitCharacterViewWithinCanvas(normalized, "front")) || normalized;
     const [directQuality, sourceLayout, directLayout] = await Promise.all([
-      evaluateFrontReferenceQuality(directPath),
+      evaluateFrontReferenceQuality(directPath, context),
       analyzeForegroundLayout(normalized),
       analyzeForegroundLayout(directPath)
     ]);
@@ -5721,7 +5839,7 @@ export function ComfyPipelinePanel() {
     ]);
     const preparedIsolatedPath = isolatedPath || isolatedRaw;
     const [isolatedQuality, isolatedLayout] = await Promise.all([
-      evaluateFrontReferenceQuality(preparedIsolatedPath),
+      evaluateFrontReferenceQuality(preparedIsolatedPath, context),
       analyzeForegroundLayout(preparedIsolatedPath)
     ]);
     const isolatedFromTinyLineup =
@@ -6600,10 +6718,10 @@ export function ComfyPipelinePanel() {
     shotPrefix: string,
     logPrefix: string
   ) => {
-    let bestPath = (await prepareCharacterFrontReferenceCandidate(candidatePath)) || candidatePath;
+    let bestPath = (await prepareCharacterFrontReferenceCandidate(candidatePath, context)) || candidatePath;
     const identityReferencePath = bestPath;
     const evaluateRepairCandidateQuality = async (pathOrUrl: string) => {
-      const quality = await evaluateFrontReferenceQuality(pathOrUrl);
+      const quality = await evaluateFrontReferenceQuality(pathOrUrl, context);
       const preparedPath = pathOrUrl.trim();
       const identityDistance =
         preparedPath && identityReferencePath
@@ -6643,9 +6761,9 @@ export function ComfyPipelinePanel() {
         let attemptBestPath = bestPath;
         let attemptBestQuality = bestQuality;
         for (const variant of variants) {
-          let repairedPath = await prepareCharacterFrontReferenceCandidate(variant);
+          let repairedPath = await prepareCharacterFrontReferenceCandidate(variant, context);
           if (attempt > 0) {
-            repairedPath = await prepareCharacterFrontReferenceCandidate(repairedPath);
+            repairedPath = await prepareCharacterFrontReferenceCandidate(repairedPath, context);
           }
           const repairedQuality = await evaluateRepairCandidateQuality(repairedPath);
           if (repairedQuality.score > attemptBestQuality.score) {
@@ -6698,7 +6816,7 @@ export function ComfyPipelinePanel() {
             const cleanupCandidates = cleanupVariants.length > 0 ? cleanupVariants : [cleanupPathRaw];
             for (const cleanupCandidate of cleanupCandidates) {
               trackGeneratedCleanupPath(cleanupCandidate);
-              const preparedCleanupPath = await prepareCharacterFrontReferenceCandidate(cleanupCandidate);
+              const preparedCleanupPath = await prepareCharacterFrontReferenceCandidate(cleanupCandidate, context);
               trackGeneratedCleanupPath(preparedCleanupPath);
               const preparedCleanupQuality = await evaluateRepairCandidateQuality(preparedCleanupPath);
               if (preparedCleanupQuality.score > bestQuality.score) {
@@ -7577,10 +7695,10 @@ export function ComfyPipelinePanel() {
             generatedArtifactSourcePaths.add(currentReferencePathRaw);
           }
           const currentReferencePath = currentReferencePathRaw
-            ? await prepareCharacterFrontReferenceCandidate(currentReferencePathRaw)
+            ? await prepareCharacterFrontReferenceCandidate(currentReferencePathRaw, context)
             : "";
           if (!currentReferencePath) continue;
-          const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath);
+          const currentReferenceQuality = await evaluateFrontReferenceQuality(currentReferencePath, context);
           if (currentReferenceQuality.score > bestReferenceScore) {
             bestReference = {
               ...currentReference,
@@ -7612,7 +7730,7 @@ export function ComfyPipelinePanel() {
       if (!referencePath) {
         throw new Error("角色参考正视图生成失败：输出路径为空");
       }
-      const bestReferenceQuality = await evaluateFrontReferenceQuality(referencePath);
+      const bestReferenceQuality = await evaluateFrontReferenceQuality(referencePath, context);
       if (!bestReferenceQuality.acceptable) {
         const repairedReference = await repairCharacterFrontReferenceCandidate(
           runtimeSettings,
@@ -7700,7 +7818,7 @@ export function ComfyPipelinePanel() {
         const currentPaths = [frontPath, sidePath, backPath].filter((value): value is string => Boolean(value));
         const currentQuality = await evaluateThreeViewQuality(currentPaths, current.referenceFrontPath);
         const [frontPanelQuality, sidePanelQuality, backPanelQuality] = await Promise.all([
-          frontPath ? evaluateFrontReferenceQuality(frontPath) : Promise.resolve(null),
+          frontPath ? evaluateFrontReferenceQuality(frontPath, context) : Promise.resolve(null),
           sidePath ? evaluateSingleCharacterViewQuality(sidePath, "side") : Promise.resolve(null),
           backPath ? evaluateSingleCharacterViewQuality(backPath, "back") : Promise.resolve(null)
         ]);
@@ -8242,7 +8360,7 @@ export function ComfyPipelinePanel() {
   const hasProvisionReadyCharacterThreeViewAsset = (asset: Asset | null | undefined) =>
     Boolean(asset?.characterFrontPath?.trim() && asset?.characterSidePath?.trim() && asset?.characterBackPath?.trim());
 
-  const inspectReusableCharacterAssetPaths = async (asset: Asset | null | undefined) => {
+  const inspectReusableCharacterAssetPaths = async (asset: Asset | null | undefined, context = "") => {
     const frontPath = (asset?.characterFrontPath?.trim() || asset?.filePath?.trim() || "").trim();
     const sidePath = asset?.characterSidePath?.trim() || "";
     const backPath = asset?.characterBackPath?.trim() || "";
@@ -8253,7 +8371,7 @@ export function ComfyPipelinePanel() {
     const usableBackPath = backPath && !missingPaths.has(backPath) ? backPath : "";
 
     const [frontQuality, sideQuality, backQuality] = await Promise.all([
-      usableFrontPath ? evaluateFrontReferenceQuality(usableFrontPath) : Promise.resolve(null),
+      usableFrontPath ? evaluateFrontReferenceQuality(usableFrontPath, context) : Promise.resolve(null),
       usableSidePath ? evaluateSingleCharacterViewQuality(usableSidePath, "side") : Promise.resolve(null),
       usableBackPath ? evaluateSingleCharacterViewQuality(usableBackPath, "back") : Promise.resolve(null)
     ]);
@@ -8317,7 +8435,9 @@ export function ComfyPipelinePanel() {
           profile.sidePath.trim() ||
           profile.backPath.trim()
       );
-      const existingAssetQuality = existingAsset ? await inspectReusableCharacterAssetPaths(existingAsset) : null;
+      const existingAssetQuality = existingAsset
+        ? await inspectReusableCharacterAssetPaths(existingAsset, semanticContext)
+        : null;
       if (existingAsset && existingAssetQuality?.hadAnyInvalid) {
         appendLog(`${sourceLabel}检测到角色旧资产质检未通过，已放弃复用并准备重建：${profile.name}（${existingAssetQuality.issues.join(" / ") || "角色资产失效"}）`, "info");
       }
@@ -8410,8 +8530,8 @@ export function ComfyPipelinePanel() {
             const candidatePathRaw = (generated.localPath || generated.previewUrl || "").trim();
             if (!candidatePathRaw) continue;
             generatedAnchorSourcePaths.add(candidatePathRaw);
-            const candidatePath = await prepareCharacterFrontReferenceCandidate(candidatePathRaw);
-            const quality = await evaluateFrontReferenceQuality(candidatePath);
+            const candidatePath = await prepareCharacterFrontReferenceCandidate(candidatePathRaw, semanticContext);
+            const quality = await evaluateFrontReferenceQuality(candidatePath, semanticContext);
             if (quality.score > bestAnchorScore) {
               bestAnchorPath = candidatePath;
               bestAnchorScore = quality.score;
@@ -8482,7 +8602,7 @@ export function ComfyPipelinePanel() {
           throw new Error(`${sourceLabel}角色正视锚点生成失败：${profile.name} 未获得可用输出`);
         }
         let finalAnchorPath = bestAnchorPath.trim();
-        let finalAnchorQuality = await evaluateFrontReferenceQuality(finalAnchorPath);
+        let finalAnchorQuality = await evaluateFrontReferenceQuality(finalAnchorPath, semanticContext);
         if (!finalAnchorQuality.acceptable) {
           const repairedAnchor = await repairCharacterFrontReferenceCandidate(
             runtimeSettings,
@@ -8679,7 +8799,7 @@ export function ComfyPipelinePanel() {
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId)
         : null;
       const normalizedContext = context.trim();
-      const initialAssetQuality = await inspectReusableCharacterAssetPaths(existingAsset);
+      const initialAssetQuality = await inspectReusableCharacterAssetPaths(existingAsset, normalizedContext);
       const initialFrontReferencePath = initialAssetQuality.usableFrontPath;
       const initialPreviewPaths = [
         initialAssetQuality.usableFrontPath,
