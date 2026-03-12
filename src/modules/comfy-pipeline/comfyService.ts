@@ -2850,11 +2850,14 @@ function extractImageReferenceSources(
     const byView: Record<CharacterReferenceView, string> = { front, side, back };
     const primaryView = characterPlan.primaryView;
     const primarySource = byView[primaryView].trim() || byView.front.trim() || byView.side.trim() || byView.back.trim();
+    const primaryWeight =
+      sceneRefs.length > 0 ? (selectedCharacters.length > 1 ? 0.34 : 0.4) : 0.72;
+    const primaryPriority = sceneRefs.length > 0 ? 245 - assetIndex * 10 : 420 - assetIndex * 20;
     if (primarySource) {
       refs.push({
         source: primarySource,
-        weight: 1,
-        priority: 420 - assetIndex * 20,
+        weight: primaryWeight,
+        priority: primaryPriority,
         bucket: `character:${asset.id}`,
         label: `${asset.name}:${primaryView}`,
         role: characterViewRole(primaryView)
@@ -3286,11 +3289,6 @@ async function stageCharacterReferenceImages(
   for (let index = 0; index < selectedRefs.length; index += 1) {
     const item = selectedRefs[index]!;
     if (item.role === "scene_secondary") {
-      continue;
-    }
-    if (item.role.startsWith("character_")) {
-      const identityCrop = await buildCharacterIdentityCropReference(shot, item, inputDir, index);
-      adjusted.push(identityCrop ?? item);
       continue;
     }
     adjusted.push(item);
@@ -5054,7 +5052,10 @@ function shouldRouteStoryboardStillToFisher(
     String(tokens.CHAR2_PRIMARY_PATH ?? "").trim().length > 0 ||
     stagedImageRefs.some((item) => String(item.role ?? "").startsWith("character_"));
   if (!hasSceneRef || !hasCharacterRef) return false;
-  return isCharacterDrivenShot(shot) || Boolean(shot.dialogue?.trim()) || (shot.characterRefs?.length ?? 0) > 0;
+  // Keep storyboard stills on the mature asset-guided path. The Fisher/Qwen
+  // still-image route currently collapses shots into square portrait-like cards
+  // and weakens the relationship to the selected three-view character assets.
+  return false;
 }
 
 function getPromptStatus(raw: unknown): ComfyPromptStatus | null {
