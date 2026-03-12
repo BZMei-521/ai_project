@@ -5418,6 +5418,12 @@ export function ComfyPipelinePanel() {
     return `${outputRoot}/人物/${sanitizeOutputAssetFolderName(name, "未命名人物")}`;
   };
 
+  const buildCanonicalSkyboxAssetDir = (name: string) => {
+    const outputRoot = settings.outputDir.trim().replace(/[\\/]+$/, "");
+    if (!outputRoot) return "";
+    return `${outputRoot}/场景/${sanitizeOutputAssetFolderName(name, "未命名场景")}`;
+  };
+
   const buildCharacterAnchorCacheDir = (name: string) => {
     const outputRoot = settings.outputDir.trim().replace(/[\\/]+$/, "");
     if (!outputRoot) return "";
@@ -5434,6 +5440,15 @@ export function ComfyPipelinePanel() {
     const directory = buildCharacterAnchorCacheDir(name);
     if (!directory) return "";
     return `${directory}/front_anchor.png`;
+  };
+
+  const buildCanonicalSkyboxFacePath = (
+    name: string,
+    face: "front" | "right" | "back" | "left" | "up" | "down"
+  ) => {
+    const directory = buildCanonicalSkyboxAssetDir(name);
+    if (!directory) return "";
+    return `${directory}/skybox_${face}.png`;
   };
 
   const persistCanonicalCharacterAssetView = async (
@@ -5470,6 +5485,34 @@ export function ComfyPipelinePanel() {
     } catch {
       return sourcePath;
     }
+  };
+
+  const persistCanonicalSkyboxFaces = async (
+    name: string,
+    faces: Partial<Record<"front" | "right" | "back" | "left" | "up" | "down", string>>
+  ) => {
+    const entries = (["front", "right", "back", "left", "up", "down"] as const)
+      .map((face) => [face, faces[face]?.trim() || ""] as const)
+      .filter((entry) => Boolean(entry[1]));
+    if (entries.length === 0) return faces;
+    const persistedEntries = await Promise.all(
+      entries.map(async ([face, sourcePath]) => {
+        const targetPath = buildCanonicalSkyboxFacePath(name, face);
+        if (!targetPath) return [face, sourcePath] as const;
+        try {
+          const copied = await invokeDesktopCommand<{ filePath: string }>("copy_file_to", {
+            sourcePath,
+            targetPath
+          });
+          return [face, copied.filePath?.trim() || sourcePath] as const;
+        } catch {
+          return [face, sourcePath] as const;
+        }
+      })
+    );
+    return Object.fromEntries(persistedEntries) as Partial<
+      Record<"front" | "right" | "back" | "left" | "up" | "down", string>
+    >;
   };
 
   const clearCanonicalCharacterAssetViews = async (
@@ -9207,13 +9250,14 @@ export function ComfyPipelinePanel() {
           `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
         );
       }
+      const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, result.faces);
       const primaryPath =
-        result.faces.front ||
-        result.faces.right ||
-        result.faces.back ||
-        result.faces.left ||
-        result.faces.up ||
-        result.faces.down ||
+        persistedFaces.front ||
+        persistedFaces.right ||
+        persistedFaces.back ||
+        persistedFaces.left ||
+        persistedFaces.up ||
+        persistedFaces.down ||
         "";
       if (!primaryPath) {
         throw new Error("天空盒生成完成但未拿到任何可用面");
@@ -9224,7 +9268,7 @@ export function ComfyPipelinePanel() {
         name: sceneName,
         filePath: primaryPath,
         skyboxDescription: description,
-        skyboxFaces: result.faces,
+        skyboxFaces: persistedFaces,
         skyboxUpdateEvents: []
       });
       const created =
@@ -9236,10 +9280,10 @@ export function ComfyPipelinePanel() {
       return {
         assetId: created,
         previewPaths: [
-          result.faces.front,
-          result.faces.right,
-          result.faces.left,
-          result.faces.back
+          persistedFaces.front,
+          persistedFaces.right,
+          persistedFaces.left,
+          persistedFaces.back
         ].filter((value): value is string => Boolean(value)),
         reused: false
       };
