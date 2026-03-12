@@ -5938,6 +5938,20 @@ function buildSkyboxNegativePrompt(sceneName: string, description: string, baseN
   }
   if (/(河边|江边|河岸|江岸|河畔|水边|岸边|riverbank|riverside|shore|waterfront)/i.test(text)) {
     extras.push(
+      "girl",
+      "woman",
+      "man",
+      "child",
+      "human figure",
+      "people",
+      "portrait",
+      "festival",
+      "wedding",
+      "hanfu",
+      "kimono",
+      "traditional costume",
+      "red lantern",
+      "lantern festival",
       "marble atrium",
       "modern lobby",
       "empty white interior",
@@ -6196,7 +6210,8 @@ export async function generateSkyboxFaces(
       ensureWorkflowJson(workflowRaw),
       rewriteSkyboxFilenamePrefix
     ) as Record<string, unknown>;
-    const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face, undefined, sceneName), "image");
+    // Skyboxes should stay pure environment plates; avoid injecting global character-style anchors here.
+    const tokens = buildSkyboxTokens(settings, description, face, undefined, sceneName);
     applyDynamicCharacterRefsForImageWorkflow(workflow, []);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
     applyFisherWorkflowBindings(built, "image", tokens);

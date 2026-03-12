@@ -7302,7 +7302,6 @@ export function ComfyPipelinePanel() {
     const prompt = scenePrompt.trim() || `${sceneName} 场景设定`;
     const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
     const styleProfile = resolveSharedVisualStyleProfile([sceneName, scenePrompt]);
-    const styleAnchor = styleProfile.styleAnchor;
     const styleHint = styleProfile.styleHint;
     const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
     const riverHardAnchor = semanticGuidance.expectsRiverside
@@ -7318,11 +7317,11 @@ export function ComfyPipelinePanel() {
       "保持地平线与垂直结构稳定，避免几何扭曲",
       "画面清晰锐利，可支持后续角色合成",
       "符合真实空间与物理逻辑",
+      "这是纯环境底板，不是角色插画，不是叙事海报，不是节庆场景，不允许人物入镜",
       riverHardAnchor,
       ...semanticGuidance.promptHints,
       styleProfile.sceneDirective,
-      `风格倾向：${styleHint}`,
-      styleAnchor ? `全局画风锚点：${styleAnchor}` : ""
+      `风格倾向：${styleHint}`
     ])}。`;
   };
 
@@ -7579,7 +7578,7 @@ export function ComfyPipelinePanel() {
     }
     const riversideModel =
       pickFirstAvailableModel(
-        ["dreamshaper_8.safetensors", "architecturerealmix_v11.safetensors", "sd_xl_base_1.0.safetensors"],
+        ["architecturerealmix_v11.safetensors", "sd_xl_base_1.0.safetensors", "dreamshaper_8.safetensors"],
         options
       ) || selectedModel;
     if (riversideModel !== selectedModel) {
