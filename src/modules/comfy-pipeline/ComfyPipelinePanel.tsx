@@ -6472,6 +6472,7 @@ export function ComfyPipelinePanel() {
       promptHints.push(
         "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。"
       );
+      promptHints.push("镜头高度必须接近人眼平视或轻微抬头，不允许鸟瞰航拍，不允许高空俯视山谷或丘陵地貌。");
       negativeHints.push(
         "marble atrium",
         "indoor courtyard",
@@ -6499,7 +6500,17 @@ export function ComfyPipelinePanel() {
         "oceanfront residence",
         "seaside apartment blocks",
         "sea",
-        "ocean"
+        "ocean",
+        "aerial view",
+        "bird's-eye view",
+        "drone shot",
+        "mountain panorama",
+        "valley aerial",
+        "cave",
+        "cavern",
+        "statue",
+        "temple carving",
+        "fantasy ruin"
       );
     }
     if (/(傍晚|黄昏|暮色|夕阳|晚霞|dusk|sunset|evening)/i.test(text)) {
@@ -7295,7 +7306,7 @@ export function ComfyPipelinePanel() {
     const styleHint = styleProfile.styleHint;
     const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
     const riverHardAnchor = semanticGuidance.expectsRiverside
-      ? "自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区、海滨城市和海景公寓。"
+      ? "自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；镜头接近人眼平视，禁止鸟瞰航拍；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区、海滨城市和海景公寓；禁止洞穴、神像、奇幻遗迹。"
       : "";
     return `${mergePromptFragments([
       prompt,
@@ -7535,6 +7546,51 @@ export function ComfyPipelinePanel() {
           : "未配置专用天空盒工作流，已自动写入当前内置天空盒模板"
     );
     return builtIn;
+  };
+
+  const resolveRuntimeSkyboxPlan = async (
+    runtimeSettings: ComfySettings,
+    sceneName: string,
+    scenePrompt: string
+  ) => {
+    const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
+    let options = availableCheckpointOptions;
+    if (options.length === 0) {
+      try {
+        options = await listComfyCheckpointOptions(runtimeSettings.baseUrl);
+        setAvailableCheckpointOptions(options);
+      } catch {
+        options = [];
+      }
+    }
+    const selectedModel = runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL;
+    if (!semanticGuidance.expectsRiverside) {
+      const workflowJson = resolveSkyboxWorkflowJson(runtimeSettings);
+      return {
+        mode:
+          resolveEffectiveAssetWorkflowMode(
+            "skybox",
+            runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
+            runtimeSettings.skyboxWorkflowJson?.trim() ?? ""
+          ) as SkyboxAssetWorkflowMode,
+        model: selectedModel,
+        workflowJson
+      };
+    }
+    const riversideModel =
+      pickFirstAvailableModel(
+        ["dreamshaper_8.safetensors", "architecturerealmix_v11.safetensors", "sd_xl_base_1.0.safetensors"],
+        options
+      ) || selectedModel;
+    if (riversideModel !== selectedModel) {
+      appendLog(`河边场景自动切换天空盒模型：${selectedModel} -> ${riversideModel}`, "info");
+    }
+    appendLog("河边场景优先使用基础六面天空盒模板，避免高级全景跑偏成鸟瞰/海边/山地外景", "info");
+    return {
+      mode: "basic_builtin" as SkyboxAssetWorkflowMode,
+      model: riversideModel,
+      workflowJson: buildSkyboxWorkflowTemplateJson(riversideModel, runtimeSettings.skyboxTemplatePreset ?? "wide")
+    };
   };
 
   const generateCharacterThreeViews = async (
@@ -9259,12 +9315,14 @@ export function ComfyPipelinePanel() {
         normalizedScenePrompt
       );
       const semanticGuidance = buildSceneSemanticGuidance(sceneName, normalizedScenePrompt);
-      const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
-      const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
-        "skybox",
-        runtimeSettings.skyboxAssetWorkflowMode ?? DEFAULT_SKYBOX_ASSET_WORKFLOW_MODE,
-        runtimeSettings.skyboxWorkflowJson?.trim() ?? ""
-      ) as SkyboxAssetWorkflowMode;
+      const skyboxPlan = await resolveRuntimeSkyboxPlan(runtimeSettings, sceneName, normalizedScenePrompt);
+      const resolvedSkyboxMode = skyboxPlan.mode;
+      const effectiveSkyboxSettings: ComfySettings = {
+        ...runtimeSettings,
+        skyboxAssetWorkflowMode: skyboxPlan.mode,
+        skyboxAssetModelName: skyboxPlan.model,
+        skyboxWorkflowJson: skyboxPlan.workflowJson
+      };
       appendLog(`开始生成场景天空盒：${sceneName}`);
       appendLog(`场景天空盒使用专用工作流：${sceneName}`);
       let result: SkyboxGenerationResult;
@@ -9277,10 +9335,7 @@ export function ComfyPipelinePanel() {
       let resultSemantic: { acceptable: boolean; issues: string[] } = { acceptable: true, issues: [] };
       try {
         const firstResult = await generateSkyboxFaces(
-          {
-            ...runtimeSettings,
-            skyboxWorkflowJson: skyboxWorkflow
-          },
+          effectiveSkyboxSettings,
           description,
           sceneName
         );
@@ -9306,10 +9361,7 @@ export function ComfyPipelinePanel() {
           );
           const retryDescription = `${description}。补充要求：输出清晰锐利、边界明确、结构无扭曲、纹理完整、避免模糊。禁止跑偏成室内大厅、中庭、展厅、白色建筑内景；必须严格贴合场景名描述。`;
           const secondResult = await generateSkyboxFaces(
-            {
-              ...runtimeSettings,
-              skyboxWorkflowJson: skyboxWorkflow
-            },
+            effectiveSkyboxSettings,
             retryDescription,
             sceneName
           );
@@ -9343,7 +9395,7 @@ export function ComfyPipelinePanel() {
             );
             const fallbackResult = await generateSkyboxFaces(
               {
-                ...runtimeSettings,
+                ...effectiveSkyboxSettings,
                 skyboxAssetWorkflowMode: "basic_builtin",
                 skyboxWorkflowJson: fallbackWorkflow
               },

@@ -5963,7 +5963,17 @@ function buildSkyboxNegativePrompt(sceneName: string, description: string, baseN
       "oceanfront residence",
       "seaside apartment blocks",
       "sea",
-      "ocean"
+      "ocean",
+      "aerial view",
+      "bird's-eye view",
+      "drone shot",
+      "mountain panorama",
+      "valley aerial",
+      "cave",
+      "cavern",
+      "statue",
+      "temple carving",
+      "fantasy ruin"
     );
   }
   const merged = [baseNegativePrompt.trim(), ...extras].filter(Boolean).join(", ");
