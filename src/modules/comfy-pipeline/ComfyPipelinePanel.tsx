@@ -5418,10 +5418,22 @@ export function ComfyPipelinePanel() {
     return `${outputRoot}/人物/${sanitizeOutputAssetFolderName(name, "未命名人物")}`;
   };
 
+  const buildCharacterAnchorCacheDir = (name: string) => {
+    const outputRoot = settings.outputDir.trim().replace(/[\\/]+$/, "");
+    if (!outputRoot) return "";
+    return `${outputRoot}/.storyboard-cache/人物/${sanitizeOutputAssetFolderName(name, "未命名人物")}`;
+  };
+
   const buildCanonicalCharacterAssetViewPath = (name: string, view: "front" | "side" | "back") => {
     const directory = buildCanonicalCharacterAssetDir(name);
     if (!directory) return "";
     return `${directory}/${view}.png`;
+  };
+
+  const buildCharacterAnchorReferencePath = (name: string) => {
+    const directory = buildCharacterAnchorCacheDir(name);
+    if (!directory) return "";
+    return `${directory}/front_anchor.png`;
   };
 
   const persistCanonicalCharacterAssetView = async (
@@ -5444,6 +5456,22 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const persistCharacterAnchorReference = async (name: string, sourcePath: string) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return sourcePath;
+    const targetPath = buildCharacterAnchorReferencePath(name);
+    if (!targetPath) return sourcePath;
+    try {
+      const copied = await invokeDesktopCommand<{ filePath: string }>("copy_file_to", {
+        sourcePath: trimmed,
+        targetPath
+      });
+      return copied.filePath?.trim() || sourcePath;
+    } catch {
+      return sourcePath;
+    }
+  };
+
   const clearCanonicalCharacterAssetViews = async (
     name: string,
     views: Array<"front" | "side" | "back">
@@ -5454,6 +5482,16 @@ export function ComfyPipelinePanel() {
     if (targets.length <= 0) return;
     try {
       await deleteGeneratedFileFamilies(targets, []);
+    } catch {
+      // Ignore cleanup failures; regeneration can still continue.
+    }
+  };
+
+  const clearCharacterAnchorReference = async (name: string) => {
+    const target = buildCharacterAnchorReferencePath(name);
+    if (!target) return;
+    try {
+      await deleteGeneratedFileFamilies([target], []);
     } catch {
       // Ignore cleanup failures; regeneration can still continue.
     }
@@ -8509,6 +8547,7 @@ export function ComfyPipelinePanel() {
       }
       if (!anchorPath && profile.description.trim().length > 0) {
         await clearCanonicalCharacterAssetViews(profile.name, ["front"]);
+        await clearCharacterAnchorReference(profile.name);
         appendLog(`${sourceLabel}开始生成角色正视锚点：${profile.name}`);
         const requestedCharacterModels = await resolveRuntimeCharacterAnchorModelCandidates(
           runtimeSettings,
@@ -8681,7 +8720,7 @@ export function ComfyPipelinePanel() {
             characterAnchorModelByNameRef.current.set(profileKey, bestAnchorModel.trim());
           }
           anchorPath = await normalizeCharacterAnchorBackground(anchorPath, "white");
-          anchorPath = await persistCanonicalCharacterAssetView(profile.name, "front", anchorPath);
+          anchorPath = await persistCharacterAnchorReference(profile.name, anchorPath);
           await cleanupGeneratedCharacterFamilies(
             [...generatedAnchorSourcePaths],
             [anchorPath],
