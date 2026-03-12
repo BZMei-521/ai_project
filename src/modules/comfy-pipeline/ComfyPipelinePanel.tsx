@@ -6470,7 +6470,7 @@ export function ComfyPipelinePanel() {
     }
     if (expectsRiverside) {
       promptHints.push(
-        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景。"
+        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。"
       );
       negativeHints.push(
         "marble atrium",
@@ -6488,7 +6488,18 @@ export function ComfyPipelinePanel() {
         "grass hill",
         "park lawn",
         "dense woodland without water",
-        "meadow only"
+        "meadow only",
+        "beach",
+        "beachfront",
+        "seaside",
+        "coastline",
+        "coastal town",
+        "coastal city",
+        "shore apartment",
+        "oceanfront residence",
+        "seaside apartment blocks",
+        "sea",
+        "ocean"
       );
     }
     if (/(傍晚|黄昏|暮色|夕阳|晚霞|dusk|sunset|evening)/i.test(text)) {
@@ -6523,6 +6534,11 @@ export function ComfyPipelinePanel() {
       guidance.expectsRiverside &&
       appearance.vegetationGreenRatio > 0.18 &&
       appearance.waterBlueRatio < 0.04;
+    const likelyCoastalDrift =
+      guidance.expectsRiverside &&
+      appearance.waterBlueRatio > 0.1 &&
+      appearance.vegetationGreenRatio < 0.035 &&
+      (appearance.skyBlueRatio > 0.04 || appearance.warmSunsetRatio > 0.18);
     if (guidance.prefersOutdoor && likelyIndoorAtrium) {
       issues.push(
         `场景语义疑似跑偏成室内中庭/展厅(neutral=${appearance.brightNeutralRatio.toFixed(2)},natural=${naturalRatio.toFixed(2)})`
@@ -6541,6 +6557,11 @@ export function ComfyPipelinePanel() {
     if (likelyMeadowDrift) {
       issues.push(
         `河边场景疑似跑偏成草坡/园区外景(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
+      );
+    }
+    if (likelyCoastalDrift) {
+      issues.push(
+        `河边场景疑似跑偏成海边/海岸住宅区(sky=${appearance.skyBlueRatio.toFixed(2)},green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},warm=${appearance.warmSunsetRatio.toFixed(2)})`
       );
     }
     return {
@@ -7274,7 +7295,7 @@ export function ComfyPipelinePanel() {
     const styleHint = styleProfile.styleHint;
     const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
     const riverHardAnchor = semanticGuidance.expectsRiverside
-      ? "自然河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景。"
+      ? "自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区、海滨城市和海景公寓。"
       : "";
     return `${mergePromptFragments([
       prompt,
@@ -9237,6 +9258,7 @@ export function ComfyPipelinePanel() {
         sceneName,
         normalizedScenePrompt
       );
+      const semanticGuidance = buildSceneSemanticGuidance(sceneName, normalizedScenePrompt);
       const skyboxWorkflow = resolveSkyboxWorkflowJson(runtimeSettings);
       const resolvedSkyboxMode = resolveEffectiveAssetWorkflowMode(
         "skybox",
@@ -9246,6 +9268,13 @@ export function ComfyPipelinePanel() {
       appendLog(`开始生成场景天空盒：${sceneName}`);
       appendLog(`场景天空盒使用专用工作流：${sceneName}`);
       let result: SkyboxGenerationResult;
+      let resultHasCompleteFaces = false;
+      let resultQuality: { lowSharpness: boolean; score: number; minSharpness?: number | null } = {
+        lowSharpness: false,
+        score: 0,
+        minSharpness: null
+      };
+      let resultSemantic: { acceptable: boolean; issues: string[] } = { acceptable: true, issues: [] };
       try {
         const firstResult = await generateSkyboxFaces(
           {
@@ -9261,6 +9290,9 @@ export function ComfyPipelinePanel() {
         const firstSemantic = await evaluateSkyboxSemanticQuality(firstPaths, sceneName, normalizedScenePrompt);
         if (firstHasCompleteFaces && !firstQuality.lowSharpness && firstSemantic.acceptable) {
           result = firstResult;
+          resultHasCompleteFaces = firstHasCompleteFaces;
+          resultQuality = firstQuality;
+          resultSemantic = firstSemantic;
         } else {
           appendLog(
             `天空盒首轮结果不稳定（${[
@@ -9295,6 +9327,51 @@ export function ComfyPipelinePanel() {
             "info"
           );
           result = chooseSecond ? secondResult : firstResult;
+          resultHasCompleteFaces = chooseSecond ? secondHasCompleteFaces : firstHasCompleteFaces;
+          resultQuality = chooseSecond ? secondQuality : firstQuality;
+          resultSemantic = chooseSecond ? secondSemantic : firstSemantic;
+          if (
+            resolvedSkyboxMode === "advanced_panorama" &&
+            semanticGuidance.expectsRiverside &&
+            (!resultHasCompleteFaces || resultQuality.lowSharpness || !resultSemantic.acceptable)
+          ) {
+            appendLog("河边场景高级全景仍跑偏，自动改用基础六面模板补救一次", "info");
+            const riversideRescueDescription = `${description}。补充要求：必须是内陆河岸，不是海边，不是沙滩，不是海岸线住宅区，不是海滨城市鸟瞰；必须看见河道、岸线、沿河植被和桥或对岸轮廓。`;
+            const fallbackWorkflow = buildSkyboxWorkflowTemplateJson(
+              runtimeSettings.skyboxAssetModelName?.trim() || DEFAULT_SKYBOX_ASSET_MODEL,
+              runtimeSettings.skyboxTemplatePreset ?? "wide"
+            );
+            const fallbackResult = await generateSkyboxFaces(
+              {
+                ...runtimeSettings,
+                skyboxAssetWorkflowMode: "basic_builtin",
+                skyboxWorkflowJson: fallbackWorkflow
+              },
+              riversideRescueDescription,
+              sceneName
+            );
+            const fallbackPaths = listSkyboxPrimaryFacePaths(fallbackResult.faces);
+            const fallbackHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(fallbackResult.faces);
+            const fallbackQuality = await evaluateImageSharpnessQuality(fallbackPaths, SKYBOX_MIN_SHARPNESS_SCORE);
+            const fallbackSemantic = await evaluateSkyboxSemanticQuality(fallbackPaths, sceneName, normalizedScenePrompt);
+            const currentScore =
+              resultQuality.score + (resultHasCompleteFaces ? 0 : -1000) + (resultSemantic.acceptable ? 0 : -600);
+            const fallbackScore =
+              fallbackQuality.score + (fallbackHasCompleteFaces ? 0 : -1000) + (fallbackSemantic.acceptable ? 0 : -600);
+            const chooseFallback =
+              (fallbackSemantic.acceptable && !resultSemantic.acceptable) ||
+              (fallbackSemantic.acceptable === resultSemantic.acceptable && fallbackScore >= currentScore);
+            appendLog(
+              `河边场景补救结果：${sceneName} -> ${chooseFallback ? "基础六面补救结果" : "保留高级全景结果"}（当前分数 ${currentScore.toFixed(2)} / 补救分数 ${fallbackScore.toFixed(2)}）`,
+              "info"
+            );
+            if (chooseFallback) {
+              result = fallbackResult;
+              resultHasCompleteFaces = fallbackHasCompleteFaces;
+              resultQuality = fallbackQuality;
+              resultSemantic = fallbackSemantic;
+            }
+          }
         }
       } catch (error) {
         if (resolvedSkyboxMode !== "advanced_panorama" || !shouldFallbackAssetWorkflow(error)) throw error;

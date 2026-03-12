@@ -5952,7 +5952,18 @@ function buildSkyboxNegativePrompt(sceneName: string, description: string, baseN
       "masterplan render",
       "meadow only",
       "grass hill",
-      "park lawn"
+      "park lawn",
+      "beach",
+      "beachfront",
+      "seaside",
+      "coastline",
+      "coastal town",
+      "coastal city",
+      "shore apartment",
+      "oceanfront residence",
+      "seaside apartment blocks",
+      "sea",
+      "ocean"
     );
   }
   const merged = [baseNegativePrompt.trim(), ...extras].filter(Boolean).join(", ");
