@@ -9796,6 +9796,12 @@ export function ComfyPipelinePanel() {
     return normalizedItems;
   };
 
+  const rebindImportedShotItemsWithCurrentAssets = (
+    normalizedItems: NormalizedImportedShot[],
+    characterOverrides: Record<string, string>,
+    skyboxOverrides: Record<string, string>
+  ) => applyImportedShotItems(applyProvisionOverrides(normalizedItems, characterOverrides, skyboxOverrides));
+
   const runScriptImportTask = async (sourceLabel: string, task: () => Promise<boolean>) => {
     if (scriptImportPromiseRef.current) {
       appendLog(`${sourceLabel}跳过：上一次导入仍在执行`, "error");
@@ -9841,11 +9847,11 @@ export function ComfyPipelinePanel() {
           normalizeImportedCharacterProfilesFromShots(parsed)
         );
         const normalized = normalizeImportedShotsWithProfiles(parsed);
-        const items = applyImportedShotItems(
+        applyImportedShotItems(
           applyProvisionOverrides(normalized, scriptCharacterOverrides, scriptSkyboxOverrides)
         );
-        pushToast(`已导入 ${items.length} 个镜头`, "success");
-        appendLog(`导入镜头脚本成功，共 ${items.length} 条`);
+        pushToast(`已导入 ${normalized.length} 个镜头`, "success");
+        appendLog(`导入镜头脚本成功，共 ${normalized.length} 条`);
         try {
           await upsertImportedCharacterAssets(profiles, "脚本导入", settings, {
             preferReuseExisting: skipExisting
@@ -9854,7 +9860,12 @@ export function ComfyPipelinePanel() {
           appendLog(`脚本导入角色资产预热失败，转入镜头导入后自动资产阶段继续处理：${String(error)}`, "error");
         }
         try {
-          await autoProvisionAssetsForImportedShots(items, settings, profiles);
+          const reboundItems = rebindImportedShotItemsWithCurrentAssets(
+            normalized,
+            scriptCharacterOverrides,
+            scriptSkyboxOverrides
+          );
+          await autoProvisionAssetsForImportedShots(reboundItems, settings, profiles);
         } catch (error) {
           appendLog(`导入后自动资产阶段失败：${String(error)}`, "error");
         }
@@ -9893,8 +9904,10 @@ export function ComfyPipelinePanel() {
                 characters?: Array<Record<string, unknown>>;
               }
             );
-            const items = applyImportedShotItems(
-              applyProvisionOverrides(normalized, storyCharacterOverrides, storySkyboxOverrides)
+            const items = rebindImportedShotItemsWithCurrentAssets(
+              normalized,
+              storyCharacterOverrides,
+              storySkyboxOverrides
             );
             pushToast(`故事已解析并导入 ${items.length} 个镜头`, "success");
             appendLog(`故事解析并导入成功，共 ${items.length} 条`);
