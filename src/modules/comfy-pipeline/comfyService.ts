@@ -2332,12 +2332,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSceneContinuityFrame && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        char1Primary: 1.1,
-        char1Secondary: 0.1,
-        char2Primary: 1.04,
-        denoise: 0.42,
-        steps: 30,
-        cfg: 5.4
+        char1Primary: 1.24,
+        char1Secondary: 0.12,
+        char2Primary: 1.18,
+        denoise: 0.5,
+        steps: 32,
+        cfg: 5.6
       };
     }
     return {
@@ -2352,12 +2352,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSceneContinuityFrame) {
     if (characterDriven) {
       return {
-        char1Primary: 1.12,
-        char1Secondary: 0.12,
+        char1Primary: 1.24,
+        char1Secondary: 0.14,
         char2Primary: 0,
-        denoise: 0.4,
-        steps: 30,
-        cfg: 5.3
+        denoise: 0.48,
+        steps: 32,
+        cfg: 5.5
       };
     }
     return {
@@ -2373,12 +2373,12 @@ function inferStoryboardReferenceWeights(
     if (characterDriven) {
       return {
         // Scene-led shot with two characters: environment stays stable, but people must still enter frame.
-        char1Primary: 1.14,
-        char1Secondary: 0.08,
-        char2Primary: 1.08,
-        denoise: 0.46,
-        steps: 30,
-        cfg: 5.5
+        char1Primary: 1.28,
+        char1Secondary: 0.12,
+        char2Primary: 1.22,
+        denoise: 0.52,
+        steps: 32,
+        cfg: 5.6
       };
     }
     return {
@@ -2393,12 +2393,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 1.14,
-        char1Secondary: 0.1,
+        char1Primary: 1.26,
+        char1Secondary: 0.14,
         char2Primary: 0,
-        denoise: 0.44,
-        steps: 30,
-        cfg: 5.4
+        denoise: 0.5,
+        steps: 32,
+        cfg: 5.5
       };
     }
     return {
@@ -3002,7 +3002,6 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
 }
 
 function shouldLeadWithSceneReference(shot: Shot): boolean {
-  if ((shot.characterRefs?.length ?? 0) > 1) return true;
   const corpus = [
     shot.title ?? "",
     shot.storyPrompt ?? "",
@@ -5938,7 +5937,23 @@ function buildSkyboxNegativePrompt(sceneName: string, description: string, baseN
     extras.push("indoor", "interior", "atrium", "lobby", "gallery", "showroom", "museum interior", "white hall");
   }
   if (/(河边|江边|河岸|江岸|河畔|水边|岸边|riverbank|riverside|shore|waterfront)/i.test(text)) {
-    extras.push("marble atrium", "modern lobby", "empty white interior", "glass hall", "indoor courtyard");
+    extras.push(
+      "marble atrium",
+      "modern lobby",
+      "empty white interior",
+      "glass hall",
+      "indoor courtyard",
+      "campus render",
+      "corporate campus",
+      "office park",
+      "modern white building",
+      "ring building",
+      "architectural concept render",
+      "masterplan render",
+      "meadow only",
+      "grass hill",
+      "park lawn"
+    );
   }
   const merged = [baseNegativePrompt.trim(), ...extras].filter(Boolean).join(", ");
   return merged.trim();

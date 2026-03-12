@@ -6470,7 +6470,7 @@ export function ComfyPipelinePanel() {
     }
     if (expectsRiverside) {
       promptHints.push(
-        "必须明确表现河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被，以及远处桥梁、对岸或河道延伸方向，空间是自然河边而不是树林草坡。"
+        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景。"
       );
       negativeHints.push(
         "marble atrium",
@@ -6478,6 +6478,12 @@ export function ComfyPipelinePanel() {
         "modern lobby",
         "empty white interior",
         "glass hall",
+        "campus render",
+        "modern white building",
+        "ring building",
+        "office park",
+        "corporate campus",
+        "architectural concept render",
         "forest clearing",
         "grass hill",
         "park lawn",
@@ -6509,6 +6515,14 @@ export function ComfyPipelinePanel() {
     const likelyMissingRiverbankCues =
       guidance.expectsRiverside &&
       (naturalRatio < 0.16 || appearance.waterBlueRatio < 0.025);
+    const likelyArchitectureDrift =
+      guidance.expectsRiverside &&
+      appearance.brightNeutralRatio > 0.12 &&
+      appearance.waterBlueRatio < 0.05;
+    const likelyMeadowDrift =
+      guidance.expectsRiverside &&
+      appearance.vegetationGreenRatio > 0.18 &&
+      appearance.waterBlueRatio < 0.04;
     if (guidance.prefersOutdoor && likelyIndoorAtrium) {
       issues.push(
         `场景语义疑似跑偏成室内中庭/展厅(neutral=${appearance.brightNeutralRatio.toFixed(2)},natural=${naturalRatio.toFixed(2)})`
@@ -6517,6 +6531,16 @@ export function ComfyPipelinePanel() {
     if (likelyMissingRiverbankCues) {
       issues.push(
         `河边/江边场景缺少明确水岸线索(sky=${appearance.skyBlueRatio.toFixed(2)},green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
+      );
+    }
+    if (likelyArchitectureDrift) {
+      issues.push(
+        `河边场景疑似跑偏成建筑概念图(neutral=${appearance.brightNeutralRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
+      );
+    }
+    if (likelyMeadowDrift) {
+      issues.push(
+        `河边场景疑似跑偏成草坡/园区外景(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
       );
     }
     return {
@@ -7249,6 +7273,9 @@ export function ComfyPipelinePanel() {
     const styleAnchor = styleProfile.styleAnchor;
     const styleHint = styleProfile.styleHint;
     const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
+    const riverHardAnchor = semanticGuidance.expectsRiverside
+      ? "自然河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景。"
+      : "";
     return `${mergePromptFragments([
       prompt,
       presetPrompt,
@@ -7259,6 +7286,7 @@ export function ComfyPipelinePanel() {
       "保持地平线与垂直结构稳定，避免几何扭曲",
       "画面清晰锐利，可支持后续角色合成",
       "符合真实空间与物理逻辑",
+      riverHardAnchor,
       ...semanticGuidance.promptHints,
       styleProfile.sceneDirective,
       `风格倾向：${styleHint}`,
