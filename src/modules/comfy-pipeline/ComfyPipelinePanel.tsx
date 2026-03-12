@@ -6485,7 +6485,7 @@ export function ComfyPipelinePanel() {
     }
     if (expectsRiverside) {
       promptHints.push(
-        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。"
+        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。必须是开阔河道，不是狭窄山涧，不是树林溪流，不是布满大石块的浅溪。"
       );
       promptHints.push("镜头高度必须接近人眼平视或轻微抬头，不允许鸟瞰航拍，不允许高空俯视山谷或丘陵地貌。");
       negativeHints.push(
@@ -6501,6 +6501,12 @@ export function ComfyPipelinePanel() {
         "corporate campus",
         "architectural concept render",
         "forest clearing",
+        "forest creek",
+        "woodland creek",
+        "mountain stream",
+        "rocky stream",
+        "shallow brook",
+        "boulder stream",
         "grass hill",
         "park lawn",
         "dense woodland without water",
@@ -6560,6 +6566,12 @@ export function ComfyPipelinePanel() {
       guidance.expectsRiverside &&
       appearance.vegetationGreenRatio > 0.18 &&
       appearance.waterBlueRatio < 0.04;
+    const likelyCreekDrift =
+      guidance.expectsRiverside &&
+      appearance.vegetationGreenRatio > 0.2 &&
+      appearance.waterBlueRatio > 0.03 &&
+      appearance.skyBlueRatio < 0.02 &&
+      appearance.brightNeutralRatio < 0.08;
     const likelyCoastalDrift =
       guidance.expectsRiverside &&
       appearance.waterBlueRatio > 0.1 &&
@@ -6583,6 +6595,11 @@ export function ComfyPipelinePanel() {
     if (likelyMeadowDrift) {
       issues.push(
         `河边场景疑似跑偏成草坡/园区外景(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
+      );
+    }
+    if (likelyCreekDrift) {
+      issues.push(
+        `河边场景疑似跑偏成树林溪流/山涧(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},sky=${appearance.skyBlueRatio.toFixed(2)})`
       );
     }
     if (likelyCoastalDrift) {
@@ -7318,10 +7335,10 @@ export function ComfyPipelinePanel() {
     const presetPrompt = SKYBOX_PROMPT_PRESET_TEXT[settings.skyboxPromptPreset ?? "day_exterior"];
     const semanticGuidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
     const riverHardAnchor = semanticGuidance.expectsRiverside
-      ? "自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；镜头接近人眼平视，禁止鸟瞰航拍；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区、海滨城市和海景公寓；禁止洞穴、神像、奇幻遗迹。"
+      ? "自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；镜头接近人眼平视，禁止鸟瞰航拍；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区和海景公寓；禁止洞穴、神像、奇幻遗迹；禁止树林溪流、狭窄山涧、乱石浅溪。"
       : "";
     const riverEnglishAnchor = semanticGuidance.expectsRiverside
-      ? "ground-level inland riverside environment, calm river water, visible shoreline, willow trees, stone riverbank path, old stone bridge, opposite bank silhouette, outdoor only, no people, no buildings as main subject"
+      ? "ground-level inland riverside environment, broad calm river water, visible shoreline, willow trees, stone riverbank path, old stone bridge, opposite bank silhouette, outdoor only, no people, no buildings as main subject, not a forest creek, not a mountain stream, not a rocky brook"
       : "";
     return `${mergePromptFragments([
       prompt,

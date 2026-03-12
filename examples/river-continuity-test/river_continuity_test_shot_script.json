@@ -29,7 +29,7 @@
     {
       "id": "river_continuity_002",
       "title": "双人中景起话",
-      "prompt": "2D guoman animation storyboard keyframe, medium two shot at the same riverside location, camera moves closer from the establishing shot, Jiang Lan stands in the left half of frame and turns slightly toward Shen Yan on the right half, bridge remains visible in the rear center, willow bank still stays on screen left, stone path visible under both characters, keep the exact same costume, hairstyle, face identity and environment layout from previous shot",
+      "prompt": "2D guoman animation storyboard keyframe, medium two shot at the same riverside location, camera moves closer from the establishing shot, Jiang Lan stands in the left half of frame and turns slightly toward Shen Yan on the right half, bridge remains visible in the center background, willow bank still stays on screen left, stone path visible under both characters, both characters are mostly front-facing or slight three-quarter toward camera rather than back-facing, keep the exact same costume, hairstyle, face identity and environment layout from previous shot",
       "negative_prompt": "different location, changed bridge, changed clothes, wrong face, extra limbs, distant tiny figure, overexposed, noisy image, collage artifacts, white cutout block, pasted character sheet, mosaic artifacts, text watermark",
       "video_prompt": "Jiang Lan gives a small head turn and subtle hand gesture while speaking, Shen stays mostly still, camera remains stable",
       "video_mode": "auto",
@@ -45,7 +45,7 @@
     {
       "id": "river_continuity_003",
       "title": "江岚近景说话",
-      "prompt": "2D guoman animation storyboard keyframe, closer medium shot focused on Jiang Lan on screen center-left at the same riverside bank, Shen Yan appears smaller on screen right as a secondary figure, river and bridge stay in the same orientation as before, Jiang Lan speaks calmly with a slight side turn, upper body larger in frame but still integrated into the riverbank environment, keep the same face, hair, costume color and lighting continuity",
+      "prompt": "2D guoman animation storyboard keyframe, closer medium shot focused on Jiang Lan on screen center-left at the same riverside bank, Shen Yan appears smaller on screen right as a secondary figure, river and bridge stay in the same orientation as before, Jiang Lan speaks calmly with a slight three-quarter turn, upper body larger in frame but still integrated into the riverbank environment, keep the same face, hair, costume color and lighting continuity, do not use a back-facing character view as the main reference",
       "negative_prompt": "new person, glamour portrait, indoor selfie, fashion shoot, random background, wrong hairstyle, changed outfit, blurry face, cut off head, cut off hands, white cutout block, pasted character sheet, mosaic artifacts, text watermark",
       "video_prompt": "Jiang Lan lip movement and a slight shoulder motion, Shen gives a minimal reaction in background, soft river movement continues",
       "video_mode": "auto",
@@ -61,7 +61,7 @@
     {
       "id": "river_continuity_004",
       "title": "沈砚回应点头",
-      "prompt": "2D guoman animation storyboard keyframe, reverse medium close shot focused on Shen Yan on screen center-right at the same riverside location, Jiang Lan appears only as a blurred foreground shoulder or side silhouette on screen left edge, same bridge and river orientation, same willow trees, same dusk light, Shen Yan nods lightly and answers, preserve exact identity, clothing and environment continuity, use a clear reverse angle rather than repeating the prior composition",
+      "prompt": "2D guoman animation storyboard keyframe, reverse medium close shot focused on Shen Yan on screen center-right at the same riverside location, Jiang Lan appears only as a blurred foreground shoulder or side silhouette on screen left edge, same bridge and river orientation, same willow trees, same dusk light, Shen Yan nods lightly and answers, preserve exact identity, clothing and environment continuity, use a clear reverse angle rather than repeating the prior composition, Shen Yan remains front-facing or slight profile rather than back-facing",
       "negative_prompt": "wrong person, swapped character, changed environment, malformed hands, duplicated face, extreme close crop, empty scene, heavy blur, white cutout block, pasted character sheet, floating UI box, random cube, mosaic artifacts, text watermark",
       "video_prompt": "Shen nods gently and gives a brief reply, camera stays steady, background remains unchanged",
       "video_mode": "auto",
@@ -77,7 +77,7 @@
     {
       "id": "river_continuity_005",
       "title": "并肩沿河慢走",
-      "prompt": "2D guoman animation storyboard keyframe, medium wide shot, Jiang Lan and Shen Yan walk slowly side by side along the same riverside path from screen left toward screen right, bridge remains in the rear background, river stays on the right side of frame, preserve both character identities and same environment layout while clearly changing body pose, stride, and staging from the prior static dialogue shots",
+      "prompt": "2D guoman animation storyboard keyframe, medium wide shot, Jiang Lan and Shen Yan walk slowly side by side along the same riverside path from screen left toward screen right, bridge remains in the distant background, river stays on the right side of frame, preserve both character identities and same environment layout while clearly changing body pose, stride, and staging from the prior static dialogue shots",
       "negative_prompt": "different background, changed bridge position, random strangers, body duplication, fused limbs, floating feet, deformed anatomy, far away tiny people, white cutout block, pasted character sheet, mosaic artifacts, text watermark",
       "video_prompt": "both characters take a few slow steps forward, clothes move lightly in the breeze, camera tracks gently with them",
       "video_mode": "auto",

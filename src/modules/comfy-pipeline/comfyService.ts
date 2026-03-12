@@ -2269,12 +2269,13 @@ function inferCharacterReferencePlan(shot: Shot): {
     "背影",
     "背面",
     "背对",
+    "背对镜头",
     "背身",
-    "后方",
-    "后背",
-    "rear",
     "back view",
-    "back-facing"
+    "back-facing",
+    "rear view",
+    "from behind",
+    "seen from behind"
   ]);
   if (prefersBack) {
     return { primaryView: "back", secondaryViews: ["side", "front"] };
@@ -2332,19 +2333,19 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSceneContinuityFrame && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        char1Primary: 1.24,
-        char1Secondary: 0.12,
-        char2Primary: 1.18,
-        denoise: 0.5,
-        steps: 32,
-        cfg: 5.6
+        char1Primary: 0.72,
+        char1Secondary: 0.08,
+        char2Primary: 0.68,
+        denoise: 0.4,
+        steps: 28,
+        cfg: 5.2
       };
     }
     return {
-      char1Primary: 0.8,
+      char1Primary: 0.58,
       char1Secondary: 0.06,
-      char2Primary: 0.76,
-      denoise: 0.26,
+      char2Primary: 0.54,
+      denoise: 0.22,
       steps: 26,
       cfg: 4.9
     };
@@ -2352,19 +2353,19 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSceneContinuityFrame) {
     if (characterDriven) {
       return {
-        char1Primary: 1.24,
-        char1Secondary: 0.14,
+        char1Primary: 0.74,
+        char1Secondary: 0.08,
         char2Primary: 0,
-        denoise: 0.48,
-        steps: 32,
-        cfg: 5.5
+        denoise: 0.38,
+        steps: 28,
+        cfg: 5.2
       };
     }
     return {
-      char1Primary: 0.82,
+      char1Primary: 0.6,
       char1Secondary: 0.06,
       char2Primary: 0,
-      denoise: 0.25,
+      denoise: 0.22,
       steps: 26,
       cfg: 4.9
     };
@@ -2372,20 +2373,20 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Scene-led shot with two characters: environment stays stable, but people must still enter frame.
-        char1Primary: 1.28,
-        char1Secondary: 0.12,
-        char2Primary: 1.22,
-        denoise: 0.52,
-        steps: 32,
-        cfg: 5.6
+        // Scene-led shot with two characters: environment stays stable and readable.
+        char1Primary: 0.76,
+        char1Secondary: 0.08,
+        char2Primary: 0.72,
+        denoise: 0.4,
+        steps: 28,
+        cfg: 5.2
       };
     }
     return {
-      char1Primary: 0.76,
+      char1Primary: 0.6,
       char1Secondary: 0.04,
-      char2Primary: 0.72,
-      denoise: 0.34,
+      char2Primary: 0.56,
+      denoise: 0.24,
       steps: 24,
       cfg: 5.1
     };
@@ -2393,19 +2394,19 @@ function inferStoryboardReferenceWeights(
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 1.26,
-        char1Secondary: 0.14,
+        char1Primary: 0.78,
+        char1Secondary: 0.08,
         char2Primary: 0,
-        denoise: 0.5,
-        steps: 32,
-        cfg: 5.5
+        denoise: 0.38,
+        steps: 28,
+        cfg: 5.2
       };
     }
     return {
-      char1Primary: 0.78,
+      char1Primary: 0.6,
       char1Secondary: 0.04,
       char2Primary: 0,
-      denoise: 0.34,
+      denoise: 0.24,
       steps: 24,
       cfg: 5.1
     };
@@ -5030,12 +5031,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
     const inputs = (node as Record<string, unknown>).inputs;
     if (!inputs || typeof inputs !== "object") return;
     (inputs as Record<string, unknown>).weight = fallbackWeight;
-    (inputs as Record<string, unknown>).end_at = 0.9;
+    (inputs as Record<string, unknown>).end_at = fallbackWeight >= 0.7 ? 1.0 : 0.72;
   };
 
-  updateAdapterWeight(sceneAdapterNode, 0.34);
-  updateAdapterWeight(char1AdapterNode, 1.08);
-  updateAdapterWeight(char2AdapterNode, 0.96);
+  // Favor a readable environment anchor. Character refs should keep identity and costume
+  // without collapsing the whole frame into pasted torso fragments.
+  updateAdapterWeight(sceneAdapterNode, 0.82);
+  updateAdapterWeight(char1AdapterNode, 0.58);
+  updateAdapterWeight(char2AdapterNode, 0.54);
 }
 
 function shouldRouteStoryboardStillToFisher(
