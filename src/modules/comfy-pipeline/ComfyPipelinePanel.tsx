@@ -8821,7 +8821,7 @@ export function ComfyPipelinePanel() {
             approvedFrontPath,
             preferredCharacterModel
           );
-          nextFrontPath = approvedFrontPath || nextFrontPath;
+          nextFrontPath = (threeView.front.localPath || threeView.front.previewUrl || approvedFrontPath || nextFrontPath).trim();
           nextSidePath = (threeView.side.localPath || threeView.side.previewUrl || nextSidePath).trim();
           nextBackPath = (threeView.back.localPath || threeView.back.previewUrl || nextBackPath).trim();
           if (profileKey) {
