@@ -5754,7 +5754,7 @@ export function ComfyPipelinePanel() {
     const normalized =
       (await normalizeCharacterAnchorBackground(pathOrUrl, view === "front" ? "white" : "gray")) || pathOrUrl;
     if (view === "front") {
-      return prepareCharacterFrontReferenceCandidate(normalized);
+      return fitCharacterViewWithinCanvas(normalized, "front");
     }
     const layout = await analyzeForegroundLayout(normalized);
     const shouldIsolate =
