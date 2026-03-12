@@ -5934,7 +5934,22 @@ function buildSkyboxNegativePrompt(sceneName: string, description: string, baseN
       text
     ) && !/(室内|内景|大厅|房间|走廊|展厅|中庭|indoor|interior|atrium|lobby|hall|room|corridor|gallery|showroom)/i.test(text);
   if (prefersOutdoor) {
-    extras.push("indoor", "interior", "atrium", "lobby", "gallery", "showroom", "museum interior", "white hall");
+    extras.push(
+      "indoor",
+      "interior",
+      "atrium",
+      "lobby",
+      "gallery",
+      "showroom",
+      "museum interior",
+      "white hall",
+      "wood interior",
+      "wooden hall",
+      "tea room",
+      "restaurant interior",
+      "cafe interior",
+      "timber pavilion"
+    );
   }
   if (/(河边|江边|河岸|江岸|河畔|水边|岸边|riverbank|riverside|shore|waterfront)/i.test(text)) {
     extras.push(

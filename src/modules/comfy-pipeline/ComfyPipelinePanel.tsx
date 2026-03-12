@@ -6466,7 +6466,22 @@ export function ComfyPipelinePanel() {
       ) && !/(室内|内景|大厅|房间|走廊|展厅|中庭|屋内|室中|indoor|interior|atrium|lobby|hall|room|corridor|gallery|showroom)/i.test(text);
     if (prefersOutdoor) {
       promptHints.push("必须是纯户外环境空间，不是室内大厅，不是中庭，不是展厅，不是白色建筑内景。");
-      negativeHints.push("indoor", "interior", "atrium", "lobby", "gallery", "showroom", "museum interior", "white hall");
+      negativeHints.push(
+        "indoor",
+        "interior",
+        "atrium",
+        "lobby",
+        "gallery",
+        "showroom",
+        "museum interior",
+        "white hall",
+        "wood interior",
+        "wooden hall",
+        "tea room",
+        "restaurant interior",
+        "cafe interior",
+        "timber pavilion"
+      );
     }
     if (expectsRiverside) {
       promptHints.push(
@@ -7578,7 +7593,7 @@ export function ComfyPipelinePanel() {
     }
     const riversideModel =
       pickFirstAvailableModel(
-        ["architecturerealmix_v11.safetensors", "sd_xl_base_1.0.safetensors", "dreamshaper_8.safetensors"],
+        ["sd_xl_base_1.0.safetensors", "dreamshaper_8.safetensors", "architecturerealmix_v11.safetensors"],
         options
       ) || selectedModel;
     if (riversideModel !== selectedModel) {
