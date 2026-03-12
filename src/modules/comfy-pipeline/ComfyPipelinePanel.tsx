@@ -6485,8 +6485,9 @@ export function ComfyPipelinePanel() {
     }
     if (expectsRiverside) {
       promptHints.push(
-        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。必须是开阔河道，不是狭窄山涧，不是树林溪流，不是布满大石块的浅溪。"
+        "必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。必须是开阔河道，不是狭窄山涧，不是树林溪流，不是布满大石块的浅溪，不是被乱石填满的浅水河床。"
       );
+      promptHints.push("河面必须连续展开，占据中景主要面积；岸线应当清晰可读，不能让圆石浅滩和树林把河面完全挤成狭窄溪流。");
       promptHints.push("镜头高度必须接近人眼平视或轻微抬头，不允许鸟瞰航拍，不允许高空俯视山谷或丘陵地貌。");
       negativeHints.push(
         "marble atrium",
@@ -6505,6 +6506,10 @@ export function ComfyPipelinePanel() {
         "woodland creek",
         "mountain stream",
         "rocky stream",
+        "stony creek",
+        "shallow rocky creek",
+        "pebble creek",
+        "rock-filled stream",
         "shallow brook",
         "boulder stream",
         "grass hill",
@@ -6572,6 +6577,13 @@ export function ComfyPipelinePanel() {
       appearance.waterBlueRatio > 0.03 &&
       appearance.skyBlueRatio < 0.02 &&
       appearance.brightNeutralRatio < 0.08;
+    const likelyShallowRockyRiverDrift =
+      guidance.expectsRiverside &&
+      appearance.vegetationGreenRatio > 0.14 &&
+      appearance.waterBlueRatio > 0.015 &&
+      appearance.waterBlueRatio < 0.08 &&
+      appearance.skyBlueRatio < 0.04 &&
+      appearance.brightNeutralRatio < 0.1;
     const likelyCoastalDrift =
       guidance.expectsRiverside &&
       appearance.waterBlueRatio > 0.1 &&
@@ -6600,6 +6612,11 @@ export function ComfyPipelinePanel() {
     if (likelyCreekDrift) {
       issues.push(
         `河边场景疑似跑偏成树林溪流/山涧(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},sky=${appearance.skyBlueRatio.toFixed(2)})`
+      );
+    }
+    if (likelyShallowRockyRiverDrift) {
+      issues.push(
+        `河边场景疑似跑偏成浅溪乱石河床(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},sky=${appearance.skyBlueRatio.toFixed(2)})`
       );
     }
     if (likelyCoastalDrift) {
@@ -7611,17 +7628,17 @@ export function ComfyPipelinePanel() {
     }
     const riversideModel =
       pickFirstAvailableModel(
-        ["dreamshaper_8.safetensors", "sd_xl_base_1.0.safetensors", "architecturerealmix_v11.safetensors"],
+        ["sd_xl_base_1.0.safetensors", "dreamshaper_8.safetensors", "architecturerealmix_v11.safetensors"],
         options
       ) || selectedModel;
     if (riversideModel !== selectedModel) {
       appendLog(`河边场景自动切换天空盒模型：${selectedModel} -> ${riversideModel}`, "info");
     }
-    appendLog("河边场景优先使用基础六面天空盒模板，避免高级全景跑偏成鸟瞰/海边/山地外景", "info");
+    appendLog("河边场景优先使用高级全景转六面模板，避免基础六面重复生成同一条树林浅溪", "info");
     return {
-      mode: "basic_builtin" as SkyboxAssetWorkflowMode,
+      mode: "advanced_panorama" as SkyboxAssetWorkflowMode,
       model: riversideModel,
-      workflowJson: buildSkyboxWorkflowTemplateJson(riversideModel, runtimeSettings.skyboxTemplatePreset ?? "wide")
+      workflowJson: buildSkyboxPanoramaWorkflowTemplateJson(riversideModel, runtimeSettings.skyboxTemplatePreset ?? "wide")
     };
   };
 
@@ -9443,8 +9460,9 @@ export function ComfyPipelinePanel() {
             const fallbackScore =
               fallbackQuality.score + (fallbackHasCompleteFaces ? 0 : -1000) + (fallbackSemantic.acceptable ? 0 : -600);
             const chooseFallback =
-              (fallbackSemantic.acceptable && !resultSemantic.acceptable) ||
-              (fallbackSemantic.acceptable === resultSemantic.acceptable && fallbackScore >= currentScore);
+              fallbackSemantic.acceptable &&
+              ((!resultSemantic.acceptable && fallbackHasCompleteFaces) ||
+                (resultSemantic.acceptable === fallbackSemantic.acceptable && fallbackScore >= currentScore));
             appendLog(
               `河边场景补救结果：${sceneName} -> ${chooseFallback ? "基础六面补救结果" : "保留高级全景结果"}（当前分数 ${currentScore.toFixed(2)} / 补救分数 ${fallbackScore.toFixed(2)}）`,
               "info"

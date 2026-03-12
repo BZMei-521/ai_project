@@ -5914,7 +5914,10 @@ function makeSkyboxPrompt(description: string, face: SkyboxFace, eventPrompt?: s
   };
   const workflowConstraint =
     "用于 scene-first 分镜底板：保持地平线稳定、垂直线条笔直、透视自然、避免鱼眼和几何扭曲；画面下方中部保留可站位空地，便于后续人物出镜。";
-  const base = `场景天空盒 ${faceInstruction[face]} cubemap face reference, wide environment plate, no characters, no action. ${workflowConstraint} ${description.trim()}`;
+  const riversideConstraint = /(河边|江边|河岸|江岸|河畔|水边|岸边|riverbank|riverside|shore|waterfront)/i.test(description)
+    ? "For riverside scenes, keep broad open river water, readable shoreline, human-eye-level perspective, and an inland river atmosphere. Do not collapse into a shallow forest creek full of rocks."
+    : "";
+  const base = `场景天空盒 ${faceInstruction[face]} cubemap face reference, wide environment plate, no characters, no action. ${workflowConstraint} ${riversideConstraint} ${description.trim()}`;
   const event = eventPrompt?.trim();
   if (!event) return base;
   return `${base}\n局部事件更新：${event}`;
@@ -6002,6 +6005,15 @@ function buildSkyboxNegativePrompt(sceneName: string, description: string, baseN
       "meadow only",
       "grass hill",
       "park lawn",
+      "forest creek",
+      "woodland creek",
+      "mountain stream",
+      "rocky stream",
+      "stony creek",
+      "shallow rocky creek",
+      "pebble creek",
+      "rock-filled stream",
+      "boulder stream",
       "beach",
       "beachfront",
       "seaside",
