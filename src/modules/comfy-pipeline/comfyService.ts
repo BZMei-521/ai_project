@@ -2332,12 +2332,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSceneContinuityFrame && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        char1Primary: 0.94,
+        char1Primary: 1.1,
         char1Secondary: 0.1,
-        char2Primary: 0.9,
-        denoise: 0.24,
-        steps: 28,
-        cfg: 4.8
+        char2Primary: 1.04,
+        denoise: 0.42,
+        steps: 30,
+        cfg: 5.4
       };
     }
     return {
@@ -2352,12 +2352,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSceneContinuityFrame) {
     if (characterDriven) {
       return {
-        char1Primary: 0.97,
+        char1Primary: 1.12,
         char1Secondary: 0.12,
         char2Primary: 0,
-        denoise: 0.22,
-        steps: 28,
-        cfg: 4.8
+        denoise: 0.4,
+        steps: 30,
+        cfg: 5.3
       };
     }
     return {
@@ -2372,13 +2372,13 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Scene-led shot with two characters: keep environment, but lock both identities hard.
-        char1Primary: 0.92,
+        // Scene-led shot with two characters: environment stays stable, but people must still enter frame.
+        char1Primary: 1.14,
         char1Secondary: 0.08,
-        char2Primary: 0.88,
-        denoise: 0.3,
-        steps: 26,
-        cfg: 5
+        char2Primary: 1.08,
+        denoise: 0.46,
+        steps: 30,
+        cfg: 5.5
       };
     }
     return {
@@ -2393,12 +2393,12 @@ function inferStoryboardReferenceWeights(
   if (sceneLed) {
     if (characterDriven) {
       return {
-        char1Primary: 0.96,
+        char1Primary: 1.14,
         char1Secondary: 0.1,
         char2Primary: 0,
-        denoise: 0.28,
-        steps: 26,
-        cfg: 4.9
+        denoise: 0.44,
+        steps: 30,
+        cfg: 5.4
       };
     }
     return {

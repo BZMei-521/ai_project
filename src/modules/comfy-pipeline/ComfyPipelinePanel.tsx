@@ -6470,9 +6470,20 @@ export function ComfyPipelinePanel() {
     }
     if (expectsRiverside) {
       promptHints.push(
-        "必须明确表现河岸/江边环境：可见水面、岸线、滩石、芦苇或沿岸植被，天空开阔，空间是自然河边而不是建筑室内。"
+        "必须明确表现河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被，以及远处桥梁、对岸或河道延伸方向，空间是自然河边而不是树林草坡。"
       );
-      negativeHints.push("marble atrium", "indoor courtyard", "modern lobby", "empty white interior", "glass hall");
+      negativeHints.push(
+        "marble atrium",
+        "indoor courtyard",
+        "modern lobby",
+        "empty white interior",
+        "glass hall",
+        "forest clearing",
+        "grass hill",
+        "park lawn",
+        "dense woodland without water",
+        "meadow only"
+      );
     }
     if (/(傍晚|黄昏|暮色|夕阳|晚霞|dusk|sunset|evening)/i.test(text)) {
       promptHints.push("光线必须是傍晚/黄昏自然天光，允许暖色夕照与冷暖交替的自然天空光。");
@@ -6495,7 +6506,9 @@ export function ComfyPipelinePanel() {
     const naturalRatio =
       appearance.skyBlueRatio + appearance.vegetationGreenRatio + appearance.warmSunsetRatio + appearance.waterBlueRatio;
     const likelyIndoorAtrium = appearance.brightNeutralRatio > 0.7 && naturalRatio < 0.08;
-    const likelyMissingRiverbankCues = guidance.expectsRiverside && naturalRatio < 0.11;
+    const likelyMissingRiverbankCues =
+      guidance.expectsRiverside &&
+      (naturalRatio < 0.16 || appearance.waterBlueRatio < 0.025);
     if (guidance.prefersOutdoor && likelyIndoorAtrium) {
       issues.push(
         `场景语义疑似跑偏成室内中庭/展厅(neutral=${appearance.brightNeutralRatio.toFixed(2)},natural=${naturalRatio.toFixed(2)})`
@@ -6503,7 +6516,7 @@ export function ComfyPipelinePanel() {
     }
     if (likelyMissingRiverbankCues) {
       issues.push(
-        `河边/江边场景缺少自然水岸线索(sky=${appearance.skyBlueRatio.toFixed(2)},green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
+        `河边/江边场景缺少明确水岸线索(sky=${appearance.skyBlueRatio.toFixed(2)},green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)})`
       );
     }
     return {
