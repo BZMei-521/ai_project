@@ -8928,6 +8928,17 @@ export function ComfyPipelinePanel() {
         ? useStoryboardStore.getState().assets.find((item) => item.id === existingId)
         : null;
       const normalizedContext = context.trim();
+      const existingThreeViewPaths = listCharacterThreeViewPaths(existingAsset);
+      const existingThreeViewMissingPaths = await filterMissingLocalPaths(existingThreeViewPaths);
+      const existingUsableThreeViewPaths = existingThreeViewPaths.filter((item) => !existingThreeViewMissingPaths.has(item));
+      if (existingId && existingUsableThreeViewPaths.length >= 3) {
+        return {
+          assetId: existingId,
+          previewPaths: existingUsableThreeViewPaths,
+          reused: true,
+          viewState: "threeview"
+        };
+      }
       const initialAssetQuality = await inspectReusableCharacterAssetPaths(existingAsset, normalizedContext);
       const initialFrontReferencePath = initialAssetQuality.usableFrontPath;
       const initialPreviewPaths = [
