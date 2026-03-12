@@ -2710,7 +2710,13 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     pieces.push(
       "Use the raw character reference images only for identity and costume fidelity. Do not copy their flat shading, white-background illustration look, or reference-sheet rendering style into the final storyboard frame."
     );
+    pieces.push(
+      "Character reference images are identity-only guides. They must not dominate composition, camera distance, pose staging, or scene layout."
+    );
   }
+  pieces.push(
+    "Treat the skybox environment and same-scene continuity frame as the main composition anchors. Treat character references as identity anchors only."
+  );
   pieces.push(
     "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
   );
@@ -2743,7 +2749,7 @@ function buildQwenSlotInstruction(
         return `${slot} is the binding environment reference${label ? ` (${label})` : ""}; keep location layout and camera direction aligned to it.`;
       }
       if (item.role === "character_front" || item.role === "character_side" || item.role === "character_back") {
-        return `${slot} is the binding character reference${label ? ` (${label})` : ""}; keep identity, costume, and shot angle aligned to it.`;
+        return `${slot} is the binding character identity reference${label ? ` (${label})` : ""}; keep face, hair, costume, and palette aligned to it, but do not copy the flat reference pose, white background, or cutout edges into the final shot.`;
       }
       if (item.role === "continuity_scene") {
         return `${slot} is a weak continuity environment hint${label ? ` (${label})` : ""}; only use it if it does not conflict with the skybox asset.`;
@@ -2789,12 +2795,18 @@ function extractImageReferenceSources(
     }
   } else if (sceneAsset?.type === "skybox") {
     const plan = inferSkyboxReferencePlan(shot);
-    // Use only one skybox face as the scene anchor. Mixing multiple cube faces
-    // in one 2D frame often creates perspective tearing and warped geometry.
+    // Keep one stable scene anchor for storyboard stills. Switching cube faces
+    // between shots causes large environment drift and surreal composites.
+    const shouldRespectDynamicFace =
+      plan.manualFaces ||
+      plan.manualWeights ||
+      (typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw)) ||
+      (typeof shot.cameraPitch === "number" && Number.isFinite(shot.cameraPitch)) ||
+      (typeof shot.cameraFov === "number" && Number.isFinite(shot.cameraFov));
     const faceCandidates = uniquePreserveOrder([
-      plan.primaryFace,
+      shouldRespectDynamicFace ? plan.primaryFace : "front",
+      ...(!shouldRespectDynamicFace ? ["front"] : []),
       ...plan.faces,
-      "front",
       "right",
       "left",
       "back",
@@ -3033,7 +3045,7 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
     return [...composite.slice(0, 1), ...characters.slice(0, 2), ...continuityScene.slice(0, 1), ...scenes, ...continuityCharacter].slice(0, 3);
   }
   if (continuityScene.length > 0 && scenes.length > 0) {
-    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuityScene.slice(0, 1), ...continuityCharacter].slice(0, 3);
+    return [...scenes.slice(0, 1), ...continuityScene.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter, ...characters.slice(1)].slice(0, 3);
   }
   if (scenes.length > 0) {
     return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1)].slice(0, 3);
@@ -3251,7 +3263,7 @@ async function buildCharacterIdentityCropReference(
   return {
     ...ref,
     source: result.filePath,
-    weight: Math.min(ref.weight, 0.72),
+    weight: Math.min(ref.weight, 0.58),
     priority: Math.max(220, ref.priority - 60),
     label: `${ref.label}:identity_crop`
   };
@@ -3270,30 +3282,20 @@ async function stageCharacterReferenceImages(
     // Generation can still continue without dynamic reference image injection.
     return [];
   }
-  const compositeRef = await buildStoryboardCompositeReference(settings, shot, selectedRefs, inputDir);
-  if (compositeRef) {
-    selectedRefs = [
-      compositeRef,
-      ...selectedRefs.filter((item) => item.role.startsWith("character_")).slice(0, 2)
-    ].slice(0, 3);
-  }
-  const hasContinuityScene = selectedRefs.some((item) => item.role === "continuity_scene");
-  if (hasContinuityScene) {
-    const adjusted: WeightedImageRef[] = [];
-    for (let index = 0; index < selectedRefs.length; index += 1) {
-      const item = selectedRefs[index]!;
-      if (item.role === "scene_secondary") {
-        continue;
-      }
-      if (item.role.startsWith("character_")) {
-        const identityCrop = await buildCharacterIdentityCropReference(shot, item, inputDir, index);
-        adjusted.push(identityCrop ?? item);
-        continue;
-      }
-      adjusted.push(item);
+  const adjusted: WeightedImageRef[] = [];
+  for (let index = 0; index < selectedRefs.length; index += 1) {
+    const item = selectedRefs[index]!;
+    if (item.role === "scene_secondary") {
+      continue;
     }
-    selectedRefs = adjusted.slice(0, 3);
+    if (item.role.startsWith("character_")) {
+      const identityCrop = await buildCharacterIdentityCropReference(shot, item, inputDir, index);
+      adjusted.push(identityCrop ?? item);
+      continue;
+    }
+    adjusted.push(item);
   }
+  selectedRefs = adjusted.slice(0, 3);
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
   for (let index = 0; index < selectedRefs.length; index += 1) {
