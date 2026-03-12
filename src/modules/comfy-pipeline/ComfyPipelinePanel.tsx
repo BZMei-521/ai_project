@@ -4769,6 +4769,26 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const hasDarkHairMismatch = (
+    appearance:
+      | {
+          expectsDarkHair: boolean;
+          expectsBlueGrayOutfit: boolean;
+          headDarkRatio: number;
+          headBrightNeutralRatio: number;
+          outfitBlueGrayRatio: number;
+          outfitWhiteRatio: number;
+        }
+      | null
+      | undefined
+  ) =>
+    Boolean(
+      appearance?.expectsDarkHair &&
+        appearance.headBrightNeutralRatio > 0.2 &&
+        appearance.headDarkRatio < 0.3 &&
+        appearance.headBrightNeutralRatio > appearance.headDarkRatio + 0.08
+    );
+
   const analyzeScenePlateAppearance = async (pathOrUrl: string) => {
     if (typeof window === "undefined" || typeof document === "undefined") return null;
     const src = toDesktopMediaSource(pathOrUrl);
@@ -5314,10 +5334,8 @@ export function ComfyPipelinePanel() {
       appearance?.likelyNudeFigure
         ? `裸露过多或疑似裸模(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
         : "",
-      semanticAppearance?.expectsDarkHair &&
-      semanticAppearance.headBrightNeutralRatio > 0.16 &&
-      semanticAppearance.headDarkRatio < 0.34
-        ? `发色与描述不符(head_dark=${semanticAppearance.headDarkRatio.toFixed(2)},head_light=${semanticAppearance.headBrightNeutralRatio.toFixed(2)})`
+      hasDarkHairMismatch(semanticAppearance)
+        ? `发色与描述不符(head_dark=${semanticAppearance?.headDarkRatio?.toFixed(2) ?? "0.00"},head_light=${semanticAppearance?.headBrightNeutralRatio?.toFixed(2) ?? "0.00"})`
         : "",
       semanticAppearance?.expectsBlueGrayOutfit &&
       (semanticAppearance.outfitBlueGrayRatio < 0.08 || semanticAppearance.outfitWhiteRatio > 0.24)
@@ -5348,11 +5366,7 @@ export function ComfyPipelinePanel() {
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (appearance?.likelyGlowPosterFigure ? 74 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
-      (semanticAppearance?.expectsDarkHair &&
-      semanticAppearance.headBrightNeutralRatio > 0.16 &&
-      semanticAppearance.headDarkRatio < 0.34
-        ? 62
-        : 0) +
+      (hasDarkHairMismatch(semanticAppearance) ? 62 : 0) +
       (semanticAppearance?.expectsBlueGrayOutfit &&
       (semanticAppearance.outfitBlueGrayRatio < 0.08 || semanticAppearance.outfitWhiteRatio > 0.24)
         ? 58
@@ -6127,6 +6141,7 @@ export function ComfyPipelinePanel() {
     [/(浅灰蓝长袖连衣裙)/gi, "muted blue gray long-sleeve dress with visible fabric structure"],
     [/(深色腰带)/gi, "dark waist belt"],
     [/(整齐刘海)/gi, "neat straight bangs"],
+    [/(黑色中长发)/gi, "medium long black hair"],
     [/(黑色长发)/gi, "long black hair"],
     [/(黑色短发)/gi, "short black hair"],
     [/(白色长发)/gi, "long white hair"],
@@ -6182,6 +6197,39 @@ export function ComfyPipelinePanel() {
       .map((fragment) => translateCharacterAppearanceFragment(fragment))
       .filter(Boolean);
     return [...new Set(fragments)].slice(0, 8).join(", ");
+  };
+
+  const buildCharacterAnchorIdentityConstraints = (context: string) => {
+    const normalized = normalizeStoryInput(context);
+    if (!normalized) return "";
+    const constraints: string[] = [];
+    if (/(黑色(?:中长|长)?发|黑发|乌黑)/i.test(normalized)) {
+      constraints.push(
+        "Hair must stay black or very dark charcoal, not white hair, not silver hair, not purple hair, not brown-blonde hair, not dyed bright hair."
+      );
+    }
+    if (/(黑色短发)/i.test(normalized)) {
+      constraints.push(
+        "Keep short black hair only. No long flowing hair, no shoulder-length feminine hairstyle, no white-haired redesign."
+      );
+    }
+    if (/(整齐刘海)/i.test(normalized)) {
+      constraints.push("Keep neat straight bangs clearly visible. Do not remove the bangs or replace them with side-swept fantasy hair.");
+    }
+    if (/(浅灰蓝|灰蓝|蓝灰)/i.test(normalized)) {
+      constraints.push(
+        "Main outfit color must remain muted blue gray. Do not change the costume into white, ivory, purple, black-and-white fantasy clothing, or glowing battle costume."
+      );
+    }
+    if (/(深色长外套|长袍|长外套|外套|长袍)/i.test(normalized)) {
+      constraints.push(
+        "Keep a dark long outer coat or robe silhouette as the dominant garment. Do not replace it with a short jacket, dress, armor, fantasy robe, or white ceremonial costume."
+      );
+    }
+    if (/(无道具|no prop|no props)/i.test(normalized)) {
+      constraints.push("No floating props, no weapon, no mascot, no mechanical ornament, no halo, no decorative emblem.");
+    }
+    return constraints.join(" ");
   };
 
   const buildContextualCharacterNegativeHints = (context: string) => {
@@ -6579,6 +6627,7 @@ export function ComfyPipelinePanel() {
     const styleProfile = resolveSharedVisualStyleProfile([context]);
     const isAnimeStyle = styleProfile.kind === "anime";
     const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(context);
+    const identityConstraints = buildCharacterAnchorIdentityConstraints(context);
     const retryTuning =
       attempt <= 0
         ? "single centered full-body character, white studio background, one person only"
@@ -6603,6 +6652,7 @@ export function ComfyPipelinePanel() {
       styleProfile.styleAnchor ? `全局画风锚点：${styleProfile.styleAnchor}` : "",
       styleProfile.characterDirective,
       appearanceContext ? `Appearance details: ${appearanceContext}` : "",
+      identityConstraints ? `Identity lock: ${identityConstraints}` : "",
       retryTuning
     ]);
   };
@@ -6612,6 +6662,7 @@ export function ComfyPipelinePanel() {
     const normalized = normalizeStoryInput(context);
     const isAnimeFemale = inferCharacterGenderHint(normalized) === "female" && inferVisualStyleKindFromText(normalized) === "anime";
     const likelyDressCharacter = /(连衣裙|长裙|裙装|dress|skirt)/i.test(normalized);
+    const identityConstraints = buildCharacterAnchorIdentityConstraints(normalized);
     const retryTuning =
       attempt <= 0
         ? ""
@@ -6630,7 +6681,14 @@ export function ComfyPipelinePanel() {
       "补充要求：脸部区域必须清楚，双眼、眉毛、鼻梁、嘴唇和下颌线都要稳定可辨识；不允许糊脸、脏脸、灰脸、无五官。face must stay crisp, readable, and detailed.";
     const cleanupInstruction =
       "补充要求：只保留角色本体，禁止漂浮宠物、悬浮挂件、额外手臂、额外武器、头像小窗、注释文字、说明线、设定页边角装饰。禁止抽象水彩斑点、漂浮色块、独立图标、动物头像、吉祥物头像、灰色脏块、白底污渍。禁止霓虹轮廓光、禁止红蓝边缘光、禁止发光残影、禁止海报式背后分身。禁止整页小人阵列、禁止多个远处小人并排、禁止 lineup 小人排表、禁止角色缩成一排 miniature figures。only the character body, no companion pet, no floating accessory, no inset portrait, no annotation text, no callout, no abstract blobs, no floating icons, no dirty grey blobs, no neon rim light, no ghost silhouettes, no tiny lineup of miniature figures.";
-    return mergePromptFragments([basePrompt, retryTuning, animeFemaleInstruction, faceDetailInstruction, cleanupInstruction]);
+    return mergePromptFragments([
+      basePrompt,
+      retryTuning,
+      animeFemaleInstruction,
+      identityConstraints ? `补充身份锁定：${identityConstraints}` : "",
+      faceDetailInstruction,
+      cleanupInstruction
+    ]);
   };
 
   const buildFrontAnchorCleanupPrompt = (name: string, context: string, attempt: number) => {
