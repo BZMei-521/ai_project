@@ -4279,6 +4279,33 @@ export function ComfyPipelinePanel() {
     return { inspected: true, lowDiversity, distances };
   };
 
+  const detectLowDiversitySkyboxFaces = async (faces: Partial<Record<"front" | "right" | "back" | "left" | "up" | "down", string>>) => {
+    const pairs: Array<[string, string, string, string]> = [
+      ["front", "right", faces.front ?? "", faces.right ?? ""],
+      ["front", "back", faces.front ?? "", faces.back ?? ""],
+      ["front", "left", faces.front ?? "", faces.left ?? ""],
+      ["right", "back", faces.right ?? "", faces.back ?? ""]
+    ];
+    const inspectedPairs: Array<{ pair: string; distance: number }> = [];
+    for (const [leftLabel, rightLabel, leftPath, rightPath] of pairs) {
+      if (!leftPath.trim() || !rightPath.trim()) continue;
+      const distance = await computeImageHashDistance(leftPath, rightPath);
+      if (typeof distance !== "number") continue;
+      inspectedPairs.push({ pair: `${leftLabel}-${rightLabel}`, distance });
+    }
+    if (inspectedPairs.length <= 0) {
+      return { inspected: false, lowDiversity: false, distances: [] as Array<{ pair: string; distance: number }> };
+    }
+    const nearDuplicatePairs = inspectedPairs.filter(
+      (item) => item.distance <= CHARACTER_VIEW_DUPLICATE_HAMMING_THRESHOLD + 2
+    ).length;
+    return {
+      inspected: true,
+      lowDiversity: nearDuplicatePairs >= 2,
+      distances: inspectedPairs
+    };
+  };
+
   const computeImageSharpnessScore = async (pathOrUrl: string): Promise<number | null> => {
     if (typeof window === "undefined" || typeof document === "undefined") return null;
     const src = toDesktopMediaSource(pathOrUrl);
@@ -9337,7 +9364,9 @@ export function ComfyPipelinePanel() {
         const hasCompleteFaces = hasCompleteSkyboxPrimaryFaces(asset?.skyboxFaces);
         const qualityCheck = await evaluateImageSharpnessQuality(primaryPaths, SKYBOX_MIN_SHARPNESS_SCORE);
         const semanticCheck = await evaluateSkyboxSemanticQuality(primaryPaths, sceneName, normalizedScenePrompt);
-        const shouldForceRegenerate = !hasCompleteFaces || qualityCheck.lowSharpness || !semanticCheck.acceptable;
+        const diversityCheck = await detectLowDiversitySkyboxFaces(asset?.skyboxFaces ?? {});
+        const shouldForceRegenerate =
+          !hasCompleteFaces || qualityCheck.lowSharpness || !semanticCheck.acceptable || diversityCheck.lowDiversity;
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
@@ -9356,6 +9385,14 @@ export function ComfyPipelinePanel() {
         }
         if (!semanticCheck.acceptable) {
           appendLog(`检测到天空盒语义跑偏（${semanticCheck.issues.join(" / ")}），已自动重建：${sceneName}`, "info");
+        }
+        if (diversityCheck.lowDiversity) {
+          appendLog(
+            `检测到天空盒各面几乎相同（${diversityCheck.distances
+              .map((item) => `${item.pair}:${item.distance}`)
+              .join(" / ")}），已自动重建：${sceneName}`,
+            "info"
+          );
         }
         appendLog(`检测到旧版或异常天空盒资产，已自动重建：${sceneName}`, "info");
       }
@@ -9382,6 +9419,11 @@ export function ComfyPipelinePanel() {
         minSharpness: null
       };
       let resultSemantic: { acceptable: boolean; issues: string[] } = { acceptable: true, issues: [] };
+      let resultDiversity: {
+        inspected: boolean;
+        lowDiversity: boolean;
+        distances: Array<{ pair: string; distance: number }>;
+      } = { inspected: false, lowDiversity: false, distances: [] };
       try {
         const firstResult = await generateSkyboxFaces(
           effectiveSkyboxSettings,
@@ -9392,17 +9434,22 @@ export function ComfyPipelinePanel() {
         const firstHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(firstResult.faces);
         const firstQuality = await evaluateImageSharpnessQuality(firstPaths, SKYBOX_MIN_SHARPNESS_SCORE);
         const firstSemantic = await evaluateSkyboxSemanticQuality(firstPaths, sceneName, normalizedScenePrompt);
-        if (firstHasCompleteFaces && !firstQuality.lowSharpness && firstSemantic.acceptable) {
+        const firstDiversity = await detectLowDiversitySkyboxFaces(firstResult.faces);
+        if (firstHasCompleteFaces && !firstQuality.lowSharpness && firstSemantic.acceptable && !firstDiversity.lowDiversity) {
           result = firstResult;
           resultHasCompleteFaces = firstHasCompleteFaces;
           resultQuality = firstQuality;
           resultSemantic = firstSemantic;
+          resultDiversity = firstDiversity;
         } else {
           appendLog(
             `天空盒首轮结果不稳定（${[
               !firstHasCompleteFaces ? "主方向缺失" : "",
               firstQuality.lowSharpness ? `清晰度偏低 min=${(firstQuality.minSharpness ?? 0).toFixed(1)}` : "",
-              !firstSemantic.acceptable ? firstSemantic.issues.join(" / ") : ""
+              !firstSemantic.acceptable ? firstSemantic.issues.join(" / ") : "",
+              firstDiversity.lowDiversity
+                ? `各面几乎相同 ${firstDiversity.distances.map((item) => `${item.pair}:${item.distance}`).join(" / ")}`
+                : ""
             ]
               .filter(Boolean)
               .join(" / ")}），自动重试一次：${sceneName}`,
@@ -9418,10 +9465,17 @@ export function ComfyPipelinePanel() {
           const secondHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(secondResult.faces);
           const secondQuality = await evaluateImageSharpnessQuality(secondPaths, SKYBOX_MIN_SHARPNESS_SCORE);
           const secondSemantic = await evaluateSkyboxSemanticQuality(secondPaths, sceneName, normalizedScenePrompt);
+          const secondDiversity = await detectLowDiversitySkyboxFaces(secondResult.faces);
           const firstScore =
-            firstQuality.score + (firstHasCompleteFaces ? 0 : -1000) + (firstSemantic.acceptable ? 0 : -600);
+            firstQuality.score +
+            (firstHasCompleteFaces ? 0 : -1000) +
+            (firstSemantic.acceptable ? 0 : -600) +
+            (firstDiversity.lowDiversity ? -500 : 0);
           const secondScore =
-            secondQuality.score + (secondHasCompleteFaces ? 0 : -1000) + (secondSemantic.acceptable ? 0 : -600);
+            secondQuality.score +
+            (secondHasCompleteFaces ? 0 : -1000) +
+            (secondSemantic.acceptable ? 0 : -600) +
+            (secondDiversity.lowDiversity ? -500 : 0);
           const chooseSecond = secondScore >= firstScore;
           appendLog(
             `天空盒自动优选结果：${sceneName} -> ${chooseSecond ? "重试结果" : "首轮结果"}（首轮分数 ${firstScore.toFixed(2)} / 重试分数 ${secondScore.toFixed(2)}）`,
@@ -9431,10 +9485,11 @@ export function ComfyPipelinePanel() {
           resultHasCompleteFaces = chooseSecond ? secondHasCompleteFaces : firstHasCompleteFaces;
           resultQuality = chooseSecond ? secondQuality : firstQuality;
           resultSemantic = chooseSecond ? secondSemantic : firstSemantic;
+          resultDiversity = chooseSecond ? secondDiversity : firstDiversity;
           if (
             resolvedSkyboxMode === "advanced_panorama" &&
             semanticGuidance.expectsRiverside &&
-            (!resultHasCompleteFaces || resultQuality.lowSharpness || !resultSemantic.acceptable)
+            (!resultHasCompleteFaces || resultQuality.lowSharpness || !resultSemantic.acceptable || resultDiversity.lowDiversity)
           ) {
             appendLog("河边场景高级全景仍跑偏，自动改用基础六面模板补救一次", "info");
             const riversideRescueDescription = `${description}。补充要求：必须是内陆河岸，不是海边，不是沙滩，不是海岸线住宅区，不是海滨城市鸟瞰；必须看见河道、岸线、沿河植被和桥或对岸轮廓。`;
@@ -9455,12 +9510,20 @@ export function ComfyPipelinePanel() {
             const fallbackHasCompleteFaces = hasCompleteSkyboxPrimaryFaces(fallbackResult.faces);
             const fallbackQuality = await evaluateImageSharpnessQuality(fallbackPaths, SKYBOX_MIN_SHARPNESS_SCORE);
             const fallbackSemantic = await evaluateSkyboxSemanticQuality(fallbackPaths, sceneName, normalizedScenePrompt);
+            const fallbackDiversity = await detectLowDiversitySkyboxFaces(fallbackResult.faces);
             const currentScore =
-              resultQuality.score + (resultHasCompleteFaces ? 0 : -1000) + (resultSemantic.acceptable ? 0 : -600);
+              resultQuality.score +
+              (resultHasCompleteFaces ? 0 : -1000) +
+              (resultSemantic.acceptable ? 0 : -600) +
+              (resultDiversity.lowDiversity ? -500 : 0);
             const fallbackScore =
-              fallbackQuality.score + (fallbackHasCompleteFaces ? 0 : -1000) + (fallbackSemantic.acceptable ? 0 : -600);
+              fallbackQuality.score +
+              (fallbackHasCompleteFaces ? 0 : -1000) +
+              (fallbackSemantic.acceptable ? 0 : -600) +
+              (fallbackDiversity.lowDiversity ? -500 : 0);
             const chooseFallback =
               fallbackSemantic.acceptable &&
+              !fallbackDiversity.lowDiversity &&
               ((!resultSemantic.acceptable && fallbackHasCompleteFaces) ||
                 (resultSemantic.acceptable === fallbackSemantic.acceptable && fallbackScore >= currentScore));
             appendLog(
@@ -9472,6 +9535,7 @@ export function ComfyPipelinePanel() {
               resultHasCompleteFaces = fallbackHasCompleteFaces;
               resultQuality = fallbackQuality;
               resultSemantic = fallbackSemantic;
+              resultDiversity = fallbackDiversity;
             }
           }
         }
