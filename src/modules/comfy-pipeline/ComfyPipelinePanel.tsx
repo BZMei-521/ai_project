@@ -1015,9 +1015,17 @@ function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" 
   return JSON.stringify(template, null, 2);
 }
 
-function buildSkyboxReferenceWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
+function buildSkyboxReferenceWorkflowTemplateJson(
+  checkpointName: string,
+  preset: "wide" | "square",
+  mode: "expand" | "refine" = "expand"
+): string {
   const width = preset === "square" ? 1024 : 1600;
   const height = preset === "square" ? 1024 : 900;
+  const samplerConfig =
+    mode === "refine"
+      ? { steps: 28, cfg: 5.2, denoise: 0.46 }
+      : { steps: 24, cfg: 4.8, denoise: 0.42 };
   const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
     "1": {
       inputs: { ckpt_name: checkpointName },
@@ -1052,11 +1060,11 @@ function buildSkyboxReferenceWorkflowTemplateJson(checkpointName: string, preset
     "7": {
       inputs: {
         seed: "{{SEED}}",
-        steps: 24,
-        cfg: 4.8,
+        steps: samplerConfig.steps,
+        cfg: samplerConfig.cfg,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.28,
+        denoise: samplerConfig.denoise,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -9716,12 +9724,61 @@ export function ComfyPipelinePanel() {
             }`
           );
         }
+        let approvedFrontPath = bestCandidate.frontPath;
+        const refineModelCandidates = uniqueEntities([
+          "realisticVisionV60B1_v51VAE.safetensors",
+          "sd_xl_base_1.0.safetensors",
+          bestCandidate.model || "",
+          runtimeSettings.skyboxAssetModelName?.trim() || ""
+        ]).filter(Boolean);
+        for (const refineModel of refineModelCandidates) {
+          try {
+            const refineWorkflowJson = buildSkyboxReferenceWorkflowTemplateJson(
+              refineModel,
+              runtimeSettings.skyboxTemplatePreset ?? "wide",
+              "refine"
+            );
+            const refinedFront = await generateSkyboxFaceUpdate(
+              {
+                ...effectiveSkyboxSettings,
+                skyboxAssetWorkflowMode: "basic_builtin",
+                skyboxAssetModelName: refineModel,
+                skyboxWorkflowJson: refineWorkflowJson
+              },
+              description,
+              "front",
+              "将已通过筛选的河边建立场景候选精修为一张单幅高清 front 环境板。保留同一条河道、岸线、石桥或沿河步道、垂柳与对岸轮廓。不是九宫格，不是 layout sheet，不是概念页，不是像素风，不是 blocky，不是 mosaic，不要重复小格版式。",
+              sceneName,
+              {
+                sourceFramePath: bestCandidate.frontPath,
+                workflowJsonOverride: refineWorkflowJson
+              }
+            );
+            const [refinedSemantic, refinedSharpness] = await Promise.all([
+              evaluateSkyboxSemanticQuality([refinedFront.filePath], sceneName, normalizedScenePrompt),
+              evaluateImageSharpnessQuality([refinedFront.filePath], SKYBOX_MIN_SHARPNESS_SCORE)
+            ]);
+            appendLog(
+              `河边场景主板精修：${refineModel} -> ${
+                refinedSemantic.acceptable ? "通过" : refinedSemantic.issues.join(" / ")
+              }`,
+              "info"
+            );
+            if (refinedSemantic.acceptable) {
+              approvedFrontPath = refinedFront.filePath;
+              if (!refinedSharpness.lowSharpness) break;
+            }
+          } catch (error) {
+            appendLog(`河边场景主板精修失败：${refineModel} -> ${String(error)}`, "error");
+          }
+        }
         const referenceWorkflowJson = buildSkyboxReferenceWorkflowTemplateJson(
           bestCandidate.model || skyboxPlan.model,
-          runtimeSettings.skyboxTemplatePreset ?? "wide"
+          runtimeSettings.skyboxTemplatePreset ?? "wide",
+          "expand"
         );
         const generatedFaces: Partial<Record<"front" | "right" | "back" | "left" | "up" | "down", string>> = {
-          front: bestCandidate.frontPath
+          front: approvedFrontPath
         };
         for (const face of ["right", "back", "left", "up", "down"] as const) {
           try {
@@ -9734,10 +9791,10 @@ export function ComfyPipelinePanel() {
               },
               description,
               face,
-              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一美术风格与空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。`,
+              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一美术风格与空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。不要与 front 完全相同，必须体现 ${face} 方向的连续空间变化。不是像素风，不是 blocky，不是 mosaic。`,
               sceneName,
               {
-                sourceFramePath: bestCandidate.frontPath,
+                sourceFramePath: approvedFrontPath,
                 workflowJsonOverride: referenceWorkflowJson
               }
             );
@@ -9747,7 +9804,7 @@ export function ComfyPipelinePanel() {
           }
         }
         const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, generatedFaces);
-        const primaryPath = persistedFaces.front || bestCandidate.frontPath;
+        const primaryPath = persistedFaces.front || approvedFrontPath;
         const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
         addAsset({
           type: "skybox",
