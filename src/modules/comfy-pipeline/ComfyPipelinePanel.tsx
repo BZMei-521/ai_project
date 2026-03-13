@@ -6775,46 +6775,7 @@ export function ComfyPipelinePanel() {
     const aspectRatio = width / Math.max(1, height);
     if (aspectRatio < 0.88 || aspectRatio > 1.12) return [pathOrUrl];
 
-    const analysisSize = 180;
-    const canvas = document.createElement("canvas");
-    canvas.width = analysisSize;
-    canvas.height = analysisSize;
-    const context = canvas.getContext("2d");
-    if (!context) return [pathOrUrl];
-    context.drawImage(image, 0, 0, analysisSize, analysisSize);
-    const frame = context.getImageData(0, 0, analysisSize, analysisSize);
-    const data = frame.data;
-    const dividerWidth = Math.max(2, Math.round(analysisSize * 0.025));
-    const dividerCenters = [Math.round(analysisSize / 3), Math.round((analysisSize * 2) / 3)];
-    const sampleBand = (startX: number, startY: number, sampleWidth: number, sampleHeight: number) => {
-      let lumaSum = 0;
-      let chromaSum = 0;
-      let count = 0;
-      for (let y = startY; y < startY + sampleHeight; y += 1) {
-        for (let x = startX; x < startX + sampleWidth; x += 1) {
-          const idx = (y * analysisSize + x) * 4;
-          const r = data[idx] ?? 0;
-          const g = data[idx + 1] ?? 0;
-          const b = data[idx + 2] ?? 0;
-          lumaSum += r * 0.299 + g * 0.587 + b * 0.114;
-          chromaSum += Math.max(r, g, b) - Math.min(r, g, b);
-          count += 1;
-        }
-      }
-      if (count <= 0) return { luma: 0, chroma: 255 };
-      return { luma: lumaSum / count, chroma: chromaSum / count };
-    };
-
-    const dividerBands = [
-      sampleBand(Math.max(0, dividerCenters[0] - dividerWidth), 0, dividerWidth * 2, analysisSize),
-      sampleBand(Math.max(0, dividerCenters[1] - dividerWidth), 0, dividerWidth * 2, analysisSize),
-      sampleBand(0, Math.max(0, dividerCenters[0] - dividerWidth), analysisSize, dividerWidth * 2),
-      sampleBand(0, Math.max(0, dividerCenters[1] - dividerWidth), analysisSize, dividerWidth * 2)
-    ];
-    const brightDividerCount = dividerBands.filter((band) => band.luma >= 218 && band.chroma <= 26).length;
-    if (brightDividerCount < 3) return [pathOrUrl];
-
-    const createdPaths: string[] = [];
+    const createdPaths: string[] = [pathOrUrl];
     const cellWidth = width / 3;
     const cellHeight = height / 3;
     const paddingRatio = 0.035;
@@ -6843,7 +6804,7 @@ export function ComfyPipelinePanel() {
         if (result.filePath) createdPaths.push(result.filePath);
       }
     }
-    return createdPaths.length > 0 ? createdPaths : [pathOrUrl];
+    return createdPaths;
   };
 
   const selectBestSkyboxFrontPlateCandidate = async (pathOrUrl: string, sceneName: string, scenePrompt: string) => {
