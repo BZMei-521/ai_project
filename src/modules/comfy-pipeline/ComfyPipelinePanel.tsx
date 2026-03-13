@@ -9452,9 +9452,15 @@ export function ComfyPipelinePanel() {
           "sd_xl_base_1.0.safetensors",
           runtimeSettings.skyboxAssetModelName?.trim() || ""
         ]).filter(Boolean);
+        const promptVariants = [
+          "这是河边主镜头正面建立场景板，不是360全景，不是室内，不是建筑外景；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。禁止白色建筑、院子、地面广场、树林浅溪、乱石浅滩、浓雾遮挡。",
+          "wide calm inland river establishing shot, broad open water occupying the middle of frame, readable shoreline, riverside stone path, willow trees only at the sides, old stone bridge in the distance, opposite bank visible, ground-level camera, open sky visible. not a creek, not a forest stream, not a rocky shallow riverbed, not architecture, not indoor.",
+          "storyboard-friendly riverside plate, open river channel, flat water surface, clear far bank silhouette, one side river path for character blocking, sparse willow framing, bridge landmark visible, no canopy covering the whole top, no fog wall, no boulder-filled stream, no plaza, no house exterior, no lobby interior."
+        ];
         let bestCandidate:
           | {
               model: string;
+              variant: string;
               frontPath: string;
               previewUrl: string;
               semantic: { acceptable: boolean; issues: string[] };
@@ -9462,49 +9468,55 @@ export function ComfyPipelinePanel() {
             }
           | null = null;
         for (const candidateModel of candidateModels) {
-          const candidateDescription = `${description}。补充要求：这是河边主镜头正面建立场景板，不是360全景，不是室内，不是建筑外景；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。禁止白色建筑、院子、地面广场、树林浅溪、乱石浅滩、浓雾遮挡。`;
-          const candidateResult = await generateSkyboxFaces(
-            {
-              ...effectiveSkyboxSettings,
-              skyboxAssetWorkflowMode: "basic_builtin",
-              skyboxAssetModelName: candidateModel,
-              skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
-                candidateModel,
-                runtimeSettings.skyboxTemplatePreset ?? "wide"
-              )
-            },
-            candidateDescription,
-            sceneName
-          );
-          const frontPath = candidateResult.faces.front?.trim() || "";
-          if (!frontPath) continue;
-          const semantic = await evaluateSkyboxSemanticQuality([frontPath], sceneName, normalizedScenePrompt);
-          const sharpness = await evaluateImageSharpnessQuality([frontPath], SKYBOX_MIN_SHARPNESS_SCORE);
-          const nextCandidate = {
-            model: candidateModel,
-            frontPath,
-            previewUrl: candidateResult.previews.front?.trim() || "",
-            semantic,
-            sharpness
-          };
-          if (
-            !bestCandidate ||
-            (nextCandidate.semantic.acceptable && !bestCandidate.semantic.acceptable) ||
-            (nextCandidate.semantic.acceptable === bestCandidate.semantic.acceptable &&
-              nextCandidate.semantic.issues.length < bestCandidate.semantic.issues.length) ||
-            (nextCandidate.semantic.acceptable === bestCandidate.semantic.acceptable &&
-              nextCandidate.semantic.issues.length === bestCandidate.semantic.issues.length &&
-              nextCandidate.sharpness.score > bestCandidate.sharpness.score)
-          ) {
-            bestCandidate = nextCandidate;
+          for (const variant of promptVariants) {
+            const candidateDescription = `${description}。补充要求：${variant}`;
+            const candidateResult = await generateSkyboxFaces(
+              {
+                ...effectiveSkyboxSettings,
+                skyboxAssetWorkflowMode: "basic_builtin",
+                skyboxAssetModelName: candidateModel,
+                skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
+                  candidateModel,
+                  runtimeSettings.skyboxTemplatePreset ?? "wide"
+                )
+              },
+              candidateDescription,
+              sceneName
+            );
+            const frontPath = candidateResult.faces.front?.trim() || "";
+            if (!frontPath) continue;
+            const semantic = await evaluateSkyboxSemanticQuality([frontPath], sceneName, normalizedScenePrompt);
+            const sharpness = await evaluateImageSharpnessQuality([frontPath], SKYBOX_MIN_SHARPNESS_SCORE);
+            const nextCandidate = {
+              model: candidateModel,
+              variant,
+              frontPath,
+              previewUrl: candidateResult.previews.front?.trim() || "",
+              semantic,
+              sharpness
+            };
+            if (
+              !bestCandidate ||
+              (nextCandidate.semantic.acceptable && !bestCandidate.semantic.acceptable) ||
+              (nextCandidate.semantic.acceptable === bestCandidate.semantic.acceptable &&
+                nextCandidate.semantic.issues.length < bestCandidate.semantic.issues.length) ||
+              (nextCandidate.semantic.acceptable === bestCandidate.semantic.acceptable &&
+                nextCandidate.semantic.issues.length === bestCandidate.semantic.issues.length &&
+                nextCandidate.sharpness.score > bestCandidate.sharpness.score)
+            ) {
+              bestCandidate = nextCandidate;
+            }
+            appendLog(
+              `河边场景主板候选：${candidateModel} -> ${
+                semantic.acceptable ? "通过" : semantic.issues.join(" / ")
+              }`,
+              "info"
+            );
+            if (semantic.acceptable && !sharpness.lowSharpness) {
+              break;
+            }
           }
-          appendLog(
-            `河边场景主板候选：${candidateModel} -> ${
-              semantic.acceptable ? "通过" : semantic.issues.join(" / ")
-            }`,
-            "info"
-          );
-          if (semantic.acceptable && !sharpness.lowSharpness) {
+          if (bestCandidate?.semantic.acceptable && !bestCandidate.sharpness.lowSharpness) {
             break;
           }
         }
