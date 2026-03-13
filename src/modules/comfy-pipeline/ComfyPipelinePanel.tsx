@@ -6808,6 +6808,7 @@ export function ComfyPipelinePanel() {
   const selectBestSkyboxFrontPlateCandidate = async (pathOrUrl: string, sceneName: string, scenePrompt: string) => {
     const candidatePaths = await extractSkyboxFrontPlatePanels(pathOrUrl);
     const rawCandidatePath = candidatePaths[0]?.trim() || pathOrUrl.trim();
+    const prefersSplitPanels = candidatePaths.length > 1;
     let best:
       | {
           path: string;
@@ -6825,16 +6826,18 @@ export function ComfyPipelinePanel() {
         sharpness,
         fromBoard: candidatePaths.length > 1
       };
-      if (
-        best?.path === rawCandidatePath &&
-        best.semantic.acceptable &&
-        next.path !== rawCandidatePath &&
-        next.semantic.acceptable
-      ) {
+      const nextIsRaw = next.path === rawCandidatePath;
+      const bestIsRaw = best?.path === rawCandidatePath;
+      if (prefersSplitPanels && !bestIsRaw && nextIsRaw) {
         continue;
       }
       if (
         !best ||
+        (prefersSplitPanels && bestIsRaw && !nextIsRaw) ||
+        (prefersSplitPanels &&
+          bestIsRaw === nextIsRaw &&
+          next.semantic.acceptable &&
+          !best.semantic.acceptable) ||
         (next.semantic.acceptable && !best.semantic.acceptable) ||
         (next.semantic.acceptable === best.semantic.acceptable &&
           next.semantic.issues.length < best.semantic.issues.length) ||
