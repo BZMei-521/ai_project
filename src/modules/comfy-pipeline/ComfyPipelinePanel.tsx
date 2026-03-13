@@ -9545,6 +9545,50 @@ export function ComfyPipelinePanel() {
           `天空盒高级全景工作流不可用，已停止自动降级基础六面模板：${String(error)}。当前基础六面模板只能生成六次近似文生图，不能稳定产出真正四面八方连续的天空盒。请先修复 ComfyUI_pytorch360convert / Apply Circular Padding Model 节点加载。`
         );
       }
+      if (semanticGuidance.expectsRiverside) {
+        try {
+          const frontPlateDescription = `${description}。补充要求：这是河边主镜头正面建立场景板，不是全景切面；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。不要树冠压顶，不要近景大树遮挡主体，不要浓雾遮挡远处，不要狭窄山涧，不要乱石浅溪。`;
+          const frontPlateResult = await generateSkyboxFaces(
+            {
+              ...effectiveSkyboxSettings,
+              skyboxAssetWorkflowMode: "basic_builtin",
+              skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
+                skyboxPlan.model,
+                runtimeSettings.skyboxTemplatePreset ?? "wide"
+              )
+            },
+            frontPlateDescription,
+            sceneName
+          );
+          const frontPlatePath = frontPlateResult.faces.front?.trim() || "";
+          if (frontPlatePath) {
+            const frontSemantic = await evaluateSkyboxSemanticQuality([frontPlatePath], sceneName, normalizedScenePrompt);
+            const existingFrontPath = result.faces.front?.trim() || "";
+            const existingFrontSemantic = existingFrontPath
+              ? await evaluateSkyboxSemanticQuality([existingFrontPath], sceneName, normalizedScenePrompt)
+              : { acceptable: false, issues: ["缺少主面"] };
+            if (
+              frontSemantic.acceptable ||
+              (!existingFrontSemantic.acceptable && frontSemantic.issues.length <= existingFrontSemantic.issues.length)
+            ) {
+              result = {
+                ...result,
+                faces: {
+                  ...result.faces,
+                  front: frontPlatePath
+                },
+                previews: {
+                  ...result.previews,
+                  front: frontPlateResult.previews.front || result.previews.front
+                }
+              };
+              appendLog("河边场景已用单独正面建立场景板覆盖 skybox front，避免全景切面变形", "info");
+            }
+          }
+        } catch (error) {
+          appendLog(`河边场景正面建立板补救失败：${String(error)}`, "error");
+        }
+      }
       const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, result.faces);
       const primaryPath =
         persistedFaces.front ||
