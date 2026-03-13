@@ -6396,7 +6396,11 @@ export async function generateSkyboxFaceUpdate(
   description: string,
   face: SkyboxFace,
   eventPrompt: string,
-  sceneName = ""
+  sceneName = "",
+  options?: {
+    sourceFramePath?: string;
+    workflowJsonOverride?: string;
+  }
 ): Promise<{ filePath: string; previewUrl: string }> {
   if (settings.skyboxAssetWorkflowMode === "advanced_panorama") {
     const result = await generateSkyboxPanoramaFaces(settings, description, eventPrompt, sceneName);
@@ -6407,11 +6411,16 @@ export async function generateSkyboxFaceUpdate(
   }
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
-  const workflow = rewriteWorkflowFilenamePrefixes(
-    ensureWorkflowJson(workflowRaw),
-    rewriteSkyboxFilenamePrefix
+    const workflow = rewriteWorkflowFilenamePrefixes(
+    ensureWorkflowJson(options?.workflowJsonOverride?.trim() || workflowRaw),
+      rewriteSkyboxFilenamePrefix
   ) as Record<string, unknown>;
-  const tokens = applyGlobalStyleToTokens(settings, buildSkyboxTokens(settings, description, face, eventPrompt, sceneName), "image");
+  const baseTokens = buildSkyboxTokens(settings, description, face, eventPrompt, sceneName);
+  if (options?.sourceFramePath?.trim()) {
+    baseTokens.FRAME_IMAGE_PATH = options.sourceFramePath.trim();
+    baseTokens.FIRST_FRAME_PATH = options.sourceFramePath.trim();
+  }
+  const tokens = applyGlobalStyleToTokens(settings, baseTokens, "image");
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
   const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
   applyFisherWorkflowBindings(built, "image", tokens);

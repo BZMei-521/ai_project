@@ -16,6 +16,7 @@ import {
   generateShotAsset,
   generateShotAssetOutputs,
   generateSkyboxFrontPlate,
+  generateSkyboxFaceUpdate,
   generateSkyboxFaces,
   inferComfyRootDir,
   inferStoryboardVideoModeByMatureCase,
@@ -1011,6 +1012,67 @@ function buildSkyboxWorkflowTemplateJson(checkpointName: string, preset: "wide" 
     template["4"].inputs.width = preset === "square" ? 1024 : 1600;
     template["4"].inputs.height = preset === "square" ? 1024 : 900;
   }
+  return JSON.stringify(template, null, 2);
+}
+
+function buildSkyboxReferenceWorkflowTemplateJson(checkpointName: string, preset: "wide" | "square"): string {
+  const width = preset === "square" ? 1024 : 1600;
+  const height = preset === "square" ? 1024 : 900;
+  const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
+    "1": {
+      inputs: { ckpt_name: checkpointName },
+      class_type: "CheckpointLoaderSimple"
+    },
+    "2": {
+      inputs: { image: "{{FRAME_IMAGE_PATH}}", upload: "image" },
+      class_type: "LoadImage"
+    },
+    "3": {
+      inputs: {
+        image: ["2", 0],
+        upscale_method: "lanczos",
+        width,
+        height,
+        crop: "disabled"
+      },
+      class_type: "ImageScale"
+    },
+    "4": {
+      inputs: { pixels: ["3", 0], vae: ["1", 2] },
+      class_type: "VAEEncode"
+    },
+    "5": {
+      inputs: { text: "{{PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "6": {
+      inputs: { text: "{{NEGATIVE_PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "7": {
+      inputs: {
+        seed: "{{SEED}}",
+        steps: 26,
+        cfg: 5.2,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        denoise: 0.52,
+        model: ["1", 0],
+        positive: ["5", 0],
+        negative: ["6", 0],
+        latent_image: ["4", 0]
+      },
+      class_type: "KSampler"
+    },
+    "8": {
+      inputs: { samples: ["7", 0], vae: ["1", 2] },
+      class_type: "VAEDecode"
+    },
+    "9": {
+      inputs: { filename_prefix: "skybox_{{SHOT_ID}}", images: ["8", 0] },
+      class_type: "SaveImage"
+    }
+  };
   return JSON.stringify(template, null, 2);
 }
 
@@ -9530,9 +9592,37 @@ export function ComfyPipelinePanel() {
             }`
           );
         }
-        const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, {
+        const referenceWorkflowJson = buildSkyboxReferenceWorkflowTemplateJson(
+          bestCandidate.model || skyboxPlan.model,
+          runtimeSettings.skyboxTemplatePreset ?? "wide"
+        );
+        const generatedFaces: Partial<Record<"front" | "right" | "back" | "left" | "up" | "down", string>> = {
           front: bestCandidate.frontPath
-        });
+        };
+        for (const face of ["right", "back", "left", "up", "down"] as const) {
+          try {
+            const faceUpdate = await generateSkyboxFaceUpdate(
+              {
+                ...effectiveSkyboxSettings,
+                skyboxAssetWorkflowMode: "basic_builtin",
+                skyboxAssetModelName: bestCandidate.model,
+                skyboxWorkflowJson: referenceWorkflowJson
+              },
+              description,
+              face,
+              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一美术风格与空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。`,
+              sceneName,
+              {
+                sourceFramePath: bestCandidate.frontPath,
+                workflowJsonOverride: referenceWorkflowJson
+              }
+            );
+            generatedFaces[face] = faceUpdate.filePath;
+          } catch (error) {
+            appendLog(`河边场景 ${face} 面基于 front plate 的连续扩展失败：${String(error)}`, "error");
+          }
+        }
+        const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, generatedFaces);
         const primaryPath = persistedFaces.front || bestCandidate.frontPath;
         const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
         addAsset({
