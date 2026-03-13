@@ -6411,14 +6411,24 @@ export async function generateSkyboxFaceUpdate(
   }
   const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
   if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
-    const workflow = rewriteWorkflowFilenamePrefixes(
+  const workflow = rewriteWorkflowFilenamePrefixes(
     ensureWorkflowJson(options?.workflowJsonOverride?.trim() || workflowRaw),
-      rewriteSkyboxFilenamePrefix
+    rewriteSkyboxFilenamePrefix
   ) as Record<string, unknown>;
   const baseTokens = buildSkyboxTokens(settings, description, face, eventPrompt, sceneName);
   if (options?.sourceFramePath?.trim()) {
-    baseTokens.FRAME_IMAGE_PATH = options.sourceFramePath.trim();
-    baseTokens.FIRST_FRAME_PATH = options.sourceFramePath.trim();
+    const inputDir = inferComfyInputDir(settings);
+    if (!inputDir) {
+      throw new Error("天空盒扩展需要 front plate 参考图，但未检测到 ComfyUI input 目录");
+    }
+    const sourceFrame = options.sourceFramePath.trim();
+    const ext = fileExtensionFromSource(sourceFrame || "png");
+    const safeSceneId = sanitizeOutputAssetFolderName(sceneName || "skybox", "skybox");
+    const targetAbs = `${inputDir}/skybox_${safeSceneId}_${face}_frame.${ext}`;
+    const written = await stageSourceFileToComfyInput(sourceFrame, targetAbs, settings.baseUrl, settings.outputDir);
+    const stagedName = written.split("/").pop() ?? written;
+    baseTokens.FRAME_IMAGE_PATH = stagedName;
+    baseTokens.FIRST_FRAME_PATH = stagedName;
   }
   const tokens = applyGlobalStyleToTokens(settings, baseTokens, "image");
   applyDynamicCharacterRefsForImageWorkflow(workflow, []);
