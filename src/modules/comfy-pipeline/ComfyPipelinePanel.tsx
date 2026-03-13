@@ -6519,6 +6519,13 @@ export function ComfyPipelinePanel() {
       negativeHints.push(
         "marble atrium",
         "indoor courtyard",
+        "courtyard exterior",
+        "villa exterior",
+        "modern villa",
+        "modern house exterior",
+        "residential compound",
+        "concrete courtyard",
+        "concrete building exterior",
         "modern lobby",
         "empty white interior",
         "glass hall",
@@ -6537,6 +6544,9 @@ export function ComfyPipelinePanel() {
         "shallow rocky creek",
         "pebble creek",
         "rock-filled stream",
+        "rock plateau",
+        "barren rock",
+        "dry rocky plain",
         "shallow brook",
         "boulder stream",
         "grass hill",
@@ -6592,7 +6602,7 @@ export function ComfyPipelinePanel() {
       (naturalRatio < 0.16 || appearance.waterBlueRatio < 0.025);
     const likelyArchitectureDrift =
       guidance.expectsRiverside &&
-      appearance.brightNeutralRatio > 0.12 &&
+      appearance.brightNeutralRatio > 0.06 &&
       appearance.waterBlueRatio < 0.05;
     const likelyMeadowDrift =
       guidance.expectsRiverside &&
@@ -6611,6 +6621,12 @@ export function ComfyPipelinePanel() {
       appearance.waterBlueRatio < 0.08 &&
       appearance.skyBlueRatio < 0.04 &&
       appearance.brightNeutralRatio < 0.1;
+    const likelyDryRockPlateauDrift =
+      guidance.expectsRiverside &&
+      appearance.waterBlueRatio < 0.02 &&
+      appearance.vegetationGreenRatio < 0.1 &&
+      appearance.skyBlueRatio < 0.04 &&
+      appearance.brightNeutralRatio < 0.12;
     const likelyCoastalDrift =
       guidance.expectsRiverside &&
       appearance.waterBlueRatio > 0.1 &&
@@ -6644,6 +6660,11 @@ export function ComfyPipelinePanel() {
     if (likelyShallowRockyRiverDrift) {
       issues.push(
         `河边场景疑似跑偏成浅溪乱石河床(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},sky=${appearance.skyBlueRatio.toFixed(2)})`
+      );
+    }
+    if (likelyDryRockPlateauDrift) {
+      issues.push(
+        `河边场景疑似跑偏成干燥岩地/荒地外景(green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},sky=${appearance.skyBlueRatio.toFixed(2)},neutral=${appearance.brightNeutralRatio.toFixed(2)})`
       );
     }
     if (likelyCoastalDrift) {
@@ -9563,14 +9584,7 @@ export function ComfyPipelinePanel() {
           const frontPlatePath = frontPlateResult.faces.front?.trim() || "";
           if (frontPlatePath) {
             const frontSemantic = await evaluateSkyboxSemanticQuality([frontPlatePath], sceneName, normalizedScenePrompt);
-            const existingFrontPath = result.faces.front?.trim() || "";
-            const existingFrontSemantic = existingFrontPath
-              ? await evaluateSkyboxSemanticQuality([existingFrontPath], sceneName, normalizedScenePrompt)
-              : { acceptable: false, issues: ["缺少主面"] };
-            if (
-              frontSemantic.acceptable ||
-              (!existingFrontSemantic.acceptable && frontSemantic.issues.length <= existingFrontSemantic.issues.length)
-            ) {
+            if (frontSemantic.acceptable) {
               result = {
                 ...result,
                 faces: {
@@ -9583,10 +9597,29 @@ export function ComfyPipelinePanel() {
                 }
               };
               appendLog("河边场景已用单独正面建立场景板覆盖 skybox front，避免全景切面变形", "info");
+            } else {
+              appendLog(`河边场景正面建立板未通过语义质检（${frontSemantic.issues.join(" / ")}），已放弃覆盖 front`, "info");
             }
           }
         } catch (error) {
           appendLog(`河边场景正面建立板补救失败：${String(error)}`, "error");
+        }
+      }
+      if (semanticGuidance.expectsRiverside) {
+        const finalPrimaryPaths = listSkyboxPrimaryFacePaths(result.faces);
+        const finalSemantic = await evaluateSkyboxSemanticQuality(finalPrimaryPaths, sceneName, normalizedScenePrompt);
+        const finalDiversity = await detectLowDiversitySkyboxFaces(result.faces);
+        if (!finalSemantic.acceptable || finalDiversity.lowDiversity) {
+          throw new Error(
+            `河边场景最终仍未通过质检：${[
+              !finalSemantic.acceptable ? finalSemantic.issues.join(" / ") : "",
+              finalDiversity.lowDiversity
+                ? `各面几乎相同 ${finalDiversity.distances.map((item) => `${item.pair}:${item.distance}`).join(" / ")}`
+                : ""
+            ]
+              .filter(Boolean)
+              .join(" / ")}`
+          );
         }
       }
       const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, result.faces);
