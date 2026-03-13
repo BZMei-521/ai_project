@@ -9448,15 +9448,17 @@ export function ComfyPipelinePanel() {
       if (semanticGuidance.expectsRiverside) {
         appendLog("河边场景改用正面建立场景板模式，优先稳定分镜主场景而不是完整六面天空盒", "info");
         const candidateModels = uniqueEntities([
-          skyboxPlan.model,
-          "dreamshaper_8.safetensors",
+          "Qwen-Rapid-AIO-SFW-v5.safetensors",
+          "realisticVisionV60B1_v51VAE.safetensors",
           "sd_xl_base_1.0.safetensors",
+          "dreamshaper_8.safetensors",
+          skyboxPlan.model,
           runtimeSettings.skyboxAssetModelName?.trim() || ""
         ]).filter(Boolean);
         const promptVariants = [
-          "这是河边主镜头正面建立场景板，不是360全景，不是 cubemap 切面，不是室内，不是建筑外景；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。禁止白色建筑、院子、地面广场、树林浅溪、乱石浅滩、浓雾遮挡。",
-          "wide calm inland river establishing shot, single storyboard front plate, broad open water occupying the middle of frame, readable shoreline, riverside stone path, willow trees only at the far sides, old stone bridge in the distance, opposite bank visible, ground-level camera, open sky visible, no visible riverbed stones in the foreground, not a creek, not a forest stream, not a rocky shallow riverbed, not architecture, not indoor.",
-          "storyboard-friendly riverside plate, one readable establishing frame, open river channel, flat water surface, clear far bank silhouette, one side river path for character blocking, sparse willow framing, bridge landmark visible, no canopy covering the whole top, no fog wall, no boulder-filled stream, no plaza, no house exterior, no lobby interior, no creek rocks filling the water."
+          "这是河边主镜头正面建立场景板，不是360全景，不是 cubemap 切面，不是室内，不是建筑外景。必须是内陆开阔河边建立镜头：中景必须是连续展开的平静河面，远处必须看见对岸轮廓，岸线要清楚，沿河步道或旧石桥至少出现一种。垂柳只能在画面边缘少量点缀，不能被树冠完全盖住天空。禁止白色建筑、院子、围墙、地面广场、树林浅溪、乱石浅滩、近景大圆石、浓雾遮挡。",
+          "wide calm inland river establishing shot, single storyboard front plate, broad open water occupying the center half of frame, readable shoreline, opposite bank visible, old stone bridge or riverside path visible, sparse willow framing only at image edges, ground-level camera, open sky visible. no creek, no forest stream, no rocky shallow riverbed, no foreground boulders, no retaining wall, no architecture, not indoor.",
+          "storyboard-friendly riverside plate, one readable establishing frame, open river channel rather than a narrow stream, smooth water surface, clear far bank silhouette, side river path for character blocking, bridge landmark visible, no canopy covering the whole top, no fog wall, no stone-filled riverbed, no plaza, no house exterior, no lobby interior, no wall or compound."
         ];
         let bestCandidate:
           | {
