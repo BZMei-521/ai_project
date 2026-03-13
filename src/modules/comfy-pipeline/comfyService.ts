@@ -5932,6 +5932,17 @@ function makeSkyboxPanoramaPrompt(description: string, eventPrompt?: string): st
   return `${base}\n局部事件更新：${event}`;
 }
 
+function makeSkyboxFrontPlatePrompt(description: string): string {
+  return [
+    "分镜主场景建立板，单张宽幅环境图，不是 cubemap，不是 360 panorama，不是 layout sheet。",
+    "用于 scene-first 分镜底板：保持地平线稳定、镜头接近人眼平视、空间可读、构图清楚，画面下方中部保留可站位空地。",
+    "必须是纯环境图，无人物，无动物，无交通工具，无室内空间，无建筑概念图。",
+    description.trim()
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function buildSkyboxNegativePrompt(sceneName: string, description: string, baseNegativePrompt: string): string {
   const text = `${sceneName} ${description}`.toLowerCase();
   const extras: string[] = [];
@@ -6277,6 +6288,98 @@ export async function generateSkyboxFaces(
     previews[face] = toComfyViewUrl(settings.baseUrl, first);
   }
   return { faces, previews };
+}
+
+export async function generateSkyboxFrontPlate(
+  settings: ComfySettings,
+  description: string,
+  sceneName = ""
+): Promise<{ filePath: string; previewUrl: string }> {
+  const workflowRaw = settings.skyboxWorkflowJson?.trim() || settings.imageWorkflowJson;
+  if (!workflowRaw.trim()) throw new Error("请先配置图片工作流");
+  const workflow = rewriteWorkflowFilenamePrefixes(
+    ensureWorkflowJson(workflowRaw),
+    rewriteSkyboxFilenamePrefix
+  ) as Record<string, unknown>;
+  const negativePrompt = buildSkyboxNegativePrompt(
+    sceneName,
+    description,
+    settings.skyboxAssetNegativePrompt?.trim() ||
+      "person, people, character, crowd, group shot, portrait, close-up, half body, full body person, actor, animal"
+  );
+  const baseTokens: Record<string, string> = {
+    ASSET_NAME_DIR: sanitizeOutputAssetFolderName(sceneName || description, "未命名场景"),
+    SHOT_ID: "skybox_front_plate",
+    SHOT_TITLE: "Skybox Front Plate",
+    SHOT_INDEX: "1",
+    PROMPT: makeSkyboxFrontPlatePrompt(description),
+    NEXT_SCENE_PROMPT: `Next Scene: ${makeSkyboxFrontPlatePrompt(description)}`,
+    VIDEO_PROMPT: makeSkyboxFrontPlatePrompt(description),
+    VIDEO_MODE: "SINGLE_FRAME",
+    NEGATIVE_PROMPT: negativePrompt,
+    DIALOGUE: "",
+    SPEAKER_NAME: "",
+    EMOTION: "",
+    DELIVERY_STYLE: "",
+    SPEECH_RATE: "",
+    VOICE_PROFILE: "",
+    CHARACTER_VOICE_PROFILES: "",
+    SEED: String(Math.floor(Math.random() * 1_000_000_000)),
+    DURATION_FRAMES: "24",
+    DURATION_SEC: "1.0",
+    CHARACTER_REFS: "",
+    SCENE_REF_PATH: "",
+    SCENE_REF_NAME: "",
+    CHARACTER_REF_PATHS: "",
+    CHARACTER_REF_NAMES: "",
+    CHARACTER_FRONT_PATHS: "",
+    CHARACTER_SIDE_PATHS: "",
+    CHARACTER_BACK_PATHS: "",
+    CHAR1_NAME: "",
+    CHAR1_FRONT_PATH: "",
+    CHAR1_SIDE_PATH: "",
+    CHAR1_BACK_PATH: "",
+    CHAR2_NAME: "",
+    CHAR2_FRONT_PATH: "",
+    CHAR2_SIDE_PATH: "",
+    CHAR2_BACK_PATH: "",
+    CHAR3_NAME: "",
+    CHAR3_FRONT_PATH: "",
+    CHAR3_SIDE_PATH: "",
+    CHAR3_BACK_PATH: "",
+    CHAR4_NAME: "",
+    CHAR4_FRONT_PATH: "",
+    CHAR4_SIDE_PATH: "",
+    CHAR4_BACK_PATH: "",
+    FRAME_IMAGE_PATH: "",
+    FIRST_FRAME_PATH: "",
+    LAST_FRAME_PATH: "",
+    DIALOGUE_AUDIO_PATH: "",
+    DIALOGUE_AUDIO_PATHS: "",
+    DIALOGUE_AUDIO_COUNT: "0",
+    HAS_DIALOGUE_AUDIO: "0",
+    SKYBOX_FACE: "FRONT",
+    SKYBOX_DESCRIPTION: description.trim()
+  };
+  const tokens = applyTokenAliases(settings.tokenMapping, baseTokens);
+  applyDynamicCharacterRefsForImageWorkflow(workflow, []);
+  const built = coerceWorkflowLiteralValues(deepReplaceTokens(workflow, tokens)) as Record<string, unknown>;
+  applyFisherWorkflowBindings(built, "image", tokens);
+  let objectInfo: Record<string, unknown> | undefined;
+  try {
+    objectInfo = await fetchObjectInfo(settings.baseUrl);
+    applyComfyModelOptionBindings(built, objectInfo);
+  } catch {
+    // ignore object_info failures during skybox front-plate generation
+  }
+  const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
+  const outputs = await waitForComfyOutput(settings.baseUrl, promptId);
+  const first = outputs[0];
+  if (!first) throw new Error("河边正面建立场景板完成但未获取到输出");
+  return {
+    filePath: await materializeImageAssetPath(settings, first),
+    previewUrl: toComfyViewUrl(settings.baseUrl, first)
+  };
 }
 
 export async function generateSkyboxFaceUpdate(

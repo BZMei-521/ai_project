@@ -15,6 +15,7 @@ import {
   extractLocalMotionPresetFromText,
   generateShotAsset,
   generateShotAssetOutputs,
+  generateSkyboxFrontPlate,
   generateSkyboxFaces,
   inferComfyRootDir,
   inferStoryboardVideoModeByMatureCase,
@@ -9453,9 +9454,9 @@ export function ComfyPipelinePanel() {
           runtimeSettings.skyboxAssetModelName?.trim() || ""
         ]).filter(Boolean);
         const promptVariants = [
-          "这是河边主镜头正面建立场景板，不是360全景，不是室内，不是建筑外景；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。禁止白色建筑、院子、地面广场、树林浅溪、乱石浅滩、浓雾遮挡。",
-          "wide calm inland river establishing shot, broad open water occupying the middle of frame, readable shoreline, riverside stone path, willow trees only at the sides, old stone bridge in the distance, opposite bank visible, ground-level camera, open sky visible. not a creek, not a forest stream, not a rocky shallow riverbed, not architecture, not indoor.",
-          "storyboard-friendly riverside plate, open river channel, flat water surface, clear far bank silhouette, one side river path for character blocking, sparse willow framing, bridge landmark visible, no canopy covering the whole top, no fog wall, no boulder-filled stream, no plaza, no house exterior, no lobby interior."
+          "这是河边主镜头正面建立场景板，不是360全景，不是 cubemap 切面，不是室内，不是建筑外景；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。禁止白色建筑、院子、地面广场、树林浅溪、乱石浅滩、浓雾遮挡。",
+          "wide calm inland river establishing shot, single storyboard front plate, broad open water occupying the middle of frame, readable shoreline, riverside stone path, willow trees only at the far sides, old stone bridge in the distance, opposite bank visible, ground-level camera, open sky visible, no visible riverbed stones in the foreground, not a creek, not a forest stream, not a rocky shallow riverbed, not architecture, not indoor.",
+          "storyboard-friendly riverside plate, one readable establishing frame, open river channel, flat water surface, clear far bank silhouette, one side river path for character blocking, sparse willow framing, bridge landmark visible, no canopy covering the whole top, no fog wall, no boulder-filled stream, no plaza, no house exterior, no lobby interior, no creek rocks filling the water."
         ];
         let bestCandidate:
           | {
@@ -9470,7 +9471,7 @@ export function ComfyPipelinePanel() {
         for (const candidateModel of candidateModels) {
           for (const variant of promptVariants) {
             const candidateDescription = `${description}。补充要求：${variant}`;
-            const candidateResult = await generateSkyboxFaces(
+            const candidateResult = await generateSkyboxFrontPlate(
               {
                 ...effectiveSkyboxSettings,
                 skyboxAssetWorkflowMode: "basic_builtin",
@@ -9483,7 +9484,7 @@ export function ComfyPipelinePanel() {
               candidateDescription,
               sceneName
             );
-            const frontPath = candidateResult.faces.front?.trim() || "";
+            const frontPath = candidateResult.filePath.trim();
             if (!frontPath) continue;
             const semantic = await evaluateSkyboxSemanticQuality([frontPath], sceneName, normalizedScenePrompt);
             const sharpness = await evaluateImageSharpnessQuality([frontPath], SKYBOX_MIN_SHARPNESS_SCORE);
@@ -9491,7 +9492,7 @@ export function ComfyPipelinePanel() {
               model: candidateModel,
               variant,
               frontPath,
-              previewUrl: candidateResult.previews.front?.trim() || "",
+              previewUrl: candidateResult.previewUrl.trim(),
               semantic,
               sharpness
             };
