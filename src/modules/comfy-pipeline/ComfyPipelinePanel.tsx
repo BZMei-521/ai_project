@@ -1052,11 +1052,11 @@ function buildSkyboxReferenceWorkflowTemplateJson(checkpointName: string, preset
     "7": {
       inputs: {
         seed: "{{SEED}}",
-        steps: 26,
-        cfg: 5.2,
+        steps: 24,
+        cfg: 4.8,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        denoise: 0.52,
+        denoise: 0.28,
         model: ["1", 0],
         positive: ["5", 0],
         negative: ["6", 0],
@@ -6654,7 +6654,10 @@ export function ComfyPipelinePanel() {
     const primaryPath = paths.find((item) => item.trim().length > 0) ?? "";
     if (!primaryPath) return { acceptable: false, issues: ["缺少天空盒主面"] };
     const guidance = buildSceneSemanticGuidance(sceneName, scenePrompt);
-    const appearance = await analyzeScenePlateAppearance(primaryPath);
+    const [appearance, layout] = await Promise.all([
+      analyzeScenePlateAppearance(primaryPath),
+      analyzeForegroundLayout(primaryPath)
+    ]);
     if (!appearance) return { acceptable: true, issues: [] as string[] };
     const issues: string[] = [];
     const naturalRatio =
@@ -6695,6 +6698,12 @@ export function ComfyPipelinePanel() {
       appearance.waterBlueRatio > 0.1 &&
       appearance.vegetationGreenRatio < 0.035 &&
       (appearance.skyBlueRatio > 0.04 || appearance.warmSunsetRatio > 0.18);
+    const likelyConceptSheetLayout =
+      layout != null &&
+      layout.mediumComponents >= 4 &&
+      (layout.secondaryForegroundRatio > 0.18 ||
+        layout.detachedForegroundRatio > 0.14 ||
+        layout.edgeForegroundRatio > 0.16);
     if (guidance.prefersOutdoor && likelyIndoorAtrium) {
       issues.push(
         `场景语义疑似跑偏成室内中庭/展厅(neutral=${appearance.brightNeutralRatio.toFixed(2)},natural=${naturalRatio.toFixed(2)})`
@@ -6733,6 +6742,11 @@ export function ComfyPipelinePanel() {
     if (likelyCoastalDrift) {
       issues.push(
         `河边场景疑似跑偏成海边/海岸住宅区(sky=${appearance.skyBlueRatio.toFixed(2)},green=${appearance.vegetationGreenRatio.toFixed(2)},water=${appearance.waterBlueRatio.toFixed(2)},warm=${appearance.warmSunsetRatio.toFixed(2)})`
+      );
+    }
+    if (likelyConceptSheetLayout && layout) {
+      issues.push(
+        `场景疑似跑偏成概念页/分栏版面(cluster=${layout.mediumComponents},secondary=${layout.secondaryForegroundRatio.toFixed(2)},detached=${layout.detachedForegroundRatio.toFixed(2)},edge=${layout.edgeForegroundRatio.toFixed(2)})`
       );
     }
     return {
