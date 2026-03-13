@@ -5502,6 +5502,12 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, `_panel${panelIndex}.png`);
   };
 
+  const buildSkyboxFrontPlatePanelOutputPath = (sourcePath: string, panelIndex: number) => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, `_frontplate_panel${panelIndex}.png`);
+  };
+
   const buildCanonicalCharacterAssetDir = (name: string) => {
     const outputRoot = settings.outputDir.trim().replace(/[\\/]+$/, "");
     if (!outputRoot) return "";
@@ -6753,6 +6759,132 @@ export function ComfyPipelinePanel() {
       acceptable: issues.length === 0,
       issues
     };
+  };
+
+  const extractSkyboxFrontPlatePanels = async (pathOrUrl: string) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return [pathOrUrl];
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return [];
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return [pathOrUrl];
+    const source = toDesktopMediaSource(trimmed);
+    if (!source) return [pathOrUrl];
+    const image = await loadImageForHash(source);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width < 300 || height < 300) return [pathOrUrl];
+    const aspectRatio = width / Math.max(1, height);
+    if (aspectRatio < 0.88 || aspectRatio > 1.12) return [pathOrUrl];
+
+    const analysisSize = 180;
+    const canvas = document.createElement("canvas");
+    canvas.width = analysisSize;
+    canvas.height = analysisSize;
+    const context = canvas.getContext("2d");
+    if (!context) return [pathOrUrl];
+    context.drawImage(image, 0, 0, analysisSize, analysisSize);
+    const frame = context.getImageData(0, 0, analysisSize, analysisSize);
+    const data = frame.data;
+    const dividerWidth = Math.max(2, Math.round(analysisSize * 0.025));
+    const dividerCenters = [Math.round(analysisSize / 3), Math.round((analysisSize * 2) / 3)];
+    const sampleBand = (startX: number, startY: number, sampleWidth: number, sampleHeight: number) => {
+      let lumaSum = 0;
+      let chromaSum = 0;
+      let count = 0;
+      for (let y = startY; y < startY + sampleHeight; y += 1) {
+        for (let x = startX; x < startX + sampleWidth; x += 1) {
+          const idx = (y * analysisSize + x) * 4;
+          const r = data[idx] ?? 0;
+          const g = data[idx + 1] ?? 0;
+          const b = data[idx + 2] ?? 0;
+          lumaSum += r * 0.299 + g * 0.587 + b * 0.114;
+          chromaSum += Math.max(r, g, b) - Math.min(r, g, b);
+          count += 1;
+        }
+      }
+      if (count <= 0) return { luma: 0, chroma: 255 };
+      return { luma: lumaSum / count, chroma: chromaSum / count };
+    };
+
+    const dividerBands = [
+      sampleBand(Math.max(0, dividerCenters[0] - dividerWidth), 0, dividerWidth * 2, analysisSize),
+      sampleBand(Math.max(0, dividerCenters[1] - dividerWidth), 0, dividerWidth * 2, analysisSize),
+      sampleBand(0, Math.max(0, dividerCenters[0] - dividerWidth), analysisSize, dividerWidth * 2),
+      sampleBand(0, Math.max(0, dividerCenters[1] - dividerWidth), analysisSize, dividerWidth * 2)
+    ];
+    const brightDividerCount = dividerBands.filter((band) => band.luma >= 218 && band.chroma <= 26).length;
+    if (brightDividerCount < 3) return [pathOrUrl];
+
+    const createdPaths: string[] = [];
+    const cellWidth = width / 3;
+    const cellHeight = height / 3;
+    const paddingRatio = 0.035;
+    for (let row = 0; row < 3; row += 1) {
+      for (let col = 0; col < 3; col += 1) {
+        const padX = cellWidth * paddingRatio;
+        const padY = cellHeight * paddingRatio;
+        const startX = Math.max(0, Math.round(col * cellWidth + padX));
+        const startY = Math.max(0, Math.round(row * cellHeight + padY));
+        const endX = Math.min(width, Math.round((col + 1) * cellWidth - padX));
+        const endY = Math.min(height, Math.round((row + 1) * cellHeight - padY));
+        const cropWidth = Math.max(1, endX - startX);
+        const cropHeight = Math.max(1, endY - startY);
+        const panelCanvas = document.createElement("canvas");
+        panelCanvas.width = cropWidth;
+        panelCanvas.height = cropHeight;
+        const panelContext = panelCanvas.getContext("2d");
+        if (!panelContext) continue;
+        panelContext.drawImage(image, startX, startY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+        const filePath = buildSkyboxFrontPlatePanelOutputPath(trimmed, row * 3 + col + 1);
+        if (!filePath) continue;
+        const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+          filePath,
+          base64Data: panelCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+        });
+        if (result.filePath) createdPaths.push(result.filePath);
+      }
+    }
+    return createdPaths.length > 0 ? createdPaths : [pathOrUrl];
+  };
+
+  const selectBestSkyboxFrontPlateCandidate = async (pathOrUrl: string, sceneName: string, scenePrompt: string) => {
+    const candidatePaths = await extractSkyboxFrontPlatePanels(pathOrUrl);
+    let best:
+      | {
+          path: string;
+          semantic: { acceptable: boolean; issues: string[] };
+          sharpness: { lowSharpness: boolean; score: number; minSharpness?: number | null };
+          fromBoard: boolean;
+        }
+      | null = null;
+    for (const candidatePath of candidatePaths) {
+      const semantic = await evaluateSkyboxSemanticQuality([candidatePath], sceneName, scenePrompt);
+      const sharpness = await evaluateImageSharpnessQuality([candidatePath], SKYBOX_MIN_SHARPNESS_SCORE);
+      const next = {
+        path: candidatePath,
+        semantic,
+        sharpness,
+        fromBoard: candidatePaths.length > 1
+      };
+      if (
+        !best ||
+        (next.semantic.acceptable && !best.semantic.acceptable) ||
+        (next.semantic.acceptable === best.semantic.acceptable &&
+          next.semantic.issues.length < best.semantic.issues.length) ||
+        (next.semantic.acceptable === best.semantic.acceptable &&
+          next.semantic.issues.length === best.semantic.issues.length &&
+          next.sharpness.score > best.sharpness.score)
+      ) {
+        best = next;
+      }
+    }
+    return (
+      best ?? {
+        path: pathOrUrl,
+        semantic: { acceptable: false, issues: ["未获得可用 front plate 候选"] },
+        sharpness: { lowSharpness: true, score: 0, minSharpness: null },
+        fromBoard: false
+      }
+    );
   };
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
@@ -9562,10 +9694,17 @@ export function ComfyPipelinePanel() {
               candidateDescription,
               sceneName
             );
-            const frontPath = candidateResult.filePath.trim();
+            const rawFrontPath = candidateResult.filePath.trim();
+            if (!rawFrontPath) continue;
+            const selectedFront = await selectBestSkyboxFrontPlateCandidate(
+              rawFrontPath,
+              sceneName,
+              normalizedScenePrompt
+            );
+            const frontPath = selectedFront.path.trim();
             if (!frontPath) continue;
-            const semantic = await evaluateSkyboxSemanticQuality([frontPath], sceneName, normalizedScenePrompt);
-            const sharpness = await evaluateImageSharpnessQuality([frontPath], SKYBOX_MIN_SHARPNESS_SCORE);
+            const semantic = selectedFront.semantic;
+            const sharpness = selectedFront.sharpness;
             const nextCandidate = {
               model: candidateModel,
               variant,
@@ -9586,7 +9725,7 @@ export function ComfyPipelinePanel() {
               bestCandidate = nextCandidate;
             }
             appendLog(
-              `河边场景主板候选：${candidateModel} -> ${
+              `河边场景主板候选：${candidateModel}${selectedFront.fromBoard ? "（九宫候选已裁主格）" : ""} -> ${
                 semantic.acceptable ? "通过" : semantic.issues.join(" / ")
               }`,
               "info"
