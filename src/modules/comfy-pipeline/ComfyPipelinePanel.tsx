@@ -9379,15 +9379,28 @@ export function ComfyPipelinePanel() {
       const existingId = findAssetIdByName("skybox", sceneName);
       const sanitizedScenePrompt = stripCharacterMentions(scenePrompt, characterNames);
       const normalizedScenePrompt = sanitizedScenePrompt || buildSceneImagePrompt(sceneName, sanitizedScenePrompt);
+      const semanticGuidance = buildSceneSemanticGuidance(sceneName, normalizedScenePrompt);
       if (existingId) {
         const asset = useStoryboardStore.getState().assets.find((item) => item.id === existingId);
-        const primaryPaths = listSkyboxPrimaryFacePaths(asset?.skyboxFaces);
-        const hasCompleteFaces = hasCompleteSkyboxPrimaryFaces(asset?.skyboxFaces);
+        const frontOnlyPath = (asset?.skyboxFaces?.front?.trim() || asset?.filePath?.trim() || "").trim();
+        const primaryPaths = semanticGuidance.expectsRiverside
+          ? (frontOnlyPath ? [frontOnlyPath] : [])
+          : listSkyboxPrimaryFacePaths(asset?.skyboxFaces);
+        const hasCompleteFaces = semanticGuidance.expectsRiverside
+          ? Boolean(frontOnlyPath)
+          : hasCompleteSkyboxPrimaryFaces(asset?.skyboxFaces);
         const qualityCheck = await evaluateImageSharpnessQuality(primaryPaths, SKYBOX_MIN_SHARPNESS_SCORE);
-        const semanticCheck = await evaluateSkyboxSemanticQuality(primaryPaths, sceneName, normalizedScenePrompt);
+        const semanticCheck = await evaluateSkyboxSemanticQuality(
+          semanticGuidance.expectsRiverside && frontOnlyPath ? [frontOnlyPath] : primaryPaths,
+          sceneName,
+          normalizedScenePrompt
+        );
         const diversityCheck = await detectLowDiversitySkyboxFaces(asset?.skyboxFaces ?? {});
         const shouldForceRegenerate =
-          !hasCompleteFaces || qualityCheck.lowSharpness || !semanticCheck.acceptable || diversityCheck.lowDiversity;
+          !hasCompleteFaces ||
+          qualityCheck.lowSharpness ||
+          !semanticCheck.acceptable ||
+          (!semanticGuidance.expectsRiverside && diversityCheck.lowDiversity);
         if (!shouldForceRegenerate) {
           return {
             assetId: existingId,
@@ -9407,7 +9420,7 @@ export function ComfyPipelinePanel() {
         if (!semanticCheck.acceptable) {
           appendLog(`检测到天空盒语义跑偏（${semanticCheck.issues.join(" / ")}），已自动重建：${sceneName}`, "info");
         }
-        if (diversityCheck.lowDiversity) {
+        if (!semanticGuidance.expectsRiverside && diversityCheck.lowDiversity) {
           appendLog(
             `检测到天空盒各面几乎相同（${diversityCheck.distances
               .map((item) => `${item.pair}:${item.distance}`)
@@ -9421,7 +9434,6 @@ export function ComfyPipelinePanel() {
         sceneName,
         normalizedScenePrompt
       );
-      const semanticGuidance = buildSceneSemanticGuidance(sceneName, normalizedScenePrompt);
       const skyboxPlan = await resolveRuntimeSkyboxPlan(runtimeSettings, sceneName, normalizedScenePrompt);
       const resolvedSkyboxMode = skyboxPlan.mode;
       const effectiveSkyboxSettings: ComfySettings = {
@@ -9432,6 +9444,104 @@ export function ComfyPipelinePanel() {
       };
       appendLog(`开始生成场景天空盒：${sceneName}`);
       appendLog(`场景天空盒使用专用工作流：${sceneName}`);
+      if (semanticGuidance.expectsRiverside) {
+        appendLog("河边场景改用正面建立场景板模式，优先稳定分镜主场景而不是完整六面天空盒", "info");
+        const candidateModels = uniqueEntities([
+          skyboxPlan.model,
+          "dreamshaper_8.safetensors",
+          "sd_xl_base_1.0.safetensors",
+          runtimeSettings.skyboxAssetModelName?.trim() || ""
+        ]).filter(Boolean);
+        let bestCandidate:
+          | {
+              model: string;
+              frontPath: string;
+              previewUrl: string;
+              semantic: { acceptable: boolean; issues: string[] };
+              sharpness: { lowSharpness: boolean; score: number; minSharpness?: number | null };
+            }
+          | null = null;
+        for (const candidateModel of candidateModels) {
+          const candidateDescription = `${description}。补充要求：这是河边主镜头正面建立场景板，不是360全景，不是室内，不是建筑外景；必须以接近人眼平视的视角展示开阔河面、清晰岸线、沿河步道、垂柳、旧石桥或对岸轮廓。禁止白色建筑、院子、地面广场、树林浅溪、乱石浅滩、浓雾遮挡。`;
+          const candidateResult = await generateSkyboxFaces(
+            {
+              ...effectiveSkyboxSettings,
+              skyboxAssetWorkflowMode: "basic_builtin",
+              skyboxAssetModelName: candidateModel,
+              skyboxWorkflowJson: buildSkyboxWorkflowTemplateJson(
+                candidateModel,
+                runtimeSettings.skyboxTemplatePreset ?? "wide"
+              )
+            },
+            candidateDescription,
+            sceneName
+          );
+          const frontPath = candidateResult.faces.front?.trim() || "";
+          if (!frontPath) continue;
+          const semantic = await evaluateSkyboxSemanticQuality([frontPath], sceneName, normalizedScenePrompt);
+          const sharpness = await evaluateImageSharpnessQuality([frontPath], SKYBOX_MIN_SHARPNESS_SCORE);
+          const nextCandidate = {
+            model: candidateModel,
+            frontPath,
+            previewUrl: candidateResult.previews.front?.trim() || "",
+            semantic,
+            sharpness
+          };
+          if (
+            !bestCandidate ||
+            (nextCandidate.semantic.acceptable && !bestCandidate.semantic.acceptable) ||
+            (nextCandidate.semantic.acceptable === bestCandidate.semantic.acceptable &&
+              nextCandidate.semantic.issues.length < bestCandidate.semantic.issues.length) ||
+            (nextCandidate.semantic.acceptable === bestCandidate.semantic.acceptable &&
+              nextCandidate.semantic.issues.length === bestCandidate.semantic.issues.length &&
+              nextCandidate.sharpness.score > bestCandidate.sharpness.score)
+          ) {
+            bestCandidate = nextCandidate;
+          }
+          appendLog(
+            `河边场景主板候选：${candidateModel} -> ${
+              semantic.acceptable ? "通过" : semantic.issues.join(" / ")
+            }`,
+            "info"
+          );
+          if (semantic.acceptable && !sharpness.lowSharpness) {
+            break;
+          }
+        }
+        if (!bestCandidate || !bestCandidate.semantic.acceptable) {
+          throw new Error(
+            `河边场景最终仍未通过质检：${
+              bestCandidate?.semantic.issues.join(" / ") || "未生成可用正面建立场景板"
+            }`
+          );
+        }
+        const persistedFaces = await persistCanonicalSkyboxFaces(sceneName, {
+          front: bestCandidate.frontPath
+        });
+        const primaryPath = persistedFaces.front || bestCandidate.frontPath;
+        const beforeIds = new Set(useStoryboardStore.getState().assets.map((asset) => asset.id));
+        addAsset({
+          type: "skybox",
+          name: sceneName,
+          filePath: primaryPath,
+          skyboxDescription: description,
+          skyboxFaces: persistedFaces,
+          skyboxUpdateEvents: []
+        });
+        const created =
+          useStoryboardStore
+            .getState()
+            .assets.find(
+              (asset) =>
+                !beforeIds.has(asset.id) && asset.type === "skybox" && normalizeEntityKey(asset.name) === normalizeEntityKey(sceneName)
+            )?.id ?? findAssetIdByName("skybox", sceneName);
+        appendLog(`场景天空盒生成成功：${sceneName}`);
+        return {
+          assetId: created,
+          previewPaths: [primaryPath].filter((value): value is string => Boolean(value)),
+          reused: false
+        };
+      }
       let result: SkyboxGenerationResult;
       let resultHasCompleteFaces = false;
       let resultQuality: { lowSharpness: boolean; score: number; minSharpness?: number | null } = {
