@@ -1025,7 +1025,7 @@ function buildSkyboxReferenceWorkflowTemplateJson(
   const samplerConfig =
     mode === "refine"
       ? { steps: 28, cfg: 5.2, denoise: 0.46 }
-      : { steps: 24, cfg: 4.8, denoise: 0.42 };
+      : { steps: 26, cfg: 5.0, denoise: 0.58 };
   const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
     "1": {
       inputs: { ckpt_name: checkpointName },
@@ -5516,6 +5516,12 @@ export function ComfyPipelinePanel() {
     return trimmed.replace(/(\.[^.\\/]+)?$/, `_frontplate_panel${panelIndex}.png`);
   };
 
+  const buildSkyboxFaceReferenceVariantOutputPath = (sourcePath: string, face: "right" | "back" | "left" | "up" | "down") => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) return "";
+    return trimmed.replace(/(\.[^.\\/]+)?$/, `_${face}_variant.png`);
+  };
+
   const buildCanonicalCharacterAssetDir = (name: string) => {
     const outputRoot = settings.outputDir.trim().replace(/[\\/]+$/, "");
     if (!outputRoot) return "";
@@ -6864,6 +6870,71 @@ export function ComfyPipelinePanel() {
         fromBoard: false
       }
     );
+  };
+
+  const createSkyboxFaceReferenceVariant = async (
+    pathOrUrl: string,
+    face: "right" | "back" | "left" | "up" | "down"
+  ) => {
+    if (typeof window === "undefined" || typeof document === "undefined") return pathOrUrl;
+    const trimmed = pathOrUrl.trim();
+    if (!trimmed) return pathOrUrl;
+    if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmed)) return pathOrUrl;
+    const source = toDesktopMediaSource(trimmed);
+    if (!source) return pathOrUrl;
+    const image = await loadImageForHash(source);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width <= 0 || height <= 0) return pathOrUrl;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return pathOrUrl;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+
+    let scale = 1.08;
+    let drawX = Math.round(-(width * 0.04));
+    let drawY = Math.round(-(height * 0.04));
+
+    if (face === "right") {
+      scale = 1.16;
+      drawX = Math.round(-(width * 0.18));
+      drawY = Math.round(-(height * 0.02));
+    } else if (face === "left") {
+      scale = 1.16;
+      drawX = Math.round(-(width * 0.02));
+      drawY = Math.round(-(height * 0.02));
+    } else if (face === "back") {
+      scale = 1.18;
+      drawX = Math.round(-(width * 0.10));
+      drawY = Math.round(-(height * 0.05));
+      context.translate(width, 0);
+      context.scale(-1, 1);
+      drawX = -drawX - Math.round(width * scale);
+    } else if (face === "up") {
+      scale = 1.14;
+      drawX = Math.round(-(width * 0.08));
+      drawY = Math.round(-(height * 0.16));
+    } else if (face === "down") {
+      scale = 1.14;
+      drawX = Math.round(-(width * 0.08));
+      drawY = Math.round(height * 0.04);
+    }
+
+    const scaledWidth = Math.round(width * scale);
+    const scaledHeight = Math.round(height * scale);
+    context.drawImage(image, drawX, drawY, scaledWidth, scaledHeight);
+
+    const filePath = buildSkyboxFaceReferenceVariantOutputPath(trimmed, face);
+    if (!filePath) return pathOrUrl;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath || pathOrUrl;
   };
 
   const buildCharacterViewPrompt = (name: string, context: string, view: "front" | "side" | "back") => {
@@ -9634,6 +9705,12 @@ export function ComfyPipelinePanel() {
       appendLog(`场景天空盒使用专用工作流：${sceneName}`);
       if (semanticGuidance.expectsRiverside) {
         appendLog("河边场景改用正面建立场景板模式，优先稳定分镜主场景而不是完整六面天空盒", "info");
+        const sharedSceneStyle = resolveSharedVisualStyleProfile([sceneName, normalizedScenePrompt]);
+        const styledDescription = mergePromptFragments([
+          description,
+          sharedSceneStyle.styleAnchor ? `全局画风锚点：${sharedSceneStyle.styleAnchor}` : "",
+          sharedSceneStyle.sceneDirective
+        ]);
         const candidateModels = uniqueEntities([
           "Qwen-Rapid-AIO-SFW-v5.safetensors",
           "realisticVisionV60B1_v51VAE.safetensors",
@@ -9659,7 +9736,7 @@ export function ComfyPipelinePanel() {
           | null = null;
         for (const candidateModel of candidateModels) {
           for (const variant of promptVariants) {
-            const candidateDescription = `${description}。补充要求：${variant}`;
+            const candidateDescription = `${styledDescription}。补充要求：${variant}`;
             const candidateResult = await generateSkyboxFrontPlate(
               {
                 ...effectiveSkyboxSettings,
@@ -9745,7 +9822,7 @@ export function ComfyPipelinePanel() {
                 skyboxAssetModelName: refineModel,
                 skyboxWorkflowJson: refineWorkflowJson
               },
-              description,
+              styledDescription,
               "front",
               "将已通过筛选的河边建立场景候选精修为一张单幅高清 front 环境板。保留同一条河道、岸线、石桥或沿河步道、垂柳与对岸轮廓。不是九宫格，不是 layout sheet，不是概念页，不是像素风，不是 blocky，不是 mosaic，不要重复小格版式。",
               sceneName,
@@ -9782,6 +9859,7 @@ export function ComfyPipelinePanel() {
         };
         for (const face of ["right", "back", "left", "up", "down"] as const) {
           try {
+            const faceReferencePath = await createSkyboxFaceReferenceVariant(approvedFrontPath, face);
             const faceUpdate = await generateSkyboxFaceUpdate(
               {
                 ...effectiveSkyboxSettings,
@@ -9789,12 +9867,12 @@ export function ComfyPipelinePanel() {
                 skyboxAssetModelName: bestCandidate.model,
                 skyboxWorkflowJson: referenceWorkflowJson
               },
-              description,
+              styledDescription,
               face,
-              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一美术风格与空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。不要与 front 完全相同，必须体现 ${face} 方向的连续空间变化。不是像素风，不是 blocky，不是 mosaic。`,
+              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一现代国漫画风、同一空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。不要与 front 完全相同，必须体现 ${face} 方向的连续空间变化。不是像素风，不是 blocky，不是 mosaic。`,
               sceneName,
               {
-                sourceFramePath: approvedFrontPath,
+                sourceFramePath: faceReferencePath,
                 workflowJsonOverride: referenceWorkflowJson
               }
             );
