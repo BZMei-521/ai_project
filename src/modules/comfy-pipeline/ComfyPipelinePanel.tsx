@@ -6772,8 +6772,6 @@ export function ComfyPipelinePanel() {
     const width = image.naturalWidth || image.width;
     const height = image.naturalHeight || image.height;
     if (width < 300 || height < 300) return [pathOrUrl];
-    const aspectRatio = width / Math.max(1, height);
-    if (aspectRatio < 0.88 || aspectRatio > 1.12) return [pathOrUrl];
 
     const createdPaths: string[] = [pathOrUrl];
     const cellWidth = width / 3;
@@ -6809,6 +6807,7 @@ export function ComfyPipelinePanel() {
 
   const selectBestSkyboxFrontPlateCandidate = async (pathOrUrl: string, sceneName: string, scenePrompt: string) => {
     const candidatePaths = await extractSkyboxFrontPlatePanels(pathOrUrl);
+    const rawCandidatePath = candidatePaths[0]?.trim() || pathOrUrl.trim();
     let best:
       | {
           path: string;
@@ -6826,6 +6825,14 @@ export function ComfyPipelinePanel() {
         sharpness,
         fromBoard: candidatePaths.length > 1
       };
+      if (
+        best?.path === rawCandidatePath &&
+        best.semantic.acceptable &&
+        next.path !== rawCandidatePath &&
+        next.semantic.acceptable
+      ) {
+        continue;
+      }
       if (
         !best ||
         (next.semantic.acceptable && !best.semantic.acceptable) ||
