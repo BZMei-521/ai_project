@@ -1286,6 +1286,7 @@ type AssetWorkflowDiagnostic = {
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
 const IMPORT_PRESETS_KEY = "storyboard-pro/import-provision-presets/v1";
 const IMPORT_PRESET_AUTO_APPLY_KEY = "storyboard-pro/import-provision-presets/auto-apply";
+const STORYBOARD_LAST_IMAGE_BUILD_KEY = "storyboard-pro/storyboard-last-image-build/v1";
 
 type ImportProvisionPreset = {
   id: string;
@@ -2849,6 +2850,11 @@ function withFreshMediaVersion(url: string, token = Date.now()): string {
   }
 }
 
+function getCurrentStoryboardBuildId(): string {
+  if (typeof window === "undefined" || !("__STORYBOARD_WEB_BUILD_ID__" in window)) return "";
+  return String((window as Window & { __STORYBOARD_WEB_BUILD_ID__?: string }).__STORYBOARD_WEB_BUILD_ID__ || "").trim();
+}
+
 function formatPipelineLogText(items: PipelineLogItem[]): string {
   return items.map((item) => `[${item.timestamp}] [${item.level.toUpperCase()}] ${item.message}`).join("\n");
 }
@@ -3447,6 +3453,7 @@ function normalizeImportedCharacterProfilesFromShots(parsed: {
 }
 
 export function ComfyPipelinePanel() {
+  const currentBuildId = useMemo(() => getCurrentStoryboardBuildId(), []);
   const project = useStoryboardStore((state) => state.project);
   const shots = useStoryboardStore((state) => state.shots);
   const assets = useStoryboardStore((state) => state.assets);
@@ -4148,14 +4155,10 @@ export function ComfyPipelinePanel() {
   }, [autoApplyImportedPreset]);
 
   useEffect(() => {
-    const buildId =
-      typeof window !== "undefined" && "__STORYBOARD_WEB_BUILD_ID__" in window
-        ? String((window as Window & { __STORYBOARD_WEB_BUILD_ID__?: string }).__STORYBOARD_WEB_BUILD_ID__ || "").trim()
-        : "";
-    if (buildId) {
-      appendLog(`AI 流水线已加载，当前构建：${buildId}`);
+    if (currentBuildId) {
+      appendLog(`AI 流水线已加载，当前构建：${currentBuildId}`);
     }
-  }, []);
+  }, [currentBuildId]);
 
   useEffect(() => {
     if (!isWebBridgeRuntime()) return;
@@ -11590,6 +11593,9 @@ export function ComfyPipelinePanel() {
         updateShotFields(shot.id, {
           generatedImagePath: withFreshMediaVersion(output.previewUrl)
         });
+        if (currentBuildId) {
+          safeStorageSetItem(STORYBOARD_LAST_IMAGE_BUILD_KEY, currentBuildId);
+        }
       } else if (kind === "video") {
         updateShotFields(shot.id, {
           generatedVideoPath: output.localPath || output.previewUrl
@@ -11957,11 +11963,16 @@ export function ComfyPipelinePanel() {
       let attemptedCount = 0;
       let skippedCount = 0;
       const latestAssetsForRun = useStoryboardStore.getState().assets;
+      const lastStoryboardImageBuildId = (safeStorageGetItem(STORYBOARD_LAST_IMAGE_BUILD_KEY) ?? "").trim();
+      const rebuildForNewBuild = Boolean(currentBuildId) && currentBuildId !== lastStoryboardImageBuildId;
+      if (rebuildForNewBuild) {
+        appendLog(`检测到分镜生成逻辑已更新（${lastStoryboardImageBuildId || "无旧版本"} -> ${currentBuildId}），本轮不会跳过已有分镜图`, "info");
+      }
       appendLog(forceRegenerateAll ? "开始重新生成全部分镜图" : retryFailedOnly ? "开始重试失败分镜图" : "开始生成分镜图");
       for (let index = 0; index < latestShotsForRun.length; index += 1) {
         const shot = latestShotsForRun[index];
         if (retryFailedOnly && imageStatusByShot[shot.id] !== "failed") continue;
-        if (!forceRegenerateAll && skipExisting && !retryFailedOnly && shot.generatedImagePath?.trim()) {
+        if (!forceRegenerateAll && skipExisting && !retryFailedOnly && !rebuildForNewBuild && shot.generatedImagePath?.trim()) {
           if (isInvalidStoryboardStillCandidate(shot.generatedImagePath, shot, latestAssetsForRun)) {
             appendLog(`检测到已有分镜图实际指向角色/场景参考图，将自动重建：${shot.title}`, "info");
           } else {
