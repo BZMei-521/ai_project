@@ -6933,10 +6933,21 @@ export function ComfyPipelinePanel() {
     cropWidth = Math.max(1, Math.min(width - cropX, cropWidth));
     cropHeight = Math.max(1, Math.min(height - cropY, cropHeight));
     if (face === "back") {
+      // Build a clean cropped source first, then mirror that crop into the
+      // final canvas. Mirroring directly from the full source image is prone
+      // to transform edge cases that can collapse into black frames.
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = width;
+      cropCanvas.height = height;
+      const cropContext = cropCanvas.getContext("2d");
+      if (!cropContext) return pathOrUrl;
+      cropContext.imageSmoothingEnabled = true;
+      cropContext.imageSmoothingQuality = "high";
+      cropContext.drawImage(image, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
       context.save();
       context.translate(width, 0);
       context.scale(-1, 1);
-      context.drawImage(image, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
+      context.drawImage(cropCanvas, 0, 0, width, height);
       context.restore();
     } else {
       context.drawImage(image, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
