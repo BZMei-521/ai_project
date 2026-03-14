@@ -3187,18 +3187,6 @@ function hasStoryboardCharacterSeed(tokens: Record<string, string>): boolean {
   );
 }
 
-function shouldBypassStoryboardStillRender(
-  kind: "image" | "video" | "audio",
-  tokens: Record<string, string>,
-  assetOutputContext: AssetOutputContext | null
-): boolean {
-  if (kind !== "image" || assetOutputContext) return false;
-  if (!hasStoryboardCharacterSeed(tokens)) return false;
-  if (!String(tokens.FRAME_IMAGE_PATH ?? "").trim()) return false;
-  if (!String(tokens.SCENE_REF_PATH ?? "").trim()) return false;
-  return true;
-}
-
 function toStableMediaPreviewUrl(source: string): string {
   const mediaSource = toDesktopMediaSource(source).trim();
   if (!mediaSource) return source;
@@ -6111,12 +6099,6 @@ export async function generateShotAsset(
     if (kind === "image") {
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
-      if (shouldBypassStoryboardStillRender(kind, tokens, assetOutputContext)) {
-        const framePath = resolveInputTokenSourcePath(settings, String(tokens.FRAME_IMAGE_PATH ?? ""));
-        if (canUseAbsoluteLocalPath(framePath)) {
-          return await materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_direct");
-        }
-      }
     }
     const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
