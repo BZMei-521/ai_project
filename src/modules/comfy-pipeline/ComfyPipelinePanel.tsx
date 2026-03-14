@@ -1025,7 +1025,7 @@ function buildSkyboxReferenceWorkflowTemplateJson(
   const samplerConfig =
     mode === "refine"
       ? { steps: 28, cfg: 5.2, denoise: 0.46 }
-      : { steps: 26, cfg: 5.0, denoise: 0.58 };
+      : { steps: 28, cfg: 4.8, denoise: 0.64 };
   const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
     "1": {
       inputs: { ckpt_name: checkpointName },
@@ -6894,39 +6894,63 @@ export function ComfyPipelinePanel() {
     if (!context) return pathOrUrl;
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
+    const mirroredSource =
+      face === "back"
+        ? (() => {
+            const mirrorCanvas = document.createElement("canvas");
+            mirrorCanvas.width = width;
+            mirrorCanvas.height = height;
+            const mirrorContext = mirrorCanvas.getContext("2d");
+            if (!mirrorContext) return image;
+            mirrorContext.imageSmoothingEnabled = true;
+            mirrorContext.imageSmoothingQuality = "high";
+            mirrorContext.translate(width, 0);
+            mirrorContext.scale(-1, 1);
+            mirrorContext.drawImage(image, 0, 0, width, height);
+            return mirrorCanvas;
+          })()
+        : image;
 
-    let scale = 1.08;
-    let drawX = Math.round(-(width * 0.04));
-    let drawY = Math.round(-(height * 0.04));
+    // Use face-specific crop windows instead of tiny pans so each direction
+    // starts from a distinct, full-frame reference without black borders.
+    let cropX = 0;
+    let cropY = 0;
+    let cropWidth = width;
+    let cropHeight = height;
 
     if (face === "right") {
-      scale = 1.16;
-      drawX = Math.round(-(width * 0.18));
-      drawY = Math.round(-(height * 0.02));
+      cropX = Math.round(width * 0.24);
+      cropWidth = Math.round(width * 0.66);
+      cropY = Math.round(height * 0.02);
+      cropHeight = Math.round(height * 0.94);
     } else if (face === "left") {
-      scale = 1.16;
-      drawX = Math.round(-(width * 0.02));
-      drawY = Math.round(-(height * 0.02));
+      cropX = Math.round(width * 0.04);
+      cropWidth = Math.round(width * 0.66);
+      cropY = Math.round(height * 0.02);
+      cropHeight = Math.round(height * 0.94);
     } else if (face === "back") {
-      scale = 1.18;
-      drawX = Math.round(-(width * 0.10));
-      drawY = Math.round(-(height * 0.05));
-      context.translate(width, 0);
-      context.scale(-1, 1);
-      drawX = -drawX - Math.round(width * scale);
+      cropX = Math.round(width * 0.10);
+      cropWidth = Math.round(width * 0.80);
+      cropY = Math.round(height * 0.04);
+      cropHeight = Math.round(height * 0.90);
     } else if (face === "up") {
-      scale = 1.14;
-      drawX = Math.round(-(width * 0.08));
-      drawY = Math.round(-(height * 0.16));
+      cropX = Math.round(width * 0.06);
+      cropWidth = Math.round(width * 0.88);
+      cropY = 0;
+      cropHeight = Math.round(height * 0.72);
     } else if (face === "down") {
-      scale = 1.14;
-      drawX = Math.round(-(width * 0.08));
-      drawY = Math.round(height * 0.04);
+      cropX = Math.round(width * 0.06);
+      cropWidth = Math.round(width * 0.88);
+      cropY = Math.round(height * 0.18);
+      cropHeight = Math.round(height * 0.72);
     }
 
-    const scaledWidth = Math.round(width * scale);
-    const scaledHeight = Math.round(height * scale);
-    context.drawImage(image, drawX, drawY, scaledWidth, scaledHeight);
+    cropX = Math.max(0, Math.min(width - 1, cropX));
+    cropY = Math.max(0, Math.min(height - 1, cropY));
+    cropWidth = Math.max(1, Math.min(width - cropX, cropWidth));
+    cropHeight = Math.max(1, Math.min(height - cropY, cropHeight));
+
+    context.drawImage(mirroredSource, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
 
     const filePath = buildSkyboxFaceReferenceVariantOutputPath(trimmed, face);
     if (!filePath) return pathOrUrl;
