@@ -3219,15 +3219,64 @@ async function buildCharacterCutoutCanvas(pathOrUrl: string): Promise<HTMLCanvas
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
   const isWide = containsAnyKeyword(corpus, ["远景", "大全景", "全景", "建立镜头", "wide shot", "establishing"]);
+  const isMedium = containsAnyKeyword(corpus, ["中景", "双人中景", "medium shot", "two shot", "two-shot"]);
   const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot"]);
   if (count >= 2) {
-    if (isWide) return 0.34;
-    if (isClose) return 0.48;
-    return 0.4;
+    if (isWide) return 0.42;
+    if (isClose) return 0.58;
+    if (isMedium) return 0.52;
+    return 0.48;
   }
   if (isWide) return 0.42;
   if (isClose) return 0.62;
+  if (isMedium) return 0.56;
   return 0.52;
+}
+
+function inferStoryboardCompositeLayout(
+  shot: Shot,
+  count: number
+): Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }> {
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
+  const isWide = containsAnyKeyword(corpus, ["远景", "大全景", "全景", "建立镜头", "wide shot", "establishing"]);
+  const isMedium = containsAnyKeyword(corpus, ["中景", "双人中景", "medium shot", "two shot", "two-shot"]);
+  const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot"]);
+
+  if (count >= 2) {
+    if (isWide) {
+      return [
+        { centerXRatio: 0.56, floorYRatio: 0.84, sizeScale: 0.88 },
+        { centerXRatio: 0.76, floorYRatio: 0.92, sizeScale: 1.0 }
+      ];
+    }
+    if (isClose) {
+      return [
+        { centerXRatio: 0.42, floorYRatio: 0.9, sizeScale: 1.0 },
+        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 1.04 }
+      ];
+    }
+    if (isMedium) {
+      return [
+        { centerXRatio: 0.44, floorYRatio: 0.88, sizeScale: 0.96 },
+        { centerXRatio: 0.68, floorYRatio: 0.9, sizeScale: 1.0 }
+      ];
+    }
+    return [
+      { centerXRatio: 0.46, floorYRatio: 0.87, sizeScale: 0.94 },
+      { centerXRatio: 0.7, floorYRatio: 0.9, sizeScale: 1.0 }
+    ];
+  }
+
+  if (isClose) {
+    return [{ centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 1.08 }];
+  }
+  if (isMedium) {
+    return [{ centerXRatio: 0.6, floorYRatio: 0.89, sizeScale: 1.0 }];
+  }
+  if (isWide) {
+    return [{ centerXRatio: 0.72, floorYRatio: 0.88, sizeScale: 0.94 }];
+  }
+  return [{ centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1.0 }];
 }
 
 async function buildStoryboardCompositeReference(
@@ -3260,15 +3309,16 @@ async function buildStoryboardCompositeReference(
   if (!context) return null;
   context.drawImage(sceneImage, 0, 0, sceneWidth, sceneHeight);
 
-  const floorY = sceneHeight * 0.92;
   const heightRatio = inferStoryboardCompositeHeightRatio(shot, cutouts.length);
-  const centerXs = cutouts.length >= 2 ? [0.36, 0.64] : [0.5];
+  const placements = inferStoryboardCompositeLayout(shot, cutouts.length);
   cutouts.forEach(({ canvas: cutout }, index) => {
-    const targetHeight = sceneHeight * (heightRatio - index * 0.02);
+    const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1 };
+    const targetHeight = sceneHeight * heightRatio * placement.sizeScale;
     const scale = targetHeight / Math.max(1, cutout.height);
     const drawWidth = cutout.width * scale;
     const drawHeight = cutout.height * scale;
-    const centerX = (centerXs[index] ?? 0.5) * sceneWidth;
+    const centerX = placement.centerXRatio * sceneWidth;
+    const floorY = sceneHeight * placement.floorYRatio;
     const drawX = Math.round(centerX - drawWidth / 2);
     const drawY = Math.round(floorY - drawHeight);
     context.save();
@@ -5110,13 +5160,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
       class_type: "VAEEncode"
     };
 
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.72 : 0.74);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.78 : 0.84);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.74 : 0);
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.64 : 0.66);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.84 : 0.88);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.8 : 0);
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
-      const minimum = hasSecondCharacter ? 0.58 : 0.54;
-      samplerInputs.denoise = Number.isFinite(current) ? Math.max(current, minimum) : minimum;
+      const target = hasSecondCharacter ? 0.34 : 0.3;
+      samplerInputs.denoise =
+        Number.isFinite(current) && current > 0 ? Math.min(current, target) : target;
       const currentSteps = Number(samplerInputs.steps);
       if (!Number.isFinite(currentSteps) || currentSteps < 28) samplerInputs.steps = 28;
     }
