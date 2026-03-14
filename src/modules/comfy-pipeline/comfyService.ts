@@ -3187,6 +3187,18 @@ function hasStoryboardCharacterSeed(tokens: Record<string, string>): boolean {
   );
 }
 
+function shouldBypassStoryboardStillRender(
+  kind: "image" | "video" | "audio",
+  tokens: Record<string, string>,
+  assetOutputContext: AssetOutputContext | null
+): boolean {
+  if (kind !== "image" || assetOutputContext) return false;
+  if (!hasStoryboardCharacterSeed(tokens)) return false;
+  if (!String(tokens.FRAME_IMAGE_PATH ?? "").trim()) return false;
+  if (!String(tokens.SCENE_REF_PATH ?? "").trim()) return false;
+  return true;
+}
+
 function toStableMediaPreviewUrl(source: string): string {
   const mediaSource = toDesktopMediaSource(source).trim();
   if (!mediaSource) return source;
@@ -3453,25 +3465,25 @@ function inferStoryboardCompositeLayout(
   if (count >= 2) {
     if (scale === "wide") {
       return [
-        { centerXRatio: 0.18, floorYRatio: 0.92, sizeScale: 0.86 },
-        { centerXRatio: 0.84, floorYRatio: 0.92, sizeScale: 0.9 }
+        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.84 },
+        { centerXRatio: 0.86, floorYRatio: 0.94, sizeScale: 0.82 }
       ];
     }
     if (scale === "close") {
       return [
-        { centerXRatio: 0.34, floorYRatio: 0.92, sizeScale: 1.08 },
-        { centerXRatio: 0.76, floorYRatio: 0.93, sizeScale: 0.92 }
+        { centerXRatio: 0.52, floorYRatio: 0.91, sizeScale: 1.0 },
+        { centerXRatio: 0.78, floorYRatio: 0.93, sizeScale: 0.88 }
       ];
     }
     if (scale === "medium") {
       return [
-        { centerXRatio: 0.32, floorYRatio: 0.92, sizeScale: 0.98 },
-        { centerXRatio: 0.76, floorYRatio: 0.93, sizeScale: 0.96 }
+        { centerXRatio: 0.56, floorYRatio: 0.91, sizeScale: 0.94 },
+        { centerXRatio: 0.8, floorYRatio: 0.93, sizeScale: 0.9 }
       ];
     }
     return [
-      { centerXRatio: 0.46, floorYRatio: 0.87, sizeScale: 0.94 },
-      { centerXRatio: 0.7, floorYRatio: 0.9, sizeScale: 1.0 }
+      { centerXRatio: 0.58, floorYRatio: 0.9, sizeScale: 0.92 },
+      { centerXRatio: 0.8, floorYRatio: 0.92, sizeScale: 0.9 }
     ];
   }
 
@@ -6099,6 +6111,12 @@ export async function generateShotAsset(
     if (kind === "image") {
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
+      if (shouldBypassStoryboardStillRender(kind, tokens, assetOutputContext)) {
+        const framePath = resolveInputTokenSourcePath(settings, String(tokens.FRAME_IMAGE_PATH ?? ""));
+        if (canUseAbsoluteLocalPath(framePath)) {
+          return await materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_direct");
+        }
+      }
     }
     const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
