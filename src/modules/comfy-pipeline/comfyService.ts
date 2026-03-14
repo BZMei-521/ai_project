@@ -3216,20 +3216,38 @@ async function buildCharacterCutoutCanvas(pathOrUrl: string): Promise<HTMLCanvas
   return cutoutCanvas;
 }
 
-function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
+function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" | "default" {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
-  const isWide = containsAnyKeyword(corpus, ["远景", "大全景", "全景", "建立镜头", "wide shot", "establishing"]);
-  const isMedium = containsAnyKeyword(corpus, ["中景", "双人中景", "medium shot", "two shot", "two-shot"]);
-  const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot"]);
+  const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot", "close-up"]);
+  const isMedium = containsAnyKeyword(corpus, [
+    "中景",
+    "双人中景",
+    "中近景",
+    "medium shot",
+    "medium two shot",
+    "medium wide",
+    "two shot",
+    "two-shot",
+    "reverse medium"
+  ]);
+  const isWide = containsAnyKeyword(corpus, ["远景", "大全景", "全景", "建立镜头", "wide shot", "establishing wide"]);
+  if (isClose) return "close";
+  if (isMedium) return "medium";
+  if (isWide) return "wide";
+  return "default";
+}
+
+function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
+  const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (isWide) return 0.42;
-    if (isClose) return 0.58;
-    if (isMedium) return 0.52;
-    return 0.48;
+    if (scale === "wide") return 0.5;
+    if (scale === "close") return 0.64;
+    if (scale === "medium") return 0.58;
+    return 0.54;
   }
-  if (isWide) return 0.42;
-  if (isClose) return 0.62;
-  if (isMedium) return 0.56;
+  if (scale === "wide") return 0.5;
+  if (scale === "close") return 0.66;
+  if (scale === "medium") return 0.6;
   return 0.52;
 }
 
@@ -3237,28 +3255,25 @@ function inferStoryboardCompositeLayout(
   shot: Shot,
   count: number
 ): Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }> {
-  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
-  const isWide = containsAnyKeyword(corpus, ["远景", "大全景", "全景", "建立镜头", "wide shot", "establishing"]);
-  const isMedium = containsAnyKeyword(corpus, ["中景", "双人中景", "medium shot", "two shot", "two-shot"]);
-  const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot"]);
+  const scale = inferStoryboardCompositeScale(shot);
 
   if (count >= 2) {
-    if (isWide) {
+    if (scale === "wide") {
       return [
-        { centerXRatio: 0.56, floorYRatio: 0.84, sizeScale: 0.88 },
+        { centerXRatio: 0.34, floorYRatio: 0.9, sizeScale: 0.96 },
         { centerXRatio: 0.76, floorYRatio: 0.92, sizeScale: 1.0 }
       ];
     }
-    if (isClose) {
+    if (scale === "close") {
       return [
-        { centerXRatio: 0.42, floorYRatio: 0.9, sizeScale: 1.0 },
-        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 1.04 }
+        { centerXRatio: 0.38, floorYRatio: 0.92, sizeScale: 1.12 },
+        { centerXRatio: 0.72, floorYRatio: 0.93, sizeScale: 0.96 }
       ];
     }
-    if (isMedium) {
+    if (scale === "medium") {
       return [
-        { centerXRatio: 0.44, floorYRatio: 0.88, sizeScale: 0.96 },
-        { centerXRatio: 0.68, floorYRatio: 0.9, sizeScale: 1.0 }
+        { centerXRatio: 0.38, floorYRatio: 0.91, sizeScale: 1.04 },
+        { centerXRatio: 0.7, floorYRatio: 0.92, sizeScale: 1.0 }
       ];
     }
     return [
@@ -3267,13 +3282,13 @@ function inferStoryboardCompositeLayout(
     ];
   }
 
-  if (isClose) {
+  if (scale === "close") {
     return [{ centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 1.08 }];
   }
-  if (isMedium) {
+  if (scale === "medium") {
     return [{ centerXRatio: 0.6, floorYRatio: 0.89, sizeScale: 1.0 }];
   }
-  if (isWide) {
+  if (scale === "wide") {
     return [{ centerXRatio: 0.72, floorYRatio: 0.88, sizeScale: 0.94 }];
   }
   return [{ centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1.0 }];
@@ -5160,12 +5175,12 @@ function adaptBuiltinStoryboardWorkflowForShot(
       class_type: "VAEEncode"
     };
 
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.64 : 0.66);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.84 : 0.88);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.8 : 0);
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.56 : 0.62);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.92 : 0.9);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.88 : 0);
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
-      const target = hasSecondCharacter ? 0.34 : 0.3;
+      const target = hasSecondCharacter ? 0.24 : 0.28;
       samplerInputs.denoise =
         Number.isFinite(current) && current > 0 ? Math.min(current, target) : target;
       const currentSteps = Number(samplerInputs.steps);
