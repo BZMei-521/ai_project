@@ -3237,9 +3237,9 @@ async function buildStoryboardCompositeReference(
   inputDir: string
 ): Promise<WeightedImageRef | null> {
   if (!canProcessStoryboardReferenceImages()) return null;
-  const continuitySceneRef = refs.find((item) => item.role === "continuity_scene");
-  if (continuitySceneRef) return null;
-  const sceneRef = continuitySceneRef ?? refs.find((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const sceneRef =
+    refs.find((item) => item.role === "scene_primary" || item.role === "scene_secondary") ??
+    refs.find((item) => item.role === "continuity_scene");
   const characterRefs = refs.filter((item) => item.role.startsWith("character_")).slice(0, 2);
   if (!sceneRef || characterRefs.length === 0) return null;
   const sceneImage = await loadReferenceImageElement(sceneRef.source);
@@ -5046,6 +5046,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   tokens: Record<string, string>
 ): void {
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
+  const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
   const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
   const hasCharacters = char1PrimaryPath.length > 0 || char2PrimaryPath.length > 0;
@@ -5074,6 +5075,53 @@ function adaptBuiltinStoryboardWorkflowForShot(
 
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
+  const hasSecondCharacter = char2PrimaryPath.length > 0;
+  const samplerInputs =
+    typeof (samplerNode as Record<string, unknown>).inputs === "object" &&
+    (samplerNode as Record<string, unknown>).inputs &&
+    !Array.isArray((samplerNode as Record<string, unknown>).inputs)
+      ? ((samplerNode as Record<string, unknown>).inputs as Record<string, unknown>)
+      : null;
+
+  const updateAdapterWeight = (node: unknown, fallbackWeight: number) => {
+    if (!node || typeof node !== "object") return;
+    const inputs = (node as Record<string, unknown>).inputs;
+    if (!inputs || typeof inputs !== "object") return;
+    (inputs as Record<string, unknown>).weight = fallbackWeight;
+    (inputs as Record<string, unknown>).end_at = fallbackWeight >= 0.7 ? 1.0 : 0.72;
+  };
+
+  if (frameImagePath.length > 0) {
+    // When characters are present, start from a lightweight scene+character layout
+    // plate so the final shot keeps readable subject placement instead of collapsing
+    // into a pure environment board.
+    workflow["16"] = {
+      inputs: {
+        image: frameImagePath,
+        upload: "image"
+      },
+      class_type: "LoadImage"
+    };
+    workflow["3"] = {
+      inputs: {
+        pixels: ["16", 0],
+        vae: ["1", 2]
+      },
+      class_type: "VAEEncode"
+    };
+
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.72 : 0.74);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.78 : 0.84);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.74 : 0);
+    if (samplerInputs) {
+      const current = Number(samplerInputs.denoise);
+      const minimum = hasSecondCharacter ? 0.58 : 0.54;
+      samplerInputs.denoise = Number.isFinite(current) ? Math.max(current, minimum) : minimum;
+      const currentSteps = Number(samplerInputs.steps);
+      if (!Number.isFinite(currentSteps) || currentSteps < 28) samplerInputs.steps = 28;
+    }
+    return;
+  }
 
   workflow["3"] = {
     inputs: {
@@ -5082,14 +5130,6 @@ function adaptBuiltinStoryboardWorkflowForShot(
       batch_size: 1
     },
     class_type: "EmptyLatentImage"
-  };
-
-  const updateAdapterWeight = (node: unknown, fallbackWeight: number) => {
-    if (!node || typeof node !== "object") return;
-    const inputs = (node as Record<string, unknown>).inputs;
-    if (!inputs || typeof inputs !== "object") return;
-    (inputs as Record<string, unknown>).weight = fallbackWeight;
-    (inputs as Record<string, unknown>).end_at = fallbackWeight >= 0.7 ? 1.0 : 0.72;
   };
 
   // Favor a readable environment anchor. Character refs should keep identity and costume
@@ -5764,6 +5804,18 @@ export async function generateShotAsset(
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
+      if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
+        const inputDir = inferComfyInputDir(settings);
+        if (inputDir) {
+          const compositeRef = await buildStoryboardCompositeReference(settings, shot, sources, inputDir);
+          if (compositeRef?.source) {
+            tokens = {
+              ...tokens,
+              FRAME_IMAGE_PATH: compositeRef.source.split("/").pop() ?? compositeRef.source
+            };
+          }
+        }
+      }
       stagedCharacterImages =
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
       if (shouldRouteStoryboardStillToFisher(settings, shot, tokens, stagedCharacterImages)) {
@@ -5899,6 +5951,18 @@ export async function generateShotAssetOutputs(
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       const sources = extractImageReferenceSources(shot, assets, index, allShots);
+      if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
+        const inputDir = inferComfyInputDir(settings);
+        if (inputDir) {
+          const compositeRef = await buildStoryboardCompositeReference(settings, shot, sources, inputDir);
+          if (compositeRef?.source) {
+            tokens = {
+              ...tokens,
+              FRAME_IMAGE_PATH: compositeRef.source.split("/").pop() ?? compositeRef.source
+            };
+          }
+        }
+      }
       stagedCharacterImages =
         sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
     }
