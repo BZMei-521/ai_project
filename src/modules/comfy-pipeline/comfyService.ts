@@ -5835,6 +5835,22 @@ export async function generateShotAsset(
           ? "scene_asset"
           : "storyboard";
     tokens = applyGlobalStyleToTokens(settings, tokens, kind, styleScope);
+    let imageReferenceSources: WeightedImageRef[] = [];
+    if (kind === "image") {
+      imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
+      if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
+        const inputDir = inferComfyInputDir(settings);
+        if (inputDir) {
+          const compositeRef = await buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir);
+          if (compositeRef?.source) {
+            tokens = {
+              ...tokens,
+              FRAME_IMAGE_PATH: compositeRef.source
+            };
+          }
+        }
+      }
+    }
     if (kind === "video") {
       if (lipSyncSupport?.usesDialogueAudioPathToken) {
         tokens = await stageDialogueAudioTokens(
@@ -5854,21 +5870,8 @@ export async function generateShotAsset(
     const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
-      const sources = extractImageReferenceSources(shot, assets, index, allShots);
-      if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
-        const inputDir = inferComfyInputDir(settings);
-        if (inputDir) {
-          const compositeRef = await buildStoryboardCompositeReference(settings, shot, sources, inputDir);
-          if (compositeRef?.source) {
-            tokens = {
-              ...tokens,
-              FRAME_IMAGE_PATH: compositeRef.source.split("/").pop() ?? compositeRef.source
-            };
-          }
-        }
-      }
       stagedCharacterImages =
-        sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
+        imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources) : [];
       if (shouldRouteStoryboardStillToFisher(settings, shot, tokens, stagedCharacterImages)) {
         rewrittenWorkflow = ensureWorkflowJson(STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_JSON);
       }
@@ -5982,6 +5985,22 @@ export async function generateShotAssetOutputs(
       };
     }
     tokens = applyGlobalStyleToTokens(settings, tokens, kind);
+    let imageReferenceSources: WeightedImageRef[] = [];
+    if (kind === "image") {
+      imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
+      if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
+        const inputDir = inferComfyInputDir(settings);
+        if (inputDir) {
+          const compositeRef = await buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir);
+          if (compositeRef?.source) {
+            tokens = {
+              ...tokens,
+              FRAME_IMAGE_PATH: compositeRef.source
+            };
+          }
+        }
+      }
+    }
     if (kind === "video") {
       if (lipSyncSupport?.usesDialogueAudioPathToken) {
         tokens = await stageDialogueAudioTokens(
@@ -6001,21 +6020,8 @@ export async function generateShotAssetOutputs(
     const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
-      const sources = extractImageReferenceSources(shot, assets, index, allShots);
-      if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
-        const inputDir = inferComfyInputDir(settings);
-        if (inputDir) {
-          const compositeRef = await buildStoryboardCompositeReference(settings, shot, sources, inputDir);
-          if (compositeRef?.source) {
-            tokens = {
-              ...tokens,
-              FRAME_IMAGE_PATH: compositeRef.source.split("/").pop() ?? compositeRef.source
-            };
-          }
-        }
-      }
       stagedCharacterImages =
-        sources.length > 0 ? await stageCharacterReferenceImages(settings, shot, sources) : [];
+        imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources) : [];
     }
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
