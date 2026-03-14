@@ -5175,16 +5175,25 @@ function adaptBuiltinStoryboardWorkflowForShot(
       class_type: "VAEEncode"
     };
 
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.56 : 0.62);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.92 : 0.9);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.88 : 0);
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.18 : 0.24);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 0.94);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.94 : 0);
+    const sceneInputs =
+      typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
+      (sceneAdapterNode as Record<string, unknown>).inputs &&
+      !Array.isArray((sceneAdapterNode as Record<string, unknown>).inputs)
+        ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
+        : null;
+    if (sceneInputs) {
+      sceneInputs.end_at = hasSecondCharacter ? 0.28 : 0.34;
+    }
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
-      const target = hasSecondCharacter ? 0.24 : 0.28;
+      const target = hasSecondCharacter ? 0.18 : 0.22;
       samplerInputs.denoise =
         Number.isFinite(current) && current > 0 ? Math.min(current, target) : target;
       const currentSteps = Number(samplerInputs.steps);
-      if (!Number.isFinite(currentSteps) || currentSteps < 28) samplerInputs.steps = 28;
+      if (!Number.isFinite(currentSteps) || currentSteps < 24) samplerInputs.steps = 24;
     }
     return;
   }
