@@ -3393,17 +3393,26 @@ function buildIntegratedCharacterCanvas(
   for (let index = 0; index < data.length; index += 4) {
     const alpha = (data[index + 3] ?? 0) / 255;
     if (alpha <= 0.01) continue;
+    const pixel = index / 4;
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    const verticalRatio = height <= 1 ? 0 : y / Math.max(1, height - 1);
+    const floorBlend = verticalRatio <= 0.58 ? 0 : Math.min(1, (verticalRatio - 0.58) / 0.42);
+    const edgeDistance = Math.min(x, y, Math.max(0, width - 1 - x), Math.max(0, height - 1 - y));
+    const edgeFeather = edgeDistance >= 3 ? 1 : Math.max(0.45, edgeDistance / 3);
     const originalR = data[index] ?? 0;
     const originalG = data[index + 1] ?? 0;
     const originalB = data[index + 2] ?? 0;
     const luma = originalR * 0.299 + originalG * 0.587 + originalB * 0.114;
-    const softenedR = luma * 0.08 + originalR * 0.92;
-    const softenedG = luma * 0.08 + originalG * 0.92;
-    const softenedB = luma * 0.08 + originalB * 0.92;
-    data[index] = clampChannel(softenedR * 0.9 + sceneTint.r * 0.1);
-    data[index + 1] = clampChannel(softenedG * 0.9 + sceneTint.g * 0.1);
-    data[index + 2] = clampChannel(softenedB * 0.9 + sceneTint.b * 0.1);
-    data[index + 3] = clampChannel((data[index + 3] ?? 255) * 0.96);
+    const desaturate = 0.14 + floorBlend * 0.1;
+    const sceneBlend = 0.14 + floorBlend * 0.18;
+    const softenedR = luma * desaturate + originalR * (1 - desaturate);
+    const softenedG = luma * desaturate + originalG * (1 - desaturate);
+    const softenedB = luma * desaturate + originalB * (1 - desaturate);
+    data[index] = clampChannel(softenedR * (1 - sceneBlend) + sceneTint.r * sceneBlend);
+    data[index + 1] = clampChannel(softenedG * (1 - sceneBlend) + sceneTint.g * sceneBlend);
+    data[index + 2] = clampChannel(softenedB * (1 - sceneBlend) + sceneTint.b * sceneBlend);
+    data[index + 3] = clampChannel((data[index + 3] ?? 255) * (0.92 - floorBlend * 0.12) * edgeFeather);
   }
   context.putImageData(image, 0, 0);
   return canvas;
@@ -3433,15 +3442,15 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (scale === "wide") return 0.5;
-    if (scale === "close") return 0.64;
-    if (scale === "medium") return 0.58;
-    return 0.54;
+    if (scale === "wide") return 0.34;
+    if (scale === "close") return 0.58;
+    if (scale === "medium") return 0.46;
+    return 0.42;
   }
-  if (scale === "wide") return 0.5;
-  if (scale === "close") return 0.66;
-  if (scale === "medium") return 0.6;
-  return 0.52;
+  if (scale === "wide") return 0.38;
+  if (scale === "close") return 0.6;
+  if (scale === "medium") return 0.5;
+  return 0.44;
 }
 
 function inferStoryboardCompositeLayout(
@@ -3453,25 +3462,25 @@ function inferStoryboardCompositeLayout(
   if (count >= 2) {
     if (scale === "wide") {
       return [
-        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.84 },
-        { centerXRatio: 0.86, floorYRatio: 0.94, sizeScale: 0.82 }
+        { centerXRatio: 0.72, floorYRatio: 0.89, sizeScale: 0.74 },
+        { centerXRatio: 0.85, floorYRatio: 0.91, sizeScale: 0.66 }
       ];
     }
     if (scale === "close") {
       return [
-        { centerXRatio: 0.52, floorYRatio: 0.91, sizeScale: 1.0 },
-        { centerXRatio: 0.78, floorYRatio: 0.93, sizeScale: 0.88 }
+        { centerXRatio: 0.56, floorYRatio: 0.9, sizeScale: 0.94 },
+        { centerXRatio: 0.78, floorYRatio: 0.92, sizeScale: 0.82 }
       ];
     }
     if (scale === "medium") {
       return [
-        { centerXRatio: 0.56, floorYRatio: 0.91, sizeScale: 0.94 },
-        { centerXRatio: 0.8, floorYRatio: 0.93, sizeScale: 0.9 }
+        { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 0.86 },
+        { centerXRatio: 0.82, floorYRatio: 0.92, sizeScale: 0.8 }
       ];
     }
     return [
-      { centerXRatio: 0.58, floorYRatio: 0.9, sizeScale: 0.92 },
-      { centerXRatio: 0.8, floorYRatio: 0.92, sizeScale: 0.9 }
+      { centerXRatio: 0.64, floorYRatio: 0.89, sizeScale: 0.84 },
+      { centerXRatio: 0.82, floorYRatio: 0.91, sizeScale: 0.78 }
     ];
   }
 
@@ -3538,18 +3547,21 @@ async function buildStoryboardCompositeReference(
     );
     const integratedCutout = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint);
     context.save();
-    context.fillStyle = "rgba(0,0,0,0.16)";
+    context.fillStyle = "rgba(0,0,0,0.2)";
     context.beginPath();
-    context.ellipse(centerX, floorY + 3, Math.max(18, drawWidth * 0.18), Math.max(8, drawWidth * 0.06), 0, 0, Math.PI * 2);
+    context.filter = "blur(6px)";
+    context.ellipse(centerX, floorY + 4, Math.max(20, drawWidth * 0.22), Math.max(10, drawWidth * 0.08), 0, 0, Math.PI * 2);
     context.fill();
     if (integratedCutout) {
-      context.globalAlpha = 0.18;
-      context.filter = "blur(2px)";
+      context.globalAlpha = 0.28;
+      context.filter = "blur(1.5px)";
       context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
-      context.globalAlpha = 1;
+      context.globalAlpha = 0.94;
       context.filter = "none";
       context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
     } else {
+      context.globalAlpha = 0.94;
+      context.filter = "none";
       context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
     }
     context.restore();
