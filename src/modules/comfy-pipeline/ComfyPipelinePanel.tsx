@@ -6902,30 +6902,30 @@ export function ComfyPipelinePanel() {
     let cropHeight = height;
 
     if (face === "right") {
-      cropX = Math.round(width * 0.34);
-      cropWidth = Math.round(width * 0.54);
-      cropY = Math.round(height * 0.02);
-      cropHeight = Math.round(height * 0.94);
+      cropX = Math.round(width * 0.42);
+      cropWidth = Math.round(width * 0.48);
+      cropY = Math.round(height * 0.04);
+      cropHeight = Math.round(height * 0.90);
     } else if (face === "left") {
-      cropX = Math.round(width * 0.02);
-      cropWidth = Math.round(width * 0.54);
-      cropY = Math.round(height * 0.02);
-      cropHeight = Math.round(height * 0.94);
+      cropX = 0;
+      cropWidth = Math.round(width * 0.48);
+      cropY = Math.round(height * 0.04);
+      cropHeight = Math.round(height * 0.90);
     } else if (face === "back") {
       cropX = Math.round(width * 0.18);
       cropWidth = Math.round(width * 0.64);
       cropY = Math.round(height * 0.06);
       cropHeight = Math.round(height * 0.86);
     } else if (face === "up") {
-      cropX = Math.round(width * 0.06);
-      cropWidth = Math.round(width * 0.88);
+      cropX = Math.round(width * 0.10);
+      cropWidth = Math.round(width * 0.80);
       cropY = 0;
-      cropHeight = Math.round(height * 0.72);
+      cropHeight = Math.round(height * 0.50);
     } else if (face === "down") {
-      cropX = Math.round(width * 0.06);
-      cropWidth = Math.round(width * 0.88);
-      cropY = Math.round(height * 0.18);
-      cropHeight = Math.round(height * 0.72);
+      cropX = Math.round(width * 0.10);
+      cropWidth = Math.round(width * 0.80);
+      cropY = Math.round(height * 0.34);
+      cropHeight = Math.round(height * 0.56);
     }
 
     cropX = Math.max(0, Math.min(width - 1, cropX));
