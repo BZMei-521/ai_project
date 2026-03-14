@@ -3260,20 +3260,20 @@ function inferStoryboardCompositeLayout(
   if (count >= 2) {
     if (scale === "wide") {
       return [
-        { centerXRatio: 0.34, floorYRatio: 0.9, sizeScale: 0.96 },
-        { centerXRatio: 0.76, floorYRatio: 0.92, sizeScale: 1.0 }
+        { centerXRatio: 0.28, floorYRatio: 0.91, sizeScale: 0.9 },
+        { centerXRatio: 0.8, floorYRatio: 0.92, sizeScale: 0.94 }
       ];
     }
     if (scale === "close") {
       return [
-        { centerXRatio: 0.38, floorYRatio: 0.92, sizeScale: 1.12 },
-        { centerXRatio: 0.72, floorYRatio: 0.93, sizeScale: 0.96 }
+        { centerXRatio: 0.34, floorYRatio: 0.92, sizeScale: 1.08 },
+        { centerXRatio: 0.76, floorYRatio: 0.93, sizeScale: 0.92 }
       ];
     }
     if (scale === "medium") {
       return [
-        { centerXRatio: 0.38, floorYRatio: 0.91, sizeScale: 1.04 },
-        { centerXRatio: 0.7, floorYRatio: 0.92, sizeScale: 1.0 }
+        { centerXRatio: 0.32, floorYRatio: 0.92, sizeScale: 0.98 },
+        { centerXRatio: 0.76, floorYRatio: 0.93, sizeScale: 0.96 }
       ];
     }
     return [
@@ -5175,9 +5175,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
       class_type: "VAEEncode"
     };
 
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.18 : 0.24);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 0.94);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.94 : 0);
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.04 : 0.08);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.22 : 0.24);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.18 : 0);
     const sceneInputs =
       typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
       (sceneAdapterNode as Record<string, unknown>).inputs &&
@@ -5185,15 +5185,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
         ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
         : null;
     if (sceneInputs) {
-      sceneInputs.end_at = hasSecondCharacter ? 0.28 : 0.34;
+      sceneInputs.end_at = hasSecondCharacter ? 0.08 : 0.12;
     }
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
-      const target = hasSecondCharacter ? 0.18 : 0.22;
+      const target = hasSecondCharacter ? 0.08 : 0.12;
       samplerInputs.denoise =
         Number.isFinite(current) && current > 0 ? Math.min(current, target) : target;
-      const currentSteps = Number(samplerInputs.steps);
-      if (!Number.isFinite(currentSteps) || currentSteps < 24) samplerInputs.steps = 24;
+      samplerInputs.steps = 18;
     }
     return;
   }
