@@ -3135,6 +3135,127 @@ async function loadReferenceImageElement(pathOrUrl: string): Promise<HTMLImageEl
   });
 }
 
+async function loadComparableImageData(
+  pathOrUrl: string,
+  width = 96,
+  height = 54
+): Promise<ImageData | null> {
+  const image = await loadReferenceImageElement(pathOrUrl);
+  if (!image) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(image, 0, 0, width, height);
+  return context.getImageData(0, 0, width, height);
+}
+
+function averageImageDifference(left: ImageData, right: ImageData): number {
+  if (left.width !== right.width || left.height !== right.height) return Number.POSITIVE_INFINITY;
+  const leftData = left.data;
+  const rightData = right.data;
+  if (leftData.length !== rightData.length || leftData.length === 0) return Number.POSITIVE_INFINITY;
+  let total = 0;
+  for (let index = 0; index < leftData.length; index += 4) {
+    total += Math.abs((leftData[index] ?? 0) - (rightData[index] ?? 0));
+    total += Math.abs((leftData[index + 1] ?? 0) - (rightData[index + 1] ?? 0));
+    total += Math.abs((leftData[index + 2] ?? 0) - (rightData[index + 2] ?? 0));
+  }
+  return total / ((leftData.length / 4) * 3);
+}
+
+async function compareImageSources(leftSource: string, rightSource: string): Promise<number | null> {
+  const [left, right] = await Promise.all([loadComparableImageData(leftSource), loadComparableImageData(rightSource)]);
+  if (!left || !right) return null;
+  return averageImageDifference(left, right);
+}
+
+function resolveInputTokenSourcePath(settings: ComfySettings, tokenValue: string): string {
+  const trimmed = tokenValue.trim();
+  if (!trimmed) return "";
+  if (canUseAbsoluteLocalPath(trimmed)) return trimmed;
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) return trimmed;
+  return `${inputDir.replace(/\/+$/, "")}/${trimmed.replace(/^\/+/, "")}`;
+}
+
+function hasStoryboardCharacterSeed(tokens: Record<string, string>): boolean {
+  return Boolean(
+    String(tokens.CHAR1_PRIMARY_PATH ?? tokens.CHAR1_FRONT_PATH ?? "").trim() ||
+      String(tokens.CHAR2_PRIMARY_PATH ?? tokens.CHAR2_FRONT_PATH ?? "").trim()
+  );
+}
+
+function toStableMediaPreviewUrl(source: string): string {
+  const mediaSource = toDesktopMediaSource(source).trim();
+  if (!mediaSource) return source;
+  if (/^(https?:|blob:|data:|file:|asset:)/i.test(mediaSource)) return mediaSource;
+  if (mediaSource.startsWith("/") && typeof window !== "undefined" && window.location?.origin) {
+    try {
+      return new URL(mediaSource, window.location.origin).toString();
+    } catch {
+      return mediaSource;
+    }
+  }
+  return mediaSource;
+}
+
+async function materializeStoryboardFallbackStill(
+  settings: ComfySettings,
+  shot: Shot,
+  sourcePath: string,
+  label: string
+): Promise<{ previewUrl: string; localPath: string }> {
+  const targetPath = localStillCachePath(settings, `${shot.id}_${label}`, sourcePath);
+  const copied = await invokeDesktop<FileWriteResult>("copy_file_to", {
+    sourcePath,
+    targetPath
+  });
+  return {
+    previewUrl: toStableMediaPreviewUrl(copied.filePath),
+    localPath: copied.filePath
+  };
+}
+
+async function maybeFallbackToStoryboardComposite(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>,
+  generatedLocalPath: string,
+  kind: "image" | "video" | "audio",
+  assetOutputContext: AssetOutputContext | null
+): Promise<{ previewUrl: string; localPath: string } | null> {
+  if (kind !== "image" || assetOutputContext || !canProcessStoryboardReferenceImages()) return null;
+  if (!hasStoryboardCharacterSeed(tokens)) return null;
+  const framePath = resolveInputTokenSourcePath(settings, String(tokens.FRAME_IMAGE_PATH ?? ""));
+  const scenePath = resolveInputTokenSourcePath(settings, String(tokens.SCENE_REF_PATH ?? ""));
+  if (!canUseAbsoluteLocalPath(framePath) || !canUseAbsoluteLocalPath(scenePath) || !canUseAbsoluteLocalPath(generatedLocalPath)) {
+    return null;
+  }
+  const [frameSceneDiff, outputSceneDiff, outputFrameDiff] = await Promise.all([
+    compareImageSources(framePath, scenePath),
+    compareImageSources(generatedLocalPath, scenePath),
+    compareImageSources(generatedLocalPath, framePath)
+  ]);
+  if (
+    frameSceneDiff === null ||
+    outputSceneDiff === null ||
+    outputFrameDiff === null ||
+    !Number.isFinite(frameSceneDiff) ||
+    !Number.isFinite(outputSceneDiff) ||
+    !Number.isFinite(outputFrameDiff)
+  ) {
+    return null;
+  }
+  const frameCarriesVisibleCharacters = frameSceneDiff >= 8;
+  const outputCollapsedToScene =
+    outputSceneDiff <= Math.max(7, frameSceneDiff * 0.5) &&
+    outputFrameDiff >= Math.max(outputSceneDiff * 1.25, 10);
+  if (!frameCarriesVisibleCharacters || !outputCollapsedToScene) return null;
+  return materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_fallback");
+}
+
 function estimateBorderBackgroundColor(context: CanvasRenderingContext2D, width: number, height: number) {
   const frame = context.getImageData(0, 0, width, height);
   const data = frame.data;
@@ -5938,6 +6059,17 @@ export async function generateShotAsset(
       throw new Error("任务完成但未找到输出文件");
     }
     const localPath = await materializeOutputAssetPath(settings, chosen);
+    const storyboardFallback = await maybeFallbackToStoryboardComposite(
+      settings,
+      shot,
+      tokens,
+      localPath,
+      kind,
+      assetOutputContext
+    );
+    if (storyboardFallback) {
+      return storyboardFallback;
+    }
     return {
       previewUrl: kind === "audio" ? localPath || toComfyViewUrl(settings.baseUrl, chosen) : toComfyViewUrl(settings.baseUrl, chosen),
       localPath
