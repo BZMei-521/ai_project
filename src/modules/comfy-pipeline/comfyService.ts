@@ -3250,8 +3250,8 @@ async function maybeFallbackToStoryboardComposite(
   }
   const frameCarriesVisibleCharacters = frameSceneDiff >= 8;
   const outputCollapsedToScene =
-    outputSceneDiff <= Math.max(7, frameSceneDiff * 0.5) &&
-    outputFrameDiff >= Math.max(outputSceneDiff * 1.25, 10);
+    outputSceneDiff <= Math.max(10, frameSceneDiff * 0.78) &&
+    outputFrameDiff >= Math.max(8, outputSceneDiff * 1.12, frameSceneDiff * 0.28);
   if (!frameCarriesVisibleCharacters || !outputCollapsedToScene) return null;
   return materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_fallback");
 }
@@ -3337,6 +3337,78 @@ async function buildCharacterCutoutCanvas(pathOrUrl: string): Promise<HTMLCanvas
   return cutoutCanvas;
 }
 
+function clampChannel(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function sampleSceneRegionColor(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): { r: number; g: number; b: number } {
+  const safeX = Math.max(0, Math.min(context.canvas.width - 1, Math.round(x)));
+  const safeY = Math.max(0, Math.min(context.canvas.height - 1, Math.round(y)));
+  const safeWidth = Math.max(1, Math.min(context.canvas.width - safeX, Math.round(width)));
+  const safeHeight = Math.max(1, Math.min(context.canvas.height - safeY, Math.round(height)));
+  const image = context.getImageData(safeX, safeY, safeWidth, safeHeight);
+  const data = image.data;
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = (data[index + 3] ?? 0) / 255;
+    if (alpha <= 0.05) continue;
+    sumR += (data[index] ?? 0) * alpha;
+    sumG += (data[index + 1] ?? 0) * alpha;
+    sumB += (data[index + 2] ?? 0) * alpha;
+    count += alpha;
+  }
+  if (count <= 0) return { r: 180, g: 180, b: 180 };
+  return {
+    r: sumR / count,
+    g: sumG / count,
+    b: sumB / count
+  };
+}
+
+function buildIntegratedCharacterCanvas(
+  cutout: HTMLCanvasElement,
+  drawWidth: number,
+  drawHeight: number,
+  sceneTint: { r: number; g: number; b: number }
+): HTMLCanvasElement | null {
+  const width = Math.max(1, Math.round(drawWidth));
+  const height = Math.max(1, Math.round(drawHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(cutout, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  const data = image.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = (data[index + 3] ?? 0) / 255;
+    if (alpha <= 0.01) continue;
+    const originalR = data[index] ?? 0;
+    const originalG = data[index + 1] ?? 0;
+    const originalB = data[index + 2] ?? 0;
+    const luma = originalR * 0.299 + originalG * 0.587 + originalB * 0.114;
+    const softenedR = luma * 0.08 + originalR * 0.92;
+    const softenedG = luma * 0.08 + originalG * 0.92;
+    const softenedB = luma * 0.08 + originalB * 0.92;
+    data[index] = clampChannel(softenedR * 0.9 + sceneTint.r * 0.1);
+    data[index + 1] = clampChannel(softenedG * 0.9 + sceneTint.g * 0.1);
+    data[index + 2] = clampChannel(softenedB * 0.9 + sceneTint.b * 0.1);
+    data[index + 3] = clampChannel((data[index + 3] ?? 255) * 0.96);
+  }
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
 function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" | "default" {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
   const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot", "close-up"]);
@@ -3381,8 +3453,8 @@ function inferStoryboardCompositeLayout(
   if (count >= 2) {
     if (scale === "wide") {
       return [
-        { centerXRatio: 0.28, floorYRatio: 0.91, sizeScale: 0.9 },
-        { centerXRatio: 0.8, floorYRatio: 0.92, sizeScale: 0.94 }
+        { centerXRatio: 0.18, floorYRatio: 0.92, sizeScale: 0.86 },
+        { centerXRatio: 0.84, floorYRatio: 0.92, sizeScale: 0.9 }
       ];
     }
     if (scale === "close") {
@@ -3457,13 +3529,30 @@ async function buildStoryboardCompositeReference(
     const floorY = sceneHeight * placement.floorYRatio;
     const drawX = Math.round(centerX - drawWidth / 2);
     const drawY = Math.round(floorY - drawHeight);
+    const sceneTint = sampleSceneRegionColor(
+      context,
+      drawX,
+      drawY + drawHeight * 0.25,
+      drawWidth,
+      drawHeight * 0.7
+    );
+    const integratedCutout = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint);
     context.save();
     context.fillStyle = "rgba(0,0,0,0.16)";
     context.beginPath();
     context.ellipse(centerX, floorY + 3, Math.max(18, drawWidth * 0.18), Math.max(8, drawWidth * 0.06), 0, 0, Math.PI * 2);
     context.fill();
+    if (integratedCutout) {
+      context.globalAlpha = 0.18;
+      context.filter = "blur(2px)";
+      context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
+      context.globalAlpha = 1;
+      context.filter = "none";
+      context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
+    } else {
+      context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
+    }
     context.restore();
-    context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
   });
 
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
