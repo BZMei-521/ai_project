@@ -2240,6 +2240,27 @@ function characterReferenceViewLabel(view: CharacterReferenceView): string {
   return view;
 }
 
+function containsKeywordWithNegativeContext(
+  raw: string,
+  keyword: string,
+  negativePrefixes: string[]
+): boolean {
+  const text = raw.toLowerCase();
+  const needle = keyword.toLowerCase();
+  let startIndex = 0;
+  while (startIndex < text.length) {
+    const matchIndex = text.indexOf(needle, startIndex);
+    if (matchIndex < 0) return false;
+    const contextStart = Math.max(0, matchIndex - 24);
+    const context = text.slice(contextStart, matchIndex).trim();
+    if (!negativePrefixes.some((prefix) => context.endsWith(prefix))) {
+      return true;
+    }
+    startIndex = matchIndex + needle.length;
+  }
+  return false;
+}
+
 function shotCameraDescriptor(shot: Shot): string {
   const yaw = typeof shot.cameraYaw === "number" && Number.isFinite(shot.cameraYaw) ? shot.cameraYaw : undefined;
   const pitch = typeof shot.cameraPitch === "number" && Number.isFinite(shot.cameraPitch) ? shot.cameraPitch : undefined;
@@ -2265,7 +2286,38 @@ function inferCharacterReferencePlan(shot: Shot): {
     .join(" ")
     .toLowerCase();
 
-  const prefersBack = containsAnyKeyword(corpus, [
+  const frontPreferred = containsAnyKeyword(corpus, [
+    "正面",
+    "正朝镜头",
+    "朝向镜头",
+    "面向镜头",
+    "面对镜头",
+    "正对镜头",
+    "面向画面",
+    "front-facing",
+    "front facing",
+    "facing camera",
+    "toward camera",
+    "towards camera",
+    "mostly front-facing",
+    "mostly front facing"
+  ]);
+
+  const backNegated = [
+    "不要",
+    "不能",
+    "不是",
+    "避免",
+    "别",
+    "禁止",
+    "rather than",
+    "instead of",
+    "not ",
+    "no ",
+    "avoid ",
+    "without "
+  ];
+  const backPositiveKeywords = [
     "背影",
     "背面",
     "背对",
@@ -2273,10 +2325,16 @@ function inferCharacterReferencePlan(shot: Shot): {
     "背身",
     "back view",
     "back-facing",
+    "back facing",
     "rear view",
     "from behind",
     "seen from behind"
-  ]);
+  ];
+  const prefersBack = backPositiveKeywords.some((keyword) => containsKeywordWithNegativeContext(corpus, keyword, backNegated));
+  if (frontPreferred && !prefersBack) {
+    return { primaryView: "front", secondaryViews: ["side", "back"] };
+  }
+
   if (prefersBack) {
     return { primaryView: "back", secondaryViews: ["side", "front"] };
   }
