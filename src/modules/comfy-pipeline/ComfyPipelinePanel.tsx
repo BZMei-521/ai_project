@@ -6894,23 +6894,6 @@ export function ComfyPipelinePanel() {
     if (!context) return pathOrUrl;
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
-    const mirroredSource =
-      face === "back"
-        ? (() => {
-            const mirrorCanvas = document.createElement("canvas");
-            mirrorCanvas.width = width;
-            mirrorCanvas.height = height;
-            const mirrorContext = mirrorCanvas.getContext("2d");
-            if (!mirrorContext) return image;
-            mirrorContext.imageSmoothingEnabled = true;
-            mirrorContext.imageSmoothingQuality = "high";
-            mirrorContext.translate(width, 0);
-            mirrorContext.scale(-1, 1);
-            mirrorContext.drawImage(image, 0, 0, width, height);
-            return mirrorCanvas;
-          })()
-        : image;
-
     // Use face-specific crop windows instead of tiny pans so each direction
     // starts from a distinct, full-frame reference without black borders.
     let cropX = 0;
@@ -6919,20 +6902,20 @@ export function ComfyPipelinePanel() {
     let cropHeight = height;
 
     if (face === "right") {
-      cropX = Math.round(width * 0.24);
-      cropWidth = Math.round(width * 0.66);
+      cropX = Math.round(width * 0.34);
+      cropWidth = Math.round(width * 0.54);
       cropY = Math.round(height * 0.02);
       cropHeight = Math.round(height * 0.94);
     } else if (face === "left") {
-      cropX = Math.round(width * 0.04);
-      cropWidth = Math.round(width * 0.66);
+      cropX = Math.round(width * 0.02);
+      cropWidth = Math.round(width * 0.54);
       cropY = Math.round(height * 0.02);
       cropHeight = Math.round(height * 0.94);
     } else if (face === "back") {
-      cropX = Math.round(width * 0.10);
-      cropWidth = Math.round(width * 0.80);
-      cropY = Math.round(height * 0.04);
-      cropHeight = Math.round(height * 0.90);
+      cropX = Math.round(width * 0.18);
+      cropWidth = Math.round(width * 0.64);
+      cropY = Math.round(height * 0.06);
+      cropHeight = Math.round(height * 0.86);
     } else if (face === "up") {
       cropX = Math.round(width * 0.06);
       cropWidth = Math.round(width * 0.88);
@@ -6949,8 +6932,15 @@ export function ComfyPipelinePanel() {
     cropY = Math.max(0, Math.min(height - 1, cropY));
     cropWidth = Math.max(1, Math.min(width - cropX, cropWidth));
     cropHeight = Math.max(1, Math.min(height - cropY, cropHeight));
-
-    context.drawImage(mirroredSource, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
+    if (face === "back") {
+      context.save();
+      context.translate(width, 0);
+      context.scale(-1, 1);
+      context.drawImage(image, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
+      context.restore();
+    } else {
+      context.drawImage(image, cropX, cropY, cropWidth, cropHeight, 0, 0, width, height);
+    }
 
     const filePath = buildSkyboxFaceReferenceVariantOutputPath(trimmed, face);
     if (!filePath) return pathOrUrl;
@@ -9883,6 +9873,16 @@ export function ComfyPipelinePanel() {
         };
         for (const face of ["right", "back", "left", "up", "down"] as const) {
           try {
+            const faceDirective =
+              face === "right"
+                ? "镜头沿河道向右偏移，右岸步道和树线更明显，石桥不再居中。"
+                : face === "left"
+                  ? "镜头沿河道向左偏移，左岸柳树和岸线更明显，石桥不再居中。"
+                  : face === "back"
+                    ? "这是背向视角，不再正对石桥正面，而是看到桥后空间、背向岸线和反向延伸的河道。"
+                    : face === "up"
+                      ? "抬高视角，更多天空、树冠和桥顶结构，减少近处水面。"
+                      : "压低视角，更多近处水面、岸边石路和桥下反射，减少天空。";
             const faceReferencePath = await createSkyboxFaceReferenceVariant(approvedFrontPath, face);
             const faceUpdate = await generateSkyboxFaceUpdate(
               {
@@ -9893,7 +9893,7 @@ export function ComfyPipelinePanel() {
               },
               styledDescription,
               face,
-              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一现代国漫画风、同一空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。不要与 front 完全相同，必须体现 ${face} 方向的连续空间变化。不是像素风，不是 blocky，不是 mosaic。`,
+              `以已通过质检的河边正面建立场景板为基准，生成 ${face} 面连续环境。保持同一时间、同一地点、同一现代国漫画风、同一空间结构；不要出现人物，不要跑成室内、建筑外景、浅溪乱石。不要与 front 完全相同，必须体现 ${face} 方向的连续空间变化。${faceDirective} 不是像素风，不是 blocky，不是 mosaic。`,
               sceneName,
               {
                 sourceFramePath: faceReferencePath,
