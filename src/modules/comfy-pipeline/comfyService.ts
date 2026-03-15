@@ -3036,18 +3036,29 @@ function firstDistinctBucketRef(
   return refs.find((item) => predicate(item) && !excludedBuckets.has(item.bucket) && !usedSources.has(item.source.trim()));
 }
 
-function adjustStoryboardReferenceWeight(ref: WeightedImageRef): WeightedImageRef {
+function adjustStoryboardReferenceWeight(
+  shot: Shot,
+  ref: WeightedImageRef,
+  selectedRefs: WeightedImageRef[]
+): WeightedImageRef {
+  const availableCharacterNames = selectedRefs
+    .filter((item) => item.role.startsWith("character_"))
+    .map((item) => extractCharacterNameFromReferenceLabel(item.label))
+    .filter((item) => item.length > 0);
+  const focusedCharacterName = inferStoryboardFocusedCharacterName(shot, availableCharacterNames);
+  const refCharacterName = extractCharacterNameFromReferenceLabel(ref.label);
+  const hasCompositeGuide = selectedRefs.some((item) => item.label === "scene_character_composite");
   if (ref.label === "scene_character_composite") {
     return {
       ...ref,
-      weight: 0.34,
+      weight: 0.28,
       priority: Math.min(ref.priority, 300)
     };
   }
   if (ref.label === "character_identity_board") {
     return {
       ...ref,
-      weight: 0.24,
+      weight: focusedCharacterName ? 0.18 : 0.28,
       priority: Math.min(ref.priority, 280)
     };
   }
@@ -3058,15 +3069,22 @@ function adjustStoryboardReferenceWeight(ref: WeightedImageRef): WeightedImageRe
     };
   }
   if (ref.role === "character_front" || ref.role === "character_side" || ref.role === "character_back") {
+    if (hasCompositeGuide && focusedCharacterName && refCharacterName === focusedCharacterName) {
+      return {
+        ...ref,
+        weight: Math.max(ref.weight, 0.58),
+        priority: Math.max(ref.priority, 295)
+      };
+    }
     return {
       ...ref,
-      weight: Math.min(ref.weight, 0.42)
+      weight: Math.min(ref.weight, hasCompositeGuide ? 0.36 : 0.48)
     };
   }
   return ref;
 }
 
-function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImageRef[] {
+function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
   if (refs.length <= 3) return refs.slice(0, 3);
   const ordered = [...refs].sort((left, right) => {
     const priorityDelta = right.priority - left.priority;
@@ -3084,6 +3102,14 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
         (item.role === "scene_primary" || item.role === "scene_secondary") && item.label !== "scene_character_composite"
     ) ??
     ordered.find((item) => item.role === "continuity_scene");
+  const focusedCharacterName = inferStoryboardFocusedCharacterName(
+    shot,
+    characters.map((item) => extractCharacterNameFromReferenceLabel(item.label)).filter((item) => item.length > 0)
+  );
+  const focusedCharacterRef =
+    focusedCharacterName
+      ? characters.find((item) => extractCharacterNameFromReferenceLabel(item.label) === focusedCharacterName)
+      : undefined;
   if (composite) {
     const selectedWithComposite: WeightedImageRef[] = [];
     const usedSources = new Set<string>();
@@ -3094,6 +3120,10 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
     if (!usedSources.has(composite.source.trim())) {
       selectedWithComposite.push(composite);
       usedSources.add(composite.source.trim());
+    }
+    if (selectedWithComposite.length < 3 && focusedCharacterRef && !usedSources.has(focusedCharacterRef.source.trim())) {
+      selectedWithComposite.push(focusedCharacterRef);
+      usedSources.add(focusedCharacterRef.source.trim());
     }
     if (selectedWithComposite.length < 3 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
       selectedWithComposite.push(identityBoard);
@@ -3186,12 +3216,20 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
   const continuityScene = continuity.filter((item) => item.role === "continuity_scene");
   const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
+  const focusedCharacterName = inferStoryboardFocusedCharacterName(
+    shot,
+    characters.map((item) => extractCharacterNameFromReferenceLabel(item.label)).filter((item) => item.length > 0)
+  );
+  const focusedCharacterRef =
+    focusedCharacterName
+      ? characters.find((item) => extractCharacterNameFromReferenceLabel(item.label) === focusedCharacterName)
+      : undefined;
   if (composite.length > 0) {
     return [
       ...scenes.slice(0, 1),
       ...composite.slice(0, 1),
-      ...identityBoards.slice(0, 1),
-      ...characters.slice(0, 1),
+      ...(focusedCharacterRef ? [focusedCharacterRef] : identityBoards.slice(0, 1)),
+      ...characters.filter((item) => item !== focusedCharacterRef).slice(0, focusedCharacterRef ? 0 : 1),
       ...continuityScene,
       ...continuityCharacter
     ].slice(0, 3);
@@ -3633,19 +3671,27 @@ function buildStoryboardGuideCharacterCanvas(
 async function buildStoryboardIdentityBoardReference(
   shot: Shot,
   refs: WeightedImageRef[],
-  inputDir: string
+  inputDir: string,
+  assets: Asset[]
 ): Promise<WeightedImageRef | null> {
   if (!canProcessStoryboardReferenceImages()) return null;
-  const characterRefs = refs
-    .filter((item) => item.role.startsWith("character_"))
-    .sort((left, right) => right.priority - left.priority)
+  const selectedCharacters = (shot.characterRefs ?? [])
+    .map((id) => assets.find((item) => item.id === id && item.type === "character"))
+    .filter((item): item is Asset => Boolean(item))
     .slice(0, 2);
-  if (characterRefs.length < 2) return null;
+  if (selectedCharacters.length < 2) return null;
 
   const crops = (
     await Promise.all(
-      characterRefs.map(async (item) => {
-        const cutout = await buildCharacterCutoutCanvas(item.source);
+      selectedCharacters.map(async (asset) => {
+        const preferredSource =
+          asset.characterFrontPath?.trim() ||
+          refs.find((item) => item.bucket === `character:${asset.id}` && item.role === "character_front")?.source?.trim() ||
+          asset.filePath?.trim() ||
+          refs.find((item) => item.bucket === `character:${asset.id}`)?.source?.trim() ||
+          "";
+        if (!preferredSource) return null;
+        const cutout = await buildCharacterCutoutCanvas(preferredSource);
         if (!cutout) return null;
         const cropHeight = Math.max(1, Math.round(cutout.height * 0.62));
         const cropCanvas = document.createElement("canvas");
@@ -3746,47 +3792,258 @@ function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number 
   return 0.44;
 }
 
+function extractCharacterNameFromReferenceLabel(label: string): string {
+  return label.split(":")[0]?.trim() ?? "";
+}
+
+function collectCharacterMentionContexts(corpus: string, name: string): string[] {
+  const text = corpus.toLowerCase();
+  const needle = name.trim().toLowerCase();
+  if (!needle) return [text];
+  const contexts: string[] = [];
+  let startIndex = 0;
+  while (startIndex < text.length) {
+    const matchIndex = text.indexOf(needle, startIndex);
+    if (matchIndex < 0) break;
+    const contextStart = Math.max(0, matchIndex - 64);
+    const contextEnd = Math.min(text.length, matchIndex + needle.length + 64);
+    contexts.push(text.slice(contextStart, contextEnd));
+    startIndex = matchIndex + needle.length;
+  }
+  return contexts.length > 0 ? contexts : [text];
+}
+
+function corpusHasAnyKeyword(corpus: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => corpus.includes(keyword));
+}
+
+function contextsHaveAnyKeyword(contexts: string[], keywords: string[]): boolean {
+  return contexts.some((context) => containsAnyKeyword(context, keywords));
+}
+
+function inferStoryboardFocusedCharacterName(
+  shot: Shot,
+  availableNames: string[]
+): string | null {
+  if (availableNames.length === 0) return null;
+  const title = (shot.title ?? "").toLowerCase();
+  const dialogue = (shot.dialogue ?? "").toLowerCase();
+  const notes = (shot.notes ?? "").toLowerCase();
+  const prompt = compactTextParts(shot.storyPrompt, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
+  let bestName = "";
+  let bestScore = 0;
+  let tie = false;
+  for (const rawName of availableNames) {
+    const name = rawName.trim();
+    if (!name) continue;
+    const needle = name.toLowerCase();
+    let score = 0;
+    if (title.includes(needle)) score += 4;
+    if (dialogue.includes(needle)) score += 3;
+    if (notes.includes(needle)) score += 2;
+    if (prompt.includes(needle)) score += 1;
+    if (score <= 0) continue;
+    if (score > bestScore) {
+      bestName = name;
+      bestScore = score;
+      tie = false;
+    } else if (score === bestScore) {
+      tie = true;
+    }
+  }
+  if (!bestName || tie) return null;
+  return bestName;
+}
+
+function applyClampedPlacement(
+  base: { centerXRatio: number; floorYRatio: number; sizeScale: number },
+  patch: Partial<{ centerXRatio: number; floorYRatio: number; sizeScale: number }>
+): { centerXRatio: number; floorYRatio: number; sizeScale: number } {
+  return {
+    centerXRatio: Math.min(0.92, Math.max(0.08, patch.centerXRatio ?? base.centerXRatio)),
+    floorYRatio: Math.min(0.96, Math.max(0.72, patch.floorYRatio ?? base.floorYRatio)),
+    sizeScale: Math.min(1.24, Math.max(0.48, patch.sizeScale ?? base.sizeScale))
+  };
+}
+
+function inferStoryboardCharacterPlacement(
+  shot: Shot,
+  characterName: string,
+  fallback: { centerXRatio: number; floorYRatio: number; sizeScale: number },
+  index: number,
+  count: number
+): { centerXRatio: number; floorYRatio: number; sizeScale: number } {
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? []));
+  const contexts = collectCharacterMentionContexts(corpus, characterName);
+  const lowerCorpus = corpus.toLowerCase();
+  const lowerName = characterName.toLowerCase();
+  const focusedName = inferStoryboardFocusedCharacterName(shot, [characterName]);
+  const isFocused = focusedName === characterName;
+  const isWideWalk = containsAnyKeyword(lowerCorpus, ["并肩", "walk", "walking", "side by side", "along the same riverside path"]);
+
+  let placement = { ...fallback };
+
+  if (contextsHaveAnyKeyword(contexts, ["left edge", "screen left edge", "画面左边缘", "左边缘"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: 0.18,
+      sizeScale: placement.sizeScale * 1.05
+    });
+  } else if (contextsHaveAnyKeyword(contexts, ["screen left", "left half", "画面左", "左半", "左侧", "左边", "屏幕左"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: count >= 2 ? 0.34 : 0.42
+    });
+  } else if (contextsHaveAnyKeyword(contexts, ["center-left", "centre-left", "screen center-left", "画面中左", "偏左", "左中"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: count >= 2 ? 0.42 : 0.46
+    });
+  } else if (contextsHaveAnyKeyword(contexts, ["right edge", "screen right edge", "画面右边缘", "右边缘"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: 0.82,
+      sizeScale: placement.sizeScale * 1.05
+    });
+  } else if (contextsHaveAnyKeyword(contexts, ["screen right", "right half", "画面右", "右半", "右侧", "右边", "屏幕右"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: count >= 2 ? 0.66 : 0.58
+    });
+  } else if (contextsHaveAnyKeyword(contexts, ["center-right", "centre-right", "screen center-right", "画面中右", "偏右", "右中"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: count >= 2 ? 0.58 : 0.54
+    });
+  } else if (contextsHaveAnyKeyword(contexts, ["center", "centre", "中间", "居中"])) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: 0.5
+    });
+  }
+
+  if (contextsHaveAnyKeyword(contexts, ["foreground shoulder", "前景肩", "foreground silhouette", "前景边缘提示", "blurred foreground shoulder"])) {
+    placement = applyClampedPlacement(placement, {
+      sizeScale: placement.sizeScale * 1.14,
+      floorYRatio: placement.floorYRatio + 0.02
+    });
+    if (placement.centerXRatio <= 0.5) {
+      placement = applyClampedPlacement(placement, { centerXRatio: 0.13 });
+    } else {
+      placement = applyClampedPlacement(placement, { centerXRatio: 0.87 });
+    }
+  }
+
+  if (contextsHaveAnyKeyword(contexts, [
+    "slightly in front",
+    "前面",
+    "在前",
+    "前景",
+    "主位",
+    "占主体",
+    "主体",
+    "focus on",
+    "focused on"
+  ]) || isFocused) {
+    placement = applyClampedPlacement(placement, {
+      floorYRatio: placement.floorYRatio + 0.015,
+      sizeScale: placement.sizeScale * 1.08
+    });
+  }
+
+  if (contextsHaveAnyKeyword(contexts, [
+    "half step behind",
+    "slightly behind",
+    "在后",
+    "后方",
+    "背景人物",
+    "secondary figure",
+    "smaller on screen",
+    "次要人物",
+    "更小"
+  ])) {
+    placement = applyClampedPlacement(placement, {
+      floorYRatio: placement.floorYRatio - 0.02,
+      sizeScale: placement.sizeScale * 0.84
+    });
+  }
+
+  if (isWideWalk && count >= 2) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: index === 0 ? 0.44 : 0.58,
+      floorYRatio: 0.9,
+      sizeScale: placement.sizeScale * 0.92
+    });
+  }
+
+  if (contextsHaveAnyKeyword(contexts, ["waterline", "岸边", "石路", "stone path", "沿河石路"])) {
+    placement = applyClampedPlacement(placement, {
+      floorYRatio: Math.min(0.92, placement.floorYRatio)
+    });
+  }
+
+  if (
+    characterName &&
+    lowerCorpus.includes(lowerName) &&
+    !contextsHaveAnyKeyword(contexts, ["left", "right", "左", "右", "中间", "center"]) &&
+    count === 2
+  ) {
+    placement = applyClampedPlacement(placement, {
+      centerXRatio: index === 0 ? 0.4 : 0.62
+    });
+  }
+
+  return placement;
+}
+
 function inferStoryboardCompositeLayout(
   shot: Shot,
-  count: number
+  characterRefs: WeightedImageRef[]
 ): Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }> {
+  const count = characterRefs.length;
   const scale = inferStoryboardCompositeScale(shot);
 
   if (count >= 2) {
     if (scale === "wide") {
-      return [
+      const wideBase = [
         { centerXRatio: 0.72, floorYRatio: 0.89, sizeScale: 0.74 },
         { centerXRatio: 0.85, floorYRatio: 0.91, sizeScale: 0.66 }
       ];
+      return characterRefs.map((ref, index) =>
+        inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), wideBase[index] ?? wideBase[wideBase.length - 1]!, index, count)
+      );
     }
     if (scale === "close") {
-      return [
+      const closeBase = [
         { centerXRatio: 0.56, floorYRatio: 0.9, sizeScale: 0.94 },
         { centerXRatio: 0.78, floorYRatio: 0.92, sizeScale: 0.82 }
       ];
+      return characterRefs.map((ref, index) =>
+        inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), closeBase[index] ?? closeBase[closeBase.length - 1]!, index, count)
+      );
     }
     if (scale === "medium") {
-      return [
+      const mediumBase = [
         { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 0.86 },
         { centerXRatio: 0.82, floorYRatio: 0.92, sizeScale: 0.8 }
       ];
+      return characterRefs.map((ref, index) =>
+        inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), mediumBase[index] ?? mediumBase[mediumBase.length - 1]!, index, count)
+      );
     }
-    return [
+    const defaultBase = [
       { centerXRatio: 0.64, floorYRatio: 0.89, sizeScale: 0.84 },
       { centerXRatio: 0.82, floorYRatio: 0.91, sizeScale: 0.78 }
     ];
+    return characterRefs.map((ref, index) =>
+      inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), defaultBase[index] ?? defaultBase[defaultBase.length - 1]!, index, count)
+    );
   }
 
+  const fallbackName = characterRefs[0] ? extractCharacterNameFromReferenceLabel(characterRefs[0].label) : "";
   if (scale === "close") {
-    return [{ centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 1.08 }];
+    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 1.08 }, 0, 1)];
   }
   if (scale === "medium") {
-    return [{ centerXRatio: 0.6, floorYRatio: 0.89, sizeScale: 1.0 }];
+    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.6, floorYRatio: 0.89, sizeScale: 1.0 }, 0, 1)];
   }
   if (scale === "wide") {
-    return [{ centerXRatio: 0.72, floorYRatio: 0.88, sizeScale: 0.94 }];
+    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.72, floorYRatio: 0.88, sizeScale: 0.94 }, 0, 1)];
   }
-  return [{ centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1.0 }];
+  return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1.0 }, 0, 1)];
 }
 
 async function buildStoryboardCompositeReference(
@@ -3835,7 +4092,10 @@ async function buildStoryboardCompositeReference(
   context.restore();
 
   const heightRatio = inferStoryboardCompositeHeightRatio(shot, cutouts.length);
-  const placements = inferStoryboardCompositeLayout(shot, cutouts.length);
+  const placements = inferStoryboardCompositeLayout(
+    shot,
+    cutouts.map(({ ref }) => ref)
+  );
   cutouts.forEach(({ canvas: cutout }, index) => {
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1 };
     const targetHeight = sceneHeight * heightRatio * placement.sizeScale;
@@ -3924,7 +4184,7 @@ async function stageCharacterReferenceImages(
   shot: Shot,
   refs: WeightedImageRef[]
 ): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
-  let selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(refs));
+  let selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(shot, refs));
   if (selectedRefs.length === 0) return [];
   const inputDir = inferComfyInputDir(settings);
   if (!inputDir) {
@@ -3944,7 +4204,7 @@ async function stageCharacterReferenceImages(
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
   for (let index = 0; index < selectedRefs.length; index += 1) {
-    const tuned = adjustStoryboardReferenceWeight(selectedRefs[index]!);
+    const tuned = adjustStoryboardReferenceWeight(shot, selectedRefs[index]!, selectedRefs);
     const { source, weight, role, label } = tuned;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
@@ -6404,7 +6664,7 @@ export async function generateShotAsset(
         if (inputDir) {
           const [compositeRef, identityBoardRef] = await Promise.all([
             buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
-            buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir)
+            buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
           if (compositeRef?.source) {
             imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
@@ -6575,7 +6835,7 @@ export async function generateShotAssetOutputs(
         if (inputDir) {
           const [compositeRef, identityBoardRef] = await Promise.all([
             buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
-            buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir)
+            buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
           if (compositeRef?.source) {
             imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
