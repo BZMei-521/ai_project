@@ -3255,8 +3255,8 @@ async function maybeFallbackToStoryboardComposite(
   }
   const frameCarriesVisibleCharacters = frameSceneDiff >= 8;
   const outputCollapsedToScene =
-    outputSceneDiff <= Math.max(14, frameSceneDiff * 0.94) &&
-    outputFrameDiff >= Math.max(4, outputSceneDiff * 0.72, frameSceneDiff * 0.16);
+    outputSceneDiff <= Math.max(8, frameSceneDiff * 0.72) &&
+    outputFrameDiff >= Math.max(10, outputSceneDiff * 1.15, frameSceneDiff * 0.42);
   if (!frameCarriesVisibleCharacters || !outputCollapsedToScene) return null;
   return materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_fallback");
 }
@@ -3466,8 +3466,7 @@ function buildIntegratedCharacterCanvas(
   return canvas;
 }
 
-function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" | "default" {
-  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
+function inferStoryboardCompositeScaleFromCorpus(corpus: string): "wide" | "medium" | "close" | "default" {
   const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot", "close-up"]);
   const isMedium = containsAnyKeyword(corpus, [
     "中景",
@@ -3485,6 +3484,11 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
   if (isMedium) return "medium";
   if (isWide) return "wide";
   return "default";
+}
+
+function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" | "default" {
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.tags).toLowerCase();
+  return inferStoryboardCompositeScaleFromCorpus(corpus);
 }
 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
@@ -5412,6 +5416,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
   const hasSecondCharacter = char2PrimaryPath.length > 0;
+  const compositeScale = inferStoryboardCompositeScaleFromCorpus(
+    compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
+  );
   const samplerInputs =
     typeof (samplerNode as Record<string, unknown>).inputs === "object" &&
     (samplerNode as Record<string, unknown>).inputs &&
@@ -5428,9 +5435,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   };
 
   if (frameImagePath.length > 0) {
-    // When characters are present, start from a lightweight scene+character layout
-    // plate so the final shot keeps readable subject placement instead of collapsing
-    // into a pure environment board.
+    // When characters are present, use the composite as a layout/placement guide,
+    // not as the final look. Keep enough denoise so Comfy can repaint the people
+    // into the scene instead of tracing a sticker-like cutout.
     workflow["16"] = {
       inputs: {
         image: frameImagePath,
@@ -5446,9 +5453,21 @@ function adaptBuiltinStoryboardWorkflowForShot(
       class_type: "VAEEncode"
     };
 
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.04 : 0.08);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.22 : 0.24);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.18 : 0);
+    const denoiseTarget =
+      compositeScale === "close"
+        ? hasSecondCharacter
+          ? 0.26
+          : 0.3
+        : compositeScale === "medium"
+          ? hasSecondCharacter
+            ? 0.24
+            : 0.28
+          : hasSecondCharacter
+            ? 0.22
+            : 0.26;
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.18 : 0.24);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.42 : 0.48);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.38 : 0);
     const sceneInputs =
       typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
       (sceneAdapterNode as Record<string, unknown>).inputs &&
@@ -5456,14 +5475,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
         ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
         : null;
     if (sceneInputs) {
-      sceneInputs.end_at = hasSecondCharacter ? 0.08 : 0.12;
+      sceneInputs.end_at = hasSecondCharacter ? 0.34 : 0.42;
     }
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
-      const target = hasSecondCharacter ? 0.08 : 0.12;
+      const target = denoiseTarget;
       samplerInputs.denoise =
-        Number.isFinite(current) && current > 0 ? Math.min(current, target) : target;
-      samplerInputs.steps = 18;
+        Number.isFinite(current) && current > 0 ? Math.max(current, target) : target;
+      samplerInputs.steps = Math.max(24, Number(samplerInputs.steps) || 0);
     }
     return;
   }
