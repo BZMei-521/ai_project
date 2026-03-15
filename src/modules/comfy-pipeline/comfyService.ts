@@ -2802,7 +2802,10 @@ function buildQwenSlotInstruction(
       const slot = `Reference slot ${index + 1}`;
       const label = item.label?.trim() ?? "";
       if (label === "scene_character_composite") {
-        return `${slot} is a pre-composited scene-and-character layout guide; keep the character grounded in the environment, preserve approximate subject placement, and refine it into one coherent cinematic frame instead of copying it as a flat overlay.`;
+        return `${slot} is an abstract scene-and-character blocking guide; preserve approximate subject placement, eye-line, spacing, and grounding, but redraw the people naturally into the scene instead of copying the guide shapes or edges.`;
+      }
+      if (label === "character_identity_board") {
+        return `${slot} is a character identity board; use it only for face, hair, costume silhouette, and palette consistency across all characters, not for pose, framing, or white-background cutout shapes.`;
       }
       if (item.role === "scene_primary" || item.role === "scene_secondary") {
         return `${slot} is the binding environment reference${label ? ` (${label})` : ""}; keep location layout and camera direction aligned to it.`;
@@ -3027,13 +3030,27 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
     return right.weight - left.weight;
   });
   const composite = ordered.find((item) => item.label === "scene_character_composite");
-  const characters = ordered.filter((item) => item.role.startsWith("character_"));
+  const identityBoard = ordered.find((item) => item.label === "character_identity_board");
+  const characters = ordered.filter(
+    (item) => item.role.startsWith("character_") && item.label !== "character_identity_board"
+  );
   const primaryScene =
-    ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary") ??
+    ordered.find(
+      (item) =>
+        (item.role === "scene_primary" || item.role === "scene_secondary") && item.label !== "scene_character_composite"
+    ) ??
     ordered.find((item) => item.role === "continuity_scene");
   if (composite) {
     const selectedWithComposite: WeightedImageRef[] = [composite];
     const usedSources = new Set<string>([composite.source.trim()]);
+    if (primaryScene && !usedSources.has(primaryScene.source.trim())) {
+      selectedWithComposite.push(primaryScene);
+      usedSources.add(primaryScene.source.trim());
+    }
+    if (selectedWithComposite.length < 3 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
+      selectedWithComposite.push(identityBoard);
+      usedSources.add(identityBoard.source.trim());
+    }
     const usedCharacterBuckets = new Set<string>();
     for (const characterRef of characters) {
       if (selectedWithComposite.length >= 3) break;
@@ -3042,15 +3059,12 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
       usedSources.add(characterRef.source.trim());
       usedCharacterBuckets.add(characterRef.bucket);
     }
-    if (selectedWithComposite.length < 3 && primaryScene && !usedSources.has(primaryScene.source.trim())) {
-      selectedWithComposite.push(primaryScene);
-      usedSources.add(primaryScene.source.trim());
-    }
     return selectedWithComposite.slice(0, 3);
   }
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
   pushUniqueWeightedRef(selected, usedSources, primaryScene);
+  pushUniqueWeightedRef(selected, usedSources, identityBoard);
   const usedCharacterBuckets = new Set<string>();
   for (const characterRef of characters) {
     if (selected.length >= 3) break;
@@ -3114,25 +3128,44 @@ function shouldLeadWithSceneReference(shot: Shot): boolean {
 function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
   if (refs.length <= 1) return refs;
   const composite = refs.filter((item) => item.label === "scene_character_composite");
-  const characters = refs.filter((item) => item.role.startsWith("character_"));
-  const scenes = refs.filter((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+  const identityBoards = refs.filter((item) => item.label === "character_identity_board");
+  const characters = refs.filter(
+    (item) => item.role.startsWith("character_") && item.label !== "character_identity_board"
+  );
+  const scenes = refs.filter(
+    (item) => (item.role === "scene_primary" || item.role === "scene_secondary") && item.label !== "scene_character_composite"
+  );
   const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
   const continuityScene = continuity.filter((item) => item.role === "continuity_scene");
   const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
   if (composite.length > 0) {
-    return [...composite.slice(0, 1), ...characters.slice(0, 2), ...scenes.slice(0, 1), ...continuityScene, ...continuityCharacter].slice(0, 3);
+    return [
+      ...composite.slice(0, 1),
+      ...scenes.slice(0, 1),
+      ...identityBoards.slice(0, 1),
+      ...characters.slice(0, 1),
+      ...continuityScene,
+      ...continuityCharacter
+    ].slice(0, 3);
   }
   // Always keep environment anchor first when a scene/skybox reference exists.
   if (continuityScene.length > 0 && scenes.length > 0) {
-    return [...scenes.slice(0, 1), ...continuityScene.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter, ...characters.slice(1)].slice(0, 3);
+    return [
+      ...scenes.slice(0, 1),
+      ...continuityScene.slice(0, 1),
+      ...identityBoards.slice(0, 1),
+      ...characters.slice(0, 1),
+      ...continuityCharacter,
+      ...characters.slice(1)
+    ].slice(0, 3);
   }
   if (scenes.length > 0) {
-    return [...scenes.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1)].slice(0, 3);
+    return [...scenes.slice(0, 1), ...identityBoards.slice(0, 1), ...characters.slice(0, 1), ...continuity, ...scenes.slice(1), ...characters.slice(1)].slice(0, 3);
   }
   if (shouldLeadWithSceneReference(shot)) {
-    return [...continuityScene, ...characters.slice(0, 2), ...continuityCharacter].slice(0, 3);
+    return [...continuityScene, ...identityBoards.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter].slice(0, 3);
   }
-  return [...characters.slice(0, 2), ...continuity].slice(0, 3);
+  return [...identityBoards.slice(0, 1), ...characters.slice(0, 1), ...continuity].slice(0, 3);
 }
 
 function canProcessStoryboardReferenceImages(): boolean {
@@ -3486,6 +3519,135 @@ function buildIntegratedCharacterCanvas(
   return canvas;
 }
 
+function buildStoryboardGuideCharacterCanvas(
+  cutout: HTMLCanvasElement,
+  drawWidth: number,
+  drawHeight: number,
+  sceneTint: { r: number; g: number; b: number },
+  scenePatch?: HTMLCanvasElement | null
+): HTMLCanvasElement | null {
+  const width = Math.max(1, Math.round(drawWidth));
+  const height = Math.max(1, Math.round(drawHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(cutout, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  const data = image.data;
+  let patchData: Uint8ClampedArray | null = null;
+  if (scenePatch) {
+    const patchCanvas = document.createElement("canvas");
+    patchCanvas.width = width;
+    patchCanvas.height = height;
+    const patchContext = patchCanvas.getContext("2d");
+    if (patchContext) {
+      patchContext.drawImage(scenePatch, 0, 0, width, height);
+      patchData = patchContext.getImageData(0, 0, width, height).data;
+    }
+  }
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = (data[index + 3] ?? 0) / 255;
+    if (alpha <= 0.01) continue;
+    const pixel = index / 4;
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    const patchIndex = index;
+    const patchR = patchData?.[patchIndex] ?? sceneTint.r;
+    const patchG = patchData?.[patchIndex + 1] ?? sceneTint.g;
+    const patchB = patchData?.[patchIndex + 2] ?? sceneTint.b;
+    const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
+    const verticalRatio = height <= 1 ? 0 : y / Math.max(1, height - 1);
+    const silhouetteLuma = Math.max(34, Math.min(210, patchLuma * (0.46 - verticalRatio * 0.06)));
+    const edgeDistance = Math.min(x, y, Math.max(0, width - 1 - x), Math.max(0, height - 1 - y));
+    const edgeFade = edgeDistance >= 8 ? 1 : Math.max(0.74, edgeDistance / 8);
+    data[index] = clampChannel(silhouetteLuma * 0.94);
+    data[index + 1] = clampChannel(silhouetteLuma * 0.96);
+    data[index + 2] = clampChannel(silhouetteLuma);
+    data[index + 3] = clampChannel((data[index + 3] ?? 255) * 0.9 * edgeFade);
+  }
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
+async function buildStoryboardIdentityBoardReference(
+  shot: Shot,
+  refs: WeightedImageRef[],
+  inputDir: string
+): Promise<WeightedImageRef | null> {
+  if (!canProcessStoryboardReferenceImages()) return null;
+  const characterRefs = refs
+    .filter((item) => item.role.startsWith("character_"))
+    .sort((left, right) => right.priority - left.priority)
+    .slice(0, 2);
+  if (characterRefs.length === 0) return null;
+
+  const crops = (
+    await Promise.all(
+      characterRefs.map(async (item) => {
+        const cutout = await buildCharacterCutoutCanvas(item.source);
+        if (!cutout) return null;
+        const cropHeight = Math.max(1, Math.round(cutout.height * 0.62));
+        const cropCanvas = document.createElement("canvas");
+        cropCanvas.width = cutout.width;
+        cropCanvas.height = cropHeight;
+        const cropContext = cropCanvas.getContext("2d");
+        if (!cropContext) return null;
+        cropContext.drawImage(cutout, 0, 0, cutout.width, cropHeight, 0, 0, cutout.width, cropHeight);
+        return cropCanvas;
+      })
+    )
+  ).filter((item): item is HTMLCanvasElement => Boolean(item));
+  if (crops.length === 0) return null;
+
+  const slotHeight = 420;
+  const gap = 28;
+  const padding = 28;
+  const slotWidth = 280;
+  const boardWidth = padding * 2 + slotWidth * crops.length + gap * Math.max(0, crops.length - 1);
+  const boardHeight = slotHeight + padding * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = boardWidth;
+  canvas.height = boardHeight;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.fillStyle = "rgb(244, 241, 236)";
+  context.fillRect(0, 0, boardWidth, boardHeight);
+
+  crops.forEach((crop, index) => {
+    const scale = Math.min(slotWidth / Math.max(1, crop.width), slotHeight / Math.max(1, crop.height));
+    const drawWidth = Math.round(crop.width * scale);
+    const drawHeight = Math.round(crop.height * scale);
+    const slotX = padding + index * (slotWidth + gap);
+    const drawX = slotX + Math.round((slotWidth - drawWidth) / 2);
+    const drawY = padding + Math.round((slotHeight - drawHeight) / 2);
+    context.save();
+    context.fillStyle = "rgba(0,0,0,0.04)";
+    context.fillRect(slotX, padding, slotWidth, slotHeight);
+    context.filter = "saturate(0.92) contrast(0.96) brightness(0.98)";
+    context.drawImage(crop, drawX, drawY, drawWidth, drawHeight);
+    context.restore();
+  });
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filePath = `${inputDir}/shot_${safeShotId}_character_identity_board.png`;
+  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath,
+    base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  });
+  if (!result.filePath) return null;
+  return {
+    source: result.filePath,
+    weight: 0.72,
+    priority: 360,
+    bucket: `scene_identity:${shot.id}`,
+    label: "character_identity_board",
+    role: "continuity_character"
+  };
+}
+
 function inferStoryboardCompositeScaleFromCorpus(corpus: string): "wide" | "medium" | "close" | "default" {
   const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot", "close-up"]);
   const isMedium = containsAnyKeyword(corpus, [
@@ -3618,23 +3780,23 @@ async function buildStoryboardCompositeReference(
       drawHeight * 0.7
     );
     const scenePatch = extractScenePatchCanvas(context, drawX, drawY, drawWidth, drawHeight);
-    const integratedCutout = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
+    const guideFigure = buildStoryboardGuideCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
     context.save();
-    context.fillStyle = "rgba(0,0,0,0.2)";
+    context.fillStyle = "rgba(0,0,0,0.14)";
     context.beginPath();
-    context.filter = "blur(6px)";
-    context.ellipse(centerX, floorY + 4, Math.max(20, drawWidth * 0.22), Math.max(10, drawWidth * 0.08), 0, 0, Math.PI * 2);
+    context.filter = "blur(10px)";
+    context.ellipse(centerX, floorY + 5, Math.max(18, drawWidth * 0.2), Math.max(8, drawWidth * 0.07), 0, 0, Math.PI * 2);
     context.fill();
-    if (integratedCutout) {
-      context.globalAlpha = 0.08;
-      context.filter = "blur(2px)";
-      context.drawImage(integratedCutout, drawX + 1, drawY + 1, drawWidth, drawHeight);
+    if (guideFigure) {
+      context.globalAlpha = 0.16;
+      context.filter = "blur(4px)";
+      context.drawImage(guideFigure, drawX + 1, drawY + 1, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "saturate(0.72) contrast(0.84) brightness(0.94)";
-      context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
+      context.filter = "contrast(0.94) brightness(0.96)";
+      context.drawImage(guideFigure, drawX, drawY, drawWidth, drawHeight);
     } else {
-      context.globalAlpha = 1;
-      context.filter = "saturate(0.76) contrast(0.86) brightness(0.95)";
+      context.globalAlpha = 0.92;
+      context.filter = "grayscale(1) contrast(0.88) brightness(0.94)";
       context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
     }
     context.restore();
@@ -6172,16 +6334,22 @@ export async function generateShotAsset(
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
-          const compositeRef = await buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir);
+          const [compositeRef, identityBoardRef] = await Promise.all([
+            buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
+            buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir)
+          ]);
           if (compositeRef?.source) {
-            imageReferenceSources = [
-              compositeRef,
-              ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())
-            ];
+            imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
             tokens = {
               ...tokens,
               FRAME_IMAGE_PATH: compositeRef.source
             };
+          }
+          if (identityBoardRef?.source) {
+            imageReferenceSources = [
+              ...imageReferenceSources.filter((item) => item.source.trim() !== identityBoardRef.source.trim()),
+              identityBoardRef
+            ];
           }
         }
       }
@@ -6337,16 +6505,22 @@ export async function generateShotAssetOutputs(
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
-          const compositeRef = await buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir);
+          const [compositeRef, identityBoardRef] = await Promise.all([
+            buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
+            buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir)
+          ]);
           if (compositeRef?.source) {
-            imageReferenceSources = [
-              compositeRef,
-              ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())
-            ];
+            imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
             tokens = {
               ...tokens,
               FRAME_IMAGE_PATH: compositeRef.source
             };
+          }
+          if (identityBoardRef?.source) {
+            imageReferenceSources = [
+              ...imageReferenceSources.filter((item) => item.source.trim() !== identityBoardRef.source.trim()),
+              identityBoardRef
+            ];
           }
         }
       }
