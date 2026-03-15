@@ -2620,10 +2620,55 @@ function buildShotReferenceDirective(
 function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `出镜硬要求：画面中必须出现角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证头部到躯干完整，不得只剩远处小人影或被树木建筑完全遮挡。`;
+    return `出镜硬要求：画面中必须且只能出现 1 名主要角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；禁止换成其他人、禁止多出陌生人、禁止把主体画成远处小人影。角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证头部到躯干完整。`;
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
-  return `出镜硬要求：画面中必须同时出现角色${names}，禁止生成为纯环境空镜；每个角色都需位于中前景且清晰可辨识，建议各自占画面高度至少约 25%，不允许只出现剪影、极远小人、严重裁切或被场景主体完全遮挡。`;
+  return `出镜硬要求：画面中必须且只能出现 ${characterAssets.length} 名角色${names}，禁止生成为纯环境空镜，禁止缺少任何一人，禁止出现第三人、路人、群演、重复人、融合人或身份互换；每个角色都需各自对应 1 名可辨识人物，不允许用同一张脸或同一套服装冒充两个人，也不允许只出现极远小人、严重裁切或被场景主体完全遮挡。`;
+}
+
+function storyboardScreenZoneLabel(centerXRatio: number): string {
+  if (centerXRatio <= 0.18) return "画面左边缘";
+  if (centerXRatio <= 0.36) return "画面左侧";
+  if (centerXRatio <= 0.47) return "画面中左";
+  if (centerXRatio < 0.53) return "画面中间";
+  if (centerXRatio < 0.66) return "画面中右";
+  if (centerXRatio < 0.82) return "画面右侧";
+  return "画面右边缘";
+}
+
+function storyboardDepthLabel(floorYRatio: number): string {
+  if (floorYRatio >= 0.92) return "更靠前";
+  if (floorYRatio >= 0.87) return "中前景";
+  if (floorYRatio >= 0.82) return "中景";
+  return "偏后";
+}
+
+function storyboardScaleLabel(sizeScale: number): string {
+  if (sizeScale >= 1.02) return "主体更大";
+  if (sizeScale <= 0.84) return "次要更小";
+  return "常规大小";
+}
+
+function buildStoryboardBlockingDirective(shot: Shot, characterAssets: Asset[]): string {
+  if (characterAssets.length === 0) return "";
+  const refs = characterAssets.map((asset) => ({
+    source: asset.characterFrontPath || asset.filePath || "",
+    weight: 1,
+    priority: 1,
+    bucket: `character:${asset.id}`,
+    label: `${asset.name}:front`,
+    role: "character_front" as WeightedImageRef["role"]
+  }));
+  const placements = inferStoryboardCompositeLayout(shot, refs);
+  const exactCountLine =
+    characterAssets.length === 1
+      ? `构图硬约束：本镜头只允许 1 名主体角色清晰可见，即“${characterAssets[0]!.name}”。`
+      : `构图硬约束：本镜头必须清晰呈现 ${characterAssets.length} 名角色，且人数必须与剧本一致，不得多也不得少。`;
+  const placementLines = characterAssets.map((asset, index) => {
+    const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.88, sizeScale: 1 };
+    return `站位硬约束：角色“${asset.name}”位于${storyboardScreenZoneLabel(placement.centerXRatio)}、${storyboardDepthLabel(placement.floorYRatio)}，画面尺度为${storyboardScaleLabel(placement.sizeScale)}；该角色不得缺失，不得被另一角色替代，也不得缩成不可辨识的小人。`;
+  });
+  return [exactCountLine, ...placementLines].join("\n");
 }
 
 function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
@@ -2800,7 +2845,7 @@ function buildQwenSlotInstruction(
 ): string {
   if (stagedRefs.length === 0) return "";
   const lines = stagedRefs
-    .slice(0, 4)
+    .slice(0, 6)
     .map((item, index) => {
       const slot = `Reference slot ${index + 1}`;
       const label = item.label?.trim() ?? "";
@@ -3065,41 +3110,41 @@ function adjustStoryboardReferenceWeight(
   if (ref.label === "character_identity_board") {
     return {
       ...ref,
-      weight: focusedCharacterName ? 0.2 : 0.34,
-      priority: Math.min(ref.priority, focusedCharacterName ? 270 : 300)
+      weight: focusedCharacterName ? 0.26 : 0.38,
+      priority: Math.min(ref.priority, focusedCharacterName ? 300 : 320)
     };
   }
   if (ref.role === "scene_primary" || ref.role === "scene_secondary") {
     return {
       ...ref,
-      weight: Math.max(ref.weight, hasCompositeGuide ? 0.88 : 1.0)
+      weight: Math.max(ref.weight, hasCompositeGuide ? 0.84 : 1.0)
     };
   }
   if (ref.role === "character_front" || ref.role === "character_side" || ref.role === "character_back") {
     if (hasCompositeGuide && focusedCharacterName && refCharacterName === focusedCharacterName) {
       return {
         ...ref,
-        weight: Math.max(ref.weight, 0.92),
-        priority: Math.max(ref.priority, 360)
+        weight: Math.max(ref.weight, 0.96),
+        priority: Math.max(ref.priority, 380)
       };
     }
     if (hasCompositeGuide && characterRefCount >= 2) {
       return {
         ...ref,
-        weight: Math.max(ref.weight, 0.8),
-        priority: Math.max(ref.priority, 330)
+        weight: Math.max(ref.weight, 0.88),
+        priority: Math.max(ref.priority, 350)
       };
     }
     return {
       ...ref,
-      weight: hasCompositeGuide ? Math.max(ref.weight, 0.74) : Math.min(ref.weight, 0.48)
+      weight: hasCompositeGuide ? Math.max(ref.weight, 0.82) : Math.min(ref.weight, 0.48)
     };
   }
   return ref;
 }
 
 function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
-  if (refs.length <= 4) return refs.slice(0, 4);
+  if (refs.length <= 5) return refs.slice(0, 5);
   const ordered = [...refs].sort((left, right) => {
     const priorityDelta = right.priority - left.priority;
     if (priorityDelta !== 0) return priorityDelta;
@@ -3142,17 +3187,17 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
     }
     const usedCharacterBuckets = new Set<string>();
     for (const characterRef of characters) {
-      if (selectedWithComposite.length >= 4) break;
+      if (selectedWithComposite.length >= 5) break;
       if (usedCharacterBuckets.has(characterRef.bucket) || usedSources.has(characterRef.source.trim())) continue;
       selectedWithComposite.push(characterRef);
       usedSources.add(characterRef.source.trim());
       usedCharacterBuckets.add(characterRef.bucket);
     }
-    if (selectedWithComposite.length < 4 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
+    if (selectedWithComposite.length < 5 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
       selectedWithComposite.push(identityBoard);
       usedSources.add(identityBoard.source.trim());
     }
-    return selectedWithComposite.slice(0, 4);
+    return selectedWithComposite.slice(0, 5);
   }
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
@@ -4056,8 +4101,8 @@ function inferStoryboardCompositeLayout(
   if (count >= 2) {
     if (scale === "wide") {
       const wideBase = [
-        { centerXRatio: 0.72, floorYRatio: 0.89, sizeScale: 0.74 },
-        { centerXRatio: 0.85, floorYRatio: 0.91, sizeScale: 0.66 }
+        { centerXRatio: 0.34, floorYRatio: 0.89, sizeScale: 0.74 },
+        { centerXRatio: 0.66, floorYRatio: 0.91, sizeScale: 0.68 }
       ];
       return characterRefs.map((ref, index) =>
         inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), wideBase[index] ?? wideBase[wideBase.length - 1]!, index, count)
@@ -4065,8 +4110,8 @@ function inferStoryboardCompositeLayout(
     }
     if (scale === "close") {
       const closeBase = [
-        { centerXRatio: 0.56, floorYRatio: 0.9, sizeScale: 0.94 },
-        { centerXRatio: 0.78, floorYRatio: 0.92, sizeScale: 0.82 }
+        { centerXRatio: 0.4, floorYRatio: 0.9, sizeScale: 0.94 },
+        { centerXRatio: 0.68, floorYRatio: 0.92, sizeScale: 0.84 }
       ];
       return characterRefs.map((ref, index) =>
         inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), closeBase[index] ?? closeBase[closeBase.length - 1]!, index, count)
@@ -4074,16 +4119,16 @@ function inferStoryboardCompositeLayout(
     }
     if (scale === "medium") {
       const mediumBase = [
-        { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 0.86 },
-        { centerXRatio: 0.82, floorYRatio: 0.92, sizeScale: 0.8 }
+        { centerXRatio: 0.38, floorYRatio: 0.9, sizeScale: 0.86 },
+        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.8 }
       ];
       return characterRefs.map((ref, index) =>
         inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), mediumBase[index] ?? mediumBase[mediumBase.length - 1]!, index, count)
       );
     }
     const defaultBase = [
-      { centerXRatio: 0.64, floorYRatio: 0.89, sizeScale: 0.84 },
-      { centerXRatio: 0.82, floorYRatio: 0.91, sizeScale: 0.78 }
+      { centerXRatio: 0.4, floorYRatio: 0.89, sizeScale: 0.84 },
+      { centerXRatio: 0.68, floorYRatio: 0.91, sizeScale: 0.8 }
     ];
     return characterRefs.map((ref, index) =>
       inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), defaultBase[index] ?? defaultBase[defaultBase.length - 1]!, index, count)
@@ -4289,7 +4334,15 @@ async function stageCharacterReferenceImages(
     }
     adjusted.push(item);
   }
-  const maxRefCount = adjusted.some((item) => item.label === "scene_character_composite") ? 4 : 3;
+  const hasCompositeGuide = adjusted.some((item) => item.label === "scene_character_composite");
+  const hasIdentityBoard = adjusted.some((item) => item.label === "character_identity_board");
+  const multiCharacterRefCount = adjusted.filter((item) => item.role.startsWith("character_")).length;
+  const maxRefCount =
+    hasCompositeGuide && hasIdentityBoard && multiCharacterRefCount >= 2
+      ? 5
+      : hasCompositeGuide
+        ? 4
+        : 3;
   selectedRefs = adjusted.slice(0, maxRefCount);
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const useIdentityCrops = selectedRefs.some((item) => item.label === "scene_character_composite");
@@ -5109,11 +5162,13 @@ function inferPromptTokens(
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
   const characterPresenceDirective = buildCharacterPresenceDirective(characterAssets);
+  const blockingDirective = buildStoryboardBlockingDirective(shot, characterAssets);
   const stabilityDirective = buildStoryboardStabilityDirective(Boolean(sceneAsset), characterAssets.length > 0);
   const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
   const promptBase = [
     referenceDirective,
     characterPresenceDirective,
+    blockingDirective,
     sceneContext,
     cameraContext,
     characterContext,
