@@ -3232,7 +3232,9 @@ async function maybeFallbackToStoryboardComposite(
   assetOutputContext: AssetOutputContext | null
 ): Promise<{ previewUrl: string; localPath: string } | null> {
   if (kind !== "image" || assetOutputContext || !canProcessStoryboardReferenceImages()) return null;
-  if (!hasStoryboardCharacterSeed(tokens)) return null;
+  // Character storyboard shots should prefer a real repaint over dropping back to the
+  // placement guide, otherwise the result keeps reading as a pasted sticker.
+  if (hasStoryboardCharacterSeed(tokens)) return null;
   const framePath = resolveInputTokenSourcePath(settings, String(tokens.FRAME_IMAGE_PATH ?? ""));
   const scenePath = resolveInputTokenSourcePath(settings, String(tokens.SCENE_REF_PATH ?? ""));
   if (!canUseAbsoluteLocalPath(framePath) || !canUseAbsoluteLocalPath(scenePath) || !canUseAbsoluteLocalPath(generatedLocalPath)) {
@@ -5456,18 +5458,18 @@ function adaptBuiltinStoryboardWorkflowForShot(
     const denoiseTarget =
       compositeScale === "close"
         ? hasSecondCharacter
-          ? 0.26
-          : 0.3
+          ? 0.48
+          : 0.54
         : compositeScale === "medium"
           ? hasSecondCharacter
-            ? 0.24
-            : 0.28
+            ? 0.44
+            : 0.5
           : hasSecondCharacter
-            ? 0.22
-            : 0.26;
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.18 : 0.24);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.42 : 0.48);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.38 : 0);
+            ? 0.4
+            : 0.46;
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.16 : 0.2);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.62 : 0.68);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.58 : 0);
     const sceneInputs =
       typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
       (sceneAdapterNode as Record<string, unknown>).inputs &&
@@ -5475,14 +5477,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
         ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
         : null;
     if (sceneInputs) {
-      sceneInputs.end_at = hasSecondCharacter ? 0.34 : 0.42;
+      sceneInputs.end_at = hasSecondCharacter ? 0.28 : 0.34;
     }
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
       const target = denoiseTarget;
       samplerInputs.denoise =
         Number.isFinite(current) && current > 0 ? Math.max(current, target) : target;
-      samplerInputs.steps = Math.max(24, Number(samplerInputs.steps) || 0);
+      samplerInputs.steps = Math.max(28, Number(samplerInputs.steps) || 0);
     }
     return;
   }
