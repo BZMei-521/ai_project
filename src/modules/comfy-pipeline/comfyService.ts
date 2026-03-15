@@ -3698,7 +3698,7 @@ async function buildStoryboardIdentityBoardReference(
     .slice(0, 2);
   if (selectedCharacters.length < 2) return null;
 
-  const crops = (
+  const strips = (
     await Promise.all(
       selectedCharacters.map(async (asset) => {
         const preferredSource =
@@ -3707,27 +3707,17 @@ async function buildStoryboardIdentityBoardReference(
           asset.filePath?.trim() ||
           refs.find((item) => item.bucket === `character:${asset.id}`)?.source?.trim() ||
           "";
-        if (!preferredSource) return null;
-        const cutout = await buildCharacterCutoutCanvas(preferredSource);
-        if (!cutout) return null;
-        const cropHeight = Math.max(1, Math.round(cutout.height * 0.62));
-        const cropCanvas = document.createElement("canvas");
-        cropCanvas.width = cutout.width;
-        cropCanvas.height = cropHeight;
-        const cropContext = cropCanvas.getContext("2d");
-        if (!cropContext) return null;
-        cropContext.drawImage(cutout, 0, 0, cutout.width, cropHeight, 0, 0, cutout.width, cropHeight);
-        return cropCanvas;
+        return await buildCharacterThreeViewStripCanvas(asset, preferredSource);
       })
     )
   ).filter((item): item is HTMLCanvasElement => Boolean(item));
-  if (crops.length === 0) return null;
+  if (strips.length === 0) return null;
 
   const slotHeight = 420;
   const gap = 28;
   const padding = 28;
-  const slotWidth = 280;
-  const boardWidth = padding * 2 + slotWidth * crops.length + gap * Math.max(0, crops.length - 1);
+  const slotWidth = 420;
+  const boardWidth = padding * 2 + slotWidth * strips.length + gap * Math.max(0, strips.length - 1);
   const boardHeight = slotHeight + padding * 2;
   const canvas = document.createElement("canvas");
   canvas.width = boardWidth;
@@ -3738,10 +3728,10 @@ async function buildStoryboardIdentityBoardReference(
   context.fillStyle = "rgb(244, 241, 236)";
   context.fillRect(0, 0, boardWidth, boardHeight);
 
-  crops.forEach((crop, index) => {
-    const scale = Math.min(slotWidth / Math.max(1, crop.width), slotHeight / Math.max(1, crop.height));
-    const drawWidth = Math.round(crop.width * scale);
-    const drawHeight = Math.round(crop.height * scale);
+  strips.forEach((strip, index) => {
+    const scale = Math.min(slotWidth / Math.max(1, strip.width), slotHeight / Math.max(1, strip.height));
+    const drawWidth = Math.round(strip.width * scale);
+    const drawHeight = Math.round(strip.height * scale);
     const slotX = padding + index * (slotWidth + gap);
     const drawX = slotX + Math.round((slotWidth - drawWidth) / 2);
     const drawY = padding + Math.round((slotHeight - drawHeight) / 2);
@@ -3749,7 +3739,7 @@ async function buildStoryboardIdentityBoardReference(
     context.fillStyle = "rgba(0,0,0,0.04)";
     context.fillRect(slotX, padding, slotWidth, slotHeight);
     context.filter = "saturate(0.92) contrast(0.96) brightness(0.98)";
-    context.drawImage(crop, drawX, drawY, drawWidth, drawHeight);
+    context.drawImage(strip, drawX, drawY, drawWidth, drawHeight);
     context.restore();
   });
 
@@ -3768,6 +3758,56 @@ async function buildStoryboardIdentityBoardReference(
     label: "character_identity_board",
     role: "continuity_character"
   };
+}
+
+async function buildCharacterThreeViewStripCanvas(
+  asset: Asset,
+  fallbackSource = ""
+): Promise<HTMLCanvasElement | null> {
+  const sources = [
+    asset.characterFrontPath?.trim() || asset.filePath?.trim() || fallbackSource.trim(),
+    asset.characterSidePath?.trim() || "",
+    asset.characterBackPath?.trim() || ""
+  ];
+  const cutouts = (
+    await Promise.all(
+      sources.map(async (source) => {
+        if (!source) return null;
+        return await buildCharacterCutoutCanvas(source);
+      })
+    )
+  ).filter((item): item is HTMLCanvasElement => Boolean(item));
+  if (cutouts.length === 0) return null;
+
+  const slotWidth = 180;
+  const slotHeight = 320;
+  const gap = 12;
+  const padding = 16;
+  const canvas = document.createElement("canvas");
+  canvas.width = padding * 2 + slotWidth * cutouts.length + gap * Math.max(0, cutouts.length - 1);
+  canvas.height = padding * 2 + slotHeight;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.fillStyle = "rgb(244, 241, 236)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  cutouts.forEach((cutout, index) => {
+    const scale = Math.min(slotWidth / Math.max(1, cutout.width), slotHeight / Math.max(1, cutout.height));
+    const drawWidth = Math.round(cutout.width * scale);
+    const drawHeight = Math.round(cutout.height * scale);
+    const slotX = padding + index * (slotWidth + gap);
+    const drawX = slotX + Math.round((slotWidth - drawWidth) / 2);
+    const drawY = padding + Math.round((slotHeight - drawHeight) / 2);
+    context.save();
+    context.fillStyle = "rgba(0,0,0,0.04)";
+    context.fillRect(slotX, padding, slotWidth, slotHeight);
+    context.filter = "saturate(0.94) contrast(0.97) brightness(0.99)";
+    context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
+    context.restore();
+  });
+
+  return canvas;
 }
 
 function inferStoryboardCompositeScaleFromCorpus(corpus: string): "wide" | "medium" | "close" | "default" {
@@ -4196,10 +4236,42 @@ async function buildCharacterIdentityCropReference(
   };
 }
 
+async function buildCharacterThreeViewReference(
+  shot: Shot,
+  ref: WeightedImageRef,
+  inputDir: string,
+  index: number,
+  assets: Asset[]
+): Promise<WeightedImageRef | null> {
+  if (!canProcessStoryboardReferenceImages()) return null;
+  const assetId = ref.bucket.startsWith("character:") ? ref.bucket.slice("character:".length) : "";
+  const asset =
+    assets.find((item) => item.id === assetId && item.type === "character") ??
+    assets.find((item) => item.type === "character" && item.name.trim() === extractCharacterNameFromReferenceLabel(ref.label));
+  if (!asset) return null;
+  const stripCanvas = await buildCharacterThreeViewStripCanvas(asset, ref.source);
+  if (!stripCanvas) return null;
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filePath = `${inputDir}/shot_${safeShotId}_threeview_identity_${index + 1}.png`;
+  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath,
+    base64Data: stripCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  });
+  if (!result.filePath) return null;
+  return {
+    ...ref,
+    source: result.filePath,
+    weight: Math.max(ref.weight, 0.86),
+    priority: Math.max(340, ref.priority),
+    label: `${ref.label}:threeview_identity`
+  };
+}
+
 async function stageCharacterReferenceImages(
   settings: ComfySettings,
   shot: Shot,
-  refs: WeightedImageRef[]
+  refs: WeightedImageRef[],
+  assets: Asset[]
 ): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
   let selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(shot, refs));
   if (selectedRefs.length === 0) return [];
@@ -4229,10 +4301,12 @@ async function stageCharacterReferenceImages(
       tuned.role.startsWith("character_") &&
       tuned.label !== "character_identity_board"
     ) {
-      const identityCrop = await buildCharacterIdentityCropReference(shot, tuned, inputDir, index);
-      if (identityCrop?.source) {
+      const threeViewRef =
+        (await buildCharacterThreeViewReference(shot, tuned, inputDir, index, assets)) ??
+        (await buildCharacterIdentityCropReference(shot, tuned, inputDir, index));
+      if (threeViewRef?.source) {
         tuned = {
-          ...identityCrop,
+          ...threeViewRef,
           weight: tuned.weight,
           priority: tuned.priority,
           role: tuned.role
@@ -6753,7 +6827,7 @@ export async function generateShotAsset(
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       stagedCharacterImages =
-        imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources) : [];
+        imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources, assets) : [];
       if (shouldRouteStoryboardStillToFisher(settings, shot, tokens, stagedCharacterImages)) {
         rewrittenWorkflow = ensureWorkflowJson(STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_JSON);
       }
@@ -6924,7 +6998,7 @@ export async function generateShotAssetOutputs(
     let stagedCharacterImages: Array<{ filename: string; weight: number }> = [];
     if (kind === "image") {
       stagedCharacterImages =
-        imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources) : [];
+        imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources, assets) : [];
     }
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
