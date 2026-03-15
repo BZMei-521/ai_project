@@ -2777,6 +2777,9 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     "Treat the skybox environment and same-scene continuity frame as the main composition anchors. Treat character references as identity anchors only."
   );
   pieces.push(
+    "If a layout guide is provided, use it only for blocking and placement. The actual environment must come from the scene reference, and the final characters must be freshly redrawn into that environment."
+  );
+  pieces.push(
     "If previous-shot continuity conflicts with character three-view or skybox references, always follow the character three-view and skybox assets first."
   );
   pieces.push(
@@ -3803,7 +3806,22 @@ async function buildStoryboardCompositeReference(
   canvas.height = sceneHeight;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.drawImage(sceneImage, 0, 0, sceneWidth, sceneHeight);
+  context.fillStyle = "rgb(236, 232, 226)";
+  context.fillRect(0, 0, sceneWidth, sceneHeight);
+  context.save();
+  const horizonY = Math.round(sceneHeight * 0.68);
+  const gradient = context.createLinearGradient(0, 0, 0, sceneHeight);
+  gradient.addColorStop(0, "rgba(255,255,255,0.04)");
+  gradient.addColorStop(1, "rgba(0,0,0,0.03)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, sceneWidth, sceneHeight);
+  context.strokeStyle = "rgba(0,0,0,0.06)";
+  context.lineWidth = Math.max(2, Math.round(sceneHeight * 0.003));
+  context.beginPath();
+  context.moveTo(0, horizonY);
+  context.lineTo(sceneWidth, horizonY);
+  context.stroke();
+  context.restore();
 
   const heightRatio = inferStoryboardCompositeHeightRatio(shot, cutouts.length);
   const placements = inferStoryboardCompositeLayout(shot, cutouts.length);
@@ -3817,15 +3835,8 @@ async function buildStoryboardCompositeReference(
     const floorY = sceneHeight * placement.floorYRatio;
     const drawX = Math.round(centerX - drawWidth / 2);
     const drawY = Math.round(floorY - drawHeight);
-    const sceneTint = sampleSceneRegionColor(
-      context,
-      drawX,
-      drawY + drawHeight * 0.25,
-      drawWidth,
-      drawHeight * 0.7
-    );
-    const scenePatch = extractScenePatchCanvas(context, drawX, drawY, drawWidth, drawHeight);
-    const guideFigure = buildStoryboardGuideCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
+    const sceneTint = { r: 132, g: 132, b: 136 };
+    const guideFigure = buildStoryboardGuideCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, null);
     context.save();
     context.fillStyle = "rgba(0,0,0,0.14)";
     context.beginPath();
