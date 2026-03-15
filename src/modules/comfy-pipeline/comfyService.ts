@@ -3404,20 +3404,20 @@ function buildIntegratedCharacterCanvas(
     const verticalRatio = height <= 1 ? 0 : y / Math.max(1, height - 1);
     const floorBlend = verticalRatio <= 0.58 ? 0 : Math.min(1, (verticalRatio - 0.58) / 0.42);
     const edgeDistance = Math.min(x, y, Math.max(0, width - 1 - x), Math.max(0, height - 1 - y));
-    const edgeFeather = edgeDistance >= 6 ? 1 : 0.72 + (edgeDistance / 6) * 0.28;
+    const edgeFeather = edgeDistance >= 8 ? 1 : 0.9 + (edgeDistance / 8) * 0.1;
     const originalR = data[index] ?? 0;
     const originalG = data[index + 1] ?? 0;
     const originalB = data[index + 2] ?? 0;
     const luma = originalR * 0.299 + originalG * 0.587 + originalB * 0.114;
-    const desaturate = 0.08 + floorBlend * 0.06;
-    const sceneBlend = 0.1 + floorBlend * 0.14;
+    const desaturate = 0.18 + floorBlend * 0.08;
+    const sceneBlend = 0.14 + floorBlend * 0.12;
     const softenedR = luma * desaturate + originalR * (1 - desaturate);
     const softenedG = luma * desaturate + originalG * (1 - desaturate);
     const softenedB = luma * desaturate + originalB * (1 - desaturate);
     data[index] = clampChannel(softenedR * (1 - sceneBlend) + sceneTint.r * sceneBlend);
     data[index + 1] = clampChannel(softenedG * (1 - sceneBlend) + sceneTint.g * sceneBlend);
     data[index + 2] = clampChannel(softenedB * (1 - sceneBlend) + sceneTint.b * sceneBlend);
-    data[index + 3] = clampChannel((data[index + 3] ?? 255) * (0.985 - floorBlend * 0.04) * edgeFeather);
+    data[index + 3] = clampChannel((data[index + 3] ?? 255) * edgeFeather);
   }
   context.putImageData(image, 0, 0);
   return canvas;
@@ -3558,15 +3558,15 @@ async function buildStoryboardCompositeReference(
     context.ellipse(centerX, floorY + 4, Math.max(20, drawWidth * 0.22), Math.max(10, drawWidth * 0.08), 0, 0, Math.PI * 2);
     context.fill();
     if (integratedCutout) {
-      context.globalAlpha = 0.12;
-      context.filter = "blur(1.2px)";
-      context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
+      context.globalAlpha = 0.08;
+      context.filter = "blur(2px)";
+      context.drawImage(integratedCutout, drawX + 1, drawY + 1, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "none";
+      context.filter = "saturate(0.88) contrast(0.9) brightness(0.98)";
       context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
     } else {
       context.globalAlpha = 1;
-      context.filter = "none";
+      context.filter = "saturate(0.9) contrast(0.92) brightness(0.99)";
       context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
     }
     context.restore();
