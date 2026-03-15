@@ -3051,15 +3051,15 @@ function adjustStoryboardReferenceWeight(
   if (ref.label === "scene_character_composite") {
     return {
       ...ref,
-      weight: 0.28,
-      priority: Math.min(ref.priority, 300)
+      weight: 0.34,
+      priority: Math.min(ref.priority, 308)
     };
   }
   if (ref.label === "character_identity_board") {
     return {
       ...ref,
-      weight: focusedCharacterName ? 0.24 : 0.42,
-      priority: Math.min(ref.priority, focusedCharacterName ? 280 : 310)
+      weight: focusedCharacterName ? 0.2 : 0.34,
+      priority: Math.min(ref.priority, focusedCharacterName ? 270 : 300)
     };
   }
   if (ref.role === "scene_primary" || ref.role === "scene_secondary") {
@@ -3072,8 +3072,8 @@ function adjustStoryboardReferenceWeight(
     if (hasCompositeGuide && focusedCharacterName && refCharacterName === focusedCharacterName) {
       return {
         ...ref,
-        weight: Math.max(ref.weight, 0.68),
-        priority: Math.max(ref.priority, 325)
+        weight: Math.max(ref.weight, 0.74),
+        priority: Math.max(ref.priority, 330)
       };
     }
     return {
@@ -3118,8 +3118,7 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
       selectedWithComposite.push(primaryScene);
       usedSources.add(primaryScene.source.trim());
     }
-    const shouldKeepCompositeGuide = scale === "wide" || (!focusedCharacterRef && characters.length > 1);
-    if (shouldKeepCompositeGuide && !usedSources.has(composite.source.trim())) {
+    if (!usedSources.has(composite.source.trim())) {
       selectedWithComposite.push(composite);
       usedSources.add(composite.source.trim());
     }
@@ -3228,13 +3227,12 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
       : undefined;
   const scale = inferStoryboardCompositeScale(shot);
   if (composite.length > 0) {
-    const shouldKeepCompositeGuide = scale === "wide" || (!focusedCharacterRef && characters.length > 1);
     return [
       ...scenes.slice(0, 1),
-      ...(shouldKeepCompositeGuide ? composite.slice(0, 1) : []),
+      ...composite.slice(0, 1),
       ...(focusedCharacterRef ? [focusedCharacterRef] : identityBoards.slice(0, 1)),
       ...identityBoards.slice(focusedCharacterRef ? 0 : 1, focusedCharacterRef ? 1 : 1),
-      ...characters.filter((item) => item !== focusedCharacterRef).slice(0, focusedCharacterRef ? 0 : Math.max(0, 1 - (shouldKeepCompositeGuide ? 1 : 0))),
+      ...characters.filter((item) => item !== focusedCharacterRef).slice(0, focusedCharacterRef ? 0 : 1),
       ...continuityScene,
       ...continuityCharacter
     ].slice(0, 3);
