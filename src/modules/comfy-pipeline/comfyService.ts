@@ -3442,15 +3442,6 @@ function buildIntegratedCharacterCanvas(
     const floorBlend = verticalRatio <= 0.58 ? 0 : Math.min(1, (verticalRatio - 0.58) / 0.42);
     const edgeDistance = Math.min(x, y, Math.max(0, width - 1 - x), Math.max(0, height - 1 - y));
     const edgeBlend = edgeDistance >= 10 ? 0 : 1 - edgeDistance / 10;
-    const originalR = data[index] ?? 0;
-    const originalG = data[index + 1] ?? 0;
-    const originalB = data[index + 2] ?? 0;
-    const luma = originalR * 0.299 + originalG * 0.587 + originalB * 0.114;
-    const desaturate = 0.18 + floorBlend * 0.08;
-    const sceneBlend = 0.1 + floorBlend * 0.1 + edgeBlend * 0.08;
-    const softenedR = luma * desaturate + originalR * (1 - desaturate);
-    const softenedG = luma * desaturate + originalG * (1 - desaturate);
-    const softenedB = luma * desaturate + originalB * (1 - desaturate);
     let patchR = sceneTint.r;
     let patchG = sceneTint.g;
     let patchB = sceneTint.b;
@@ -3460,10 +3451,16 @@ function buildIntegratedCharacterCanvas(
       patchG = patchData[patchIndex + 1] ?? patchG;
       patchB = patchData[patchIndex + 2] ?? patchB;
     }
-    data[index] = clampChannel(softenedR * (1 - sceneBlend) + patchR * sceneBlend);
-    data[index + 1] = clampChannel(softenedG * (1 - sceneBlend) + patchG * sceneBlend);
-    data[index + 2] = clampChannel(softenedB * (1 - sceneBlend) + patchB * sceneBlend);
-    data[index + 3] = clampChannel(data[index + 3] ?? 255);
+    const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
+    const figureShade = Math.max(24, Math.min(230, patchLuma * (0.72 - floorBlend * 0.08)));
+    const sceneBlend = 0.16 + floorBlend * 0.12 + edgeBlend * 0.08;
+    const figureR = clampChannel(figureShade * 0.96 + patchR * 0.04);
+    const figureG = clampChannel(figureShade * 0.98 + patchG * 0.02);
+    const figureB = clampChannel(figureShade + patchB * 0.01);
+    data[index] = clampChannel(figureR * (1 - sceneBlend) + patchR * sceneBlend);
+    data[index + 1] = clampChannel(figureG * (1 - sceneBlend) + patchG * sceneBlend);
+    data[index + 2] = clampChannel(figureB * (1 - sceneBlend) + patchB * sceneBlend);
+    data[index + 3] = clampChannel((data[index + 3] ?? 255) * (0.98 - edgeBlend * 0.04));
   }
   context.putImageData(image, 0, 0);
   return canvas;
@@ -3609,11 +3606,11 @@ async function buildStoryboardCompositeReference(
       context.filter = "blur(2px)";
       context.drawImage(integratedCutout, drawX + 1, drawY + 1, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "saturate(0.88) contrast(0.9) brightness(0.98)";
+      context.filter = "saturate(0.72) contrast(0.84) brightness(0.94)";
       context.drawImage(integratedCutout, drawX, drawY, drawWidth, drawHeight);
     } else {
       context.globalAlpha = 1;
-      context.filter = "saturate(0.9) contrast(0.92) brightness(0.99)";
+      context.filter = "saturate(0.76) contrast(0.86) brightness(0.95)";
       context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
     }
     context.restore();
