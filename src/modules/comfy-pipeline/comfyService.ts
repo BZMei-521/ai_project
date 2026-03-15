@@ -3379,11 +3379,32 @@ function sampleSceneRegionColor(
   };
 }
 
+function extractScenePatchCanvas(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): HTMLCanvasElement | null {
+  const safeX = Math.max(0, Math.min(context.canvas.width - 1, Math.round(x)));
+  const safeY = Math.max(0, Math.min(context.canvas.height - 1, Math.round(y)));
+  const safeWidth = Math.max(1, Math.min(context.canvas.width - safeX, Math.round(width)));
+  const safeHeight = Math.max(1, Math.min(context.canvas.height - safeY, Math.round(height)));
+  const canvas = document.createElement("canvas");
+  canvas.width = safeWidth;
+  canvas.height = safeHeight;
+  const patchContext = canvas.getContext("2d");
+  if (!patchContext) return null;
+  patchContext.drawImage(context.canvas, safeX, safeY, safeWidth, safeHeight, 0, 0, safeWidth, safeHeight);
+  return canvas;
+}
+
 function buildIntegratedCharacterCanvas(
   cutout: HTMLCanvasElement,
   drawWidth: number,
   drawHeight: number,
-  sceneTint: { r: number; g: number; b: number }
+  sceneTint: { r: number; g: number; b: number },
+  scenePatch?: HTMLCanvasElement | null
 ): HTMLCanvasElement | null {
   const width = Math.max(1, Math.round(drawWidth));
   const height = Math.max(1, Math.round(drawHeight));
@@ -3395,6 +3416,22 @@ function buildIntegratedCharacterCanvas(
   context.drawImage(cutout, 0, 0, width, height);
   const image = context.getImageData(0, 0, width, height);
   const data = image.data;
+  let patchData: Uint8ClampedArray | null = null;
+  let patchWidth = 0;
+  let patchHeight = 0;
+  if (scenePatch) {
+    const patchCanvas = document.createElement("canvas");
+    patchCanvas.width = width;
+    patchCanvas.height = height;
+    const patchContext = patchCanvas.getContext("2d");
+    if (patchContext) {
+      patchContext.drawImage(scenePatch, 0, 0, width, height);
+      const patchImage = patchContext.getImageData(0, 0, width, height);
+      patchData = patchImage.data;
+      patchWidth = width;
+      patchHeight = height;
+    }
+  }
   for (let index = 0; index < data.length; index += 4) {
     const alpha = (data[index + 3] ?? 0) / 255;
     if (alpha <= 0.01) continue;
@@ -3404,20 +3441,29 @@ function buildIntegratedCharacterCanvas(
     const verticalRatio = height <= 1 ? 0 : y / Math.max(1, height - 1);
     const floorBlend = verticalRatio <= 0.58 ? 0 : Math.min(1, (verticalRatio - 0.58) / 0.42);
     const edgeDistance = Math.min(x, y, Math.max(0, width - 1 - x), Math.max(0, height - 1 - y));
-    const edgeFeather = edgeDistance >= 8 ? 1 : 0.9 + (edgeDistance / 8) * 0.1;
+    const edgeBlend = edgeDistance >= 10 ? 0 : 1 - edgeDistance / 10;
     const originalR = data[index] ?? 0;
     const originalG = data[index + 1] ?? 0;
     const originalB = data[index + 2] ?? 0;
     const luma = originalR * 0.299 + originalG * 0.587 + originalB * 0.114;
     const desaturate = 0.18 + floorBlend * 0.08;
-    const sceneBlend = 0.14 + floorBlend * 0.12;
+    const sceneBlend = 0.1 + floorBlend * 0.1 + edgeBlend * 0.08;
     const softenedR = luma * desaturate + originalR * (1 - desaturate);
     const softenedG = luma * desaturate + originalG * (1 - desaturate);
     const softenedB = luma * desaturate + originalB * (1 - desaturate);
-    data[index] = clampChannel(softenedR * (1 - sceneBlend) + sceneTint.r * sceneBlend);
-    data[index + 1] = clampChannel(softenedG * (1 - sceneBlend) + sceneTint.g * sceneBlend);
-    data[index + 2] = clampChannel(softenedB * (1 - sceneBlend) + sceneTint.b * sceneBlend);
-    data[index + 3] = clampChannel((data[index + 3] ?? 255) * edgeFeather);
+    let patchR = sceneTint.r;
+    let patchG = sceneTint.g;
+    let patchB = sceneTint.b;
+    if (patchData && patchWidth > 0 && patchHeight > 0) {
+      const patchIndex = (Math.min(patchHeight - 1, y) * patchWidth + Math.min(patchWidth - 1, x)) * 4;
+      patchR = patchData[patchIndex] ?? patchR;
+      patchG = patchData[patchIndex + 1] ?? patchG;
+      patchB = patchData[patchIndex + 2] ?? patchB;
+    }
+    data[index] = clampChannel(softenedR * (1 - sceneBlend) + patchR * sceneBlend);
+    data[index + 1] = clampChannel(softenedG * (1 - sceneBlend) + patchG * sceneBlend);
+    data[index + 2] = clampChannel(softenedB * (1 - sceneBlend) + patchB * sceneBlend);
+    data[index + 3] = clampChannel(data[index + 3] ?? 255);
   }
   context.putImageData(image, 0, 0);
   return canvas;
@@ -3550,7 +3596,8 @@ async function buildStoryboardCompositeReference(
       drawWidth,
       drawHeight * 0.7
     );
-    const integratedCutout = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint);
+    const scenePatch = extractScenePatchCanvas(context, drawX, drawY, drawWidth, drawHeight);
+    const integratedCutout = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
     context.save();
     context.fillStyle = "rgba(0,0,0,0.2)";
     context.beginPath();
