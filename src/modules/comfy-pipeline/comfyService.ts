@@ -3058,8 +3058,8 @@ function adjustStoryboardReferenceWeight(
   if (ref.label === "character_identity_board") {
     return {
       ...ref,
-      weight: focusedCharacterName ? 0.18 : 0.28,
-      priority: Math.min(ref.priority, 280)
+      weight: focusedCharacterName ? 0.24 : 0.42,
+      priority: Math.min(ref.priority, focusedCharacterName ? 280 : 310)
     };
   }
   if (ref.role === "scene_primary" || ref.role === "scene_secondary") {
@@ -3072,8 +3072,8 @@ function adjustStoryboardReferenceWeight(
     if (hasCompositeGuide && focusedCharacterName && refCharacterName === focusedCharacterName) {
       return {
         ...ref,
-        weight: Math.max(ref.weight, 0.58),
-        priority: Math.max(ref.priority, 295)
+        weight: Math.max(ref.weight, 0.68),
+        priority: Math.max(ref.priority, 325)
       };
     }
     return {
@@ -4202,9 +4202,25 @@ async function stageCharacterReferenceImages(
   }
   selectedRefs = adjusted.slice(0, 3);
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const useIdentityCrops = selectedRefs.some((item) => item.label === "scene_character_composite");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
   for (let index = 0; index < selectedRefs.length; index += 1) {
-    const tuned = adjustStoryboardReferenceWeight(shot, selectedRefs[index]!, selectedRefs);
+    let tuned = adjustStoryboardReferenceWeight(shot, selectedRefs[index]!, selectedRefs);
+    if (
+      useIdentityCrops &&
+      tuned.role.startsWith("character_") &&
+      tuned.label !== "character_identity_board"
+    ) {
+      const identityCrop = await buildCharacterIdentityCropReference(shot, tuned, inputDir, index);
+      if (identityCrop?.source) {
+        tuned = {
+          ...identityCrop,
+          weight: tuned.weight,
+          priority: tuned.priority,
+          role: tuned.role
+        };
+      }
+    }
     const { source, weight, role, label } = tuned;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
