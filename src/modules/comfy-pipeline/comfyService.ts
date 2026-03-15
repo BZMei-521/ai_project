@@ -2830,6 +2830,17 @@ function buildQwenSlotInstruction(
 
 function qwenReferenceChunkSize(stagedRefs: Array<{ role?: WeightedImageRef["role"] }>): number {
   if (stagedRefs.length <= 0) return 1;
+  if (
+    stagedRefs.some(
+      (item) =>
+        (item as { label?: string }).label === "scene_character_composite" ||
+        (item as { label?: string }).label === "character_identity_board"
+    )
+  ) {
+    // For storyboard stills, keep environment, layout guide, and identity guide in
+    // separate encoders so weighting can actually bias the scene over the guides.
+    return 1;
+  }
   // Keep refs in one encoder when possible; multi-encoder averaging tends to
   // introduce geometry tearing and identity drift on storyboard stills.
   return 3;
@@ -3023,6 +3034,36 @@ function firstDistinctBucketRef(
   usedSources: Set<string>
 ): WeightedImageRef | undefined {
   return refs.find((item) => predicate(item) && !excludedBuckets.has(item.bucket) && !usedSources.has(item.source.trim()));
+}
+
+function adjustStoryboardReferenceWeight(ref: WeightedImageRef): WeightedImageRef {
+  if (ref.label === "scene_character_composite") {
+    return {
+      ...ref,
+      weight: 0.34,
+      priority: Math.min(ref.priority, 300)
+    };
+  }
+  if (ref.label === "character_identity_board") {
+    return {
+      ...ref,
+      weight: 0.24,
+      priority: Math.min(ref.priority, 280)
+    };
+  }
+  if (ref.role === "scene_primary" || ref.role === "scene_secondary") {
+    return {
+      ...ref,
+      weight: Math.max(ref.weight, 1.0)
+    };
+  }
+  if (ref.role === "character_front" || ref.role === "character_side" || ref.role === "character_back") {
+    return {
+      ...ref,
+      weight: Math.min(ref.weight, 0.42)
+    };
+  }
+  return ref;
 }
 
 function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImageRef[] {
@@ -3558,11 +3599,9 @@ function buildStoryboardGuideCharacterCanvas(
   const patchB = patchData?.[patchCenterIndex + 2] ?? sceneTint.b;
   const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
   const guideTone = `rgba(${clampChannel(patchLuma * 0.85)}, ${clampChannel(patchLuma * 0.88)}, ${clampChannel(patchLuma * 0.92)}, 0.72)`;
-  const headRadius = Math.max(10, Math.round(width * 0.11));
+  const headRadius = Math.max(10, Math.round(width * 0.105));
   const torsoWidth = Math.max(18, Math.round(width * 0.34));
-  const torsoHeight = Math.max(44, Math.round(height * 0.36));
-  const hipWidth = Math.max(16, Math.round(width * 0.26));
-  const legHeight = Math.max(28, Math.round(height * 0.26));
+  const torsoHeight = Math.max(52, Math.round(height * 0.44));
   const centerX = width / 2;
   const headCenterY = Math.max(headRadius + 6, Math.round(height * 0.18));
   const torsoTop = headCenterY + headRadius * 0.85;
@@ -3573,48 +3612,20 @@ function buildStoryboardGuideCharacterCanvas(
   context.filter = "blur(5px)";
   context.fillStyle = guideTone;
   context.beginPath();
-  context.ellipse(centerX, floorY, Math.max(14, torsoWidth * 0.42), Math.max(6, torsoWidth * 0.14), 0, 0, Math.PI * 2);
+  context.ellipse(centerX, floorY, Math.max(14, torsoWidth * 0.4), Math.max(6, torsoWidth * 0.12), 0, 0, Math.PI * 2);
   context.fill();
   context.restore();
 
   context.save();
-  context.filter = "blur(2.5px)";
+  context.filter = "blur(3px)";
   context.fillStyle = guideTone;
   context.beginPath();
   context.arc(centerX, headCenterY, headRadius, 0, Math.PI * 2);
   context.fill();
 
   context.beginPath();
-  context.moveTo(centerX - torsoWidth * 0.45, torsoTop);
-  context.quadraticCurveTo(centerX - torsoWidth * 0.52, torsoTop + torsoHeight * 0.4, centerX - hipWidth * 0.55, torsoBottom);
-  context.lineTo(centerX + hipWidth * 0.55, torsoBottom);
-  context.quadraticCurveTo(centerX + torsoWidth * 0.52, torsoTop + torsoHeight * 0.4, centerX + torsoWidth * 0.45, torsoTop);
-  context.closePath();
+  context.ellipse(centerX, torsoTop + torsoHeight * 0.52, torsoWidth * 0.46, torsoHeight * 0.5, 0, 0, Math.PI * 2);
   context.fill();
-
-  context.lineWidth = Math.max(10, Math.round(width * 0.09));
-  context.lineCap = "round";
-  context.beginPath();
-  context.moveTo(centerX - torsoWidth * 0.2, torsoBottom - 1);
-  context.lineTo(centerX - torsoWidth * 0.28, Math.max(torsoBottom + 12, floorY - legHeight));
-  context.strokeStyle = guideTone;
-  context.stroke();
-
-  context.beginPath();
-  context.moveTo(centerX + torsoWidth * 0.2, torsoBottom - 1);
-  context.lineTo(centerX + torsoWidth * 0.28, Math.max(torsoBottom + 12, floorY - legHeight));
-  context.stroke();
-
-  context.lineWidth = Math.max(8, Math.round(width * 0.07));
-  context.beginPath();
-  context.moveTo(centerX - torsoWidth * 0.42, torsoTop + torsoHeight * 0.18);
-  context.lineTo(centerX - torsoWidth * 0.78, torsoTop + torsoHeight * 0.48);
-  context.stroke();
-
-  context.beginPath();
-  context.moveTo(centerX + torsoWidth * 0.42, torsoTop + torsoHeight * 0.18);
-  context.lineTo(centerX + torsoWidth * 0.78, torsoTop + torsoHeight * 0.48);
-  context.stroke();
   context.restore();
   return canvas;
 }
@@ -3933,7 +3944,8 @@ async function stageCharacterReferenceImages(
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
   for (let index = 0; index < selectedRefs.length; index += 1) {
-    const { source, weight, role, label } = selectedRefs[index]!;
+    const tuned = adjustStoryboardReferenceWeight(selectedRefs[index]!);
+    const { source, weight, role, label } = tuned;
     const ext = fileExtensionFromSource(source || "png");
     const targetAbs = `${inputDir}/shot_${safeShotId}_charref_${index + 1}.${ext}`;
     const written = await stageSourceFileToComfyInput(source, targetAbs, settings.baseUrl, settings.outputDir);
