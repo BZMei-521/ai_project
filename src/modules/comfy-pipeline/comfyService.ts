@@ -3265,6 +3265,9 @@ function shouldLeadWithSceneReference(shot: Shot): boolean {
 
 function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
   if (refs.length <= 1) return refs;
+  const hasIdentityCoverage = refs.some((item) => item.label === "character_identity_board");
+  const characterRefCount = refs.filter((item) => item.role.startsWith("character_") && item.label !== "character_identity_board").length;
+  const maxStoryboardRefs = hasIdentityCoverage && characterRefCount >= 2 ? 5 : 4;
   const composite = refs.filter((item) => item.label === "scene_character_composite");
   const identityBoards = refs.filter((item) => item.label === "character_identity_board");
   const characters = refs.filter(
@@ -3294,7 +3297,7 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
       ...identityBoards.slice(0, 1),
       ...continuityScene,
       ...continuityCharacter
-    ].slice(0, 4);
+    ].slice(0, maxStoryboardRefs);
   }
   // Always keep environment anchor first when a scene/skybox reference exists.
   if (continuityScene.length > 0 && scenes.length > 0) {
@@ -3305,15 +3308,15 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
       ...characters.slice(0, 1),
       ...continuityCharacter,
       ...characters.slice(1)
-    ].slice(0, 4);
+    ].slice(0, maxStoryboardRefs);
   }
   if (scenes.length > 0) {
-    return [...scenes.slice(0, 1), ...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1), ...characters.slice(2)].slice(0, 4);
+    return [...scenes.slice(0, 1), ...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1), ...characters.slice(2)].slice(0, maxStoryboardRefs);
   }
   if (shouldLeadWithSceneReference(shot)) {
-    return [...continuityScene, ...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuityCharacter].slice(0, 4);
+    return [...continuityScene, ...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuityCharacter].slice(0, maxStoryboardRefs);
   }
-  return [...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuity].slice(0, 4);
+  return [...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuity].slice(0, maxStoryboardRefs);
 }
 
 function canProcessStoryboardReferenceImages(): boolean {
