@@ -3640,7 +3640,7 @@ async function buildStoryboardIdentityBoardReference(
     .filter((item) => item.role.startsWith("character_"))
     .sort((left, right) => right.priority - left.priority)
     .slice(0, 2);
-  if (characterRefs.length === 0) return null;
+  if (characterRefs.length < 2) return null;
 
   const crops = (
     await Promise.all(
