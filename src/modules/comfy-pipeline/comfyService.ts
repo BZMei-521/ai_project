@@ -3072,27 +3072,27 @@ function adjustStoryboardReferenceWeight(
   if (ref.role === "scene_primary" || ref.role === "scene_secondary") {
     return {
       ...ref,
-      weight: Math.max(ref.weight, 1.0)
+      weight: Math.max(ref.weight, hasCompositeGuide ? 0.88 : 1.0)
     };
   }
   if (ref.role === "character_front" || ref.role === "character_side" || ref.role === "character_back") {
     if (hasCompositeGuide && focusedCharacterName && refCharacterName === focusedCharacterName) {
       return {
         ...ref,
-        weight: Math.max(ref.weight, 0.74),
-        priority: Math.max(ref.priority, 330)
+        weight: Math.max(ref.weight, 0.92),
+        priority: Math.max(ref.priority, 360)
       };
     }
     if (hasCompositeGuide && characterRefCount >= 2) {
       return {
         ...ref,
-        weight: Math.max(ref.weight, 0.56),
-        priority: Math.max(ref.priority, 305)
+        weight: Math.max(ref.weight, 0.8),
+        priority: Math.max(ref.priority, 330)
       };
     }
     return {
       ...ref,
-      weight: Math.min(ref.weight, hasCompositeGuide ? 0.36 : 0.48)
+      weight: hasCompositeGuide ? Math.max(ref.weight, 0.74) : Math.min(ref.weight, 0.48)
     };
   }
   return ref;
@@ -4173,7 +4173,7 @@ async function buildCharacterIdentityCropReference(
   const cutout = await buildCharacterCutoutCanvas(ref.source);
   if (!cutout) return null;
   const cropY = 0;
-  const cropHeight = Math.max(1, Math.round(cutout.height * 0.62));
+  const cropHeight = Math.max(1, Math.round(cutout.height * 0.48));
   const cropCanvas = document.createElement("canvas");
   cropCanvas.width = cutout.width;
   cropCanvas.height = cropHeight;
@@ -4190,8 +4190,8 @@ async function buildCharacterIdentityCropReference(
   return {
     ...ref,
     source: result.filePath,
-    weight: Math.min(ref.weight, 0.58),
-    priority: Math.max(220, ref.priority - 60),
+    weight: Math.max(ref.weight, 0.82),
+    priority: Math.max(320, ref.priority),
     label: `${ref.label}:identity_crop`
   };
 }
