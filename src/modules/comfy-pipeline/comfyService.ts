@@ -2800,7 +2800,7 @@ function buildQwenSlotInstruction(
 ): string {
   if (stagedRefs.length === 0) return "";
   const lines = stagedRefs
-    .slice(0, 3)
+    .slice(0, 4)
     .map((item, index) => {
       const slot = `Reference slot ${index + 1}`;
       const label = item.label?.trim() ?? "";
@@ -3048,6 +3048,7 @@ function adjustStoryboardReferenceWeight(
   const focusedCharacterName = inferStoryboardFocusedCharacterName(shot, availableCharacterNames);
   const refCharacterName = extractCharacterNameFromReferenceLabel(ref.label);
   const hasCompositeGuide = selectedRefs.some((item) => item.label === "scene_character_composite");
+  const characterRefCount = selectedRefs.filter((item) => item.role.startsWith("character_")).length;
   if (ref.label === "scene_character_composite") {
     return {
       ...ref,
@@ -3076,6 +3077,13 @@ function adjustStoryboardReferenceWeight(
         priority: Math.max(ref.priority, 330)
       };
     }
+    if (hasCompositeGuide && characterRefCount >= 2) {
+      return {
+        ...ref,
+        weight: Math.max(ref.weight, 0.56),
+        priority: Math.max(ref.priority, 305)
+      };
+    }
     return {
       ...ref,
       weight: Math.min(ref.weight, hasCompositeGuide ? 0.36 : 0.48)
@@ -3085,7 +3093,7 @@ function adjustStoryboardReferenceWeight(
 }
 
 function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): WeightedImageRef[] {
-  if (refs.length <= 3) return refs.slice(0, 3);
+  if (refs.length <= 4) return refs.slice(0, 4);
   const ordered = [...refs].sort((left, right) => {
     const priorityDelta = right.priority - left.priority;
     if (priorityDelta !== 0) return priorityDelta;
@@ -3126,19 +3134,19 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
       selectedWithComposite.push(focusedCharacterRef);
       usedSources.add(focusedCharacterRef.source.trim());
     }
-    if (selectedWithComposite.length < 3 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
-      selectedWithComposite.push(identityBoard);
-      usedSources.add(identityBoard.source.trim());
-    }
     const usedCharacterBuckets = new Set<string>();
     for (const characterRef of characters) {
-      if (selectedWithComposite.length >= 3) break;
+      if (selectedWithComposite.length >= 4) break;
       if (usedCharacterBuckets.has(characterRef.bucket) || usedSources.has(characterRef.source.trim())) continue;
       selectedWithComposite.push(characterRef);
       usedSources.add(characterRef.source.trim());
       usedCharacterBuckets.add(characterRef.bucket);
     }
-    return selectedWithComposite.slice(0, 3);
+    if (selectedWithComposite.length < 4 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
+      selectedWithComposite.push(identityBoard);
+      usedSources.add(identityBoard.source.trim());
+    }
+    return selectedWithComposite.slice(0, 4);
   }
   const selected: WeightedImageRef[] = [];
   const usedSources = new Set<string>();
@@ -3146,7 +3154,7 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
   pushUniqueWeightedRef(selected, usedSources, identityBoard);
   const usedCharacterBuckets = new Set<string>();
   for (const characterRef of characters) {
-    if (selected.length >= 3) break;
+    if (selected.length >= 4) break;
     if (usedCharacterBuckets.has(characterRef.bucket)) continue;
     pushUniqueWeightedRef(selected, usedSources, characterRef);
     usedCharacterBuckets.add(characterRef.bucket);
@@ -3165,10 +3173,10 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
   ];
   for (const candidate of fallbackCandidates) {
     pushUniqueWeightedRef(selected, usedSources, candidate);
-    if (selected.length >= 3) break;
+    if (selected.length >= 4) break;
   }
 
-  return selected.slice(0, 3);
+  return selected.slice(0, 4);
 }
 
 function shouldLeadWithSceneReference(shot: Shot): boolean {
@@ -3231,11 +3239,11 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
       ...scenes.slice(0, 1),
       ...composite.slice(0, 1),
       ...(focusedCharacterRef ? [focusedCharacterRef] : identityBoards.slice(0, 1)),
-      ...identityBoards.slice(focusedCharacterRef ? 0 : 1, focusedCharacterRef ? 1 : 1),
-      ...characters.filter((item) => item !== focusedCharacterRef).slice(0, focusedCharacterRef ? 0 : 1),
+      ...characters.filter((item) => item !== focusedCharacterRef).slice(0, focusedCharacterRef ? 1 : 2),
+      ...identityBoards.slice(0, 1),
       ...continuityScene,
       ...continuityCharacter
-    ].slice(0, 3);
+    ].slice(0, 4);
   }
   // Always keep environment anchor first when a scene/skybox reference exists.
   if (continuityScene.length > 0 && scenes.length > 0) {
@@ -3246,15 +3254,15 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
       ...characters.slice(0, 1),
       ...continuityCharacter,
       ...characters.slice(1)
-    ].slice(0, 3);
+    ].slice(0, 4);
   }
   if (scenes.length > 0) {
-    return [...scenes.slice(0, 1), ...identityBoards.slice(0, 1), ...characters.slice(0, 1), ...continuity, ...scenes.slice(1), ...characters.slice(1)].slice(0, 3);
+    return [...scenes.slice(0, 1), ...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuity, ...scenes.slice(1), ...characters.slice(2)].slice(0, 4);
   }
   if (shouldLeadWithSceneReference(shot)) {
-    return [...continuityScene, ...identityBoards.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter].slice(0, 3);
+    return [...continuityScene, ...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuityCharacter].slice(0, 4);
   }
-  return [...identityBoards.slice(0, 1), ...characters.slice(0, 1), ...continuity].slice(0, 3);
+  return [...identityBoards.slice(0, 1), ...characters.slice(0, 2), ...continuity].slice(0, 4);
 }
 
 function canProcessStoryboardReferenceImages(): boolean {
@@ -4203,7 +4211,8 @@ async function stageCharacterReferenceImages(
     }
     adjusted.push(item);
   }
-  selectedRefs = adjusted.slice(0, 3);
+  const maxRefCount = adjusted.some((item) => item.label === "scene_character_composite") ? 4 : 3;
+  selectedRefs = adjusted.slice(0, maxRefCount);
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const useIdentityCrops = selectedRefs.some((item) => item.label === "scene_character_composite");
   const staged: Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }> = [];
