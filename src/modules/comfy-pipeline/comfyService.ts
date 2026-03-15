@@ -2918,14 +2918,16 @@ function extractImageReferenceSources(
   const selectedCharacters = (shot.characterRefs ?? [])
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item));
+  const shouldPreferFrontIdentityRefs =
+    sceneRefs.length > 0 || selectedCharacters.length > 1 || shotLooksCharacterDrivenInComfy(shot);
   const characterRefs = selectedCharacters.flatMap((asset, assetIndex) => {
     const refs: WeightedImageRef[] = [];
     const front = asset.characterFrontPath || asset.filePath || "";
     const side = asset.characterSidePath || "";
     const back = asset.characterBackPath || "";
     const byView: Record<CharacterReferenceView, string> = { front, side, back };
-    const primaryView = characterPlan.primaryView;
-    const primarySource = byView[primaryView].trim() || byView.front.trim() || byView.side.trim() || byView.back.trim();
+    const primaryView = shouldPreferFrontIdentityRefs ? "front" : characterPlan.primaryView;
+    const primarySource = byView.front.trim() || byView[primaryView].trim() || byView.side.trim() || byView.back.trim();
     const primaryWeight =
       sceneRefs.length > 0 ? (selectedCharacters.length > 1 ? 0.34 : 0.4) : 0.72;
     const primaryPriority = sceneRefs.length > 0 ? 245 - assetIndex * 10 : 420 - assetIndex * 20;
@@ -2942,7 +2944,11 @@ function extractImageReferenceSources(
     // Only use a secondary character view as fallback when scene anchor is missing
     // and there is a single character in shot.
     if (selectedCharacters.length === 1 && sceneRefs.length === 0) {
-      const secondaryView = characterPlan.secondaryViews[0];
+      const secondaryView = shouldPreferFrontIdentityRefs
+        ? characterPlan.primaryView === "front"
+          ? characterPlan.secondaryViews[0]
+          : characterPlan.primaryView
+        : characterPlan.secondaryViews[0];
       if (secondaryView) {
         const secondarySource = byView[secondaryView].trim();
         if (secondarySource && secondarySource !== primarySource) {
@@ -4947,26 +4953,43 @@ function inferPromptTokens(
   const charSlots = [0, 1, 2, 3].map((slotIndex) => characterAssets[slotIndex]);
   const characterPlan = inferCharacterReferencePlan(shot);
   const continuityCharacterRefPath = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
-  const char1PrimaryPath =
-    assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || characterFrontPaths[0] || continuityCharacterRefPath || "";
+  const hasCharacters = characterAssets.length > 0;
+  const hasSecondCharacter = Boolean(charSlots[1]);
+  const preferIdentityFrontPaths =
+    kind === "image" && (Boolean(sceneRefPath) || hasCharacters || shotLooksCharacterDrivenInComfy(shot));
+  const char1IdentityPath = assetPathForCharacterView(charSlots[0], "front") || characterFrontPaths[0] || continuityCharacterRefPath || "";
+  const char1ViewPath =
+    assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || char1IdentityPath || "";
+  const char1SecondaryView = characterPlan.secondaryViews[0] ?? "front";
+  const char1PrimaryPath = preferIdentityFrontPaths ? char1IdentityPath || char1ViewPath : char1ViewPath;
   const char1SecondaryPath =
-    assetPathForCharacterView(charSlots[0], characterPlan.secondaryViews[0] ?? "front") ||
+    (preferIdentityFrontPaths
+      ? assetPathForCharacterView(charSlots[0], characterPlan.primaryView === "front" ? char1SecondaryView : characterPlan.primaryView)
+      : assetPathForCharacterView(charSlots[0], char1SecondaryView)) ||
     char1PrimaryPath ||
     "";
-  const char2PrimaryPath =
-    assetPathForCharacterView(charSlots[1], characterPlan.primaryView) ||
+  const char2IdentityPath =
     assetPathForCharacterView(charSlots[1], "front") ||
+    characterFrontPaths[1] ||
+    char1IdentityPath ||
+    continuityCharacterRefPath ||
+    "";
+  const char2ViewPath =
+    assetPathForCharacterView(charSlots[1], characterPlan.primaryView) ||
+    char2IdentityPath ||
     char1SecondaryPath ||
     char1PrimaryPath ||
     "";
+  const char2SecondaryView = characterPlan.secondaryViews[0] ?? "front";
+  const char2PrimaryPath = preferIdentityFrontPaths ? char2IdentityPath || char2ViewPath : char2ViewPath;
   const char2SecondaryPath =
-    assetPathForCharacterView(charSlots[1], characterPlan.secondaryViews[0] ?? "front") ||
+    (preferIdentityFrontPaths
+      ? assetPathForCharacterView(charSlots[1], characterPlan.primaryView === "front" ? char2SecondaryView : characterPlan.primaryView)
+      : assetPathForCharacterView(charSlots[1], char2SecondaryView)) ||
     char2PrimaryPath ||
     char1SecondaryPath ||
     char1PrimaryPath ||
     "";
-  const hasCharacters = characterAssets.length > 0;
-  const hasSecondCharacter = Boolean(charSlots[1]);
   const defaultFramePath = parseComfyViewPath(shot.generatedImagePath ?? "");
   const continuitySceneSeedPath = parseComfyViewPath(continuityPlan.previousSceneShot?.generatedImagePath ?? "");
   const shouldPreferContinuitySeed =
