@@ -2802,7 +2802,7 @@ function buildQwenSlotInstruction(
       const slot = `Reference slot ${index + 1}`;
       const label = item.label?.trim() ?? "";
       if (label === "scene_character_composite") {
-        return `${slot} is an abstract scene-and-character blocking guide; preserve approximate subject placement, eye-line, spacing, and grounding, but redraw the people naturally into the scene instead of copying the guide shapes or edges.`;
+        return `${slot} is a soft occupancy map for character placement only; use it only to understand where people stand, their spacing, and their rough scale, then redraw them naturally into the environment without copying the guide silhouettes, edges, or tones.`;
       }
       if (label === "character_identity_board") {
         return `${slot} is a character identity board; use it only for face, hair, costume silhouette, and palette consistency across all characters, not for pose, framing, or white-background cutout shapes.`;
@@ -3041,11 +3041,15 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
     ) ??
     ordered.find((item) => item.role === "continuity_scene");
   if (composite) {
-    const selectedWithComposite: WeightedImageRef[] = [composite];
-    const usedSources = new Set<string>([composite.source.trim()]);
+    const selectedWithComposite: WeightedImageRef[] = [];
+    const usedSources = new Set<string>();
     if (primaryScene && !usedSources.has(primaryScene.source.trim())) {
       selectedWithComposite.push(primaryScene);
       usedSources.add(primaryScene.source.trim());
+    }
+    if (!usedSources.has(composite.source.trim())) {
+      selectedWithComposite.push(composite);
+      usedSources.add(composite.source.trim());
     }
     if (selectedWithComposite.length < 3 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
       selectedWithComposite.push(identityBoard);
@@ -3140,8 +3144,8 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
   if (composite.length > 0) {
     return [
-      ...composite.slice(0, 1),
       ...scenes.slice(0, 1),
+      ...composite.slice(0, 1),
       ...identityBoards.slice(0, 1),
       ...characters.slice(0, 1),
       ...continuityScene,
@@ -3520,7 +3524,7 @@ function buildIntegratedCharacterCanvas(
 }
 
 function buildStoryboardGuideCharacterCanvas(
-  cutout: HTMLCanvasElement,
+  _cutout: HTMLCanvasElement,
   drawWidth: number,
   drawHeight: number,
   sceneTint: { r: number; g: number; b: number },
@@ -3533,9 +3537,7 @@ function buildStoryboardGuideCharacterCanvas(
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.drawImage(cutout, 0, 0, width, height);
-  const image = context.getImageData(0, 0, width, height);
-  const data = image.data;
+  context.clearRect(0, 0, width, height);
   let patchData: Uint8ClampedArray | null = null;
   if (scenePatch) {
     const patchCanvas = document.createElement("canvas");
@@ -3547,27 +3549,70 @@ function buildStoryboardGuideCharacterCanvas(
       patchData = patchContext.getImageData(0, 0, width, height).data;
     }
   }
-  for (let index = 0; index < data.length; index += 4) {
-    const alpha = (data[index + 3] ?? 0) / 255;
-    if (alpha <= 0.01) continue;
-    const pixel = index / 4;
-    const x = pixel % width;
-    const y = Math.floor(pixel / width);
-    const patchIndex = index;
-    const patchR = patchData?.[patchIndex] ?? sceneTint.r;
-    const patchG = patchData?.[patchIndex + 1] ?? sceneTint.g;
-    const patchB = patchData?.[patchIndex + 2] ?? sceneTint.b;
-    const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
-    const verticalRatio = height <= 1 ? 0 : y / Math.max(1, height - 1);
-    const silhouetteLuma = Math.max(34, Math.min(210, patchLuma * (0.46 - verticalRatio * 0.06)));
-    const edgeDistance = Math.min(x, y, Math.max(0, width - 1 - x), Math.max(0, height - 1 - y));
-    const edgeFade = edgeDistance >= 8 ? 1 : Math.max(0.74, edgeDistance / 8);
-    data[index] = clampChannel(silhouetteLuma * 0.94);
-    data[index + 1] = clampChannel(silhouetteLuma * 0.96);
-    data[index + 2] = clampChannel(silhouetteLuma);
-    data[index + 3] = clampChannel((data[index + 3] ?? 255) * 0.9 * edgeFade);
-  }
-  context.putImageData(image, 0, 0);
+  const patchCenterIndex = ((Math.max(0, Math.floor(height * 0.65)) * width) + Math.max(0, Math.floor(width * 0.5))) * 4;
+  const patchR = patchData?.[patchCenterIndex] ?? sceneTint.r;
+  const patchG = patchData?.[patchCenterIndex + 1] ?? sceneTint.g;
+  const patchB = patchData?.[patchCenterIndex + 2] ?? sceneTint.b;
+  const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
+  const guideTone = `rgba(${clampChannel(patchLuma * 0.85)}, ${clampChannel(patchLuma * 0.88)}, ${clampChannel(patchLuma * 0.92)}, 0.72)`;
+  const headRadius = Math.max(10, Math.round(width * 0.11));
+  const torsoWidth = Math.max(18, Math.round(width * 0.34));
+  const torsoHeight = Math.max(44, Math.round(height * 0.36));
+  const hipWidth = Math.max(16, Math.round(width * 0.26));
+  const legHeight = Math.max(28, Math.round(height * 0.26));
+  const centerX = width / 2;
+  const headCenterY = Math.max(headRadius + 6, Math.round(height * 0.18));
+  const torsoTop = headCenterY + headRadius * 0.85;
+  const torsoBottom = torsoTop + torsoHeight;
+  const floorY = Math.round(height * 0.94);
+
+  context.save();
+  context.filter = "blur(5px)";
+  context.fillStyle = guideTone;
+  context.beginPath();
+  context.ellipse(centerX, floorY, Math.max(14, torsoWidth * 0.42), Math.max(6, torsoWidth * 0.14), 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+
+  context.save();
+  context.filter = "blur(2.5px)";
+  context.fillStyle = guideTone;
+  context.beginPath();
+  context.arc(centerX, headCenterY, headRadius, 0, Math.PI * 2);
+  context.fill();
+
+  context.beginPath();
+  context.moveTo(centerX - torsoWidth * 0.45, torsoTop);
+  context.quadraticCurveTo(centerX - torsoWidth * 0.52, torsoTop + torsoHeight * 0.4, centerX - hipWidth * 0.55, torsoBottom);
+  context.lineTo(centerX + hipWidth * 0.55, torsoBottom);
+  context.quadraticCurveTo(centerX + torsoWidth * 0.52, torsoTop + torsoHeight * 0.4, centerX + torsoWidth * 0.45, torsoTop);
+  context.closePath();
+  context.fill();
+
+  context.lineWidth = Math.max(10, Math.round(width * 0.09));
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(centerX - torsoWidth * 0.2, torsoBottom - 1);
+  context.lineTo(centerX - torsoWidth * 0.28, Math.max(torsoBottom + 12, floorY - legHeight));
+  context.strokeStyle = guideTone;
+  context.stroke();
+
+  context.beginPath();
+  context.moveTo(centerX + torsoWidth * 0.2, torsoBottom - 1);
+  context.lineTo(centerX + torsoWidth * 0.28, Math.max(torsoBottom + 12, floorY - legHeight));
+  context.stroke();
+
+  context.lineWidth = Math.max(8, Math.round(width * 0.07));
+  context.beginPath();
+  context.moveTo(centerX - torsoWidth * 0.42, torsoTop + torsoHeight * 0.18);
+  context.lineTo(centerX - torsoWidth * 0.78, torsoTop + torsoHeight * 0.48);
+  context.stroke();
+
+  context.beginPath();
+  context.moveTo(centerX + torsoWidth * 0.42, torsoTop + torsoHeight * 0.18);
+  context.lineTo(centerX + torsoWidth * 0.78, torsoTop + torsoHeight * 0.48);
+  context.stroke();
+  context.restore();
   return canvas;
 }
 
