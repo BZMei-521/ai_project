@@ -3026,14 +3026,32 @@ function selectStoryboardReferenceSlots(refs: WeightedImageRef[]): WeightedImage
     if (priorityDelta !== 0) return priorityDelta;
     return right.weight - left.weight;
   });
-  const selected: WeightedImageRef[] = [];
-  const usedSources = new Set<string>();
+  const composite = ordered.find((item) => item.label === "scene_character_composite");
+  const characters = ordered.filter((item) => item.role.startsWith("character_"));
   const primaryScene =
     ordered.find((item) => item.role === "scene_primary" || item.role === "scene_secondary") ??
     ordered.find((item) => item.role === "continuity_scene");
+  if (composite) {
+    const selectedWithComposite: WeightedImageRef[] = [composite];
+    const usedSources = new Set<string>([composite.source.trim()]);
+    const usedCharacterBuckets = new Set<string>();
+    for (const characterRef of characters) {
+      if (selectedWithComposite.length >= 3) break;
+      if (usedCharacterBuckets.has(characterRef.bucket) || usedSources.has(characterRef.source.trim())) continue;
+      selectedWithComposite.push(characterRef);
+      usedSources.add(characterRef.source.trim());
+      usedCharacterBuckets.add(characterRef.bucket);
+    }
+    if (selectedWithComposite.length < 3 && primaryScene && !usedSources.has(primaryScene.source.trim())) {
+      selectedWithComposite.push(primaryScene);
+      usedSources.add(primaryScene.source.trim());
+    }
+    return selectedWithComposite.slice(0, 3);
+  }
+  const selected: WeightedImageRef[] = [];
+  const usedSources = new Set<string>();
   pushUniqueWeightedRef(selected, usedSources, primaryScene);
   const usedCharacterBuckets = new Set<string>();
-  const characters = ordered.filter((item) => item.role.startsWith("character_"));
   for (const characterRef of characters) {
     if (selected.length >= 3) break;
     if (usedCharacterBuckets.has(characterRef.bucket)) continue;
@@ -3101,10 +3119,10 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   const continuity = refs.filter((item) => item.role === "continuity_character" || item.role === "continuity_scene");
   const continuityScene = continuity.filter((item) => item.role === "continuity_scene");
   const continuityCharacter = continuity.filter((item) => item.role === "continuity_character");
-  // Always keep environment anchor first when a scene/skybox reference exists.
-  if (composite.length > 0 && continuityScene.length > 0) {
-    return [...composite.slice(0, 1), ...characters.slice(0, 2), ...continuityScene.slice(0, 1), ...scenes, ...continuityCharacter].slice(0, 3);
+  if (composite.length > 0) {
+    return [...composite.slice(0, 1), ...characters.slice(0, 2), ...scenes.slice(0, 1), ...continuityScene, ...continuityCharacter].slice(0, 3);
   }
+  // Always keep environment anchor first when a scene/skybox reference exists.
   if (continuityScene.length > 0 && scenes.length > 0) {
     return [...scenes.slice(0, 1), ...continuityScene.slice(0, 1), ...characters.slice(0, 1), ...continuityCharacter, ...characters.slice(1)].slice(0, 3);
   }
@@ -5509,7 +5527,7 @@ function shouldRouteStoryboardStillToFisher(
   settings: ComfySettings,
   shot: Shot,
   tokens: Record<string, string>,
-  stagedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"] }>
+  stagedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"]; label?: string }>
 ): boolean {
   if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") !== "mature_asset_guided") return false;
   const hasSceneRef = String(tokens.SCENE_REF_PATH ?? "").trim().length > 0;
@@ -5517,11 +5535,9 @@ function shouldRouteStoryboardStillToFisher(
     String(tokens.CHAR1_PRIMARY_PATH ?? "").trim().length > 0 ||
     String(tokens.CHAR2_PRIMARY_PATH ?? "").trim().length > 0 ||
     stagedImageRefs.some((item) => String(item.role ?? "").startsWith("character_"));
-  if (!hasSceneRef || !hasCharacterRef) return false;
-  // Keep storyboard stills on the mature asset-guided path. The Fisher/Qwen
-  // still-image route currently collapses shots into square portrait-like cards
-  // and weakens the relationship to the selected three-view character assets.
-  return false;
+  const hasCompositeGuide = stagedImageRefs.some((item) => String(item.label ?? "") === "scene_character_composite");
+  if (!hasSceneRef || !hasCharacterRef || !hasCompositeGuide) return false;
+  return true;
 }
 
 function getPromptStatus(raw: unknown): ComfyPromptStatus | null {
@@ -6158,6 +6174,10 @@ export async function generateShotAsset(
         if (inputDir) {
           const compositeRef = await buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir);
           if (compositeRef?.source) {
+            imageReferenceSources = [
+              compositeRef,
+              ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())
+            ];
             tokens = {
               ...tokens,
               FRAME_IMAGE_PATH: compositeRef.source
@@ -6319,6 +6339,10 @@ export async function generateShotAssetOutputs(
         if (inputDir) {
           const compositeRef = await buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir);
           if (compositeRef?.source) {
+            imageReferenceSources = [
+              compositeRef,
+              ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())
+            ];
             tokens = {
               ...tokens,
               FRAME_IMAGE_PATH: compositeRef.source
