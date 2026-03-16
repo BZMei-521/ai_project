@@ -3434,9 +3434,7 @@ async function maybeFallbackToStoryboardComposite(
   assetOutputContext: AssetOutputContext | null
 ): Promise<{ previewUrl: string; localPath: string } | null> {
   if (kind !== "image" || assetOutputContext || !canProcessStoryboardReferenceImages()) return null;
-  // Character storyboard shots should prefer a real repaint over dropping back to the
-  // placement guide, otherwise the result keeps reading as a pasted sticker.
-  if (hasStoryboardCharacterSeed(tokens)) return null;
+  const hasCharacterSeed = hasStoryboardCharacterSeed(tokens);
   const framePath = resolveInputTokenSourcePath(settings, String(tokens.FRAME_IMAGE_PATH ?? ""));
   const scenePath = resolveInputTokenSourcePath(settings, String(tokens.SCENE_REF_PATH ?? ""));
   if (!canUseAbsoluteLocalPath(framePath) || !canUseAbsoluteLocalPath(scenePath) || !canUseAbsoluteLocalPath(generatedLocalPath)) {
@@ -3457,10 +3455,12 @@ async function maybeFallbackToStoryboardComposite(
   ) {
     return null;
   }
-  const frameCarriesVisibleCharacters = frameSceneDiff >= 8;
-  const outputCollapsedToScene =
-    outputSceneDiff <= Math.max(8, frameSceneDiff * 0.72) &&
-    outputFrameDiff >= Math.max(10, outputSceneDiff * 1.15, frameSceneDiff * 0.42);
+  const frameCarriesVisibleCharacters = frameSceneDiff >= (hasCharacterSeed ? 3.5 : 8);
+  const outputCollapsedToScene = hasCharacterSeed
+    ? outputSceneDiff <= Math.max(6, frameSceneDiff * 0.78) &&
+      outputFrameDiff >= Math.max(6.5, outputSceneDiff * 1.05, frameSceneDiff * 0.28)
+    : outputSceneDiff <= Math.max(8, frameSceneDiff * 0.72) &&
+      outputFrameDiff >= Math.max(10, outputSceneDiff * 1.15, frameSceneDiff * 0.42);
   if (!frameCarriesVisibleCharacters || !outputCollapsedToScene) return null;
   return materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_fallback");
 }
@@ -4765,11 +4765,15 @@ function applyFisherWorkflowBindings(
   const frames = Number(tokens.DURATION_FRAMES);
   const safeFrames = Number.isFinite(frames) ? Math.max(1, Math.round(frames)) : undefined;
 
-  // Normalize common model path defaults for Comfy dropdown values.
-  // Prefer basename as a cross-platform fallback. Some Comfy builds expose checkpoints
-  // as plain filenames, others include a subdirectory prefix. object_info remapping below
-  // will upgrade this to the exact available option when possible.
-  setNodeWidgetValue(byId.get(49), 0, "Qwen-Rapid-AIO-SFW-v5.safetensors");
+  // Keep Fisher image workflow model aligned with storyboard settings.
+  // Falling back to a fixed Qwen checkpoint here causes identity/style drift
+  // between generated storyboard frames and character three-view assets.
+  const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim();
+  setNodeWidgetValue(
+    byId.get(49),
+    0,
+    storyboardModel || "Qwen-Rapid-AIO-SFW-v5.safetensors"
+  );
   setNodeWidgetValue(byId.get(145), 0, "wan_2.1_vae.safetensors");
   setNodeWidgetValue(byId.get(208), 0, "wan_2.1_vae.safetensors");
 

@@ -692,6 +692,13 @@ function inferVisualStyleKindFromModelName(name: string): UnifiedVisualStyleKind
   return "";
 }
 
+function isModelCompatibleWithVisualStyle(modelName: string, style: UnifiedVisualStyleKind | ""): boolean {
+  if (!style) return true;
+  const modelStyle = inferVisualStyleKindFromModelName(modelName);
+  if (!modelStyle || modelStyle === "neutral") return true;
+  return modelStyle === style;
+}
+
 function resolveCharacterTemplateSize(checkpointName: string, preset: "portrait" | "square"): { width: number; height: number } {
   const isSdxl = looksLikeSdxlModelName(checkpointName);
   if (preset === "square") {
@@ -7803,11 +7810,17 @@ export function ComfyPipelinePanel() {
     if (ordered.length <= 0) {
       return [selectedModel];
     }
-    const primary = ordered[0] ?? selectedModel;
+    const preferredStyle =
+      inferVisualStyleKindFromText(context) ||
+      inferVisualStyleKindFromModelName(selectedModel) ||
+      "";
+    const styleLockedOrdered = ordered.filter((name) => isModelCompatibleWithVisualStyle(name, preferredStyle));
+    const effectiveOrdered = styleLockedOrdered.length > 0 ? styleLockedOrdered : ordered;
+    const primary = effectiveOrdered[0] ?? selectedModel;
     if (primary !== selectedModel) {
       appendLog(`${sourceLabel}自动切换角色正视锚点模型：${selectedModel} -> ${primary}`, "info");
     }
-    return ordered.slice(0, CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES);
+    return effectiveOrdered.slice(0, CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES);
   };
 
   const resolveCharacterAnchorRenderPreset = (
