@@ -4824,6 +4824,8 @@ function applyFisherWorkflowBindings(
   setNodeWidgetValue(byId.get(123), 0, qwenPromptText);
 
   if (kind === "image") {
+    const safeShotId = sanitizePathSegment(String(tokens.SHOT_ID ?? "").trim() || "shot");
+    setNodeWidgetValue(byId.get(89), 0, `Storyboard/image_asset_guided_${safeShotId}`);
     if (safeSeed !== undefined) setNodeWidgetValue(byId.get(10), 0, safeSeed);
     return;
   }
@@ -6240,15 +6242,19 @@ function shouldRouteStoryboardStillToFisher(
   tokens: Record<string, string>,
   stagedImageRefs: Array<{ filename: string; weight: number; role?: WeightedImageRef["role"]; label?: string }>
 ): boolean {
-  if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") !== "mature_asset_guided") return false;
+  const storyboardMode = settings.storyboardImageWorkflowMode ?? "mature_asset_guided";
+  // Mature asset guided mode is explicitly the scene-first + IPAdapter pipeline.
+  // Auto-replacing it with the Qwen/Fisher compatibility still workflow causes
+  // scene continuity loss, softer scene detail, and characters drifting away
+  // from the bound three-view references.
+  if (storyboardMode === "mature_asset_guided") return false;
   const hasSceneRef = String(tokens.SCENE_REF_PATH ?? "").trim().length > 0;
   const hasCharacterRef =
     String(tokens.CHAR1_PRIMARY_PATH ?? "").trim().length > 0 ||
     String(tokens.CHAR2_PRIMARY_PATH ?? "").trim().length > 0 ||
     stagedImageRefs.some((item) => String(item.role ?? "").startsWith("character_"));
   const hasCompositeGuide = stagedImageRefs.some((item) => String(item.label ?? "") === "scene_character_composite");
-  if (!hasSceneRef || !hasCharacterRef || !hasCompositeGuide) return false;
-  return true;
+  return hasSceneRef && hasCharacterRef && hasCompositeGuide;
 }
 
 function getPromptStatus(raw: unknown): ComfyPromptStatus | null {
