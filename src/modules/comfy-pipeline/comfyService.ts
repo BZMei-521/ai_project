@@ -6877,10 +6877,6 @@ export async function generateShotAsset(
           ]);
           if (compositeRef?.source) {
             imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
-            tokens = {
-              ...tokens,
-              FRAME_IMAGE_PATH: compositeRef.source
-            };
           }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
@@ -7048,10 +7044,6 @@ export async function generateShotAssetOutputs(
           ]);
           if (compositeRef?.source) {
             imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
-            tokens = {
-              ...tokens,
-              FRAME_IMAGE_PATH: compositeRef.source
-            };
           }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
