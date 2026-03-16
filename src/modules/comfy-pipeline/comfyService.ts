@@ -6159,12 +6159,31 @@ function adaptBuiltinStoryboardWorkflowForShot(
       ? ((samplerNode as Record<string, unknown>).inputs as Record<string, unknown>)
       : null;
 
-  const updateAdapterWeight = (node: unknown, fallbackWeight: number) => {
+  const updateAdapterWeight = (
+    node: unknown,
+    fallbackWeight: number,
+    mode: "at_least" | "cap_at_most" = "at_least",
+    fallbackEndAt?: number
+  ) => {
     if (!node || typeof node !== "object") return;
     const inputs = (node as Record<string, unknown>).inputs;
     if (!inputs || typeof inputs !== "object") return;
-    (inputs as Record<string, unknown>).weight = fallbackWeight;
-    (inputs as Record<string, unknown>).end_at = fallbackWeight >= 0.7 ? 1.0 : 0.72;
+    const currentWeight = Number((inputs as Record<string, unknown>).weight);
+    const safeFallback = Number.isFinite(fallbackWeight) ? fallbackWeight : 0;
+    const resolvedWeight =
+      mode === "cap_at_most"
+        ? (Number.isFinite(currentWeight) ? Math.min(currentWeight, safeFallback) : safeFallback)
+        : (Number.isFinite(currentWeight) ? Math.max(currentWeight, safeFallback) : safeFallback);
+    (inputs as Record<string, unknown>).weight = resolvedWeight;
+    const resolvedEndAt =
+      typeof fallbackEndAt === "number" && Number.isFinite(fallbackEndAt)
+        ? fallbackEndAt
+        : resolvedWeight >= 0.78
+          ? 1.0
+          : resolvedWeight >= 0.62
+            ? 0.9
+            : 0.72;
+    (inputs as Record<string, unknown>).end_at = resolvedEndAt;
   };
 
   if (frameImagePath.length > 0) {
@@ -6189,18 +6208,20 @@ function adaptBuiltinStoryboardWorkflowForShot(
     const denoiseTarget =
       compositeScale === "close"
         ? hasSecondCharacter
-          ? 0.48
-          : 0.54
+          ? 0.6
+          : 0.64
         : compositeScale === "medium"
           ? hasSecondCharacter
-            ? 0.44
-            : 0.5
+            ? 0.56
+            : 0.6
           : hasSecondCharacter
-            ? 0.4
-            : 0.46;
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.16 : 0.2);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.62 : 0.68);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.58 : 0);
+            ? 0.52
+            : 0.56;
+    // Keep the scene as the environment anchor, but let character references stay
+    // stronger than the scene adapter so people are actually rendered into the shot.
+    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.18 : 0.22, "cap_at_most", hasSecondCharacter ? 0.34 : 0.4);
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.84 : 0.9, "at_least", 1.0);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.8 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
     const sceneInputs =
       typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
       (sceneAdapterNode as Record<string, unknown>).inputs &&
@@ -6208,7 +6229,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
         ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
         : null;
     if (sceneInputs) {
-      sceneInputs.end_at = hasSecondCharacter ? 0.28 : 0.34;
+      sceneInputs.end_at = hasSecondCharacter ? 0.34 : 0.4;
     }
     if (samplerInputs) {
       const current = Number(samplerInputs.denoise);
