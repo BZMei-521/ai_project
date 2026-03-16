@@ -3667,16 +3667,20 @@ function buildIntegratedCharacterCanvas(
       patchG = patchData[patchIndex + 1] ?? patchG;
       patchB = patchData[patchIndex + 2] ?? patchB;
     }
+    const baseR = data[index] ?? 0;
+    const baseG = data[index + 1] ?? 0;
+    const baseB = data[index + 2] ?? 0;
     const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
-    const figureShade = Math.max(24, Math.min(230, patchLuma * (0.72 - floorBlend * 0.08)));
-    const sceneBlend = 0.16 + floorBlend * 0.12 + edgeBlend * 0.08;
-    const figureR = clampChannel(figureShade * 0.96 + patchR * 0.04);
-    const figureG = clampChannel(figureShade * 0.98 + patchG * 0.02);
-    const figureB = clampChannel(figureShade + patchB * 0.01);
-    data[index] = clampChannel(figureR * (1 - sceneBlend) + patchR * sceneBlend);
-    data[index + 1] = clampChannel(figureG * (1 - sceneBlend) + patchG * sceneBlend);
-    data[index + 2] = clampChannel(figureB * (1 - sceneBlend) + patchB * sceneBlend);
-    data[index + 3] = clampChannel((data[index + 3] ?? 255) * (0.98 - edgeBlend * 0.04));
+    const baseLuma = baseR * 0.299 + baseG * 0.587 + baseB * 0.114;
+    const brightnessScale = Math.max(0.88, Math.min(1.08, (patchLuma + 1) / Math.max(1, baseLuma + 1)));
+    const sceneBlend = 0.06 + floorBlend * 0.08 + edgeBlend * 0.04;
+    const litR = clampChannel(baseR * brightnessScale);
+    const litG = clampChannel(baseG * brightnessScale);
+    const litB = clampChannel(baseB * brightnessScale);
+    data[index] = clampChannel(litR * (1 - sceneBlend) + patchR * sceneBlend);
+    data[index + 1] = clampChannel(litG * (1 - sceneBlend) + patchG * sceneBlend);
+    data[index + 2] = clampChannel(litB * (1 - sceneBlend) + patchB * sceneBlend);
+    data[index + 3] = clampChannel((data[index + 3] ?? 255) * (1 - edgeBlend * 0.015));
   }
   context.putImageData(image, 0, 0);
   return canvas;
