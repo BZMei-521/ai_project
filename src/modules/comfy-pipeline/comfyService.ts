@@ -6905,6 +6905,7 @@ export async function generateShotAsset(
           : "storyboard";
     tokens = applyGlobalStyleToTokens(settings, tokens, kind, styleScope);
     let imageReferenceSources: WeightedImageRef[] = [];
+    let storyboardCompositeFrameSource = "";
     if (kind === "image") {
       imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
@@ -6915,6 +6916,7 @@ export async function generateShotAsset(
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
           if (compositeRef?.source) {
+            storyboardCompositeFrameSource = compositeRef.source.trim();
             imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
           }
           if (identityBoardRef?.source) {
@@ -6939,6 +6941,12 @@ export async function generateShotAsset(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
+      if (storyboardCompositeFrameSource) {
+        tokens = {
+          ...tokens,
+          FRAME_IMAGE_PATH: storyboardCompositeFrameSource
+        };
+      }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
@@ -7072,6 +7080,7 @@ export async function generateShotAssetOutputs(
     }
     tokens = applyGlobalStyleToTokens(settings, tokens, kind);
     let imageReferenceSources: WeightedImageRef[] = [];
+    let storyboardCompositeFrameSource = "";
     if (kind === "image") {
       imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
@@ -7082,6 +7091,7 @@ export async function generateShotAssetOutputs(
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
           if (compositeRef?.source) {
+            storyboardCompositeFrameSource = compositeRef.source.trim();
             imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
           }
           if (identityBoardRef?.source) {
@@ -7106,6 +7116,12 @@ export async function generateShotAssetOutputs(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
+      if (storyboardCompositeFrameSource) {
+        tokens = {
+          ...tokens,
+          FRAME_IMAGE_PATH: storyboardCompositeFrameSource
+        };
+      }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
