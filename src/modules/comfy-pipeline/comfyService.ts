@@ -3683,12 +3683,16 @@ function buildIntegratedCharacterCanvas(
 }
 
 function buildStoryboardGuideCharacterCanvas(
-  _cutout: HTMLCanvasElement,
+  cutout: HTMLCanvasElement,
   drawWidth: number,
   drawHeight: number,
   sceneTint: { r: number; g: number; b: number },
   scenePatch?: HTMLCanvasElement | null
 ): HTMLCanvasElement | null {
+  const integrated = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
+  if (integrated) {
+    return integrated;
+  }
   const width = Math.max(1, Math.round(drawWidth));
   const height = Math.max(1, Math.round(drawHeight));
   const canvas = document.createElement("canvas");
@@ -4254,11 +4258,11 @@ async function buildStoryboardCompositeReference(
     context.ellipse(centerX, floorY + 5, Math.max(18, drawWidth * 0.2), Math.max(8, drawWidth * 0.07), 0, 0, Math.PI * 2);
     context.fill();
     if (guideFigure) {
-      context.globalAlpha = 0.12;
+      context.globalAlpha = 0.2;
       context.filter = "blur(4px)";
       context.drawImage(guideFigure, drawX + 1, drawY + 1, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "contrast(0.95) brightness(0.92)";
+      context.filter = "contrast(1.02) brightness(0.98) saturate(0.94)";
       context.drawImage(guideFigure, drawX, drawY, drawWidth, drawHeight);
     } else {
       context.globalAlpha = 0.28;
