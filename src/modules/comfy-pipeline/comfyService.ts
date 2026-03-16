@@ -3103,8 +3103,8 @@ function adjustStoryboardReferenceWeight(
   if (ref.label === "scene_character_composite") {
     return {
       ...ref,
-      weight: 0.34,
-      priority: Math.min(ref.priority, 308)
+      weight: 0.14,
+      priority: Math.min(ref.priority, 230)
     };
   }
   if (ref.label === "character_identity_board") {
@@ -3117,7 +3117,14 @@ function adjustStoryboardReferenceWeight(
   if (ref.role === "scene_primary" || ref.role === "scene_secondary") {
     return {
       ...ref,
-      weight: Math.max(ref.weight, hasCompositeGuide ? 0.84 : 1.0)
+      weight: Math.max(ref.weight, 1.0)
+    };
+  }
+  if (ref.role === "continuity_scene") {
+    return {
+      ...ref,
+      weight: hasCompositeGuide ? Math.max(ref.weight, 0.72) : Math.max(ref.weight, 0.46),
+      priority: hasCompositeGuide ? Math.max(ref.priority, 250) : ref.priority
     };
   }
   if (ref.role === "character_front" || ref.role === "character_side" || ref.role === "character_back") {
@@ -3169,6 +3176,7 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
     focusedCharacterName
       ? characters.find((item) => extractCharacterNameFromReferenceLabel(item.label) === focusedCharacterName)
       : undefined;
+  const compositeContinuityScene = ordered.find((item) => item.role === "continuity_scene");
   const scale = inferStoryboardCompositeScale(shot);
   if (composite) {
     const selectedWithComposite: WeightedImageRef[] = [];
@@ -3177,11 +3185,15 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
       selectedWithComposite.push(primaryScene);
       usedSources.add(primaryScene.source.trim());
     }
+    if (compositeContinuityScene && !usedSources.has(compositeContinuityScene.source.trim())) {
+      selectedWithComposite.push(compositeContinuityScene);
+      usedSources.add(compositeContinuityScene.source.trim());
+    }
     if (!usedSources.has(composite.source.trim())) {
       selectedWithComposite.push(composite);
       usedSources.add(composite.source.trim());
     }
-    if (selectedWithComposite.length < 3 && focusedCharacterRef && !usedSources.has(focusedCharacterRef.source.trim())) {
+    if (selectedWithComposite.length < 4 && focusedCharacterRef && !usedSources.has(focusedCharacterRef.source.trim())) {
       selectedWithComposite.push(focusedCharacterRef);
       usedSources.add(focusedCharacterRef.source.trim());
     }
@@ -3193,7 +3205,7 @@ function selectStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): W
       usedSources.add(characterRef.source.trim());
       usedCharacterBuckets.add(characterRef.bucket);
     }
-    if (selectedWithComposite.length < 5 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
+    if (!compositeContinuityScene && selectedWithComposite.length < 5 && identityBoard && !usedSources.has(identityBoard.source.trim())) {
       selectedWithComposite.push(identityBoard);
       usedSources.add(identityBoard.source.trim());
     }
@@ -3291,11 +3303,11 @@ function reorderStoryboardReferenceSlots(shot: Shot, refs: WeightedImageRef[]): 
   if (composite.length > 0) {
     return [
       ...scenes.slice(0, 1),
+      ...continuityScene.slice(0, 1),
       ...composite.slice(0, 1),
       ...(focusedCharacterRef ? [focusedCharacterRef] : identityBoards.slice(0, 1)),
       ...characters.filter((item) => item !== focusedCharacterRef).slice(0, focusedCharacterRef ? 1 : 2),
-      ...identityBoards.slice(0, 1),
-      ...continuityScene,
+      ...(!continuityScene.length ? identityBoards.slice(0, 1) : []),
       ...continuityCharacter
     ].slice(0, maxStoryboardRefs);
   }
