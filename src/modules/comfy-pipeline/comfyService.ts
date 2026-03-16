@@ -4179,9 +4179,10 @@ async function buildStoryboardCompositeReference(
   canvas.height = sceneHeight;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.fillStyle = "rgb(236, 232, 226)";
-  context.fillRect(0, 0, sceneWidth, sceneHeight);
+  context.drawImage(sceneImage, 0, 0, sceneWidth, sceneHeight);
   context.save();
+  context.fillStyle = "rgba(246, 244, 240, 0.08)";
+  context.fillRect(0, 0, sceneWidth, sceneHeight);
   const horizonY = Math.round(sceneHeight * 0.68);
   const gradient = context.createLinearGradient(0, 0, 0, sceneHeight);
   gradient.addColorStop(0, "rgba(255,255,255,0.04)");
@@ -4211,8 +4212,29 @@ async function buildStoryboardCompositeReference(
     const floorY = sceneHeight * placement.floorYRatio;
     const drawX = Math.round(centerX - drawWidth / 2);
     const drawY = Math.round(floorY - drawHeight);
+    const sampleWidth = Math.max(1, Math.round(drawWidth));
+    const sampleHeight = Math.max(1, Math.round(drawHeight));
+    const sampleX = Math.max(0, Math.min(sceneWidth - sampleWidth, drawX));
+    const sampleY = Math.max(0, Math.min(sceneHeight - sampleHeight, drawY));
+    const scenePatch = document.createElement("canvas");
+    scenePatch.width = sampleWidth;
+    scenePatch.height = sampleHeight;
+    const scenePatchContext = scenePatch.getContext("2d");
+    if (scenePatchContext) {
+      scenePatchContext.drawImage(
+        sceneImage,
+        sampleX,
+        sampleY,
+        sampleWidth,
+        sampleHeight,
+        0,
+        0,
+        sampleWidth,
+        sampleHeight
+      );
+    }
     const sceneTint = { r: 132, g: 132, b: 136 };
-    const guideFigure = buildStoryboardGuideCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, null);
+    const guideFigure = buildStoryboardGuideCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
     context.save();
     context.fillStyle = "rgba(0,0,0,0.14)";
     context.beginPath();
@@ -4220,15 +4242,15 @@ async function buildStoryboardCompositeReference(
     context.ellipse(centerX, floorY + 5, Math.max(18, drawWidth * 0.2), Math.max(8, drawWidth * 0.07), 0, 0, Math.PI * 2);
     context.fill();
     if (guideFigure) {
-      context.globalAlpha = 0.16;
+      context.globalAlpha = 0.12;
       context.filter = "blur(4px)";
       context.drawImage(guideFigure, drawX + 1, drawY + 1, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "contrast(0.94) brightness(0.96)";
+      context.filter = "contrast(0.95) brightness(0.92)";
       context.drawImage(guideFigure, drawX, drawY, drawWidth, drawHeight);
     } else {
-      context.globalAlpha = 0.92;
-      context.filter = "grayscale(1) contrast(0.88) brightness(0.94)";
+      context.globalAlpha = 0.28;
+      context.filter = "grayscale(1) contrast(0.88) brightness(0.92)";
       context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
     }
     context.restore();
