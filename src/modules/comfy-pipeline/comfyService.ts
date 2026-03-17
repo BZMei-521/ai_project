@@ -2634,6 +2634,16 @@ function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   return `出镜硬要求：画面中必须且只能出现 ${characterAssets.length} 名角色${names}，禁止生成为纯环境空镜，禁止缺少任何一人，禁止出现第三人、路人、群演、重复人、融合人或身份互换；每个角色都需各自对应 1 名可辨识人物，不允许用同一张脸或同一套服装冒充两个人，也不允许只出现极远小人、严重裁切或被场景主体完全遮挡。`;
 }
 
+function buildCompactStoryboardPresencePrompt(characterAssets: Asset[]): string {
+  if (characterAssets.length === 0) return "";
+  if (characterAssets.length === 1) {
+    return `exactly one full body character, character clearly visible, standing in the scene, feet touching the ground, integrated with the environment, not an empty scene`;
+  }
+  const names = characterAssets.map((item) => item.name.trim()).filter((item) => item.length > 0);
+  const nameText = names.length > 0 ? `exactly ${characterAssets.length} characters: ${names.join(" and ")}` : `exactly ${characterAssets.length} characters`;
+  return `${nameText}, both full body characters clearly visible, both characters inside the scene, feet touching the ground, no missing character, no empty scene, natural interaction with environment`;
+}
+
 function storyboardScreenZoneLabel(centerXRatio: number): string {
   if (centerXRatio <= 0.18) return "画面左边缘";
   if (centerXRatio <= 0.36) return "画面左侧";
@@ -5413,18 +5423,20 @@ function inferPromptTokens(
   const cameraContext = shotCameraDescriptor(shot) ? `镜头机位：${shotCameraDescriptor(shot)}` : "";
   const characterContext =
     characterAssets.length > 0 ? `人物参考：${characterAssets.map((item) => item.name).join("、")}` : "";
+  const compactPresencePrompt = buildCompactStoryboardPresencePrompt(characterAssets);
   const characterPresenceDirective = buildCharacterPresenceDirective(characterAssets);
   const blockingDirective = buildStoryboardBlockingDirective(shot, characterAssets);
   const stabilityDirective = buildStoryboardStabilityDirective(Boolean(sceneAsset), characterAssets.length > 0);
   const referenceDirective = buildShotReferenceDirective(shot, sceneAsset, skyboxFaces, characterAssets, continuityPlan);
   const promptBase = [
+    promptBaseRaw,
+    compactPresencePrompt,
+    characterContext,
+    sceneContext,
+    cameraContext,
     referenceDirective,
     characterPresenceDirective,
     blockingDirective,
-    sceneContext,
-    cameraContext,
-    characterContext,
-    promptBaseRaw,
     stabilityDirective
   ]
     .filter((item) => item.length > 0)
