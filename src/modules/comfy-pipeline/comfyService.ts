@@ -562,7 +562,7 @@ function resolveStoryboardImageModel(
   if (hasCharacterRefs && characterModel) return characterModel;
   if (storyboardModel) return storyboardModel;
   if (characterModel) return characterModel;
-  return "sd_xl_base_1.0.safetensors";
+  return "realisticVisionV60B1_v51VAE.safetensors";
 }
 
 export function defaultVideoGenerationMode(): "comfy" | "local_motion" {
@@ -6259,7 +6259,6 @@ function adaptBuiltinStoryboardWorkflowForShot(
   tokens: Record<string, string>
 ): void {
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
-  const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
   const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
   const hasCharacters = char1PrimaryPath.length > 0 || char2PrimaryPath.length > 0;
@@ -6268,16 +6267,15 @@ function adaptBuiltinStoryboardWorkflowForShot(
 
   const samplerNode = workflow["13"];
   const sceneAdapterNode = workflow["17"];
-  const latentNode = workflow["3"];
   const char1AdapterNode = workflow["8"];
+  const char1SecondaryAdapterNode = workflow["10"];
   const char2AdapterNode = workflow["12"];
+  const controlNetNode = workflow["20"];
   if (
     !samplerNode ||
     !sceneAdapterNode ||
-    !latentNode ||
     typeof samplerNode !== "object" ||
-    typeof sceneAdapterNode !== "object" ||
-    typeof latentNode !== "object"
+    typeof sceneAdapterNode !== "object"
   ) {
     return;
   }
@@ -6289,7 +6287,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
   const hasSecondCharacter = char2PrimaryPath.length > 0;
-  const compositeScale = inferStoryboardCompositeScaleFromCorpus(
+  const shotScale = inferStoryboardCompositeScaleFromCorpus(
     compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
   );
   const samplerInputs =
@@ -6297,6 +6295,12 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (samplerNode as Record<string, unknown>).inputs &&
     !Array.isArray((samplerNode as Record<string, unknown>).inputs)
       ? ((samplerNode as Record<string, unknown>).inputs as Record<string, unknown>)
+      : null;
+  const controlNetInputs =
+    typeof (controlNetNode as Record<string, unknown>)?.inputs === "object" &&
+    (controlNetNode as Record<string, unknown>).inputs &&
+    !Array.isArray((controlNetNode as Record<string, unknown>).inputs)
+      ? ((controlNetNode as Record<string, unknown>).inputs as Record<string, unknown>)
       : null;
 
   const updateAdapterWeight = (
@@ -6326,75 +6330,57 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (inputs as Record<string, unknown>).end_at = resolvedEndAt;
   };
 
-  if (frameImagePath.length > 0) {
-    // When characters are present, use the composite as a layout/placement guide,
-    // not as the final look. Keep enough denoise so Comfy can repaint the people
-    // into the scene instead of tracing a sticker-like cutout.
-    workflow["16"] = {
-      inputs: {
-        image: frameImagePath,
-        upload: "image"
-      },
-      class_type: "LoadImage"
-    };
-    workflow["3"] = {
-      inputs: {
-        pixels: ["16", 0],
-        vae: ["1", 2]
-      },
-      class_type: "VAEEncode"
-    };
-
-    const denoiseTarget =
-      compositeScale === "close"
-        ? hasSecondCharacter
-          ? 0.6
-          : 0.64
-        : compositeScale === "medium"
-          ? hasSecondCharacter
-            ? 0.56
-            : 0.6
-          : hasSecondCharacter
-            ? 0.52
-            : 0.56;
-    // Keep the scene as the environment anchor, but let character references stay
-    // stronger than the scene adapter so people are actually rendered into the shot.
-    updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.18 : 0.22, "cap_at_most", hasSecondCharacter ? 0.34 : 0.4);
-    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.84 : 0.9, "at_least", 1.0);
-    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.8 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
-    const sceneInputs =
-      typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
-      (sceneAdapterNode as Record<string, unknown>).inputs &&
-      !Array.isArray((sceneAdapterNode as Record<string, unknown>).inputs)
-        ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
-        : null;
-    if (sceneInputs) {
-      sceneInputs.end_at = hasSecondCharacter ? 0.34 : 0.4;
-    }
-    if (samplerInputs) {
-      const current = Number(samplerInputs.denoise);
-      const target = denoiseTarget;
-      samplerInputs.denoise =
-        Number.isFinite(current) && current > 0 ? Math.max(current, target) : target;
-      samplerInputs.steps = Math.max(28, Number(samplerInputs.steps) || 0);
-    }
-    return;
-  }
-
-  workflow["3"] = {
+  // Always use the pure scene image as the latent/control anchor.
+  // Feeding the cutout composite into the main latent path makes the model trace
+  // pasted silhouettes instead of repainting a natural person into the scene.
+  workflow["16"] = {
     inputs: {
+      image: sceneRefPath,
+      upscale_method: "lanczos",
       width: renderWidth,
       height: renderHeight,
-      batch_size: 1
+      crop: "center"
     },
-    class_type: "EmptyLatentImage"
+    class_type: "ImageScale"
+  };
+  workflow["3"] = {
+    inputs: {
+      pixels: ["16", 0],
+      vae: ["1", 2]
+    },
+    class_type: "VAEEncode"
   };
 
-  // Favor a readable environment anchor. Character refs should keep identity and costume
-  // without collapsing the whole frame into pasted torso fragments.
-  updateAdapterWeight(sceneAdapterNode, 0.82);
-  updateAdapterWeight(char1AdapterNode, 0.58);
-  updateAdapterWeight(char2AdapterNode, 0.54);
+  const denoiseTarget =
+    shotScale === "close"
+      ? hasSecondCharacter
+        ? 0.68
+        : 0.7
+      : shotScale === "medium"
+        ? hasSecondCharacter
+          ? 0.64
+          : 0.66
+        : hasSecondCharacter
+          ? 0.6
+          : 0.62;
+  updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.08 : 0.1, "cap_at_most", 0.28);
+  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.92 : 0.96, "at_least", 1.0);
+  updateAdapterWeight(char1SecondaryAdapterNode, hasSecondCharacter ? 0.34 : 0.42, "at_least", 0.72);
+  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.86 : 0, "at_least", hasSecondCharacter ? 0.96 : 0.72);
+
+  if (controlNetInputs) {
+    const targetStrength =
+      shotScale === "close" ? 0.34 : shotScale === "medium" ? 0.38 : 0.42;
+    controlNetInputs.strength = targetStrength;
+    controlNetInputs.end_percent = shotScale === "close" ? 0.68 : 0.74;
+  }
+  if (samplerInputs) {
+    const current = Number(samplerInputs.denoise);
+    samplerInputs.denoise =
+      Number.isFinite(current) && current > 0 ? Math.max(current, denoiseTarget) : denoiseTarget;
+    samplerInputs.steps = Math.max(30, Number(samplerInputs.steps) || 0);
+    samplerInputs.cfg = Math.max(6.2, Number(samplerInputs.cfg) || 0);
+  }
 }
 
 function shouldRouteStoryboardStillToFisher(
