@@ -197,7 +197,7 @@
   },
   "16": {
     "inputs": {
-      "image": "{{FRAME_IMAGE_PATH}}",
+      "image": "{{SCENE_REF_PATH}}",
       "upscale_method": "lanczos",
       "width": "{{RENDER_WIDTH}}",
       "height": "{{RENDER_HEIGHT}}",
@@ -219,11 +219,11 @@
         "2",
         0
       ],
-      "weight": 0.18,
+      "weight": 0.1,
       "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0,
-      "end_at": 0.62,
+      "end_at": 0.32,
       "embeds_scaling": "V only"
     },
     "class_type": "IPAdapterAdvanced"
@@ -263,9 +263,9 @@
         "18",
         0
       ],
-      "strength": 0.45,
+      "strength": 0.38,
       "start_percent": 0,
-      "end_percent": 0.82
+      "end_percent": 0.74
     },
     "class_type": "ControlNetApplyAdvanced"
   }
