@@ -4398,6 +4398,31 @@ function inferStoryboardCharacterPlacement(
     });
   }
 
+  const isRiversidePathShot = containsAnyKeyword(lowerCorpus, [
+    "河边",
+    "河岸",
+    "riverside",
+    "riverbank",
+    "stone path",
+    "沿河石路",
+    "桥边"
+  ]);
+  if (isRiversidePathShot) {
+    if (count >= 2) {
+      placement = applyClampedPlacement(placement, {
+        centerXRatio: index === 0 ? 0.68 : 0.8,
+        floorYRatio: index === 0 ? 0.9 : 0.89,
+        sizeScale: placement.sizeScale * (index === 0 ? 0.92 : 0.84)
+      });
+    } else {
+      placement = applyClampedPlacement(placement, {
+        centerXRatio: 0.8,
+        floorYRatio: 0.9,
+        sizeScale: placement.sizeScale * 0.94
+      });
+    }
+  }
+
   if (
     characterName &&
     lowerCorpus.includes(lowerName) &&
