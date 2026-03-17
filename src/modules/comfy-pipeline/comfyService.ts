@@ -4089,6 +4089,93 @@ async function buildCharacterThreeViewStripCanvas(
   return canvas;
 }
 
+async function buildCharacterThreeViewTokenCanvas(
+  settings: ComfySettings,
+  sources: string[]
+): Promise<HTMLCanvasElement | null> {
+  if (!canProcessStoryboardReferenceImages()) return null;
+  const cutouts = (
+    await Promise.all(
+      sources
+        .map((source) => resolveInputTokenSourcePath(settings, source))
+        .filter((source) => source.trim().length > 0)
+        .map(async (source) => await buildCharacterCutoutCanvas(source))
+    )
+  ).filter((item): item is HTMLCanvasElement => Boolean(item));
+  if (cutouts.length === 0) return null;
+
+  const canvasSize = 1024;
+  const padding = 48;
+  const gap = 24;
+  const slotWidth = Math.floor((canvasSize - padding * 2 - gap * 2) / 3);
+  const slotHeight = canvasSize - padding * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.fillStyle = "rgb(244, 241, 236)";
+  context.fillRect(0, 0, canvasSize, canvasSize);
+
+  for (let index = 0; index < 3; index += 1) {
+    const cutout = cutouts[index] ?? cutouts[cutouts.length - 1];
+    if (!cutout) continue;
+    const scale = Math.min(slotWidth / Math.max(1, cutout.width), slotHeight / Math.max(1, cutout.height));
+    const drawWidth = Math.round(cutout.width * scale);
+    const drawHeight = Math.round(cutout.height * scale);
+    const slotX = padding + index * (slotWidth + gap);
+    const drawX = slotX + Math.round((slotWidth - drawWidth) / 2);
+    const drawY = padding + Math.round((slotHeight - drawHeight) / 2);
+    context.save();
+    context.fillStyle = "rgba(0,0,0,0.035)";
+    context.fillRect(slotX, padding, slotWidth, slotHeight);
+    context.filter = "saturate(0.94) contrast(0.97) brightness(0.99)";
+    context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
+    context.restore();
+  }
+
+  return canvas;
+}
+
+async function stageStoryboardThreeViewTokens(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>
+): Promise<Record<string, string>> {
+  if (!canProcessStoryboardReferenceImages()) return tokens;
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) return tokens;
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const nextTokens = { ...tokens };
+  const specs = [
+    {
+      key: "CHAR1_PRIMARY_PATH" as const,
+      sources: [tokens.CHAR1_FRONT_PATH ?? "", tokens.CHAR1_SIDE_PATH ?? "", tokens.CHAR1_BACK_PATH ?? ""],
+      filePath: `${inputDir}/shot_${safeShotId}_char1_threeview_board.png`
+    },
+    {
+      key: "CHAR2_PRIMARY_PATH" as const,
+      sources: [tokens.CHAR2_FRONT_PATH ?? "", tokens.CHAR2_SIDE_PATH ?? "", tokens.CHAR2_BACK_PATH ?? ""],
+      filePath: `${inputDir}/shot_${safeShotId}_char2_threeview_board.png`
+    }
+  ];
+
+  for (const spec of specs) {
+    const canvas = await buildCharacterThreeViewTokenCanvas(settings, spec.sources);
+    if (!canvas) continue;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath: spec.filePath,
+      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    if (!result.filePath) continue;
+    nextTokens[spec.key] = result.filePath.split("/").pop() ?? result.filePath;
+  }
+
+  return nextTokens;
+}
+
 function inferStoryboardCompositeScaleFromCorpus(corpus: string): "wide" | "medium" | "close" | "default" {
   const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot", "close-up"]);
   const isMedium = containsAnyKeyword(corpus, [
@@ -7183,6 +7270,7 @@ export async function generateShotAsset(
         };
       }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
+      tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
     const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
@@ -7391,6 +7479,7 @@ export async function generateShotAssetOutputs(
         };
       }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
+      tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
     const requirePersistentImageOutput = kind === "image" && workflowHasNodeType(rewrittenWorkflow, "SaveImage");
