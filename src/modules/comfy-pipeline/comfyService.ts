@@ -554,8 +554,12 @@ function resolveStoryboardImageModel(
   settings: ComfySettings,
   hasCharacterRefs = false
 ): string {
+  const storyboardMode = settings.storyboardImageWorkflowMode ?? "mature_asset_guided";
   const storyboardModel = settings.storyboardImageModelName?.trim() || "";
   const characterModel = settings.characterAssetModelName?.trim() || "";
+  if (storyboardMode === "mature_asset_guided" && hasCharacterRefs) {
+    return "realisticVisionV60B1_v51VAE.safetensors";
+  }
   const hasExplicitStoryboardModel =
     storyboardModel.length > 0 && storyboardModel.toLowerCase() !== "sd_xl_base_1.0.safetensors";
   if (hasExplicitStoryboardModel) return storyboardModel;
