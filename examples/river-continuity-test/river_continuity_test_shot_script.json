@@ -13,98 +13,152 @@
     {
       "id": "river_continuity_001",
       "title": "河边远景建立",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, wide establishing shot at the same dusk riverside location, Jiang Lan stands on the left stone path and Shen Yan stands on the right stone path, both characters are clearly present as readable full-body figures inside the environment instead of pasted cutouts, feet firmly planted on the riverside path, correct scale and natural perspective, old stone bridge in the mid background, willow trees on screen left, open river surface on screen right, unified guoman cinematic style, soft dusk light, consistent shadow direction, stable anatomy, clean silhouette, no border",
-      "negative_prompt": "white border, frame, padding, empty scene, scenery only, no people, missing character, wrong character count, floating character, hovering feet, tiny distant figure, cut off body, duplicate person, pasted character, character sheet, collage, mosaic artifact, warped bridge, text watermark",
+      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, two full body characters, Jiang Lan standing on the left stone path in the left side of the frame, Shen Yan standing on the right stone path in the right side of the frame, both characters fully visible from head to toe, both feet touching the ground, both characters inside the riverside environment, interacting with the riverside path and open air environment, wide establishing shot, dusk riverside, old stone bridge in the mid background, willow trees on the left, open river on the right, natural body scale, correct perspective, grounded shadows, unified dusk lighting, guoman cinematic style, clean composition, no border",
+      "negative_prompt": "white border, frame, padding, empty scene, scenery only, no character, no people, missing character, one character only, cropped body, cut off feet, floating character, hovering feet, pasted character, collage, character sheet, duplicate person, tiny distant person, detached shadow, wrong perspective, indoor scene, text watermark",
       "video_prompt": "slow push in, subtle river ripples, willow leaves sway lightly, both characters hold a stable standing pose with readable silhouettes",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "",
       "notes": "建立镜头必须先把两人明确放进同一河边空间。人物不是贴图，脚要接地，桥和河岸关系稳定，画面不能出现白边。",
-      "tags": ["河边", "建立镜头", "双人", "远景", "接地"],
+      "tags": [
+        "河边",
+        "建立镜头",
+        "双人",
+        "远景",
+        "接地"
+      ],
       "scene_name": "河边",
       "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": ["江岚", "沈砚"]
+      "character_names": [
+        "江岚",
+        "沈砚"
+      ]
     },
     {
       "id": "river_continuity_002",
       "title": "双人中景起话",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, medium two shot at the same riverside location, Jiang Lan stands in the left half of the frame and turns slightly toward Shen Yan on the right, both full bodies remain visible with feet grounded on the stone path, bridge stays visible in the center background, river remains on the right, readable standing action, natural body scale, natural lighting matching the dusk riverside, integrated shadows, same faces, same costumes, same environment continuity, not a portrait crop, not a pasted cutout",
-      "negative_prompt": "white border, frame, padding, empty scene, missing one character, wrong character count, glamour portrait, indoor selfie, floating character, detached shadow, deformed anatomy, duplicated body, cut off feet, overexposed background, pasted character, character sheet, text watermark",
+      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, two full body characters, Jiang Lan standing on the left side of the frame on the stone path, Shen Yan standing on the right side of the frame on the same stone path, both characters fully visible from head to toe, both feet touching the ground, Jiang Lan turning slightly toward Shen Yan, Shen Yan looking at Jiang Lan, both characters interacting with each other inside the riverside environment, medium two shot, bridge visible in the center background, river on the right, dusk outdoor lighting, natural shadows, correct body scale, correct perspective, integrated characters, no pasted cutout, no border",
+      "negative_prompt": "white border, frame, padding, empty scene, no character, missing one character, wrong character count, portrait crop, close-up face only, cropped feet, floating body, detached shadow, pasted character, collage, character sheet, duplicate limbs, deformed anatomy, indoor lighting, text watermark",
       "video_prompt": "Jiang Lan gives a small head turn and subtle hand gesture while speaking, Shen Yan remains grounded and mostly still, camera stays stable",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "江岚：风小下来了。",
       "notes": "双人对话中景。动作要清楚，但仍以稳定站位为主。两人必须完整处于河边空间中，不能只剩半身。",
-      "tags": ["河边", "中景", "对话", "续帧", "双人"],
+      "tags": [
+        "河边",
+        "中景",
+        "对话",
+        "续帧",
+        "双人"
+      ],
       "scene_name": "河边",
       "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": ["江岚", "沈砚"]
+      "character_names": [
+        "江岚",
+        "沈砚"
+      ]
     },
     {
       "id": "river_continuity_003",
       "title": "江岚近景说话",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, closer medium shot focused on Jiang Lan at center-left, Jiang Lan remains clearly inside the riverside environment with grounded feet and readable upper body gesture, Shen Yan stays visible on the right as a smaller secondary full-body figure, bridge and river orientation remain unchanged, Jiang Lan speaks calmly with a slight three-quarter turn, soft dusk side light, consistent shadows, stable anatomy, integrated character and environment, not an isolated portrait, not a fashion shot",
-      "negative_prompt": "white border, frame, padding, missing secondary character, empty scene, no people, glamour portrait, indoor lighting, floating body, cropped feet, pasted character, character sheet, wrong hairstyle, changed outfit, mosaic artifact, text watermark",
+      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, two full body characters, Jiang Lan standing on the stone path at center-left, full body character fully visible from head to toe, both feet touching the ground, Jiang Lan turning three quarters and speaking with one clear hand gesture, Shen Yan standing on the right side of the frame as a smaller secondary full body character, Shen Yan also fully visible and grounded on the path, both characters inside the same riverside environment, interacting with the environment, medium shot with environment continuity, bridge orientation unchanged, river on the right, dusk side light, natural shadows, correct perspective, not an isolated portrait, no border",
+      "negative_prompt": "white border, frame, padding, empty scene, no character, missing secondary character, portrait only, upper body only, cropped legs, cropped feet, floating character, pasted character, fashion photo, character sheet, duplicate person, changed outfit, indoor background, text watermark",
       "video_prompt": "Jiang Lan moves her shoulders slightly and speaks with a controlled hand gesture, Shen Yan gives a small background reaction, water movement stays subtle",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "江岚：先沿着河岸往前走。",
       "notes": "江岚是主体，但沈砚仍必须在场。不能把镜头退化成单人摆拍肖像，人物和环境要继续融合。",
-      "tags": ["河边", "近中景", "单人主镜头", "续帧", "人物明确存在"],
+      "tags": [
+        "河边",
+        "近中景",
+        "单人主镜头",
+        "续帧",
+        "人物明确存在"
+      ],
       "scene_name": "河边",
       "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": ["江岚", "沈砚"]
+      "character_names": [
+        "江岚",
+        "沈砚"
+      ]
     },
     {
       "id": "river_continuity_004",
       "title": "沈砚回应点头",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, reverse medium close shot focused on Shen Yan at center-right, Shen Yan is the primary full-body figure with grounded feet on the riverside path, Jiang Lan remains present on the left edge as a readable secondary figure, same bridge orientation, same river placement, same willow trees, same dusk light, Shen Yan gives a gentle nod with a clear readable response action, natural perspective, stable anatomy, integrated lighting, not a pasted collage, not a border-framed composition",
-      "negative_prompt": "white border, frame, padding, empty scene, missing foreground character, wrong character count, swapped character identity, malformed hands, detached feet, floating stance, pasted character, character sheet, abstract block, mosaic artifact, text watermark",
+      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, two full body characters, Shen Yan standing on the riverside stone path at center-right, full body character fully visible from head to toe, both feet touching the ground, Shen Yan giving a gentle nod, Jiang Lan standing on the left edge as a readable secondary full body character, Jiang Lan also fully visible and grounded on the same path, both characters inside the same riverside environment, interacting with the environment, reverse medium shot, same bridge orientation, same river placement, same willow trees, same dusk lighting, natural perspective, integrated lighting, no pasted collage, no border",
+      "negative_prompt": "white border, frame, padding, empty scene, no character, missing foreground character, one character only, cropped body, cropped feet, floating stance, detached feet, pasted character, collage, character sheet, swapped identity, malformed hands, wrong perspective, text watermark",
       "video_prompt": "Shen Yan nods gently and gives a brief reply while keeping his stance grounded, Jiang Lan remains visible on the left, camera stays steady",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "沈砚：好，桥那边看得更清楚。",
       "notes": "反打镜头。主体切换到沈砚，但仍然必须维持双人空间关系和稳定接地。",
-      "tags": ["河边", "反打", "近景", "续帧", "回应动作"],
+      "tags": [
+        "河边",
+        "反打",
+        "近景",
+        "续帧",
+        "回应动作"
+      ],
       "scene_name": "河边",
       "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": ["江岚", "沈砚"]
+      "character_names": [
+        "江岚",
+        "沈砚"
+      ]
     },
     {
       "id": "river_continuity_005",
       "title": "并肩沿河慢走",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, medium wide shot, Jiang Lan and Shen Yan walk slowly side by side along the same riverside path from left to right, Jiang Lan is slightly ahead on the left and Shen Yan is half a step behind on the right, both walking poses are clearly readable, feet contact the ground naturally, body scale and perspective remain correct, river stays on the right side of the frame, bridge remains in the distance, dusk light and shadow direction stay consistent, integrated motion inside the environment, not a static pasted lineup",
-      "negative_prompt": "white border, frame, padding, empty scene, no people, missing one character, wrong character count, floating feet, detached shadow, body duplication, fused limbs, pasted character, character sheet, random strangers, mosaic artifact, text watermark",
+      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, two full body characters, Jiang Lan walking on the riverside stone path on the left side of the frame, Shen Yan walking on the same stone path on the right side of the frame, Jiang Lan slightly ahead, Shen Yan half a step behind, both full body characters fully visible from head to toe, both feet contacting the ground naturally during walking, clear walking action, both characters inside the environment instead of pasted on top, interacting with the riverside path while moving, medium wide shot, river on the right, bridge in the distance, dusk outdoor lighting, consistent shadow direction, correct body scale, correct perspective, cinematic composition, no border",
+      "negative_prompt": "white border, frame, padding, empty scene, no character, missing one character, standing still, stiff pose, floating feet, detached shadow, sliding character, pasted character, static lineup, character sheet, fused limbs, duplicate body, wrong perspective, text watermark",
       "video_prompt": "both characters take a few slow grounded steps along the river path, cloth and hair move lightly in the breeze, camera tracks gently with them",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "",
       "notes": "动作镜头必须真的像走路，不是站立立绘平移。脚要踩在地面上，人物不能漂。",
-      "tags": ["河边", "双人", "移动", "续帧", "脚接地"],
+      "tags": [
+        "河边",
+        "双人",
+        "移动",
+        "续帧",
+        "脚接地"
+      ],
       "scene_name": "河边",
       "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": ["江岚", "沈砚"]
+      "character_names": [
+        "江岚",
+        "沈砚"
+      ]
     },
     {
       "id": "river_continuity_006",
       "title": "桥边停步收尾",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, closing medium two shot near the same riverside bridge, Jiang Lan stops on the left slightly in front and Shen Yan stops on the right slightly behind, both characters remain clearly present with grounded feet and natural posture, they look toward the water, same dusk lighting, same bridge orientation, same willow trees, same stone bank, integrated cinematic composition, stable anatomy, consistent perspective, characters belong inside the scene rather than pasted onto it, no border",
-      "negative_prompt": "white border, frame, padding, empty scene, scenery only, missing one character, wrong character count, floating character, detached feet, cropped body, duplicate person, pasted character, character sheet, indoor lighting, mosaic artifact, text watermark",
+      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, two full body characters, Jiang Lan standing on the left side of the frame on the stone path slightly in front, Shen Yan standing on the right side of the frame on the stone path slightly behind, both full body characters fully visible from head to toe, both feet touching the ground, both characters looking toward the water, both characters inside the riverside environment, interacting with the environment near the bridge, medium two shot, same stone bridge, same willow trees, same riverbank, dusk lighting, unified shadows, natural posture, correct perspective, cinematic ending composition, no border",
+      "negative_prompt": "white border, frame, padding, empty scene, scenery only, no character, missing one character, wrong character count, cropped body, cut off feet, floating character, detached feet, pasted character, collage, character sheet, indoor lighting, wrong perspective, text watermark",
       "video_prompt": "both characters stop and hold briefly, slight eye movement and subtle cloth motion remain visible, water ripples softly in the background",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "江岚：就从这里开始看吧。",
       "notes": "收尾镜头必须稳住空间关系、人物前后站位和统一光照。两人都要明确在场且无白边。",
-      "tags": ["河边", "收尾", "双人", "续帧", "稳定分镜"],
+      "tags": [
+        "河边",
+        "收尾",
+        "双人",
+        "续帧",
+        "稳定分镜"
+      ],
       "scene_name": "河边",
       "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": ["江岚", "沈砚"]
+      "character_names": [
+        "江岚",
+        "沈砚"
+      ]
     }
   ]
 }

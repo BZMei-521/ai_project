@@ -2432,22 +2432,24 @@ function inferStoryboardReferenceWeights(
   if (sceneLed && hasSecondCharacter) {
     if (characterDriven) {
       return {
-        // Scene-led shot with two characters: environment stays stable and readable.
-        char1Primary: 0.76,
-        char1Secondary: 0.08,
-        char2Primary: 0.72,
-        denoise: 0.4,
-        steps: 28,
-        cfg: 5.2
+        // Scene-led dual-character storyboard shots are the most failure-prone:
+        // keep the scene stable, but push both character anchors hard enough that
+        // the second actor does not disappear into the background.
+        char1Primary: 0.9,
+        char1Secondary: 0.06,
+        char2Primary: 0.88,
+        denoise: 0.46,
+        steps: 32,
+        cfg: 6
       };
     }
     return {
-      char1Primary: 0.6,
+      char1Primary: 0.82,
       char1Secondary: 0.04,
-      char2Primary: 0.56,
-      denoise: 0.24,
-      steps: 24,
-      cfg: 5.1
+      char2Primary: 0.78,
+      denoise: 0.36,
+      steps: 30,
+      cfg: 5.8
     };
   }
   if (sceneLed) {
@@ -2472,12 +2474,12 @@ function inferStoryboardReferenceWeights(
   }
   if (hasSecondCharacter) {
     return {
-      char1Primary: 0.9,
+      char1Primary: 0.94,
       char1Secondary: 0.08,
-      char2Primary: 0.86,
-      denoise: 0.34,
-      steps: 28,
-      cfg: 5.2
+      char2Primary: 0.9,
+      denoise: 0.42,
+      steps: 30,
+      cfg: 5.8
     };
   }
   return {
@@ -6324,10 +6326,12 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
   const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
+  const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
   const hasCharacters = char1PrimaryPath.length > 0 || char2PrimaryPath.length > 0;
   const hasSceneRef = sceneRefPath.length > 0;
   if (!hasCharacters || !hasSceneRef) return;
 
+  const checkpointNode = workflow["1"];
   const samplerNode = workflow["13"];
   const sceneAdapterNode = workflow["17"];
   const char1AdapterNode = workflow["8"];
@@ -6346,6 +6350,13 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const samplerClass = String((samplerNode as Record<string, unknown>).class_type ?? "").trim();
   const sceneAdapterClass = String((sceneAdapterNode as Record<string, unknown>).class_type ?? "").trim();
   if (samplerClass !== "KSampler" || sceneAdapterClass !== "IPAdapterAdvanced") return;
+
+  if (checkpointNode && typeof checkpointNode === "object") {
+    const checkpointInputs = (checkpointNode as Record<string, unknown>).inputs;
+    if (checkpointInputs && typeof checkpointInputs === "object" && !Array.isArray(checkpointInputs)) {
+      (checkpointInputs as Record<string, unknown>).ckpt_name = storyboardModel;
+    }
+  }
 
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
@@ -6417,32 +6428,32 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const denoiseTarget =
     shotScale === "close"
       ? hasSecondCharacter
-        ? 0.68
+        ? 0.72
         : 0.7
       : shotScale === "medium"
         ? hasSecondCharacter
-          ? 0.64
+          ? 0.7
           : 0.66
         : hasSecondCharacter
-          ? 0.6
+          ? 0.66
           : 0.62;
-  updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.08 : 0.1, "cap_at_most", 0.28);
-  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.92 : 0.96, "at_least", 1.0);
-  updateAdapterWeight(char1SecondaryAdapterNode, hasSecondCharacter ? 0.34 : 0.42, "at_least", 0.72);
-  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.86 : 0, "at_least", hasSecondCharacter ? 0.96 : 0.72);
+  updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.06 : 0.1, "cap_at_most", hasSecondCharacter ? 0.22 : 0.28);
+  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 0.96, "at_least", 1.0);
+  updateAdapterWeight(char1SecondaryAdapterNode, hasSecondCharacter ? 0.18 : 0.42, "at_least", hasSecondCharacter ? 0.46 : 0.72);
+  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.94 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
 
   if (controlNetInputs) {
     const targetStrength =
-      shotScale === "close" ? 0.34 : shotScale === "medium" ? 0.38 : 0.42;
+      shotScale === "close" ? 0.3 : shotScale === "medium" ? 0.34 : 0.38;
     controlNetInputs.strength = targetStrength;
-    controlNetInputs.end_percent = shotScale === "close" ? 0.68 : 0.74;
+    controlNetInputs.end_percent = shotScale === "close" ? 0.62 : 0.7;
   }
   if (samplerInputs) {
     const current = Number(samplerInputs.denoise);
     samplerInputs.denoise =
       Number.isFinite(current) && current > 0 ? Math.max(current, denoiseTarget) : denoiseTarget;
-    samplerInputs.steps = Math.max(30, Number(samplerInputs.steps) || 0);
-    samplerInputs.cfg = Math.max(6.2, Number(samplerInputs.cfg) || 0);
+    samplerInputs.steps = Math.max(hasSecondCharacter ? 32 : 30, Number(samplerInputs.steps) || 0);
+    samplerInputs.cfg = Math.max(hasSecondCharacter ? 6.8 : 6.2, Number(samplerInputs.cfg) || 0);
   }
 }
 
@@ -7106,7 +7117,6 @@ export async function generateShotAsset(
           ]);
           if (compositeRef?.source) {
             storyboardCompositeFrameSource = compositeRef.source.trim();
-            imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
           }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
@@ -7315,7 +7325,6 @@ export async function generateShotAssetOutputs(
           ]);
           if (compositeRef?.source) {
             storyboardCompositeFrameSource = compositeRef.source.trim();
-            imageReferenceSources = [compositeRef, ...imageReferenceSources.filter((item) => item.source.trim() !== compositeRef.source.trim())];
           }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
@@ -7356,6 +7365,9 @@ export async function generateShotAssetOutputs(
     }
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
     const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
+    if (kind === "image") {
+      adaptBuiltinStoryboardWorkflowForShot(built, tokens);
+    }
     applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     let objectInfo: Record<string, unknown> | undefined;
     try {
