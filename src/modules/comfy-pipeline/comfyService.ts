@@ -1611,7 +1611,8 @@ async function stageImageReferenceTokens(
   for (const entry of stagedEntries) {
     const ext = "png";
     const targetAbs = `${inputDir}/shot_${safeShotId}_${entry.key.toLowerCase()}.${ext}`;
-    const written = await stageSquarePaddedReferenceImage(settings, entry.source, targetAbs);
+    const mode = entry.key === "SCENE_REF_PATH" || entry.key === "PREV_SCENE_IMAGE_PATH" ? "scene" : "character";
+    const written = await stagePreparedReferenceImage(settings, entry.source, targetAbs, mode);
     nextTokens[entry.key] = written.split("/").pop() ?? written;
   }
   return nextTokens;
@@ -3399,10 +3400,48 @@ async function loadComparableImageData(
   return context.getImageData(0, 0, width, height);
 }
 
-async function stageSquarePaddedReferenceImage(
+function detectReferenceContentBounds(context: CanvasRenderingContext2D, width: number, height: number) {
+  const frame = context.getImageData(0, 0, width, height);
+  const data = frame.data;
+  const background = estimateBorderBackgroundColor(context, width, height);
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3] ?? 255;
+    if (alpha <= 8) continue;
+    const dr = (data[index] ?? 0) - background.r;
+    const dg = (data[index + 1] ?? 0) - background.g;
+    const db = (data[index + 2] ?? 0) - background.b;
+    const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+    if (distance < 18) continue;
+    const pixel = index / 4;
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (maxX < minX || maxY < minY) return null;
+  const padding = Math.max(6, Math.round(Math.min(width, height) * 0.015));
+  const cropX = Math.max(0, minX - padding);
+  const cropY = Math.max(0, minY - padding);
+  return {
+    x: cropX,
+    y: cropY,
+    width: Math.min(width - cropX, maxX - minX + 1 + padding * 2),
+    height: Math.min(height - cropY, maxY - minY + 1 + padding * 2),
+    background
+  };
+}
+
+async function stagePreparedReferenceImage(
   settings: ComfySettings,
   source: string,
-  targetAbs: string
+  targetAbs: string,
+  mode: "scene" | "character"
 ): Promise<string> {
   const trimmedSource = source.trim();
   if (!trimmedSource || !canProcessStoryboardReferenceImages()) {
@@ -3414,7 +3453,7 @@ async function stageSquarePaddedReferenceImage(
   }
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
-  if (width <= 0 || height <= 0 || Math.abs(width - height) <= 2) {
+  if (width <= 0 || height <= 0) {
     return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
   }
 
@@ -3426,26 +3465,50 @@ async function stageSquarePaddedReferenceImage(
     return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
   }
   sampleContext.drawImage(image, 0, 0, width, height);
-  const background = estimateBorderBackgroundColor(sampleContext, width, height);
+  const bounds = detectReferenceContentBounds(sampleContext, width, height);
+  if (!bounds) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
 
-  const padding = Math.max(24, Math.round(Math.max(width, height) * 0.08));
-  const size = Math.max(width, height) + padding * 2;
+  const trimmedCanvas = document.createElement("canvas");
+  trimmedCanvas.width = bounds.width;
+  trimmedCanvas.height = bounds.height;
+  const trimmedContext = trimmedCanvas.getContext("2d");
+  if (!trimmedContext) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+  trimmedContext.drawImage(
+    sampleCanvas,
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
+    0,
+    0,
+    bounds.width,
+    bounds.height
+  );
+
+  const shouldSquarePad = mode === "character";
+  const padding = shouldSquarePad ? Math.max(24, Math.round(Math.max(bounds.width, bounds.height) * 0.08)) : 0;
+  const outWidth = shouldSquarePad ? Math.max(bounds.width, bounds.height) + padding * 2 : bounds.width;
+  const outHeight = shouldSquarePad ? Math.max(bounds.width, bounds.height) + padding * 2 : bounds.height;
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = outWidth;
+  canvas.height = outHeight;
   const context = canvas.getContext("2d");
   if (!context) {
     return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
   }
 
-  context.fillStyle = `rgb(${clampChannel(background.r)}, ${clampChannel(background.g)}, ${clampChannel(background.b)})`;
-  context.fillRect(0, 0, size, size);
+  context.fillStyle = `rgb(${clampChannel(bounds.background.r)}, ${clampChannel(bounds.background.g)}, ${clampChannel(bounds.background.b)})`;
+  context.fillRect(0, 0, outWidth, outHeight);
   context.drawImage(
-    image,
-    Math.round((size - width) / 2),
-    Math.round((size - height) / 2),
-    width,
-    height
+    trimmedCanvas,
+    Math.round((outWidth - bounds.width) / 2),
+    Math.round((outHeight - bounds.height) / 2),
+    bounds.width,
+    bounds.height
   );
 
   try {

@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "ckpt_name": "{{STORYBOARD_IMAGE_MODEL}}"
+      "ckpt_name": "realisticVisionV60B1_v51VAE.safetensors"
     },
     "class_type": "CheckpointLoaderSimple"
   },
