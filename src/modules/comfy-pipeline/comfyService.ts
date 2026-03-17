@@ -2664,11 +2664,18 @@ function buildStoryboardBlockingDirective(shot: Shot, characterAssets: Asset[]):
     characterAssets.length === 1
       ? `构图硬约束：本镜头只允许 1 名主体角色清晰可见，即“${characterAssets[0]!.name}”。`
       : `构图硬约束：本镜头必须清晰呈现 ${characterAssets.length} 名角色，且人数必须与剧本一致，不得多也不得少。`;
+  const shotActionCue = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.videoPrompt)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+  const actionLine = shotActionCue
+    ? `动作硬约束：严格执行本镜头脚本动作（${shotActionCue}），禁止把角色退化为静止站姿、模板摆拍或与剧情无关的姿态。`
+    : "动作硬约束：严格执行本镜头脚本动作，禁止把角色退化为静止站姿、模板摆拍或与剧情无关的姿态。";
   const placementLines = characterAssets.map((asset, index) => {
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.88, sizeScale: 1 };
     return `站位硬约束：角色“${asset.name}”位于${storyboardScreenZoneLabel(placement.centerXRatio)}、${storyboardDepthLabel(placement.floorYRatio)}，画面尺度为${storyboardScaleLabel(placement.sizeScale)}；该角色不得缺失，不得被另一角色替代，也不得缩成不可辨识的小人。`;
   });
-  return [exactCountLine, ...placementLines].join("\n");
+  return [exactCountLine, actionLine, ...placementLines].join("\n");
 }
 
 function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
@@ -3465,6 +3472,9 @@ async function maybeFallbackToStoryboardComposite(
     !Number.isFinite(outputSceneDiff) ||
     !Number.isFinite(outputFrameDiff)
   ) {
+    return null;
+  }
+  if (hasCharacterSeed) {
     return null;
   }
   const frameCarriesVisibleCharacters = frameSceneDiff >= (hasCharacterSeed ? 3.5 : 8);
