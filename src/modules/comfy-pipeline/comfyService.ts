@@ -1609,9 +1609,9 @@ async function stageImageReferenceTokens(
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const nextTokens = { ...tokens };
   for (const entry of stagedEntries) {
-    const ext = fileExtensionFromSource(entry.source || "png");
+    const ext = "png";
     const targetAbs = `${inputDir}/shot_${safeShotId}_${entry.key.toLowerCase()}.${ext}`;
-    const written = await stageSourceFileToComfyInput(entry.source, targetAbs, settings.baseUrl, settings.outputDir);
+    const written = await stageSquarePaddedReferenceImage(settings, entry.source, targetAbs);
     nextTokens[entry.key] = written.split("/").pop() ?? written;
   }
   return nextTokens;
@@ -2650,6 +2650,22 @@ function storyboardScaleLabel(sizeScale: number): string {
   return "常规大小";
 }
 
+
+function extractCharacterActionCues(text: string, characterNames: string[]): Array<{ characterName: string; actionCue: string }> {
+  const cues = [];
+  let remainingText = text;
+
+  for (const characterName of characterNames) {
+    const regex = new RegExp(`${characterName}([^,.]*)`, 'g');
+    let match;
+    while ((match = regex.exec(remainingText)) !== null) {
+      cues.push({ characterName, actionCue: match[1].trim() });
+    }
+  }
+
+  return cues;
+}
+
 function buildStoryboardBlockingDirective(shot: Shot, characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   const refs = characterAssets.map((asset) => ({
@@ -2669,14 +2685,21 @@ function buildStoryboardBlockingDirective(shot: Shot, characterAssets: Asset[]):
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 220);
-  const actionLine = shotActionCue
+  
+  const characterCues = extractCharacterActionCues(shotActionCue, characterAssets.map(c => c.name));
+  const actionLines = characterCues.map(cue => `动作硬约束（${cue.characterName}）: ${cue.actionCue}`);
+  
+  const genericActionLine = shotActionCue
     ? `动作硬约束：严格执行本镜头脚本动作（${shotActionCue}），禁止把角色退化为静止站姿、模板摆拍或与剧情无关的姿态。`
     : "动作硬约束：严格执行本镜头脚本动作，禁止把角色退化为静止站姿、模板摆拍或与剧情无关的姿态。";
+
+  const finalActionLines = actionLines.length > 0 ? actionLines : [genericActionLine];
+
   const placementLines = characterAssets.map((asset, index) => {
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.88, sizeScale: 1 };
     return `站位硬约束：角色“${asset.name}”位于${storyboardScreenZoneLabel(placement.centerXRatio)}、${storyboardDepthLabel(placement.floorYRatio)}，画面尺度为${storyboardScaleLabel(placement.sizeScale)}；该角色不得缺失，不得被另一角色替代，也不得缩成不可辨识的小人。`;
   });
-  return [exactCountLine, actionLine, ...placementLines].join("\n");
+  return [exactCountLine, ...finalActionLines, ...placementLines].join("\n");
 }
 
 function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
@@ -3374,6 +3397,67 @@ async function loadComparableImageData(
   if (!context) return null;
   context.drawImage(image, 0, 0, width, height);
   return context.getImageData(0, 0, width, height);
+}
+
+async function stageSquarePaddedReferenceImage(
+  settings: ComfySettings,
+  source: string,
+  targetAbs: string
+): Promise<string> {
+  const trimmedSource = source.trim();
+  if (!trimmedSource || !canProcessStoryboardReferenceImages()) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+  const image = await loadReferenceImageElement(trimmedSource);
+  if (!image) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (width <= 0 || height <= 0 || Math.abs(width - height) <= 2) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = width;
+  sampleCanvas.height = height;
+  const sampleContext = sampleCanvas.getContext("2d");
+  if (!sampleContext) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+  sampleContext.drawImage(image, 0, 0, width, height);
+  const background = estimateBorderBackgroundColor(sampleContext, width, height);
+
+  const padding = Math.max(24, Math.round(Math.max(width, height) * 0.08));
+  const size = Math.max(width, height) + padding * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+
+  context.fillStyle = `rgb(${clampChannel(background.r)}, ${clampChannel(background.g)}, ${clampChannel(background.b)})`;
+  context.fillRect(0, 0, size, size);
+  context.drawImage(
+    image,
+    Math.round((size - width) / 2),
+    Math.round((size - height) / 2),
+    width,
+    height
+  );
+
+  try {
+    const written = await invokeDesktop<FileWriteResult>("write_base64_file", {
+      filePath: targetAbs,
+      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    if (written.filePath.trim()) return written.filePath;
+  } catch {
+    // Keep the original staging path when square padding cannot be materialized.
+  }
+  return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
 }
 
 function averageImageDifference(left: ImageData, right: ImageData): number {
