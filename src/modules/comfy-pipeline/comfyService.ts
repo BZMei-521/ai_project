@@ -2605,6 +2605,7 @@ function buildShotReferenceDirective(
       );
     }
     lines.push("人物构图硬约束：人物必须在中前景清晰可见，优先完整半身或全身，不得退化成远景小人影、剪影或被场景主体遮挡。");
+    lines.push("动作与站位硬约束：必须执行脚本描述的动作和站位，镜头变化时不得沿用上一镜头姿态或无关模板姿势。");
     lines.push("人物-场景物理约束：人物脚部与地面接触关系自然，接触阴影方向与场景主光一致，不允许漂浮、穿模、比例失真。");
     lines.push("人物风格硬约束：禁止把角色改成室内写真、自拍、时装摆拍、裸露画面或无关陌生人，必须保持参考角色的身份与服装。");
   }
@@ -2823,6 +2824,9 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     );
     pieces.push(
       "Character reference images are identity-only guides. They must not dominate composition, camera distance, pose staging, or scene layout."
+    );
+    pieces.push(
+      "Do not output empty environment-only frames when the shot script includes characters. Always place all required characters in visible positions and execute the scripted body actions for this shot."
     );
   }
   pieces.push(
@@ -3485,6 +3489,40 @@ async function maybeFallbackToStoryboardComposite(
       outputFrameDiff >= Math.max(10, outputSceneDiff * 1.15, frameSceneDiff * 0.42);
   if (!frameCarriesVisibleCharacters || !outputCollapsedToScene) return null;
   return materializeStoryboardFallbackStill(settings, shot, framePath, "storyboard_composite_fallback");
+}
+
+async function isStoryboardCharacterDropout(
+  settings: ComfySettings,
+  tokens: Record<string, string>,
+  generatedLocalPath: string
+): Promise<boolean> {
+  const hasCharacterSeed = hasStoryboardCharacterSeed(tokens);
+  if (!hasCharacterSeed) return false;
+  const framePath = resolveInputTokenSourcePath(settings, String(tokens.FRAME_IMAGE_PATH ?? ""));
+  const scenePath = resolveInputTokenSourcePath(settings, String(tokens.SCENE_REF_PATH ?? ""));
+  if (!canUseAbsoluteLocalPath(framePath) || !canUseAbsoluteLocalPath(scenePath) || !canUseAbsoluteLocalPath(generatedLocalPath)) {
+    return false;
+  }
+  const [frameSceneDiff, outputSceneDiff, outputFrameDiff] = await Promise.all([
+    compareImageSources(framePath, scenePath),
+    compareImageSources(generatedLocalPath, scenePath),
+    compareImageSources(generatedLocalPath, framePath)
+  ]);
+  if (
+    frameSceneDiff === null ||
+    outputSceneDiff === null ||
+    outputFrameDiff === null ||
+    !Number.isFinite(frameSceneDiff) ||
+    !Number.isFinite(outputSceneDiff) ||
+    !Number.isFinite(outputFrameDiff)
+  ) {
+    return false;
+  }
+  const frameCarriesVisibleCharacters = frameSceneDiff >= 3.5;
+  const outputCollapsedToScene =
+    outputSceneDiff <= Math.max(6, frameSceneDiff * 0.78) &&
+    outputFrameDiff >= Math.max(6.5, outputSceneDiff * 1.05, frameSceneDiff * 0.28);
+  return frameCarriesVisibleCharacters && outputCollapsedToScene;
 }
 
 function estimateBorderBackgroundColor(context: CanvasRenderingContext2D, width: number, height: number) {
@@ -5119,10 +5157,10 @@ function inferPromptTokens(
     pushCharacterRefId(asset.id);
   }
   if (inferredCharacterRefIds.length === 0 && shotLooksCharacterDrivenInComfy(shot)) {
-    if (characterAssetsAll.length === 1) {
+    if (characterAssetsAll.length >= 1) {
       pushCharacterRefId(characterAssetsAll[0]?.id);
-    } else if (characterAssetsAll.length === 2) {
-      pushCharacterRefId(characterAssetsAll[0]?.id);
+    }
+    if (characterAssetsAll.length >= 2) {
       pushCharacterRefId(characterAssetsAll[1]?.id);
     }
   }
@@ -7015,7 +7053,41 @@ export async function generateShotAsset(
       }
       throw new Error("任务完成但未找到输出文件");
     }
-    const localPath = await materializeOutputAssetPath(settings, chosen);
+    let localPath = await materializeOutputAssetPath(settings, chosen);
+    if (kind === "image" && !assetOutputContext && (await isStoryboardCharacterDropout(settings, tokens, localPath))) {
+      options?.onProgress?.(0.72, "检测到人物缺失，自动强化人物约束并重试");
+      const strengthenedTokens = {
+        ...tokens,
+        NEGATIVE_PROMPT: `${tokens.NEGATIVE_PROMPT ?? ""}, empty scene, scenery only, no people, character missing, actor missing, no protagonist`,
+        CHAR1_PRIMARY_WEIGHT: String(
+          Math.min(1.28, Math.max(0, Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0") || 0) + 0.2)
+        ),
+        CHAR1_SECONDARY_WEIGHT: String(
+          Math.min(1.02, Math.max(0, Number(tokens.CHAR1_SECONDARY_WEIGHT ?? "0") || 0) + 0.12)
+        ),
+        CHAR2_PRIMARY_WEIGHT: String(
+          Math.min(1.18, Math.max(0, Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0") || 0) + 0.18)
+        ),
+        STORYBOARD_DENOISE: String(
+          Math.min(0.72, Math.max(0, Number(tokens.STORYBOARD_DENOISE ?? "0.48") || 0.48) + 0.08)
+        ),
+        STORYBOARD_CFG: String(Math.min(8.2, Math.max(0, Number(tokens.STORYBOARD_CFG ?? "4.9") || 4.9) + 0.7))
+      };
+      const rebuilt = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, strengthenedTokens)) as Record<string, unknown>;
+      adaptBuiltinStoryboardWorkflowForShot(rebuilt, strengthenedTokens);
+      applyFisherWorkflowBindings(rebuilt, kind, strengthenedTokens, stagedCharacterImages);
+      if (objectInfo) {
+        applyComfyModelOptionBindings(rebuilt, objectInfo);
+      }
+      const retryPromptId = await queueComfyPrompt(settings.baseUrl, rebuilt, objectInfo);
+      const retryOutputs = await waitForComfyOutput(settings.baseUrl, retryPromptId, options?.onProgress, {
+        requirePersistentImageOutput
+      });
+      const retryChosen = selectOutputAsset(retryOutputs, kind, shot, assetOutputContext);
+      if (retryChosen) {
+        localPath = await materializeOutputAssetPath(settings, retryChosen);
+      }
+    }
     const storyboardFallback = await maybeFallbackToStoryboardComposite(
       settings,
       shot,
