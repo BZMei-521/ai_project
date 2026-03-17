@@ -6340,6 +6340,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   tokens: Record<string, string>
 ): void {
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
+  const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
   const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
   const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
@@ -6377,6 +6378,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
   const hasSecondCharacter = char2PrimaryPath.length > 0;
+  const hasFrameSeed = frameImagePath.length > 0;
   const shotScale = inferStoryboardCompositeScaleFromCorpus(
     compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
   );
@@ -6420,12 +6422,12 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (inputs as Record<string, unknown>).end_at = resolvedEndAt;
   };
 
-  // Always use the pure scene image as the latent/control anchor.
-  // Feeding the cutout composite into the main latent path makes the model trace
-  // pasted silhouettes instead of repainting a natural person into the scene.
+  // Prioritize character presence first: use the storyboard frame/composite as the
+  // img2img latent seed when available so the sampler cannot collapse back to an
+  // empty scene. Keep the pure scene image only as the structure/control anchor.
   workflow["16"] = {
     inputs: {
-      image: sceneRefPath,
+      image: hasFrameSeed ? frameImagePath : sceneRefPath,
       upscale_method: "lanczos",
       width: renderWidth,
       height: renderHeight,
@@ -6440,29 +6442,47 @@ function adaptBuiltinStoryboardWorkflowForShot(
     },
     class_type: "VAEEncode"
   };
+  if (workflow["18"] && typeof workflow["18"] === "object") {
+    const cannyInputs = (workflow["18"] as Record<string, unknown>).inputs;
+    if (cannyInputs && typeof cannyInputs === "object" && !Array.isArray(cannyInputs)) {
+      (cannyInputs as Record<string, unknown>).image = ["2", 0];
+    }
+  }
 
   const denoiseTarget =
-    shotScale === "close"
-      ? hasSecondCharacter
-        ? 0.72
-        : 0.7
-      : shotScale === "medium"
+    hasFrameSeed
+      ? shotScale === "close"
         ? hasSecondCharacter
-          ? 0.7
-          : 0.66
-        : hasSecondCharacter
-          ? 0.66
-          : 0.62;
-  updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.06 : 0.1, "cap_at_most", hasSecondCharacter ? 0.22 : 0.28);
-  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 0.96, "at_least", 1.0);
-  updateAdapterWeight(char1SecondaryAdapterNode, hasSecondCharacter ? 0.18 : 0.42, "at_least", hasSecondCharacter ? 0.46 : 0.72);
-  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.94 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
+          ? 0.62
+          : 0.64
+        : shotScale === "medium"
+          ? hasSecondCharacter
+            ? 0.58
+            : 0.6
+          : hasSecondCharacter
+            ? 0.54
+            : 0.56
+      : shotScale === "close"
+        ? hasSecondCharacter
+          ? 0.72
+          : 0.7
+        : shotScale === "medium"
+          ? hasSecondCharacter
+            ? 0.7
+            : 0.66
+          : hasSecondCharacter
+            ? 0.66
+            : 0.62;
+  updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.02 : 0.05, "cap_at_most", hasSecondCharacter ? 0.16 : 0.22);
+  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.04 : 0.98, "at_least", 1.0);
+  updateAdapterWeight(char1SecondaryAdapterNode, hasSecondCharacter ? 0.12 : 0.24, "at_least", hasSecondCharacter ? 0.34 : 0.52);
+  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 1.0 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
 
   if (controlNetInputs) {
     const targetStrength =
-      shotScale === "close" ? 0.3 : shotScale === "medium" ? 0.34 : 0.38;
+      shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24;
     controlNetInputs.strength = targetStrength;
-    controlNetInputs.end_percent = shotScale === "close" ? 0.62 : 0.7;
+    controlNetInputs.end_percent = shotScale === "close" ? 0.42 : 0.5;
   }
   if (samplerInputs) {
     const current = Number(samplerInputs.denoise);
