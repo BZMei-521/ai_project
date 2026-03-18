@@ -2737,20 +2737,20 @@ function buildShotReferenceDirective(
 function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `出镜硬要求：画面中必须且只能出现 1 名主要角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；禁止换成其他人、禁止多出陌生人、禁止把主体画成远处小人影。角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证完整全身、脚部接地、受光自然、阴影与环境一致。`;
+    return `出镜硬要求：画面中必须且只能出现 1 名主要角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；禁止换成其他人、禁止多出陌生人、禁止把主体画成远处小人影。角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证完整全身、头顶和脚底都留有安全边距、脚部接地、受光自然、阴影与环境一致。`;
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
-  return `出镜硬要求：画面中必须且只能出现 ${characterAssets.length} 名角色${names}，禁止生成为纯环境空镜，禁止缺少任何一人，禁止出现第三人、路人、群演、重复人、融合人或身份互换；每个角色都需各自对应 1 名可辨识人物，不允许用同一张脸或同一套服装冒充两个人，也不允许只出现极远小人、严重裁切或被场景主体完全遮挡。所有角色都必须完整接地、阴影自然、比例正确，并作为场景中的真实主体出现。`;
+  return `出镜硬要求：画面中必须且只能出现 ${characterAssets.length} 名角色${names}，禁止生成为纯环境空镜，禁止缺少任何一人，禁止出现第三人、路人、群演、重复人、融合人或身份互换；每个角色都需各自对应 1 名可辨识人物，不允许用同一张脸或同一套服装冒充两个人，也不允许只出现极远小人、严重裁切或被场景主体完全遮挡。所有角色都必须完整接地、头顶脚底保留安全边距、阴影自然、比例正确，并作为场景中的真实主体出现。`;
 }
 
 function buildCompactStoryboardPresencePrompt(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `exactly one full body character, character clearly visible, same face same hair same outfit in every shot, visible body action, readable facial expression, standing in the scene, feet touching the ground, shadow matching environment, integrated with the environment, not an empty scene`;
+    return `exactly one full body character, character clearly visible from head to toe with safe margin above head and below feet, same face same hair same outfit in every shot, visible body action, readable facial expression, standing in the scene, feet touching the ground, shadow matching environment, integrated with the environment, never crop the body, not an empty scene`;
   }
   const names = characterAssets.map((item) => item.name.trim()).filter((item) => item.length > 0);
   const nameText = names.length > 0 ? `exactly ${characterAssets.length} characters: ${names.join(" and ")}` : `exactly ${characterAssets.length} characters`;
-  return `${nameText}, both full body characters clearly visible, same faces same hairstyles same outfits in every shot, visible body acting, readable facial expressions, both characters inside the scene, feet touching the ground, shadow matching environment, no missing character, no empty scene, natural interaction with environment`;
+  return `${nameText}, all characters full body and clearly visible from head to toe with safe top and bottom margins, same faces same hairstyles same outfits in every shot, visible body acting, readable facial expressions, all characters inside the scene, feet touching the ground, shadow matching environment, no missing character, no body crop, no empty scene, natural interaction with environment`;
 }
 
 function storyboardScreenZoneLabel(centerXRatio: number): string {
@@ -2822,12 +2822,14 @@ function buildStoryboardBlockingDirective(shot: Shot, characterAssets: Asset[]):
   const finalActionLines = actionLines.length > 0 ? actionLines : [genericActionLine];
   const performanceLine =
     "表演硬约束：所有出镜角色都必须表现出清晰可见的身体动作和与情境一致的面部表情，不允许木讷站立、没有表情、没有反应或像证件照一样僵硬。";
+  const framingConflictLine =
+    "景别冲突处理规则：如果文案里出现近景、中景、反应镜头等表述，但本工作流又要求 full body，则必须以 full body 为最高优先级，通过让人物在画面中更大、更靠前来体现景别，禁止把头顶、脚底、手臂或躯干裁出画面，禁止退化成半身像或肖像裁切。";
 
   const placementLines = characterAssets.map((asset, index) => {
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.88, sizeScale: 1 };
     return `站位硬约束：角色“${asset.name}”位于${storyboardScreenZoneLabel(placement.centerXRatio)}、${storyboardDepthLabel(placement.floorYRatio)}，画面尺度为${storyboardScaleLabel(placement.sizeScale)}；该角色不得缺失，不得被另一角色替代，也不得缩成不可辨识的小人。`;
   });
-  return [exactCountLine, ...finalActionLines, performanceLine, ...placementLines].join("\n");
+  return [exactCountLine, ...finalActionLines, performanceLine, framingConflictLine, ...placementLines].join("\n");
 }
 
 function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
@@ -4527,14 +4529,14 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (scale === "wide") return 0.42;
-    if (scale === "close") return 0.64;
-    if (scale === "medium") return 0.54;
-    return 0.5;
+    if (scale === "wide") return 0.38;
+    if (scale === "close") return 0.54;
+    if (scale === "medium") return 0.48;
+    return 0.44;
   }
-  if (scale === "wide") return 0.4;
-  if (scale === "close") return 0.6;
-  if (scale === "medium") return 0.52;
+  if (scale === "wide") return 0.42;
+  if (scale === "close") return 0.56;
+  if (scale === "medium") return 0.5;
   return 0.46;
 }
 
@@ -4776,14 +4778,14 @@ function inferStoryboardCharacterPlacement(
         // Keep both actors inside the lower-right walkable band instead of
         // pushing them into the upper willow canopy or open water.
         centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : index === 0 ? 0.58 : 0.72,
-        floorYRatio: index === 0 ? 0.94 : 0.935,
-        sizeScale: placement.sizeScale * (index === 0 ? 0.98 : 0.9)
+        floorYRatio: index === 0 ? 0.92 : 0.915,
+        sizeScale: placement.sizeScale * (index === 0 ? 0.94 : 0.88)
       });
     } else {
       placement = applyClampedPlacement(placement, {
         centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.68,
-        floorYRatio: 0.94,
-        sizeScale: placement.sizeScale * 0.96
+        floorYRatio: 0.92,
+        sizeScale: placement.sizeScale * 0.92
       });
     }
   }
@@ -5107,6 +5109,27 @@ async function stageCharacterReferenceImages(
 ): Promise<Array<{ filename: string; weight: number; role: WeightedImageRef["role"]; label: string }>> {
   let selectedRefs = reorderStoryboardReferenceSlots(shot, selectStoryboardReferenceSlots(shot, refs));
   if (selectedRefs.length === 0) return [];
+  const isMatureStoryboardGuidance = (settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided";
+  if (isMatureStoryboardGuidance) {
+    const hasExplicitScene = selectedRefs.some((item) => item.role === "scene_primary" || item.role === "scene_secondary");
+    const explicitCharacterRefs = selectedRefs.filter(
+      (item) => item.role.startsWith("character_") && item.label !== "character_identity_board"
+    );
+    if (hasExplicitScene || explicitCharacterRefs.length > 0) {
+      // Previous generated storyboard frames are useful as textual continuity hints,
+      // but re-feeding them as visual refs compounds drift from earlier bad shots.
+      // Keep mature storyboard stills anchored to clean asset refs instead.
+      selectedRefs = selectedRefs.filter(
+        (item) => item.role !== "continuity_scene" && item.role !== "continuity_character"
+      );
+    }
+    if (hasExplicitScene && explicitCharacterRefs.length > 0) {
+      // The Qwen edit encoder only exposes three real image slots. When we already
+      // have a scene ref plus explicit character refs, an identity board becomes
+      // redundant and can evict the second character from the slot budget.
+      selectedRefs = selectedRefs.filter((item) => item.label !== "character_identity_board");
+    }
+  }
   const inputDir = inferComfyInputDir(settings);
   if (!inputDir) {
     // Degrade gracefully when input directory is unknown.
@@ -5995,7 +6018,7 @@ function inferPromptTokens(
       : "";
   const characterCropNegativePrompt =
     characterAssets.length > 0
-      ? "cropped body, cut off head, cut off face, cut off feet, out of frame, body out of frame, close-up crop, partial body, incomplete body"
+      ? "cropped body, cut off head, cut off face, cut off feet, out of frame, body out of frame, close-up crop, portrait crop, half body crop, knee-up crop, partial body, incomplete body"
       : "";
   const characterChaosNegativePrompt =
     characterAssets.length > 0
@@ -6006,7 +6029,7 @@ function inferPromptTokens(
       ? "tiny person, distant tiny figure, far-away silhouette, person hidden behind objects, person fully occluded"
       : "";
   const structureChaosNegativePrompt =
-    "surreal abstract texture, warped geometry, twisted architecture, melted buildings, bent horizon, fisheye distortion, random scribble lines, chaotic glitch artifacts, smeared details";
+    "surreal abstract texture, warped geometry, twisted architecture, melted buildings, melted bridge, warped riverbank, bent stone path, bent horizon, fisheye distortion, random scribble lines, chaotic glitch artifacts, smeared details";
   const identityDriftNegativePrompt =
     characterAssets.length > 0
       ? "unrelated character, wrong character identity, wrong face, wrong hairstyle, changed outfit, changed costume, changed color palette, different person, random passerby, stranger, background extra person"
@@ -6984,6 +7007,39 @@ function adaptBuiltinStoryboardWorkflowForShot(
             : 0.72;
     (inputs as Record<string, unknown>).end_at = resolvedEndAt;
   };
+  const clampAdapterWeight = (
+    node: unknown,
+    minWeight: number,
+    maxWeight: number,
+    fallbackEndAt?: number
+  ) => {
+    if (!node || typeof node !== "object") return;
+    const inputs = (node as Record<string, unknown>).inputs;
+    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return;
+    const currentWeight = Number((inputs as Record<string, unknown>).weight);
+    const safeMin = Number.isFinite(minWeight) ? minWeight : 0;
+    const safeMax = Number.isFinite(maxWeight) ? Math.max(safeMin, maxWeight) : safeMin;
+    const resolvedWeight = Number.isFinite(currentWeight)
+      ? Math.min(safeMax, Math.max(safeMin, currentWeight))
+      : safeMin;
+    (inputs as Record<string, unknown>).weight = resolvedWeight;
+    (inputs as Record<string, unknown>).end_at =
+      typeof fallbackEndAt === "number" && Number.isFinite(fallbackEndAt)
+        ? fallbackEndAt
+        : resolvedWeight >= 0.92
+          ? 0.92
+          : resolvedWeight >= 0.78
+            ? 0.84
+            : 0.72;
+  };
+  const disableAdapter = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    const inputs = (node as Record<string, unknown>).inputs;
+    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return;
+    (inputs as Record<string, unknown>).weight = 0;
+    (inputs as Record<string, unknown>).start_at = 0;
+    (inputs as Record<string, unknown>).end_at = 0;
+  };
 
   // When a pose guide exists, prefer a clean scene-first latent plus OpenPose.
   // Feeding the pasted composite frame back into img2img makes characters behave
@@ -7042,15 +7098,15 @@ function adaptBuiltinStoryboardWorkflowForShot(
     usePoseGuide
       ? shotScale === "close"
         ? hasSecondCharacter
-          ? 0.66
-          : 0.62
+          ? 0.56
+          : 0.54
         : shotScale === "medium"
           ? hasSecondCharacter
-            ? 0.62
-            : 0.58
+            ? 0.52
+            : 0.5
           : hasSecondCharacter
-            ? 0.58
-            : 0.56
+            ? 0.48
+            : 0.46
       : hasFrameSeed
       ? shotScale === "close"
         ? hasSecondCharacter
@@ -7074,14 +7130,17 @@ function adaptBuiltinStoryboardWorkflowForShot(
         : hasSecondCharacter
           ? 0.66
           : 0.62;
-  updateAdapterWeight(
-    sceneAdapterNode,
-    usePoseGuide ? 0.02 : hasFrameSeed ? 0.01 : (hasSecondCharacter ? 0.02 : 0.05),
-    "cap_at_most",
-    usePoseGuide ? 0.12 : hasFrameSeed ? 0.08 : (hasSecondCharacter ? 0.16 : 0.22)
-  );
-  updateAdapterWeight(char1AdapterNode, usePoseGuide ? (hasSecondCharacter ? 1.2 : 1.16) : (hasSecondCharacter ? 1.14 : 1.08), "at_least", 1.0);
-  updateAdapterWeight(char2AdapterNode, usePoseGuide ? (hasSecondCharacter ? 1.16 : 0) : (hasSecondCharacter ? 1.12 : 0), "at_least", hasSecondCharacter ? 1.0 : 0.72);
+  // The scene reference is already the img2img latent anchor.
+  // Re-feeding the same wide scene into scene IPAdapter makes CLIPVision center-crop it,
+  // which is exactly what causes river/bridge continuity drift and background warping.
+  disableAdapter(sceneAdapterNode);
+  if (usePoseGuide) {
+    clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.94 : 0.96, hasSecondCharacter ? 1.02 : 1.06, 0.9);
+    clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.92 : 0, hasSecondCharacter ? 1.0 : 0, hasSecondCharacter ? 0.9 : 0);
+  } else {
+    updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.02 : 0.98, "at_least", 0.9);
+    updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.98 : 0, "at_least", hasSecondCharacter ? 0.88 : 0.72);
+  }
   if (char1SecondaryAdapterNode && typeof char1SecondaryAdapterNode === "object") {
     const secondaryInputs = (char1SecondaryAdapterNode as Record<string, unknown>).inputs;
     if (secondaryInputs && typeof secondaryInputs === "object" && !Array.isArray(secondaryInputs)) {
@@ -7097,7 +7156,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   if (controlNetInputs) {
     const targetStrength =
       usePoseGuide
-        ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : hasSecondCharacter ? 0.78 : 0.74)
+        ? (shotScale === "close" ? 0.72 : shotScale === "medium" ? 0.68 : hasSecondCharacter ? 0.64 : 0.62)
         : hasFrameSeed
         ? (shotScale === "close" ? 0.56 : shotScale === "medium" ? 0.52 : hasSecondCharacter ? 0.5 : 0.46)
         : (shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24);
@@ -7105,7 +7164,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
     controlNetInputs.image = ["18", 0];
     controlNetInputs.start_percent = 0;
     controlNetInputs.end_percent = usePoseGuide
-      ? (shotScale === "close" ? 0.98 : shotScale === "medium" ? 0.96 : 0.94)
+      ? (shotScale === "close" ? 0.9 : shotScale === "medium" ? 0.86 : 0.82)
       : hasFrameSeed
         ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
         : (shotScale === "close" ? 0.42 : 0.5);
@@ -7116,17 +7175,17 @@ function adaptBuiltinStoryboardWorkflowForShot(
       Number.isFinite(current) && current > 0
         ? (usePoseGuide ? Math.max(current, denoiseTarget) : hasFrameSeed ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
         : denoiseTarget;
-    samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 38 : 34) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
+    samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 34 : 32) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
     const currentCfg = Number(samplerInputs.cfg);
     samplerInputs.cfg =
       Number.isFinite(currentCfg) && currentCfg > 0
         ? (usePoseGuide
-            ? Math.max(currentCfg, hasSecondCharacter ? 6.6 : 6.3)
+            ? Math.max(currentCfg, hasSecondCharacter ? 6.0 : 5.8)
             : hasFrameSeed
               ? Math.min(currentCfg, hasSecondCharacter ? 6.2 : 5.9)
               : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
         : (usePoseGuide
-            ? (hasSecondCharacter ? 6.6 : 6.3)
+            ? (hasSecondCharacter ? 6.0 : 5.8)
             : hasFrameSeed
               ? (hasSecondCharacter ? 6.2 : 5.9)
               : (hasSecondCharacter ? 6.8 : 6.2));
