@@ -2870,9 +2870,27 @@ function shouldUseSecondaryCharacterView(shot: Shot): boolean {
 
 function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
   if (assets.length <= 1) return assets;
+  const explicitlyBoundCharacterCount = Math.max(
+    shot.characterRefs?.filter((item) => item.trim().length > 0).length ?? 0,
+    shot.sourceCharacterNames?.filter((item) => item.trim().length > 0).length ?? 0
+  );
   const corpus = [shot.title ?? "", shot.storyPrompt ?? "", shot.videoPrompt ?? "", shot.notes ?? "", ...(shot.tags ?? [])]
     .join(" ")
     .toLowerCase();
+  if (
+    explicitlyBoundCharacterCount >= 2 ||
+    containsAnyKeyword(corpus, [
+      "exact character count is 2",
+      "only 2",
+      "both characters",
+      "两个人都",
+      "两人都",
+      "双人",
+      "二人"
+    ])
+  ) {
+    return assets.slice(0, 2);
+  }
   const isForcedDual = containsAnyKeyword(corpus, [
     "双人",
     "两人",
