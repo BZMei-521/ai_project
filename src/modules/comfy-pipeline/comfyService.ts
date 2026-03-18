@@ -5034,6 +5034,119 @@ function inferStoryboardCharacterPlacement(
   return placement;
 }
 
+function stabilizeStoryboardPairPlacements(
+  shot: Shot,
+  characterNames: string[],
+  placements: Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }>,
+  focusedCharacterName: string | null
+): Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }> {
+  if (placements.length < 2) return placements;
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
+  const scale = inferStoryboardCompositeScale(shot);
+  const isRiversidePathShot = containsAnyKeyword(corpus, [
+    "河边",
+    "河岸",
+    "riverside",
+    "riverbank",
+    "stone path",
+    "沿河石路",
+    "桥边"
+  ]);
+  const desiredFocusedSide = containsAnyKeyword(corpus, [
+    "main subject at center-right",
+    "main subject at screen right",
+    "main subject on the right side",
+    "主体在画面右",
+    "主体在右侧",
+    "主体在中右",
+    "center-right"
+  ])
+    ? "right"
+    : containsAnyKeyword(corpus, [
+        "main subject at center-left",
+        "main subject at screen left",
+        "main subject on the left side",
+        "主体在画面左",
+        "主体在左侧",
+        "主体在中左",
+        "center-left"
+      ])
+      ? "left"
+      : null;
+
+  let leftIndex = 0;
+  let rightIndex = 1;
+  if (focusedCharacterName) {
+    const focusIndex = characterNames.findIndex((name) => name === focusedCharacterName);
+    if (focusIndex >= 0 && focusIndex < 2 && desiredFocusedSide) {
+      if (desiredFocusedSide === "left") {
+        leftIndex = focusIndex;
+        rightIndex = focusIndex === 0 ? 1 : 0;
+      } else {
+        rightIndex = focusIndex;
+        leftIndex = focusIndex === 0 ? 1 : 0;
+      }
+    }
+  }
+
+  const stabilized = placements.map((item) => ({ ...item }));
+  const currentSeparation = Math.abs(stabilized[0]!.centerXRatio - stabilized[1]!.centerXRatio);
+
+  if (isRiversidePathShot) {
+    const riversidePreset =
+      scale === "close"
+        ? {
+            left: { centerXRatio: 0.64, floorYRatio: 0.91, sizeScale: 0.96 },
+            right: { centerXRatio: 0.77, floorYRatio: 0.895, sizeScale: 0.88 }
+          }
+        : scale === "medium"
+          ? {
+              left: { centerXRatio: 0.66, floorYRatio: 0.915, sizeScale: 0.9 },
+              right: { centerXRatio: 0.79, floorYRatio: 0.9, sizeScale: 0.84 }
+            }
+          : {
+              left: { centerXRatio: 0.68, floorYRatio: 0.92, sizeScale: 0.82 },
+              right: { centerXRatio: 0.8, floorYRatio: 0.905, sizeScale: 0.76 }
+            };
+    stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
+      centerXRatio: riversidePreset.left.centerXRatio,
+      floorYRatio: Math.max(stabilized[leftIndex]!.floorYRatio, riversidePreset.left.floorYRatio),
+      sizeScale: Math.max(stabilized[leftIndex]!.sizeScale, riversidePreset.left.sizeScale)
+    });
+    stabilized[rightIndex] = applyClampedPlacement(stabilized[rightIndex]!, {
+      centerXRatio: riversidePreset.right.centerXRatio,
+      floorYRatio: Math.max(stabilized[rightIndex]!.floorYRatio, riversidePreset.right.floorYRatio),
+      sizeScale: Math.max(stabilized[rightIndex]!.sizeScale, riversidePreset.right.sizeScale)
+    });
+  } else if (currentSeparation < 0.12) {
+    const spreadPreset =
+      scale === "close"
+        ? [0.42, 0.62]
+        : scale === "medium"
+          ? [0.4, 0.62]
+          : [0.38, 0.6];
+    stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
+      centerXRatio: spreadPreset[0],
+      floorYRatio: Math.max(0.88, stabilized[leftIndex]!.floorYRatio)
+    });
+    stabilized[rightIndex] = applyClampedPlacement(stabilized[rightIndex]!, {
+      centerXRatio: spreadPreset[1],
+      floorYRatio: Math.max(0.88, stabilized[rightIndex]!.floorYRatio)
+    });
+  }
+
+  if (Math.abs(stabilized[0]!.centerXRatio - stabilized[1]!.centerXRatio) < 0.1) {
+    stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
+      centerXRatio: stabilized[leftIndex]!.centerXRatio - 0.08
+    });
+    stabilized[rightIndex] = applyClampedPlacement(stabilized[rightIndex]!, {
+      centerXRatio: stabilized[rightIndex]!.centerXRatio + 0.08
+    });
+  }
+
+  return stabilized;
+}
+
 function inferStoryboardCompositeLayout(
   shot: Shot,
   characterRefs: WeightedImageRef[]
@@ -5044,68 +5157,50 @@ function inferStoryboardCompositeLayout(
   const focusedCharacterName = inferStoryboardFocusedCharacterName(shot, availableNames);
 
   if (count >= 2) {
+    const buildPairPlacements = (
+      basePlacements: Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }>
+    ) =>
+      stabilizeStoryboardPairPlacements(
+        shot,
+        availableNames,
+        characterRefs.map((ref, index) =>
+          inferStoryboardCharacterPlacement(
+            shot,
+            extractCharacterNameFromReferenceLabel(ref.label),
+            basePlacements[index] ?? basePlacements[basePlacements.length - 1]!,
+            index,
+            count,
+            focusedCharacterName
+          )
+        ),
+        focusedCharacterName
+      );
     if (scale === "wide") {
       const wideBase = [
         { centerXRatio: 0.44, floorYRatio: 0.91, sizeScale: 0.78 },
         { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.72 }
       ];
-      return characterRefs.map((ref, index) =>
-        inferStoryboardCharacterPlacement(
-          shot,
-          extractCharacterNameFromReferenceLabel(ref.label),
-          wideBase[index] ?? wideBase[wideBase.length - 1]!,
-          index,
-          count,
-          focusedCharacterName
-        )
-      );
+      return buildPairPlacements(wideBase);
     }
     if (scale === "close") {
       const closeBase = [
         { centerXRatio: 0.46, floorYRatio: 0.91, sizeScale: 0.9 },
         { centerXRatio: 0.66, floorYRatio: 0.93, sizeScale: 0.82 }
       ];
-      return characterRefs.map((ref, index) =>
-        inferStoryboardCharacterPlacement(
-          shot,
-          extractCharacterNameFromReferenceLabel(ref.label),
-          closeBase[index] ?? closeBase[closeBase.length - 1]!,
-          index,
-          count,
-          focusedCharacterName
-        )
-      );
+      return buildPairPlacements(closeBase);
     }
     if (scale === "medium") {
       const mediumBase = [
         { centerXRatio: 0.46, floorYRatio: 0.91, sizeScale: 0.82 },
         { centerXRatio: 0.66, floorYRatio: 0.93, sizeScale: 0.76 }
       ];
-      return characterRefs.map((ref, index) =>
-        inferStoryboardCharacterPlacement(
-          shot,
-          extractCharacterNameFromReferenceLabel(ref.label),
-          mediumBase[index] ?? mediumBase[mediumBase.length - 1]!,
-          index,
-          count,
-          focusedCharacterName
-        )
-      );
+      return buildPairPlacements(mediumBase);
     }
     const defaultBase = [
       { centerXRatio: 0.46, floorYRatio: 0.9, sizeScale: 0.8 },
       { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.74 }
     ];
-    return characterRefs.map((ref, index) =>
-      inferStoryboardCharacterPlacement(
-        shot,
-        extractCharacterNameFromReferenceLabel(ref.label),
-        defaultBase[index] ?? defaultBase[defaultBase.length - 1]!,
-        index,
-        count,
-        focusedCharacterName
-      )
-    );
+    return buildPairPlacements(defaultBase);
   }
 
   const fallbackName = characterRefs[0] ? extractCharacterNameFromReferenceLabel(characterRefs[0].label) : "";
