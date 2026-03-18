@@ -4321,7 +4321,7 @@ type StoryboardPoseAction =
 
 function inferStoryboardPoseAction(shot: Shot, characterName: string, isFocused: boolean): StoryboardPoseAction {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
-  const contexts = collectCharacterMentionContexts(corpus, characterName);
+  const { contexts } = collectCharacterMentionContexts(shot, corpus, characterName);
   const localText = contexts.join(" ");
   const mentionsLeftHand = containsAnyKeyword(localText, ["左手", "left hand", "left arm"]);
   const mentionsRightHand = containsAnyKeyword(localText, ["右手", "right hand", "right arm"]);
@@ -4638,21 +4638,79 @@ function extractCharacterNameFromReferenceLabel(label: string): string {
   return label.split(":")[0]?.trim() ?? "";
 }
 
-function collectCharacterMentionContexts(corpus: string, name: string): string[] {
-  const text = corpus.toLowerCase();
-  const needle = name.trim().toLowerCase();
-  if (!needle) return [text];
-  const contexts: string[] = [];
-  let startIndex = 0;
-  while (startIndex < text.length) {
-    const matchIndex = text.indexOf(needle, startIndex);
-    if (matchIndex < 0) break;
-    const contextStart = Math.max(0, matchIndex - 64);
-    const contextEnd = Math.min(text.length, matchIndex + needle.length + 64);
-    contexts.push(text.slice(contextStart, contextEnd));
-    startIndex = matchIndex + needle.length;
+function extractStoryboardLatinCharacterAliases(text: string): string[] {
+  const source = text.trim();
+  if (!source) return [];
+  const aliases: string[] = [];
+  const seen = new Set<string>();
+  const patterns = [
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+is\s+a\b/g,
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:standing|walking|remains|turns|steps|slows|leans|plants|quickens|bending|lowering|lifting|speaking)\b/g
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const alias = match[1]?.trim();
+      if (!alias) continue;
+      const key = alias.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      aliases.push(alias);
+    }
   }
-  return contexts.length > 0 ? contexts : [text];
+  return aliases;
+}
+
+function inferStoryboardCharacterMentionVariants(shot: Shot, name: string): string[] {
+  const canonicalName = name.trim();
+  if (!canonicalName) return [];
+  const variants: string[] = [];
+  const seen = new Set<string>();
+  const pushVariant = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    variants.push(normalized);
+  };
+  pushVariant(canonicalName);
+  const orderedNames = uniquePreserveOrder([...(shot.sourceCharacterNames ?? []), canonicalName].map((item) => item.trim()).filter((item) => item.length > 0));
+  const characterIndex = orderedNames.findIndex((item) => item.toLowerCase() === canonicalName.toLowerCase());
+  if (characterIndex >= 0) {
+    const aliasCandidates = extractStoryboardLatinCharacterAliases(compactTextParts(shot.storyPrompt, shot.videoPrompt));
+    const alias = aliasCandidates[characterIndex];
+    if (alias) {
+      pushVariant(alias);
+      pushVariant(alias.replace(/\s+/g, ""));
+    }
+  }
+  return variants;
+}
+
+function collectCharacterMentionContexts(
+  shot: Shot,
+  corpus: string,
+  name: string
+): { contexts: string[]; usedFallback: boolean } {
+  const text = corpus.toLowerCase();
+  const variants = inferStoryboardCharacterMentionVariants(shot, name);
+  if (variants.length === 0) return { contexts: [text], usedFallback: true };
+  const contexts: string[] = [];
+  const seenContexts = new Set<string>();
+  for (const needle of variants) {
+    let startIndex = 0;
+    while (startIndex < text.length) {
+      const matchIndex = text.indexOf(needle, startIndex);
+      if (matchIndex < 0) break;
+      const contextStart = Math.max(0, matchIndex - 96);
+      const contextEnd = Math.min(text.length, matchIndex + needle.length + 96);
+      const context = text.slice(contextStart, contextEnd);
+      if (!seenContexts.has(context)) {
+        seenContexts.add(context);
+        contexts.push(context);
+      }
+      startIndex = matchIndex + needle.length;
+    }
+  }
+  return contexts.length > 0 ? { contexts, usedFallback: false } : { contexts: [text], usedFallback: true };
 }
 
 function corpusHasAnyKeyword(corpus: string, keywords: string[]): boolean {
@@ -4678,12 +4736,12 @@ function inferStoryboardFocusedCharacterName(
   for (const rawName of availableNames) {
     const name = rawName.trim();
     if (!name) continue;
-    const needle = name.toLowerCase();
     let score = 0;
-    if (title.includes(needle)) score += 4;
-    if (dialogue.includes(needle)) score += 3;
-    if (notes.includes(needle)) score += 2;
-    if (prompt.includes(needle)) score += 1;
+    const variants = inferStoryboardCharacterMentionVariants(shot, name);
+    if (variants.some((needle) => title.includes(needle))) score += 4;
+    if (variants.some((needle) => dialogue.includes(needle))) score += 3;
+    if (variants.some((needle) => notes.includes(needle))) score += 2;
+    if (variants.some((needle) => prompt.includes(needle))) score += 1;
     if (score <= 0) continue;
     if (score > bestScore) {
       bestName = name;
@@ -4747,14 +4805,19 @@ function inferStoryboardCharacterPlacement(
   focusedCharacterName: string | null = null
 ): { centerXRatio: number; floorYRatio: number; sizeScale: number } {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? []));
-  const contexts = collectCharacterMentionContexts(corpus, characterName);
+  const mentionData = collectCharacterMentionContexts(shot, corpus, characterName);
+  const contexts = mentionData.contexts;
   const lowerCorpus = corpus.toLowerCase();
   const lowerName = characterName.toLowerCase();
   const scale = inferStoryboardCompositeScale(shot);
   const isFocused = Boolean(focusedCharacterName && focusedCharacterName === characterName);
   const isWideWalk = containsAnyKeyword(lowerCorpus, ["并肩", "walk", "walking", "side by side", "along the same riverside path"]);
-  const hasPathRelativeLeftCue = contextsHavePathRelativeCue(contexts, "left");
-  const hasPathRelativeRightCue = contextsHavePathRelativeCue(contexts, "right");
+  let hasPathRelativeLeftCue = contextsHavePathRelativeCue(contexts, "left");
+  let hasPathRelativeRightCue = contextsHavePathRelativeCue(contexts, "right");
+  if (mentionData.usedFallback && hasPathRelativeLeftCue && hasPathRelativeRightCue && count >= 2) {
+    hasPathRelativeLeftCue = index === 0;
+    hasPathRelativeRightCue = index === 1;
+  }
   const hasPathRelativeLaneCue = hasPathRelativeLeftCue || hasPathRelativeRightCue;
   const hasExplicitHorizontalCue = contextsHaveAnyKeyword(contexts, [
     "left edge",
