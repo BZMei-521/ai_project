@@ -512,6 +512,102 @@ function looksLikeSdxlCheckpoint(name: string): boolean {
   return /(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)/.test(normalized);
 }
 
+function looksLikeFluxOrSd3Model(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  return /flux|sd3|sd[_ -]?3\.?5|stable[_ -]?diffusion[_ -]?3|xlabs/.test(normalized);
+}
+
+function looksLikeSdxlControlNet(name: string): boolean {
+  const normalized = basenameModelChoice(name);
+  if (!normalized) return false;
+  if (looksLikeFluxOrSd3Model(normalized)) return false;
+  return /sd[_-]?xl|(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)|xinsir|mistoline|union|thibaud.*xl|kohya.*xl/.test(normalized);
+}
+
+function looksLikeSd15ControlNet(name: string): boolean {
+  const normalized = basenameModelChoice(name);
+  if (!normalized) return false;
+  if (looksLikeFluxOrSd3Model(normalized) || looksLikeSdxlControlNet(normalized)) return false;
+  return /sd15|control[_-]?v11|(?:^|[^a-z0-9])v11(?:[^a-z0-9]|$)|11p|11f1|t2i[_-]?adapter/.test(normalized);
+}
+
+function preferControlNetOption(
+  options: string[],
+  matchers: Array<(value: string) => boolean>
+): string | null {
+  for (const matcher of matchers) {
+    const matched = options.find((value) => matcher(value));
+    if (matched) return matched;
+  }
+  return null;
+}
+
+function resolveStoryboardControlNetChoice(
+  storyboardModel: string,
+  usePoseGuide: boolean,
+  objectInfo?: Record<string, unknown>
+): {
+  controlNetName: string | null;
+  checkpointOverride: string | null;
+  qualityError: string | null;
+} {
+  const requestedTask = usePoseGuide ? /openpose/i : /canny/i;
+  const requestedTaskLabel = usePoseGuide ? "OpenPose" : "Canny";
+  const preferredDefault = usePoseGuide ? "control_v11p_sd15_openpose.pth" : "control_v11p_sd15_canny.pth";
+  const isSdxl = looksLikeSdxlCheckpoint(storyboardModel);
+  const options =
+    objectInfo && typeof objectInfo === "object"
+      ? extractComboOptionsFromObjectInfo(objectInfo, "ControlNetLoader", "control_net_name")
+      : [];
+  const taskOptions = options.filter((value) => requestedTask.test(value));
+
+  if (taskOptions.length === 0) {
+    return {
+      controlNetName: preferredDefault,
+      checkpointOverride: isSdxl ? "realisticVisionV60B1_v51VAE.safetensors" : null,
+      qualityError:
+        isSdxl && objectInfo
+          ? `当前分镜基模“${storyboardModel}”属于 SDXL，但 ComfyUI 未检测到任何可用的 ${requestedTaskLabel} ControlNet。为保证最终质量，请先下载 SDXL 版 ${requestedTaskLabel} ControlNet；文件名建议包含 “${usePoseGuide ? "openpose" : "canny"}” 和 “sdxl/xl” 或 “xinsir”。`
+          : null
+    };
+  }
+
+  if (isSdxl) {
+    const sdxlChoice = preferControlNetOption(taskOptions, [
+      (value) => looksLikeSdxlControlNet(value) && /\.safetensors$/i.test(value),
+      (value) => looksLikeSdxlControlNet(value)
+    ]);
+    if (sdxlChoice) {
+      return { controlNetName: sdxlChoice, checkpointOverride: null, qualityError: null };
+    }
+    const sd15Fallback = preferControlNetOption(taskOptions, [
+      (value) => looksLikeSd15ControlNet(value) && /\.safetensors$/i.test(value),
+      (value) => looksLikeSd15ControlNet(value),
+      () => true
+    ]);
+    return {
+      controlNetName: sd15Fallback,
+      checkpointOverride: "realisticVisionV60B1_v51VAE.safetensors",
+      qualityError: objectInfo
+        ? `当前分镜基模“${storyboardModel}”属于 SDXL，但当前 ComfyUI 里只有 SD1.5 系的 ${requestedTaskLabel} ControlNet（例如：${taskOptions.slice(0, 3).join(" / ")}）。这会导致你刚才看到的维度报错或被迫降级到低质量兜底。要保住 SDXL 质量，请下载 SDXL 版 ${requestedTaskLabel} ControlNet；文件名建议包含 “${usePoseGuide ? "openpose" : "canny"}” 和 “sdxl/xl” 或 “xinsir”。`
+        : null
+    };
+  }
+
+  const sd15Choice = preferControlNetOption(taskOptions, [
+    (value) => looksLikeSd15ControlNet(value) && /\.safetensors$/i.test(value),
+    (value) => looksLikeSd15ControlNet(value),
+    (value) => !looksLikeSdxlControlNet(value) && !looksLikeFluxOrSd3Model(value),
+    () => true
+  ]);
+  return {
+    controlNetName: sd15Choice,
+    checkpointOverride: null,
+    qualityError: null
+  };
+}
+
 function snapRenderSize(value: number): number {
   const clamped = Math.max(320, Math.round(value));
   return Math.max(320, Math.round(clamped / 64) * 64);
@@ -6780,7 +6876,8 @@ function workflowHasNodeType(workflow: Record<string, unknown>, targetType: stri
 
 function adaptBuiltinStoryboardWorkflowForShot(
   workflow: Record<string, unknown>,
-  tokens: Record<string, string>
+  tokens: Record<string, string>,
+  objectInfo?: Record<string, unknown>
 ): void {
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
   const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
@@ -6814,10 +6911,16 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const sceneAdapterClass = String((sceneAdapterNode as Record<string, unknown>).class_type ?? "").trim();
   if (samplerClass !== "KSampler" || sceneAdapterClass !== "IPAdapterAdvanced") return;
 
+  const controlNetChoice = resolveStoryboardControlNetChoice(storyboardModel, usePoseGuide, objectInfo);
+  if (controlNetChoice.qualityError) {
+    throw new Error(controlNetChoice.qualityError);
+  }
+  const effectiveStoryboardModel = controlNetChoice.checkpointOverride ?? storyboardModel;
+
   if (checkpointNode && typeof checkpointNode === "object") {
     const checkpointInputs = (checkpointNode as Record<string, unknown>).inputs;
     if (checkpointInputs && typeof checkpointInputs === "object" && !Array.isArray(checkpointInputs)) {
-      (checkpointInputs as Record<string, unknown>).ckpt_name = storyboardModel;
+      (checkpointInputs as Record<string, unknown>).ckpt_name = effectiveStoryboardModel;
     }
   }
 
@@ -6922,9 +7025,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
     }
   }
   if (controlNetLoaderInputs) {
-    controlNetLoaderInputs.control_net_name = usePoseGuide
+    controlNetLoaderInputs.control_net_name = controlNetChoice.controlNetName ?? (usePoseGuide
       ? "control_v11p_sd15_openpose.pth"
-      : "control_v11p_sd15_canny.pth";
+      : "control_v11p_sd15_canny.pth");
   }
 
   const denoiseTarget =
@@ -7727,17 +7830,19 @@ export async function generateShotAsset(
     }
     // Always detach baked-in Qwen image ref links; when image refs exist, reconnect with staged files.
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
-    const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
-    if (kind === "image") {
-      adaptBuiltinStoryboardWorkflowForShot(built, tokens);
-    }
-    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     let objectInfo: Record<string, unknown> | undefined;
     try {
       objectInfo = await fetchObjectInfo(settings.baseUrl);
-      applyComfyModelOptionBindings(built, objectInfo);
     } catch {
       // Keep queueing with the original values if object_info is unavailable.
+    }
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
+    if (kind === "image") {
+      adaptBuiltinStoryboardWorkflowForShot(built, tokens, objectInfo);
+    }
+    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
+    if (objectInfo) {
+      applyComfyModelOptionBindings(built, objectInfo);
     }
     const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
     const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress, {
@@ -7784,7 +7889,7 @@ export async function generateShotAsset(
         STORYBOARD_CFG: String(Math.min(6.2, Math.max(5.6, Number(tokens.STORYBOARD_CFG ?? "5.8") || 5.8)))
       };
       const rebuilt = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, strengthenedTokens)) as Record<string, unknown>;
-      adaptBuiltinStoryboardWorkflowForShot(rebuilt, strengthenedTokens);
+      adaptBuiltinStoryboardWorkflowForShot(rebuilt, strengthenedTokens, objectInfo);
       applyFisherWorkflowBindings(rebuilt, kind, strengthenedTokens, stagedCharacterImages);
       if (objectInfo) {
         applyComfyModelOptionBindings(rebuilt, objectInfo);
@@ -7933,17 +8038,19 @@ export async function generateShotAssetOutputs(
         imageReferenceSources.length > 0 ? await stageCharacterReferenceImages(settings, shot, imageReferenceSources, assets) : [];
     }
     applyDynamicCharacterRefsForImageWorkflow(rewrittenWorkflow, stagedCharacterImages);
-    const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
-    if (kind === "image") {
-      adaptBuiltinStoryboardWorkflowForShot(built, tokens);
-    }
-    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
     let objectInfo: Record<string, unknown> | undefined;
     try {
       objectInfo = await fetchObjectInfo(settings.baseUrl);
-      applyComfyModelOptionBindings(built, objectInfo);
     } catch {
       // Keep queueing with the original values if object_info is unavailable.
+    }
+    const built = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, tokens)) as Record<string, unknown>;
+    if (kind === "image") {
+      adaptBuiltinStoryboardWorkflowForShot(built, tokens, objectInfo);
+    }
+    applyFisherWorkflowBindings(built, kind, tokens, stagedCharacterImages);
+    if (objectInfo) {
+      applyComfyModelOptionBindings(built, objectInfo);
     }
     const promptId = await queueComfyPrompt(settings.baseUrl, built, objectInfo);
     const outputs = await waitForComfyOutput(settings.baseUrl, promptId, options?.onProgress, {
