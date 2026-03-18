@@ -4319,6 +4319,26 @@ type StoryboardPoseAction =
   | "reach_down_left"
   | "look";
 
+type StoryboardPoseFigureGeometry = {
+  head: { x: number; y: number };
+  neck: { x: number; y: number };
+  pelvis: { x: number; y: number };
+  leftShoulder: { x: number; y: number };
+  rightShoulder: { x: number; y: number };
+  leftHip: { x: number; y: number };
+  rightHip: { x: number; y: number };
+  leftElbow: { x: number; y: number };
+  rightElbow: { x: number; y: number };
+  leftWrist: { x: number; y: number };
+  rightWrist: { x: number; y: number };
+  leftKnee: { x: number; y: number };
+  rightKnee: { x: number; y: number };
+  leftAnkle: { x: number; y: number };
+  rightAnkle: { x: number; y: number };
+  jointRadius: number;
+  limbWidth: number;
+};
+
 function inferStoryboardPoseAction(shot: Shot, characterName: string, isFocused: boolean): StoryboardPoseAction {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
   const { contexts } = collectCharacterMentionContexts(shot, corpus, characterName);
@@ -4398,14 +4418,13 @@ function drawStoryboardPoseJoint(
   context.restore();
 }
 
-function buildStoryboardPoseFigure(
-  context: CanvasRenderingContext2D,
+function computeStoryboardPoseFigureGeometry(
   centerX: number,
   floorY: number,
   bodyHeight: number,
   action: StoryboardPoseAction,
   mirror = false
-) {
+): StoryboardPoseFigureGeometry {
   const dir = mirror ? -1 : 1;
   const headY = floorY - bodyHeight * 0.92;
   const neck = { x: centerX, y: floorY - bodyHeight * 0.78 };
@@ -4501,7 +4520,55 @@ function buildStoryboardPoseFigure(
     headX += shoulderOffset * 0.22 * dir;
   }
 
-  const head = { x: headX, y: headTiltY };
+  return {
+    head: { x: headX, y: headTiltY },
+    neck,
+    pelvis,
+    leftShoulder,
+    rightShoulder,
+    leftHip,
+    rightHip,
+    leftElbow,
+    rightElbow,
+    leftWrist,
+    rightWrist,
+    leftKnee,
+    rightKnee,
+    leftAnkle,
+    rightAnkle,
+    jointRadius,
+    limbWidth
+  };
+}
+
+function buildStoryboardPoseFigure(
+  context: CanvasRenderingContext2D,
+  centerX: number,
+  floorY: number,
+  bodyHeight: number,
+  action: StoryboardPoseAction,
+  mirror = false
+) {
+  const geometry = computeStoryboardPoseFigureGeometry(centerX, floorY, bodyHeight, action, mirror);
+  const {
+    head,
+    neck,
+    pelvis,
+    leftShoulder,
+    rightShoulder,
+    leftHip,
+    rightHip,
+    leftElbow,
+    rightElbow,
+    leftWrist,
+    rightWrist,
+    leftKnee,
+    rightKnee,
+    leftAnkle,
+    rightAnkle,
+    jointRadius,
+    limbWidth
+  } = geometry;
   const torsoTop = { x: neck.x, y: neck.y };
   const torsoBottom = { x: pelvis.x, y: pelvis.y };
   const limbColors = ["#ff4444", "#ffbb33", "#ffee55", "#66cc66", "#33b5e5", "#9966ff"];
