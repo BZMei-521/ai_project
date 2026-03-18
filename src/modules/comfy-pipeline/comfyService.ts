@@ -2256,9 +2256,12 @@ function containsKeywordWithNegativeContext(
   while (startIndex < text.length) {
     const matchIndex = text.indexOf(needle, startIndex);
     if (matchIndex < 0) return false;
-    const contextStart = Math.max(0, matchIndex - 24);
-    const context = text.slice(contextStart, matchIndex).trim();
-    if (!negativePrefixes.some((prefix) => context.endsWith(prefix))) {
+    const contextStart = Math.max(0, matchIndex - 48);
+    const context = text
+      .slice(contextStart, matchIndex)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!negativePrefixes.some((prefix) => context.endsWith(prefix) || context.includes(prefix.trim()))) {
       return true;
     }
     startIndex = matchIndex + needle.length;
@@ -3303,26 +3306,39 @@ function shouldLeadWithSceneReference(shot: Shot): boolean {
   ]
     .join(" ")
     .toLowerCase();
+  const explicitCharacterFocus = containsAnyKeyword(corpus, [
+    "人物主体",
+    "角色主体",
+    "对白",
+    "对话",
+    "起话",
+    "回应",
+    "反打",
+    "近景",
+    "中近景",
+    "特写",
+    "单人主镜头",
+    "人物明确存在",
+    "walk",
+    "walking",
+    "speak",
+    "speaking",
+    "reaction",
+    "medium close",
+    "close-up"
+  ]);
+  if (explicitCharacterFocus) return false;
   return containsAnyKeyword(corpus, [
-    "对峙",
-    "双人",
-    "两人",
-    "二人",
     "全景",
     "大全景",
-    "中景",
     "远景",
     "建立镜头",
-    "环境",
-    "河边",
-    "桥上",
-    "室外",
-    "对打",
-    "打斗",
-    "搏斗",
-    "wide shot",
+    "环境空镜",
+    "环境建立",
+    "wide establishing",
     "establishing",
-    "environment"
+    "environment plate",
+    "scenery frame"
   ]);
 }
 

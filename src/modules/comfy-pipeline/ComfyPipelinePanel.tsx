@@ -1941,16 +1941,163 @@ function buildScenePrompt(text: string, sceneName: string, characterNames: strin
   return `${sceneLabel} 场景设定图，无人物，环境一致，材质统一，空间关系清晰。${clean}`;
 }
 
-function buildStoryShotPrompt(text: string, scale: string): string {
-  const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
-  return `${clean}。电影分镜，${scale}，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
+function inferStoryboardEnvironmentLabel(sceneName: string, text: string): string {
+  const corpus = `${sceneName} ${text}`.toLowerCase();
+  if (/(河边|江边|河岸|river|riverside)/.test(corpus)) return "riverside environment";
+  if (/(桥上|桥边|石桥|bridge)/.test(corpus)) return "bridge environment";
+  if (/(街道|巷子|街头|street|road|alley)/.test(corpus)) return "street environment";
+  if (/(走廊|corridor|hallway)/.test(corpus)) return "corridor environment";
+  if (/(楼梯|stairs|stairwell)/.test(corpus)) return "stair environment";
+  if (/(庭院|院子|courtyard)/.test(corpus)) return "courtyard environment";
+  if (/(房间|客厅|卧室|办公室|教室|room|indoor|interior)/.test(corpus)) return "interior environment";
+  return sceneName.trim() ? `${sceneName.trim()} environment` : "same environment";
 }
 
-function buildStoryVideoPrompt(text: string): string {
-  if (/走|跑|转身|抬手|放下|靠近|远离|打开|进入|离开/.test(text)) {
-    return `${normalizeStoryInput(text)}。主体产生连续动作，镜头保持平稳推进。`;
+function inferStoryboardGroundSurface(sceneName: string, text: string): string {
+  const corpus = `${sceneName} ${text}`.toLowerCase();
+  if (/(河边|江边|河岸|river|riverside)/.test(corpus) && /(桥上|桥边|bridge)/.test(corpus)) {
+    return "riverside stone path near the bridge";
   }
-  return `${normalizeStoryInput(text)}。主体有轻微呼吸感动作，镜头稳定。`;
+  if (/(河边|江边|河岸|river|riverside)/.test(corpus)) return "riverside stone path";
+  if (/(桥上|桥边|bridge)/.test(corpus)) return "bridge deck";
+  if (/(街道|巷子|street|road|alley)/.test(corpus)) return "street ground";
+  if (/(走廊|corridor|hallway)/.test(corpus)) return "corridor floor";
+  if (/(楼梯|stairs|stairwell)/.test(corpus)) return "stair steps";
+  if (/(庭院|院子|courtyard)/.test(corpus)) return "courtyard ground";
+  if (/(房间|客厅|卧室|办公室|教室|room|indoor|interior)/.test(corpus)) return "room floor";
+  return "ground plane";
+}
+
+function inferStoryboardGroundedAction(text: string): "standing on" | "walking on" | "running on" | "sitting on" | "leaning on" | "kneeling on" {
+  const corpus = text.toLowerCase();
+  if (/(跑|奔跑|冲刺|run|running|sprint)/.test(corpus)) return "running on";
+  if (/(走|慢走|前行|walk|walking|step|stepping)/.test(corpus)) return "walking on";
+  if (/(坐|坐下|sit|sitting|seated)/.test(corpus)) return "sitting on";
+  if (/(靠|倚|lean|leaning)/.test(corpus)) return "leaning on";
+  if (/(跪|kneel|kneeling)/.test(corpus)) return "kneeling on";
+  return "standing on";
+}
+
+function inferStoryboardGroundContact(action: ReturnType<typeof inferStoryboardGroundedAction>): string {
+  if (action === "walking on" || action === "running on") {
+    return "grounded foot contact";
+  }
+  return "both feet touching the ground";
+}
+
+function inferStoryboardFocusCharacter(text: string, characterNames: string[], preferred = ""): string {
+  const uniqueNames = uniqueEntities(characterNames.map((name) => sanitizeCharacterCandidate(name)).filter(Boolean));
+  if (uniqueNames.length === 0) return "";
+  if (preferred && uniqueNames.includes(preferred)) return preferred;
+  const corpus = normalizeStoryInput(text);
+  const mentioned = uniqueNames.filter((name) => corpus.includes(name));
+  if (mentioned.length === 1) return mentioned[0]!;
+  return uniqueNames[0]!;
+}
+
+function storyboardScreenPlacement(index: number, total: number, isFocus: boolean): string {
+  if (total <= 1) return "at screen center";
+  if (isFocus) return total === 2 ? "at screen center-left" : "at screen center";
+  if (index === 0) return "at screen left";
+  if (index === 1) return "at screen right";
+  return "in the same frame";
+}
+
+function buildMandatoryStoryboardNegativePrompt(baseNegativePrompt: string, characterCount: number): string {
+  const baseItems = baseNegativePrompt
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const mandatoryItems = [
+    "empty scene",
+    "scenery only",
+    "landscape only",
+    "pure environment",
+    "no character",
+    "no person",
+    "no people",
+    "character missing",
+    characterCount > 1 ? "missing one character" : "missing character",
+    characterCount > 1 ? "one character only" : "",
+    characterCount > 1 ? "wrong character count" : "",
+    "cropped body",
+    "cut off head",
+    "cut off feet",
+    "upper body only",
+    "portrait crop",
+    "partial body",
+    "floating character",
+    "hovering feet",
+    "detached shadow",
+    "tiny distant person",
+    "silhouette only",
+    "pasted character",
+    "collage"
+  ].filter(Boolean);
+  return [...new Set([...baseItems, ...mandatoryItems])].join(", ");
+}
+
+function buildStoryShotPrompt(
+  text: string,
+  scale: string,
+  sceneName: string,
+  characterNames: string[] = [],
+  preferredFocusCharacter = ""
+): string {
+  const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
+  const uniqueNames = uniqueEntities(characterNames.map((name) => sanitizeCharacterCandidate(name)).filter(Boolean));
+  if (uniqueNames.length === 0) {
+    return `${clean}。电影分镜，${scale}，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
+  }
+  const environmentLabel = inferStoryboardEnvironmentLabel(sceneName, clean);
+  const surface = inferStoryboardGroundSurface(sceneName, clean);
+  const groundedAction = inferStoryboardGroundedAction(clean);
+  const groundContact = inferStoryboardGroundContact(groundedAction);
+  const focusCharacter = inferStoryboardFocusCharacter(clean, uniqueNames, preferredFocusCharacter);
+  const subjectLine =
+    uniqueNames.length === 1
+      ? `${focusCharacter} is the main subject of the shot`
+      : focusCharacter
+        ? `${focusCharacter} is the main subject of the shot, and every other scripted character must remain visible in the same frame`
+        : `${uniqueNames.join(" and ")} are the main subjects of the shot`;
+  const characterLines = uniqueNames
+    .map((name, index) => {
+      const isFocus = focusCharacter === name;
+      const role = isFocus || !focusCharacter ? "main subject" : "secondary required character";
+      return `${name}, ${role}, full body, clearly visible, in the scene, ${groundedAction} the ${surface} ${storyboardScreenPlacement(index, uniqueNames.length, isFocus)}, ${groundContact}, interacting with the ${environmentLabel}`;
+    })
+    .join(". ");
+  return `${clean}。${subjectLine}。${characterLines}。The characters are the subject of the shot, not the empty environment. No pure scenery frame. 电影分镜，${scale}，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
+}
+
+function buildStoryVideoPrompt(
+  text: string,
+  characterNames: string[] = [],
+  sceneName = "",
+  preferredFocusCharacter = ""
+): string {
+  const clean = normalizeStoryInput(text).replace(/\n+/g, " ").trim();
+  if (characterNames.length === 0) {
+    if (/走|跑|转身|抬手|放下|靠近|远离|打开|进入|离开/.test(text)) {
+      return `${clean}。主体产生连续动作，镜头保持平稳推进。`;
+    }
+    return `${clean}。主体有轻微呼吸感动作，镜头稳定。`;
+  }
+  const uniqueNames = uniqueEntities(characterNames.map((name) => sanitizeCharacterCandidate(name)).filter(Boolean));
+  const environmentLabel = inferStoryboardEnvironmentLabel(sceneName, clean);
+  const surface = inferStoryboardGroundSurface(sceneName, clean);
+  const groundedAction = inferStoryboardGroundedAction(clean);
+  const focusCharacter = inferStoryboardFocusCharacter(clean, uniqueNames, preferredFocusCharacter);
+  const visibilityLine =
+    uniqueNames.length === 1
+      ? `${uniqueNames[0]} remains full body, clearly visible, in the scene`
+      : `${uniqueNames.join(" and ")} remain full body, clearly visible, in the scene`;
+  const motionLine =
+    groundedAction === "walking on" || groundedAction === "running on"
+      ? `the characters keep grounded motion while ${groundedAction} the ${surface}`
+      : `the characters keep grounded contact while standing on the ${surface}`;
+  const focusLine = focusCharacter ? `${focusCharacter} stays the visual focus` : "the scripted characters stay readable";
+  return `${clean}。${visibilityLine}，${motionLine}，${focusLine}，no empty scenery shot，持续与 ${environmentLabel} 发生互动，镜头稳定。`;
 }
 
 function inferVideoModeForStory(text: string, dialogue: string): "auto" | "single_frame" | "first_last_frame" {
@@ -1988,10 +2135,17 @@ function inferDialogueShotTitle(speaker: string, index: number, total: number): 
   return total === 1 ? "对白镜头" : `对白镜头 ${index + 1}`;
 }
 
-function buildDialogueShotPrompt(context: string, speaker: string, line: string): string {
-  const speakerPart = speaker ? `角色 ${speaker}` : "角色";
+function buildDialogueShotPrompt(
+  context: string,
+  speaker: string,
+  line: string,
+  sceneName: string,
+  characterNames: string[]
+): string {
+  const uniqueNames = uniqueEntities(characterNames.map((name) => sanitizeCharacterCandidate(name)).filter(Boolean));
   const normalizedContext = normalizeStoryInput(context).replace(/\n+/g, " ").trim();
-  return `${normalizedContext}。${speakerPart} 说：“${line}”。电影对白分镜，中近景或近景，人物表情清晰，视线关系明确，镜头稳定，光影自然。`;
+  const clean = `${normalizedContext}。${speaker ? `${speaker} 说：“${line}”。` : line}`.trim();
+  return buildStoryShotPrompt(clean, "中近景或近景", sceneName, uniqueNames, speaker);
 }
 
 function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
@@ -2013,13 +2167,14 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
     chunks.forEach((chunk, chunkIndex) => {
       const scale = inferShotScale(chunk, chunkIndex, chunks.length);
       const title = inferShotTitle(chunk, block.heading, chunkIndex, chunks.length);
-      const prompt = buildStoryShotPrompt(chunk, scale);
-      const videoPrompt = buildStoryVideoPrompt(chunk);
+      const focusCharacter = inferStoryboardFocusCharacter([title, chunk].join(" "), characterNames);
+      const prompt = buildStoryShotPrompt(chunk, scale, sceneName, characterNames, focusCharacter);
+      const videoPrompt = buildStoryVideoPrompt(chunk, characterNames, sceneName, focusCharacter);
       shots.push({
         id: `story_shot_${shotIndex}`,
         title,
         prompt,
-        negative_prompt: "",
+        negative_prompt: buildMandatoryStoryboardNegativePrompt("", characterNames.length),
         video_prompt: videoPrompt,
         video_mode: inferVideoModeForStory(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : ""),
         duration_sec: inferDurationSec(chunk, shouldSplitDialogueShots ? "" : chunkIndex === 0 ? dialogue : ""),
@@ -2038,19 +2193,20 @@ function parseStoryToShotScript(raw: string): { shots: ParsedScriptShot[] } {
       dialogueLines.forEach((item, dialogueIndex) => {
         const text = item.text.trim();
         const title = inferDialogueShotTitle(item.speaker, dialogueIndex, dialogueLines.length);
-        const prompt = buildDialogueShotPrompt(narrationContext, item.speaker, text);
+        const shotCharacterNames = uniqueEntities([item.speaker, ...characterNames]);
+        const prompt = buildDialogueShotPrompt(narrationContext, item.speaker, text, sceneName, shotCharacterNames);
         shots.push({
           id: `story_shot_${shotIndex}`,
           title,
           prompt,
-          negative_prompt: "",
-          video_prompt: `${normalizeStoryInput(text)}。对白镜头，人物保持轻微表情和视线变化。`,
+          negative_prompt: buildMandatoryStoryboardNegativePrompt("", shotCharacterNames.filter(Boolean).length),
+          video_prompt: buildStoryVideoPrompt(text, shotCharacterNames, sceneName, item.speaker),
           video_mode: inferVideoModeForStory("", text),
           duration_sec: inferDurationSec("", text),
           dialogue: item.speaker ? `${item.speaker}: ${text}` : text,
           notes: normalizeStoryInput(narrationContext),
           tags: inferShotTags(narrationContext, text),
-          character_names: uniqueEntities([item.speaker, ...characterNames]),
+          character_names: shotCharacterNames,
           scene_name: sceneName || undefined,
           scene_prompt: scenePrompt || undefined
         });
@@ -3209,6 +3365,28 @@ type NormalizedImportedCharacterProfile = {
   seed?: number;
 };
 
+function enforceImportedShotCharacterDirectives(item: NormalizedImportedShot): NormalizedImportedShot {
+  if (item.characterNames.length === 0) return item;
+  const promptContext = [item.title, item.prompt, item.notes, item.dialogue, item.tags.join("、")].filter(Boolean).join("。");
+  const focusCharacter = inferStoryboardFocusCharacter(
+    promptContext,
+    item.characterNames,
+    sanitizeCharacterCandidate(item.dialogue.split(/[:：]/)[0] ?? "")
+  );
+  const scale = inferShotScale(promptContext, 0, 1);
+  return {
+    ...item,
+    prompt: buildStoryShotPrompt(item.prompt || item.notes || item.title, scale, item.sceneName, item.characterNames, focusCharacter),
+    negativePrompt: buildMandatoryStoryboardNegativePrompt(item.negativePrompt, item.characterNames.length),
+    videoPrompt: buildStoryVideoPrompt(
+      item.videoPrompt || item.prompt || item.notes || item.title,
+      item.characterNames,
+      item.sceneName,
+      focusCharacter
+    )
+  };
+}
+
 function parseImportedNumericSeed(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -3292,10 +3470,10 @@ function enrichImportedShotCharacterNames(
       nextCharacterNames = profileNames;
     }
     if (nextCharacterNames.length === 0) return item;
-    return {
+    return enforceImportedShotCharacterDirectives({
       ...item,
       characterNames: nextCharacterNames
-    };
+    });
   });
 }
 
@@ -3320,50 +3498,73 @@ function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>>
     }
     return undefined;
   };
-  return list.map((item, index) => ({
-    id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
-    title: String(item.title ?? `镜头 ${index + 1}`),
-    prompt: String(item.prompt ?? ""),
-    negativePrompt: String(item.negative_prompt ?? item.negativePrompt ?? ""),
-    videoPrompt: String(item.video_prompt ?? item.videoPrompt ?? ""),
-    videoMode:
-      item.video_mode === "single_frame" || item.videoMode === "single_frame"
-        ? "single_frame"
-        : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
-          ? "first_last_frame"
-          : "auto",
-    videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
-    videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
-    skyboxFace:
-      item.skybox_face === "front" ||
-      item.skybox_face === "right" ||
-      item.skybox_face === "back" ||
-      item.skybox_face === "left" ||
-      item.skybox_face === "up" ||
-      item.skybox_face === "down" ||
-      item.skybox_face === "auto"
-        ? item.skybox_face
-        : item.skyboxFace === "front" ||
-            item.skyboxFace === "right" ||
-            item.skyboxFace === "back" ||
-            item.skyboxFace === "left" ||
-            item.skyboxFace === "up" ||
-            item.skyboxFace === "down" ||
-            item.skyboxFace === "auto"
-          ? item.skyboxFace
-          : "auto",
-    skyboxFaces: Array.isArray(item.skybox_faces)
-      ? item.skybox_faces.filter(
-          (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
-            face === "front" ||
-            face === "right" ||
-            face === "back" ||
-            face === "left" ||
-            face === "up" ||
-            face === "down"
-        )
-      : Array.isArray(item.skyboxFaces)
-        ? item.skyboxFaces.filter(
+  return list.map((item, index) => {
+    const title = String(item.title ?? `镜头 ${index + 1}`);
+    const rawPrompt = String(item.prompt ?? "");
+    const rawNegativePrompt = String(item.negative_prompt ?? item.negativePrompt ?? "");
+    const rawVideoPrompt = String(item.video_prompt ?? item.videoPrompt ?? "");
+    const dialogue = typeof item.dialogue === "string" ? item.dialogue : "";
+    const notes = typeof item.notes === "string" ? item.notes : "";
+    const tags = Array.isArray(item.tags) ? (item.tags as string[]) : [];
+    const characterNames = Array.isArray(item.character_names)
+      ? uniqueEntities((item.character_names as string[]).map((value) => sanitizeCharacterCandidate(String(value))).filter(Boolean))
+      : Array.isArray(item.characterNames)
+        ? uniqueEntities((item.characterNames as string[]).map((value) => sanitizeCharacterCandidate(String(value))).filter(Boolean))
+        : [];
+    const sceneName = sanitizeSceneCandidate(String(item.scene_name ?? item.sceneName ?? "").trim());
+    const promptContext = [title, rawPrompt, notes, dialogue, tags.join("、")].filter(Boolean).join("。");
+    const focusCharacter = inferStoryboardFocusCharacter(
+      promptContext,
+      characterNames,
+      sanitizeCharacterCandidate(dialogue.split(/[:：]/)[0] ?? "")
+    );
+    const scale = inferShotScale(promptContext, 0, 1);
+    const normalizedPrompt =
+      characterNames.length > 0
+        ? buildStoryShotPrompt(rawPrompt || notes || title, scale, sceneName, characterNames, focusCharacter)
+        : rawPrompt;
+    const normalizedNegativePrompt =
+      characterNames.length > 0
+        ? buildMandatoryStoryboardNegativePrompt(rawNegativePrompt, characterNames.length)
+        : rawNegativePrompt;
+    const normalizedVideoPrompt =
+      characterNames.length > 0
+        ? buildStoryVideoPrompt(rawVideoPrompt || rawPrompt || notes || title, characterNames, sceneName, focusCharacter)
+        : rawVideoPrompt;
+    return {
+      id: typeof item.id === "string" ? item.id : `shot_import_${index + 1}`,
+      title,
+      prompt: normalizedPrompt,
+      negativePrompt: normalizedNegativePrompt,
+      videoPrompt: normalizedVideoPrompt,
+      videoMode:
+        item.video_mode === "single_frame" || item.videoMode === "single_frame"
+          ? "single_frame"
+          : item.video_mode === "first_last_frame" || item.videoMode === "first_last_frame"
+            ? "first_last_frame"
+            : "auto",
+      videoStartFramePath: String(item.video_start_frame_path ?? item.videoStartFramePath ?? ""),
+      videoEndFramePath: String(item.video_end_frame_path ?? item.videoEndFramePath ?? ""),
+      skyboxFace:
+        item.skybox_face === "front" ||
+        item.skybox_face === "right" ||
+        item.skybox_face === "back" ||
+        item.skybox_face === "left" ||
+        item.skybox_face === "up" ||
+        item.skybox_face === "down" ||
+        item.skybox_face === "auto"
+          ? item.skybox_face
+          : item.skyboxFace === "front" ||
+              item.skyboxFace === "right" ||
+              item.skyboxFace === "back" ||
+              item.skyboxFace === "left" ||
+              item.skyboxFace === "up" ||
+              item.skyboxFace === "down" ||
+              item.skyboxFace === "auto"
+            ? item.skyboxFace
+            : "auto",
+      skyboxFaces: Array.isArray(item.skybox_faces)
+        ? item.skybox_faces.filter(
             (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
               face === "front" ||
               face === "right" ||
@@ -3372,46 +3573,53 @@ function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>>
               face === "up" ||
               face === "down"
           )
-        : [],
-    skyboxFaceWeights:
-      item.skybox_face_weights && typeof item.skybox_face_weights === "object"
-        ? (item.skybox_face_weights as Record<string, number>)
-        : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
-          ? (item.skyboxFaceWeights as Record<string, number>)
-          : {},
-    cameraYaw: parseNumber(item.camera_yaw ?? item.cameraYaw),
-    cameraPitch: parseNumber(item.camera_pitch ?? item.cameraPitch),
-    cameraFov: parseNumber(item.camera_fov ?? item.cameraFov),
-    durationSec:
-      typeof item.duration_sec === "number"
-        ? item.duration_sec
-        : typeof item.durationSec === "number"
-          ? item.durationSec
-          : undefined,
-    durationFrames:
-      typeof item.duration_frames === "number"
-        ? item.duration_frames
-        : typeof item.durationFrames === "number"
-          ? item.durationFrames
-          : undefined,
-    seed: typeof item.seed === "number" ? item.seed : undefined,
-    characterRefs: Array.isArray(item.character_refs)
-      ? (item.character_refs as string[])
-      : Array.isArray(item.characterRefs)
-        ? (item.characterRefs as string[])
-        : [],
-    sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
-    dialogue: typeof item.dialogue === "string" ? item.dialogue : "",
-    notes: typeof item.notes === "string" ? item.notes : "",
-    tags: Array.isArray(item.tags) ? (item.tags as string[]) : [],
-    characterNames: Array.isArray(item.character_names)
-      ? uniqueEntities((item.character_names as string[]).map((value) => sanitizeCharacterCandidate(String(value))).filter(Boolean))
-      : Array.isArray(item.characterNames)
-        ? uniqueEntities((item.characterNames as string[]).map((value) => sanitizeCharacterCandidate(String(value))).filter(Boolean))
-        : [],
-    sceneName: sanitizeSceneCandidate(String(item.scene_name ?? item.sceneName ?? "").trim()),
-    scenePrompt: String(item.scene_prompt ?? item.scenePrompt ?? "").trim()
-  }));
+        : Array.isArray(item.skyboxFaces)
+          ? item.skyboxFaces.filter(
+              (face): face is "front" | "right" | "back" | "left" | "up" | "down" =>
+                face === "front" ||
+                face === "right" ||
+                face === "back" ||
+                face === "left" ||
+                face === "up" ||
+                face === "down"
+            )
+          : [],
+      skyboxFaceWeights:
+        item.skybox_face_weights && typeof item.skybox_face_weights === "object"
+          ? (item.skybox_face_weights as Record<string, number>)
+          : item.skyboxFaceWeights && typeof item.skyboxFaceWeights === "object"
+            ? (item.skyboxFaceWeights as Record<string, number>)
+            : {},
+      cameraYaw: parseNumber(item.camera_yaw ?? item.cameraYaw),
+      cameraPitch: parseNumber(item.camera_pitch ?? item.cameraPitch),
+      cameraFov: parseNumber(item.camera_fov ?? item.cameraFov),
+      durationSec:
+        typeof item.duration_sec === "number"
+          ? item.duration_sec
+          : typeof item.durationSec === "number"
+            ? item.durationSec
+            : undefined,
+      durationFrames:
+        typeof item.duration_frames === "number"
+          ? item.duration_frames
+          : typeof item.durationFrames === "number"
+            ? item.durationFrames
+            : undefined,
+      seed: typeof item.seed === "number" ? item.seed : undefined,
+      characterRefs: Array.isArray(item.character_refs)
+        ? (item.character_refs as string[])
+        : Array.isArray(item.characterRefs)
+          ? (item.characterRefs as string[])
+          : [],
+      sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
+      dialogue,
+      notes,
+      tags,
+      characterNames,
+      sceneName,
+      scenePrompt: String(item.scene_prompt ?? item.scenePrompt ?? "").trim()
+    };
+  });
 }
 
 function normalizeImportedCharacterProfiles(parsed: {
