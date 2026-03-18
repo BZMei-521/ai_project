@@ -3132,8 +3132,10 @@ function extractImageReferenceSources(
   const selectedCharacters = (shot.characterRefs ?? [])
     .map((id) => assets.find((item) => item.id === id && item.type === "character"))
     .filter((item): item is Asset => Boolean(item));
+  const prefersAngleMatchedView = shouldUseSecondaryCharacterView(shot);
   const shouldPreferFrontIdentityRefs =
-    sceneRefs.length > 0 || selectedCharacters.length > 1 || shotLooksCharacterDrivenInComfy(shot);
+    (sceneRefs.length > 0 || selectedCharacters.length > 1 || shotLooksCharacterDrivenInComfy(shot)) &&
+    !prefersAngleMatchedView;
   const characterRefs = selectedCharacters.flatMap((asset, assetIndex) => {
     const refs: WeightedImageRef[] = [];
     const front = asset.characterFrontPath || asset.filePath || "";
@@ -3141,7 +3143,10 @@ function extractImageReferenceSources(
     const back = asset.characterBackPath || "";
     const byView: Record<CharacterReferenceView, string> = { front, side, back };
     const primaryView = shouldPreferFrontIdentityRefs ? "front" : characterPlan.primaryView;
-    const primarySource = byView.front.trim() || byView[primaryView].trim() || byView.side.trim() || byView.back.trim();
+    const primarySource =
+      primaryView === "front"
+        ? byView.front.trim() || byView.side.trim() || byView.back.trim()
+        : byView[primaryView].trim() || byView.front.trim() || byView.side.trim() || byView.back.trim();
     const primaryWeight =
       sceneRefs.length > 0 ? (selectedCharacters.length > 1 ? 0.34 : 0.4) : 0.72;
     const primaryPriority = sceneRefs.length > 0 ? 245 - assetIndex * 10 : 420 - assetIndex * 20;
@@ -4283,22 +4288,62 @@ async function stageStoryboardThreeViewTokens(
   return tokens;
 }
 
-type StoryboardPoseAction = "stand" | "walk" | "gesture" | "stop" | "nod" | "lean" | "look";
+type StoryboardPoseAction =
+  | "stand"
+  | "walk"
+  | "gesture"
+  | "gesture_left"
+  | "stop"
+  | "stop_left"
+  | "nod"
+  | "lean"
+  | "reach_down"
+  | "reach_down_left"
+  | "look";
 
 function inferStoryboardPoseAction(shot: Shot, characterName: string, isFocused: boolean): StoryboardPoseAction {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
   const contexts = collectCharacterMentionContexts(corpus, characterName);
   const localText = contexts.join(" ");
+  const mentionsLeftHand = containsAnyKeyword(localText, ["左手", "left hand", "left arm"]);
+  const mentionsRightHand = containsAnyKeyword(localText, ["右手", "right hand", "right arm"]);
+  const mentionsReachDown = containsAnyKeyword(localText, [
+    "lowering one hand",
+    "lowering her hand",
+    "lowering his hand",
+    "lowering her left hand",
+    "lowering his left hand",
+    "lowering her right hand",
+    "lowering his right hand",
+    "向石边",
+    "toward the stone edge",
+    "toward the water",
+    "探向水边",
+    "探向石边",
+    "reach down",
+    "reaching down"
+  ]);
+  const mentionsGesture = containsAnyKeyword(localText, ["抬手", "举手", "伸手", "raise hand", "lift hand", "gesture", "extending"]);
   if (containsAnyKeyword(localText, ["走", "慢走", "前行", "walk", "walking", "step", "stepping"])) return "walk";
-  if (containsAnyKeyword(localText, ["停下", "停步", "stop", "halt"])) return "stop";
+  if (containsAnyKeyword(localText, ["俯身", "弯腰", "bend", "lean forward", "leaning"]) || mentionsReachDown) {
+    if (mentionsLeftHand && !mentionsRightHand) return "reach_down_left";
+    if (mentionsRightHand && !mentionsLeftHand) return "reach_down";
+    return "reach_down_left";
+  }
+  if (containsAnyKeyword(localText, ["停下", "停步", "stop", "halt"])) {
+    return mentionsLeftHand && !mentionsRightHand ? "stop_left" : "stop";
+  }
   if (containsAnyKeyword(localText, ["点头", "nod"])) return "nod";
-  if (containsAnyKeyword(localText, ["抬手", "举手", "raise hand", "lift hand", "gesture"])) return "gesture";
-  if (containsAnyKeyword(localText, ["俯身", "弯腰", "bend", "lean forward", "leaning"])) return "lean";
+  if (mentionsGesture) {
+    if (mentionsLeftHand && !mentionsRightHand) return "gesture_left";
+    return "gesture";
+  }
+  if (containsAnyKeyword(localText, ["lean toward", "leaning toward", "lean toward jiang lan", "lean toward shen yan", "lean in", "倾向", "靠近"])) return "lean";
   if (containsAnyKeyword(localText, ["回头", "转头", "看向", "look at", "look toward", "turn head", "turn back", "glance"])) {
-    return isFocused ? "gesture" : "look";
+    return isFocused ? (mentionsLeftHand ? "gesture_left" : "gesture") : "look";
   }
   if (isFocused && containsAnyKeyword(corpus, ["回应", "说话", "起话", "反应", "reply", "speak", "speaking", "reaction"])) {
-    return "gesture";
+    return mentionsLeftHand ? "gesture_left" : "gesture";
   }
   return "stand";
 }
@@ -4386,11 +4431,22 @@ function buildStoryboardPoseFigure(
     leftElbow = { x: leftShoulder.x - shoulderOffset * 0.28 * dir, y: leftShoulder.y + elbowDrop * 0.96 };
     leftWrist = { x: leftElbow.x - shoulderOffset * 0.18 * dir, y: leftElbow.y + wristDrop * 0.82 };
     headX += shoulderOffset * 0.18 * dir;
+  } else if (action === "gesture_left") {
+    leftElbow = { x: leftShoulder.x - shoulderOffset * 0.85 * dir, y: leftShoulder.y + elbowDrop * 0.42 };
+    leftWrist = { x: leftElbow.x - shoulderOffset * 0.48 * dir, y: leftElbow.y - wristDrop * 0.08 };
+    rightElbow = { x: rightShoulder.x + shoulderOffset * 0.24 * dir, y: rightShoulder.y + elbowDrop * 0.96 };
+    rightWrist = { x: rightElbow.x + shoulderOffset * 0.18 * dir, y: rightElbow.y + wristDrop * 0.82 };
+    headX -= shoulderOffset * 0.14 * dir;
   } else if (action === "stop") {
     rightElbow = { x: rightShoulder.x + shoulderOffset * 0.7 * dir, y: rightShoulder.y + elbowDrop * 0.5 };
     rightWrist = { x: rightElbow.x + shoulderOffset * 0.3 * dir, y: rightElbow.y + wristDrop * 0.08 };
     leftKnee = { x: leftHip.x + hipOffset * 0.18 * dir, y: leftHip.y + kneeDrop };
     rightKnee = { x: rightHip.x - hipOffset * 0.12 * dir, y: rightHip.y + kneeDrop };
+  } else if (action === "stop_left") {
+    leftElbow = { x: leftShoulder.x - shoulderOffset * 0.7 * dir, y: leftShoulder.y + elbowDrop * 0.5 };
+    leftWrist = { x: leftElbow.x - shoulderOffset * 0.3 * dir, y: leftElbow.y + wristDrop * 0.08 };
+    leftKnee = { x: leftHip.x + hipOffset * 0.12 * dir, y: leftHip.y + kneeDrop };
+    rightKnee = { x: rightHip.x - hipOffset * 0.18 * dir, y: rightHip.y + kneeDrop };
   } else if (action === "nod") {
     headTiltY += bodyHeight * 0.02;
   } else if (action === "lean") {
@@ -4403,6 +4459,26 @@ function buildStoryboardPoseFigure(
     rightElbow.x += shoulderOffset * 0.25 * dir;
     leftWrist.x += shoulderOffset * 0.25 * dir;
     rightWrist.x += shoulderOffset * 0.25 * dir;
+  } else if (action === "reach_down" || action === "reach_down_left") {
+    const useLeft = action === "reach_down_left";
+    headX += shoulderOffset * 0.54 * dir;
+    headTiltY += bodyHeight * 0.032;
+    leftShoulder.x += shoulderOffset * 0.26 * dir;
+    rightShoulder.x += shoulderOffset * 0.26 * dir;
+    pelvis.x += shoulderOffset * 0.16 * dir;
+    if (useLeft) {
+      leftElbow = { x: leftShoulder.x + shoulderOffset * 0.12 * dir, y: leftShoulder.y + elbowDrop * 1.18 };
+      leftWrist = { x: leftElbow.x + shoulderOffset * 0.16 * dir, y: leftElbow.y + wristDrop * 1.08 };
+      rightElbow = { x: rightShoulder.x + shoulderOffset * 0.24 * dir, y: rightShoulder.y + elbowDrop * 0.74 };
+      rightWrist = { x: rightElbow.x + shoulderOffset * 0.18 * dir, y: rightElbow.y + wristDrop * 0.72 };
+    } else {
+      rightElbow = { x: rightShoulder.x + shoulderOffset * 0.12 * dir, y: rightShoulder.y + elbowDrop * 1.18 };
+      rightWrist = { x: rightElbow.x + shoulderOffset * 0.16 * dir, y: rightElbow.y + wristDrop * 1.08 };
+      leftElbow = { x: leftShoulder.x - shoulderOffset * 0.24 * dir, y: leftShoulder.y + elbowDrop * 0.74 };
+      leftWrist = { x: leftElbow.x - shoulderOffset * 0.18 * dir, y: leftElbow.y + wristDrop * 0.72 };
+    }
+    leftKnee = { x: leftHip.x + hipOffset * 0.12 * dir, y: leftHip.y + kneeDrop * 0.98 };
+    rightKnee = { x: rightHip.x - hipOffset * 0.06 * dir, y: rightHip.y + kneeDrop * 1.04 };
   } else if (action === "look") {
     headX += shoulderOffset * 0.22 * dir;
   }
@@ -4614,6 +4690,36 @@ function applyClampedPlacement(
   };
 }
 
+function contextsHavePathRelativeCue(contexts: string[], side: "left" | "right"): boolean {
+  const keywords =
+    side === "left"
+      ? [
+          "left side of the stone path",
+          "left side of the riverside stone path",
+          "left side of the same stone path",
+          "left side of the path",
+          "左侧的石路",
+          "石路左侧",
+          "沿河石路左侧",
+          "河边石路左侧",
+          "路径左侧",
+          "路的左侧"
+        ]
+      : [
+          "right side of the stone path",
+          "right side of the riverside stone path",
+          "right side of the same stone path",
+          "right side of the path",
+          "右侧的石路",
+          "石路右侧",
+          "沿河石路右侧",
+          "河边石路右侧",
+          "路径右侧",
+          "路的右侧"
+        ];
+  return contextsHaveAnyKeyword(contexts, keywords);
+}
+
 function inferStoryboardCharacterPlacement(
   shot: Shot,
   characterName: string,
@@ -4626,8 +4732,12 @@ function inferStoryboardCharacterPlacement(
   const contexts = collectCharacterMentionContexts(corpus, characterName);
   const lowerCorpus = corpus.toLowerCase();
   const lowerName = characterName.toLowerCase();
+  const scale = inferStoryboardCompositeScale(shot);
   const isFocused = Boolean(focusedCharacterName && focusedCharacterName === characterName);
   const isWideWalk = containsAnyKeyword(lowerCorpus, ["并肩", "walk", "walking", "side by side", "along the same riverside path"]);
+  const hasPathRelativeLeftCue = contextsHavePathRelativeCue(contexts, "left");
+  const hasPathRelativeRightCue = contextsHavePathRelativeCue(contexts, "right");
+  const hasPathRelativeLaneCue = hasPathRelativeLeftCue || hasPathRelativeRightCue;
   const hasExplicitHorizontalCue = contextsHaveAnyKeyword(contexts, [
     "left edge",
     "screen left edge",
@@ -4667,7 +4777,7 @@ function inferStoryboardCharacterPlacement(
     "centre",
     "中间",
     "居中"
-  ]);
+  ]) && !hasPathRelativeLaneCue;
 
   let placement = { ...fallback };
 
@@ -4773,13 +4883,52 @@ function inferStoryboardCharacterPlacement(
     "桥边"
   ]);
   if (isRiversidePathShot) {
+    if (hasPathRelativeLaneCue) {
+      const lanePreset =
+        scale === "close"
+          ? {
+              leftLaneX: 0.72,
+              rightLaneX: 0.83,
+              leftFloorY: 0.9,
+              rightFloorY: 0.885,
+              leftSize: 0.96,
+              rightSize: 0.9
+            }
+          : scale === "medium"
+            ? {
+                leftLaneX: 0.7,
+                rightLaneX: 0.81,
+                leftFloorY: 0.905,
+                rightFloorY: 0.89,
+                leftSize: 0.9,
+                rightSize: 0.84
+              }
+            : {
+                leftLaneX: 0.68,
+                rightLaneX: 0.78,
+                leftFloorY: 0.91,
+                rightFloorY: 0.895,
+                leftSize: 0.84,
+                rightSize: 0.78
+              };
+      placement = applyClampedPlacement(placement, {
+        centerXRatio: hasPathRelativeLeftCue ? lanePreset.leftLaneX : lanePreset.rightLaneX,
+        floorYRatio: hasPathRelativeLeftCue ? lanePreset.leftFloorY : lanePreset.rightFloorY,
+        sizeScale: Math.max(
+          placement.sizeScale,
+          hasPathRelativeLeftCue ? lanePreset.leftSize : lanePreset.rightSize
+        )
+      });
+    }
     if (count >= 2) {
       placement = applyClampedPlacement(placement, {
         // Keep both actors inside the lower-right walkable band instead of
         // pushing them into the upper willow canopy or open water.
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : index === 0 ? 0.58 : 0.72,
-        floorYRatio: index === 0 ? 0.92 : 0.915,
-        sizeScale: placement.sizeScale * (index === 0 ? 0.94 : 0.88)
+        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.64 : 0.78,
+        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.915 : 0.9,
+        sizeScale: hasPathRelativeLaneCue
+          ? placement.sizeScale
+          : placement.sizeScale * (index === 0 ? 0.98 : 0.92)
       });
     } else {
       placement = applyClampedPlacement(placement, {
@@ -5124,10 +5273,13 @@ async function stageCharacterReferenceImages(
       );
     }
     if (hasExplicitScene && explicitCharacterRefs.length > 0) {
-      // The Qwen edit encoder only exposes three real image slots. When we already
-      // have a scene ref plus explicit character refs, an identity board becomes
-      // redundant and can evict the second character from the slot budget.
-      selectedRefs = selectedRefs.filter((item) => item.label !== "character_identity_board");
+      // In mature storyboard mode, a clean scene ref + clean character refs + pose guide
+      // is more stable than feeding the model a pasted composite board. The composite and
+      // identity board tend to reintroduce flat cutout silhouettes, slot contention, and
+      // sticker-like integration.
+      selectedRefs = selectedRefs.filter(
+        (item) => item.label !== "character_identity_board" && item.label !== "scene_character_composite"
+      );
     }
   }
   const inputDir = inferComfyInputDir(settings);
@@ -5895,11 +6047,14 @@ function inferPromptTokens(
   const characterAllViewPaths = [...characterFrontPaths, ...characterSidePaths, ...characterBackPaths].filter(Boolean);
   const charSlots = [0, 1, 2, 3].map((slotIndex) => characterAssets[slotIndex]);
   const characterPlan = inferCharacterReferencePlan(shot);
+  const prefersAngleMatchedCharacterView = shouldUseSecondaryCharacterView(shot);
   const continuityCharacterRefPath = parseComfyViewPath(continuityPlan.previousCharacterShot?.generatedImagePath ?? "");
   const hasCharacters = characterAssets.length > 0;
   const hasSecondCharacter = Boolean(charSlots[1]);
   const preferIdentityFrontPaths =
-    kind === "image" && (Boolean(sceneRefPath) || hasCharacters || shotLooksCharacterDrivenInComfy(shot));
+    kind === "image" &&
+    (Boolean(sceneRefPath) || hasCharacters || shotLooksCharacterDrivenInComfy(shot)) &&
+    !prefersAngleMatchedCharacterView;
   const char1IdentityPath = assetPathForCharacterView(charSlots[0], "front") || characterFrontPaths[0] || continuityCharacterRefPath || "";
   const char1ViewPath =
     assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || char1IdentityPath || "";
@@ -6914,7 +7069,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
   const poseGuidePath = String(tokens.POSE_GUIDE_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
+  const char1SecondaryPath = String(tokens.CHAR1_SECONDARY_PATH ?? "").trim();
   const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
+  const char2SecondaryPath = String(tokens.CHAR2_SECONDARY_PATH ?? "").trim();
   const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
   const hasCharacters = char1PrimaryPath.length > 0 || char2PrimaryPath.length > 0;
   const hasSceneRef = sceneRefPath.length > 0;
@@ -6968,6 +7125,24 @@ function adaptBuiltinStoryboardWorkflowForShot(
     !Array.isArray((samplerNode as Record<string, unknown>).inputs)
       ? ((samplerNode as Record<string, unknown>).inputs as Record<string, unknown>)
       : null;
+  const sceneAdapterInputs =
+    typeof (sceneAdapterNode as Record<string, unknown>).inputs === "object" &&
+    (sceneAdapterNode as Record<string, unknown>).inputs &&
+    !Array.isArray((sceneAdapterNode as Record<string, unknown>).inputs)
+      ? ((sceneAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
+      : null;
+  const char1AdapterInputs =
+    typeof (char1AdapterNode as Record<string, unknown>)?.inputs === "object" &&
+    (char1AdapterNode as Record<string, unknown>).inputs &&
+    !Array.isArray((char1AdapterNode as Record<string, unknown>).inputs)
+      ? ((char1AdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
+      : null;
+  const char1SecondaryAdapterInputs =
+    typeof (char1SecondaryAdapterNode as Record<string, unknown>)?.inputs === "object" &&
+    (char1SecondaryAdapterNode as Record<string, unknown>).inputs &&
+    !Array.isArray((char1SecondaryAdapterNode as Record<string, unknown>).inputs)
+      ? ((char1SecondaryAdapterNode as Record<string, unknown>).inputs as Record<string, unknown>)
+      : null;
   const controlNetLoaderInputs =
     typeof (controlNetLoaderNode as Record<string, unknown>)?.inputs === "object" &&
     (controlNetLoaderNode as Record<string, unknown>).inputs &&
@@ -6980,6 +7155,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
     !Array.isArray((controlNetNode as Record<string, unknown>).inputs)
       ? ((controlNetNode as Record<string, unknown>).inputs as Record<string, unknown>)
       : null;
+  const workflowRef = (nodeId: string | number, outputIndex = 0) => [String(nodeId), outputIndex];
 
   const updateAdapterWeight = (
     node: unknown,
@@ -7094,19 +7270,54 @@ function adaptBuiltinStoryboardWorkflowForShot(
       : "control_v11p_sd15_canny.pth");
   }
 
+  const hasViewSpecificChar1 = char1SecondaryPath.length > 0 && char1SecondaryPath !== char1PrimaryPath;
+  const hasViewSpecificChar2 = char2SecondaryPath.length > 0 && char2SecondaryPath !== char2PrimaryPath;
+  const enableChar2ViewAdapter = usePoseGuide && hasSecondCharacter && hasViewSpecificChar2;
+  if (enableChar2ViewAdapter) {
+    workflow["22"] = {
+      inputs: {
+        image: char2SecondaryPath,
+        upload: "image"
+      },
+      class_type: "LoadImage"
+    };
+  } else if (workflow["22"]) {
+    delete workflow["22"];
+  }
+  if (char1AdapterInputs) {
+    char1AdapterInputs.model = workflowRef(enableChar2ViewAdapter ? "17" : "6");
+  }
+  if (sceneAdapterInputs) {
+    if (enableChar2ViewAdapter) {
+      sceneAdapterInputs.model = workflowRef("6");
+      sceneAdapterInputs.ipadapter = workflowRef("6", 1);
+      sceneAdapterInputs.image = workflowRef("22");
+      sceneAdapterInputs.weight = shotScale === "close" ? 0.24 : shotScale === "medium" ? 0.22 : 0.18;
+      sceneAdapterInputs.weight_type = "linear";
+      sceneAdapterInputs.combine_embeds = "concat";
+      sceneAdapterInputs.start_at = 0;
+      sceneAdapterInputs.end_at = 0.58;
+      sceneAdapterInputs.embeds_scaling = "V only";
+    } else {
+      // Fully bypass the legacy scene IPAdapter. Weight=0 alone is not enough because
+      // the node still encodes the wide scene image, reintroducing crop bias and hidden drift.
+      disableAdapter(sceneAdapterNode);
+    }
+  }
+
   const denoiseTarget =
     usePoseGuide
       ? shotScale === "close"
         ? hasSecondCharacter
-          ? 0.56
-          : 0.54
+          ? 0.6
+          : 0.58
         : shotScale === "medium"
           ? hasSecondCharacter
+            ? 0.56
+            : 0.54
+          : hasSecondCharacter
             ? 0.52
             : 0.5
-          : hasSecondCharacter
-            ? 0.48
-            : 0.46
       : hasFrameSeed
       ? shotScale === "close"
         ? hasSecondCharacter
@@ -7130,33 +7341,37 @@ function adaptBuiltinStoryboardWorkflowForShot(
         : hasSecondCharacter
           ? 0.66
           : 0.62;
-  // The scene reference is already the img2img latent anchor.
-  // Re-feeding the same wide scene into scene IPAdapter makes CLIPVision center-crop it,
-  // which is exactly what causes river/bridge continuity drift and background warping.
-  disableAdapter(sceneAdapterNode);
   if (usePoseGuide) {
-    clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.94 : 0.96, hasSecondCharacter ? 1.02 : 1.06, 0.9);
-    clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.92 : 0, hasSecondCharacter ? 1.0 : 0, hasSecondCharacter ? 0.9 : 0);
+    clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 1.0, hasSecondCharacter ? 1.06 : 1.1, 0.92);
+    clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.96 : 0, hasSecondCharacter ? 1.04 : 0, hasSecondCharacter ? 0.92 : 0);
   } else {
     updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.02 : 0.98, "at_least", 0.9);
     updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.98 : 0, "at_least", hasSecondCharacter ? 0.88 : 0.72);
   }
-  if (char1SecondaryAdapterNode && typeof char1SecondaryAdapterNode === "object") {
-    const secondaryInputs = (char1SecondaryAdapterNode as Record<string, unknown>).inputs;
-    if (secondaryInputs && typeof secondaryInputs === "object" && !Array.isArray(secondaryInputs)) {
-      if (hasSecondCharacter || usePoseGuide) {
-        (secondaryInputs as Record<string, unknown>).weight = 0;
-        (secondaryInputs as Record<string, unknown>).end_at = 0;
+  if (char1SecondaryAdapterInputs) {
+    if (usePoseGuide) {
+      if (hasViewSpecificChar1) {
+        char1SecondaryAdapterInputs.weight = hasSecondCharacter ? 0.18 : 0.3;
+        char1SecondaryAdapterInputs.start_at = 0;
+        char1SecondaryAdapterInputs.end_at = hasSecondCharacter ? 0.56 : 0.68;
       } else {
-        updateAdapterWeight(char1SecondaryAdapterNode, 0.28, "at_least", 0.56);
+        char1SecondaryAdapterInputs.weight = 0;
+        char1SecondaryAdapterInputs.start_at = 0;
+        char1SecondaryAdapterInputs.end_at = 0;
       }
+    } else if (hasSecondCharacter) {
+      char1SecondaryAdapterInputs.weight = 0;
+      char1SecondaryAdapterInputs.start_at = 0;
+      char1SecondaryAdapterInputs.end_at = 0;
+    } else {
+      updateAdapterWeight(char1SecondaryAdapterNode, 0.28, "at_least", 0.56);
     }
   }
 
   if (controlNetInputs) {
     const targetStrength =
       usePoseGuide
-        ? (shotScale === "close" ? 0.72 : shotScale === "medium" ? 0.68 : hasSecondCharacter ? 0.64 : 0.62)
+        ? (shotScale === "close" ? 0.8 : shotScale === "medium" ? 0.76 : hasSecondCharacter ? 0.72 : 0.7)
         : hasFrameSeed
         ? (shotScale === "close" ? 0.56 : shotScale === "medium" ? 0.52 : hasSecondCharacter ? 0.5 : 0.46)
         : (shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24);
@@ -7164,7 +7379,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
     controlNetInputs.image = ["18", 0];
     controlNetInputs.start_percent = 0;
     controlNetInputs.end_percent = usePoseGuide
-      ? (shotScale === "close" ? 0.9 : shotScale === "medium" ? 0.86 : 0.82)
+      ? (shotScale === "close" ? 0.94 : shotScale === "medium" ? 0.9 : 0.86)
       : hasFrameSeed
         ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
         : (shotScale === "close" ? 0.42 : 0.5);
