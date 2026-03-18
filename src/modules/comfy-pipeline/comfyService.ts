@@ -518,11 +518,17 @@ function looksLikeFluxOrSd3Model(name: string): boolean {
   return /flux|sd3|sd[_ -]?3\.?5|stable[_ -]?diffusion[_ -]?3|xlabs/.test(normalized);
 }
 
+function looksLikeControlNetLoRA(name: string): boolean {
+  const normalized = basenameModelChoice(name);
+  if (!normalized) return false;
+  return /control[-_]?lora|rank\d+/.test(normalized);
+}
+
 function looksLikeSdxlControlNet(name: string): boolean {
   const normalized = basenameModelChoice(name);
   if (!normalized) return false;
   if (looksLikeFluxOrSd3Model(normalized)) return false;
-  return /sd[_-]?xl|(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)|xinsir|mistoline|union|thibaud.*xl|kohya.*xl/.test(normalized);
+  return /sd[_-]?xl|openposexl\d*|posexl\d*|cannyxl\d*|depthxl\d*|scribblexl\d*|(?:^|[^a-z0-9])xl\d*(?:[^a-z0-9]|$)|xinsir|mistoline|union|thibaud.*xl|kohya.*xl/.test(normalized);
 }
 
 function looksLikeSd15ControlNet(name: string): boolean {
@@ -575,6 +581,8 @@ function resolveStoryboardControlNetChoice(
 
   if (isSdxl) {
     const sdxlChoice = preferControlNetOption(taskOptions, [
+      (value) => looksLikeSdxlControlNet(value) && !looksLikeControlNetLoRA(value) && /\.safetensors$/i.test(value),
+      (value) => looksLikeSdxlControlNet(value) && !looksLikeControlNetLoRA(value),
       (value) => looksLikeSdxlControlNet(value) && /\.safetensors$/i.test(value),
       (value) => looksLikeSdxlControlNet(value)
     ]);
