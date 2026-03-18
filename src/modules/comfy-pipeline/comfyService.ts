@@ -7395,9 +7395,10 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (inputs as Record<string, unknown>).end_at = 0;
   };
 
-  // When a pose guide exists, prefer a clean scene-first latent plus OpenPose.
-  // Feeding the pasted composite frame back into img2img makes characters behave
-  // like flat decals and weakens both identity lock and action readability.
+  // Dual-character storyboard shots are stabilized by reusing the composed
+  // scene+character frame as a low-denoise seed. This keeps count and blocking
+  // far more stable than asking the model to redraw both actors from a blank
+  // scene latent on every shot.
   if (hasFrameSeed) {
     workflow["21"] = {
       inputs: {
