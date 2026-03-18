@@ -4177,6 +4177,224 @@ async function stageStoryboardThreeViewTokens(
   return tokens;
 }
 
+type StoryboardPoseAction = "stand" | "walk" | "gesture" | "stop" | "nod" | "lean" | "look";
+
+function inferStoryboardPoseAction(shot: Shot, characterName: string, isFocused: boolean): StoryboardPoseAction {
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
+  const contexts = collectCharacterMentionContexts(corpus, characterName);
+  const localText = contexts.join(" ");
+  if (containsAnyKeyword(localText, ["走", "慢走", "前行", "walk", "walking", "step", "stepping"])) return "walk";
+  if (containsAnyKeyword(localText, ["停下", "停步", "stop", "halt"])) return "stop";
+  if (containsAnyKeyword(localText, ["点头", "nod"])) return "nod";
+  if (containsAnyKeyword(localText, ["抬手", "举手", "raise hand", "lift hand", "gesture"])) return "gesture";
+  if (containsAnyKeyword(localText, ["俯身", "弯腰", "bend", "lean forward", "leaning"])) return "lean";
+  if (containsAnyKeyword(localText, ["回头", "转头", "看向", "look at", "look toward", "turn head", "turn back", "glance"])) {
+    return isFocused ? "gesture" : "look";
+  }
+  if (isFocused && containsAnyKeyword(corpus, ["回应", "说话", "起话", "反应", "reply", "speak", "speaking", "reaction"])) {
+    return "gesture";
+  }
+  return "stand";
+}
+
+function drawStoryboardPoseLimb(
+  context: CanvasRenderingContext2D,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  color: string,
+  width: number
+) {
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = width;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(from.x, from.y);
+  context.lineTo(to.x, to.y);
+  context.stroke();
+  context.restore();
+}
+
+function drawStoryboardPoseJoint(
+  context: CanvasRenderingContext2D,
+  point: { x: number; y: number },
+  color: string,
+  radius: number
+) {
+  context.save();
+  context.fillStyle = color;
+  context.beginPath();
+  context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function buildStoryboardPoseFigure(
+  context: CanvasRenderingContext2D,
+  centerX: number,
+  floorY: number,
+  bodyHeight: number,
+  action: StoryboardPoseAction,
+  mirror = false
+) {
+  const dir = mirror ? -1 : 1;
+  const headY = floorY - bodyHeight * 0.92;
+  const neck = { x: centerX, y: floorY - bodyHeight * 0.78 };
+  const pelvis = { x: centerX, y: floorY - bodyHeight * 0.42 };
+  const shoulderOffset = bodyHeight * 0.11;
+  const hipOffset = bodyHeight * 0.075;
+  const elbowDrop = bodyHeight * 0.18;
+  const wristDrop = bodyHeight * 0.16;
+  const kneeDrop = bodyHeight * 0.23;
+  const ankleDrop = bodyHeight * 0.24;
+  const jointRadius = Math.max(3, Math.round(bodyHeight * 0.025));
+  const limbWidth = Math.max(4, Math.round(bodyHeight * 0.026));
+  const leftShoulder = { x: neck.x - shoulderOffset, y: neck.y + bodyHeight * 0.02 };
+  const rightShoulder = { x: neck.x + shoulderOffset, y: neck.y + bodyHeight * 0.02 };
+  const leftHip = { x: pelvis.x - hipOffset, y: pelvis.y };
+  const rightHip = { x: pelvis.x + hipOffset, y: pelvis.y };
+  let leftElbow = { x: leftShoulder.x - shoulderOffset * 0.45, y: leftShoulder.y + elbowDrop };
+  let rightElbow = { x: rightShoulder.x + shoulderOffset * 0.45, y: rightShoulder.y + elbowDrop };
+  let leftWrist = { x: leftElbow.x - shoulderOffset * 0.4, y: leftElbow.y + wristDrop };
+  let rightWrist = { x: rightElbow.x + shoulderOffset * 0.4, y: rightElbow.y + wristDrop };
+  let leftKnee = { x: leftHip.x - hipOffset * 0.12, y: leftHip.y + kneeDrop };
+  let rightKnee = { x: rightHip.x + hipOffset * 0.12, y: rightHip.y + kneeDrop };
+  let leftAnkle = { x: leftKnee.x - hipOffset * 0.08, y: leftKnee.y + ankleDrop };
+  let rightAnkle = { x: rightKnee.x + hipOffset * 0.08, y: rightKnee.y + ankleDrop };
+  let headX = centerX;
+  let headTiltY = headY;
+
+  if (action === "walk") {
+    leftElbow = { x: leftShoulder.x - shoulderOffset * 0.15 * dir, y: leftShoulder.y + elbowDrop * 0.8 };
+    rightElbow = { x: rightShoulder.x + shoulderOffset * 0.75 * dir, y: rightShoulder.y + elbowDrop * 0.78 };
+    leftWrist = { x: leftElbow.x - shoulderOffset * 0.2 * dir, y: leftElbow.y + wristDrop * 0.82 };
+    rightWrist = { x: rightElbow.x + shoulderOffset * 0.45 * dir, y: rightElbow.y + wristDrop * 0.72 };
+    leftKnee = { x: leftHip.x + hipOffset * 0.7 * dir, y: leftHip.y + kneeDrop * 0.92 };
+    rightKnee = { x: rightHip.x - hipOffset * 0.5 * dir, y: rightHip.y + kneeDrop * 1.02 };
+    leftAnkle = { x: leftKnee.x + hipOffset * 0.85 * dir, y: leftKnee.y + ankleDrop * 0.9 };
+    rightAnkle = { x: rightKnee.x - hipOffset * 0.55 * dir, y: rightKnee.y + ankleDrop * 1.02 };
+    headX += shoulderOffset * 0.12 * dir;
+  } else if (action === "gesture") {
+    rightElbow = { x: rightShoulder.x + shoulderOffset * 0.85 * dir, y: rightShoulder.y + elbowDrop * 0.42 };
+    rightWrist = { x: rightElbow.x + shoulderOffset * 0.48 * dir, y: rightElbow.y - wristDrop * 0.08 };
+    leftElbow = { x: leftShoulder.x - shoulderOffset * 0.28 * dir, y: leftShoulder.y + elbowDrop * 0.96 };
+    leftWrist = { x: leftElbow.x - shoulderOffset * 0.18 * dir, y: leftElbow.y + wristDrop * 0.82 };
+    headX += shoulderOffset * 0.18 * dir;
+  } else if (action === "stop") {
+    rightElbow = { x: rightShoulder.x + shoulderOffset * 0.7 * dir, y: rightShoulder.y + elbowDrop * 0.5 };
+    rightWrist = { x: rightElbow.x + shoulderOffset * 0.3 * dir, y: rightElbow.y + wristDrop * 0.08 };
+    leftKnee = { x: leftHip.x + hipOffset * 0.18 * dir, y: leftHip.y + kneeDrop };
+    rightKnee = { x: rightHip.x - hipOffset * 0.12 * dir, y: rightHip.y + kneeDrop };
+  } else if (action === "nod") {
+    headTiltY += bodyHeight * 0.02;
+  } else if (action === "lean") {
+    headX += shoulderOffset * 0.5 * dir;
+    headTiltY += bodyHeight * 0.02;
+    leftShoulder.x += shoulderOffset * 0.3 * dir;
+    rightShoulder.x += shoulderOffset * 0.3 * dir;
+    pelvis.x += shoulderOffset * 0.18 * dir;
+    leftElbow.x += shoulderOffset * 0.25 * dir;
+    rightElbow.x += shoulderOffset * 0.25 * dir;
+    leftWrist.x += shoulderOffset * 0.25 * dir;
+    rightWrist.x += shoulderOffset * 0.25 * dir;
+  } else if (action === "look") {
+    headX += shoulderOffset * 0.22 * dir;
+  }
+
+  const head = { x: headX, y: headTiltY };
+  const torsoTop = { x: neck.x, y: neck.y };
+  const torsoBottom = { x: pelvis.x, y: pelvis.y };
+  const limbColors = ["#ff4444", "#ffbb33", "#ffee55", "#66cc66", "#33b5e5", "#9966ff"];
+
+  drawStoryboardPoseLimb(context, head, neck, limbColors[0], limbWidth);
+  drawStoryboardPoseLimb(context, torsoTop, torsoBottom, limbColors[1], limbWidth);
+  drawStoryboardPoseLimb(context, leftShoulder, rightShoulder, limbColors[2], limbWidth);
+  drawStoryboardPoseLimb(context, leftHip, rightHip, limbColors[2], limbWidth);
+  drawStoryboardPoseLimb(context, leftShoulder, leftElbow, limbColors[3], limbWidth);
+  drawStoryboardPoseLimb(context, leftElbow, leftWrist, limbColors[3], limbWidth);
+  drawStoryboardPoseLimb(context, rightShoulder, rightElbow, limbColors[4], limbWidth);
+  drawStoryboardPoseLimb(context, rightElbow, rightWrist, limbColors[4], limbWidth);
+  drawStoryboardPoseLimb(context, leftHip, leftKnee, limbColors[5], limbWidth);
+  drawStoryboardPoseLimb(context, leftKnee, leftAnkle, limbColors[5], limbWidth);
+  drawStoryboardPoseLimb(context, rightHip, rightKnee, limbColors[0], limbWidth);
+  drawStoryboardPoseLimb(context, rightKnee, rightAnkle, limbColors[0], limbWidth);
+
+  for (const [point, color] of [
+    [head, limbColors[0]],
+    [neck, limbColors[1]],
+    [leftShoulder, limbColors[3]],
+    [rightShoulder, limbColors[4]],
+    [pelvis, limbColors[1]],
+    [leftElbow, limbColors[3]],
+    [rightElbow, limbColors[4]],
+    [leftWrist, limbColors[3]],
+    [rightWrist, limbColors[4]],
+    [leftHip, limbColors[5]],
+    [rightHip, limbColors[0]],
+    [leftKnee, limbColors[5]],
+    [rightKnee, limbColors[0]],
+    [leftAnkle, limbColors[5]],
+    [rightAnkle, limbColors[0]]
+  ] as const) {
+    drawStoryboardPoseJoint(context, point, color, jointRadius);
+  }
+}
+
+async function stageStoryboardPoseGuideToken(
+  settings: ComfySettings,
+  shot: Shot,
+  tokens: Record<string, string>
+): Promise<Record<string, string>> {
+  if (!canProcessStoryboardReferenceImages()) return tokens;
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) return tokens;
+  const characterNames = [String(tokens.CHAR1_NAME ?? "").trim(), String(tokens.CHAR2_NAME ?? "").trim()].filter((item) => item.length > 0);
+  if (characterNames.length === 0) return tokens;
+
+  const renderWidth = Math.max(512, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1280"), 10) || 1280);
+  const renderHeight = Math.max(512, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "704"), 10) || 704);
+  const canvas = document.createElement("canvas");
+  canvas.width = renderWidth;
+  canvas.height = renderHeight;
+  const context = canvas.getContext("2d");
+  if (!context) return tokens;
+  context.fillStyle = "black";
+  context.fillRect(0, 0, renderWidth, renderHeight);
+
+  const refs = characterNames.map((name, index) => ({
+    source: index === 0 ? String(tokens.CHAR1_PRIMARY_PATH ?? "") : String(tokens.CHAR2_PRIMARY_PATH ?? ""),
+    weight: 1,
+    priority: 1,
+    bucket: `pose:${name}`,
+    label: `${name}:front`,
+    role: "character_front" as WeightedImageRef["role"]
+  }));
+  const placements = inferStoryboardCompositeLayout(shot, refs);
+  const heightRatio = inferStoryboardCompositeHeightRatio(shot, characterNames.length);
+  const focusCharacter = inferStoryboardFocusedCharacterName(shot, characterNames);
+
+  characterNames.forEach((name, index) => {
+    const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.9, sizeScale: 1 };
+    const centerX = renderWidth * placement.centerXRatio;
+    const floorY = renderHeight * placement.floorYRatio;
+    const bodyHeight = renderHeight * heightRatio * placement.sizeScale * 0.92;
+    const action = inferStoryboardPoseAction(shot, name, focusCharacter === name || (!focusCharacter && index === 0));
+    buildStoryboardPoseFigure(context, centerX, floorY, bodyHeight, action, index % 2 === 1);
+  });
+
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filePath = `${inputDir}/shot_${safeShotId}_pose_map.png`;
+  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+    filePath,
+    base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  });
+  if (!result.filePath) return tokens;
+  return {
+    ...tokens,
+    POSE_GUIDE_PATH: result.filePath.split("/").pop() ?? result.filePath
+  };
+}
+
 function inferStoryboardCompositeScaleFromCorpus(corpus: string): "wide" | "medium" | "close" | "default" {
   const isClose = containsAnyKeyword(corpus, ["近景", "特写", "中近景", "medium close", "close shot", "close-up"]);
   const isMedium = containsAnyKeyword(corpus, [
@@ -5771,6 +5989,7 @@ function inferPromptTokens(
     STORYBOARD_STEPS: String(storyboardWeights.steps),
     STORYBOARD_CFG: String(storyboardWeights.cfg),
     STORYBOARD_IMAGE_MODEL: effectiveStoryboardModel,
+    POSE_GUIDE_PATH: "",
     FRAME_IMAGE_PATH: storyboardFrameSeedPath,
     FIRST_FRAME_PATH: firstFramePath,
     LAST_FRAME_PATH: lastFramePath,
@@ -6533,11 +6752,13 @@ function adaptBuiltinStoryboardWorkflowForShot(
 ): void {
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
   const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
+  const poseGuidePath = String(tokens.POSE_GUIDE_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
   const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
   const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
   const hasCharacters = char1PrimaryPath.length > 0 || char2PrimaryPath.length > 0;
   const hasSceneRef = sceneRefPath.length > 0;
+  const usePoseGuide = poseGuidePath.length > 0;
   if (!hasCharacters || !hasSceneRef) return;
 
   const checkpointNode = workflow["1"];
@@ -6546,6 +6767,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const char1AdapterNode = workflow["8"];
   const char1SecondaryAdapterNode = workflow["10"];
   const char2AdapterNode = workflow["12"];
+  const controlNetLoaderNode = workflow["19"];
   const controlNetNode = workflow["20"];
   if (
     !samplerNode ||
@@ -6570,7 +6792,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
   const hasSecondCharacter = char2PrimaryPath.length > 0;
-  const hasFrameSeed = frameImagePath.length > 0;
+  const hasFrameSeed = frameImagePath.length > 0 && !usePoseGuide;
   const shotScale = inferStoryboardCompositeScaleFromCorpus(
     compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
   );
@@ -6579,6 +6801,12 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (samplerNode as Record<string, unknown>).inputs &&
     !Array.isArray((samplerNode as Record<string, unknown>).inputs)
       ? ((samplerNode as Record<string, unknown>).inputs as Record<string, unknown>)
+      : null;
+  const controlNetLoaderInputs =
+    typeof (controlNetLoaderNode as Record<string, unknown>)?.inputs === "object" &&
+    (controlNetLoaderNode as Record<string, unknown>).inputs &&
+    !Array.isArray((controlNetLoaderNode as Record<string, unknown>).inputs)
+      ? ((controlNetLoaderNode as Record<string, unknown>).inputs as Record<string, unknown>)
       : null;
   const controlNetInputs =
     typeof (controlNetNode as Record<string, unknown>)?.inputs === "object" &&
@@ -6614,9 +6842,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (inputs as Record<string, unknown>).end_at = resolvedEndAt;
   };
 
-  // Prioritize character presence first: use the storyboard frame/composite as the
-  // img2img latent seed and, when available, also as the Canny source so the
-  // structure chain preserves the inserted full-body figures instead of erasing them.
+  // When a pose guide exists, prefer a clean scene-first latent plus OpenPose.
+  // Feeding the pasted composite frame back into img2img makes characters behave
+  // like flat decals and weakens both identity lock and action readability.
   if (hasFrameSeed) {
     workflow["21"] = {
       inputs: {
@@ -6645,7 +6873,15 @@ function adaptBuiltinStoryboardWorkflowForShot(
     },
     class_type: "VAEEncode"
   };
-  if (workflow["18"] && typeof workflow["18"] === "object") {
+  if (usePoseGuide) {
+    workflow["18"] = {
+      inputs: {
+        image: poseGuidePath,
+        upload: "image"
+      },
+      class_type: "LoadImage"
+    };
+  } else if (workflow["18"] && typeof workflow["18"] === "object") {
     const cannyInputs = (workflow["18"] as Record<string, unknown>).inputs;
     if (cannyInputs && typeof cannyInputs === "object" && !Array.isArray(cannyInputs)) {
       (cannyInputs as Record<string, unknown>).image = hasFrameSeed ? ["16", 0] : ["2", 0];
@@ -6653,9 +6889,26 @@ function adaptBuiltinStoryboardWorkflowForShot(
       (cannyInputs as Record<string, unknown>).high_threshold = hasFrameSeed ? 0.22 : 0.4;
     }
   }
+  if (controlNetLoaderInputs) {
+    controlNetLoaderInputs.control_net_name = usePoseGuide
+      ? "control_v11p_sd15_openpose.pth"
+      : "control_v11p_sd15_canny.pth";
+  }
 
   const denoiseTarget =
-    hasFrameSeed
+    usePoseGuide
+      ? shotScale === "close"
+        ? hasSecondCharacter
+          ? 0.62
+          : 0.58
+        : shotScale === "medium"
+          ? hasSecondCharacter
+            ? 0.58
+            : 0.56
+          : hasSecondCharacter
+            ? 0.56
+            : 0.52
+      : hasFrameSeed
       ? shotScale === "close"
         ? hasSecondCharacter
           ? 0.44
@@ -6675,16 +6928,21 @@ function adaptBuiltinStoryboardWorkflowForShot(
           ? hasSecondCharacter
             ? 0.7
             : 0.66
-          : hasSecondCharacter
-            ? 0.66
-            : 0.62;
-  updateAdapterWeight(sceneAdapterNode, hasFrameSeed ? 0.01 : (hasSecondCharacter ? 0.02 : 0.05), "cap_at_most", hasFrameSeed ? 0.08 : (hasSecondCharacter ? 0.16 : 0.22));
-  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.14 : 1.08, "at_least", 1.0);
-  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 1.12 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
+        : hasSecondCharacter
+          ? 0.66
+          : 0.62;
+  updateAdapterWeight(
+    sceneAdapterNode,
+    usePoseGuide ? 0.02 : hasFrameSeed ? 0.01 : (hasSecondCharacter ? 0.02 : 0.05),
+    "cap_at_most",
+    usePoseGuide ? 0.12 : hasFrameSeed ? 0.08 : (hasSecondCharacter ? 0.16 : 0.22)
+  );
+  updateAdapterWeight(char1AdapterNode, usePoseGuide ? (hasSecondCharacter ? 1.2 : 1.16) : (hasSecondCharacter ? 1.14 : 1.08), "at_least", 1.0);
+  updateAdapterWeight(char2AdapterNode, usePoseGuide ? (hasSecondCharacter ? 1.16 : 0) : (hasSecondCharacter ? 1.12 : 0), "at_least", hasSecondCharacter ? 1.0 : 0.72);
   if (char1SecondaryAdapterNode && typeof char1SecondaryAdapterNode === "object") {
     const secondaryInputs = (char1SecondaryAdapterNode as Record<string, unknown>).inputs;
     if (secondaryInputs && typeof secondaryInputs === "object" && !Array.isArray(secondaryInputs)) {
-      if (hasSecondCharacter) {
+      if (hasSecondCharacter || usePoseGuide) {
         (secondaryInputs as Record<string, unknown>).weight = 0;
         (secondaryInputs as Record<string, unknown>).end_at = 0;
       } else {
@@ -6695,24 +6953,36 @@ function adaptBuiltinStoryboardWorkflowForShot(
 
   if (controlNetInputs) {
     const targetStrength =
-      hasFrameSeed
+      usePoseGuide
+        ? (shotScale === "close" ? 0.7 : shotScale === "medium" ? 0.66 : hasSecondCharacter ? 0.64 : 0.6)
+        : hasFrameSeed
         ? (shotScale === "close" ? 0.56 : shotScale === "medium" ? 0.52 : hasSecondCharacter ? 0.5 : 0.46)
         : (shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24);
     controlNetInputs.strength = targetStrength;
-    controlNetInputs.end_percent = hasFrameSeed ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76) : (shotScale === "close" ? 0.42 : 0.5);
+    controlNetInputs.image = ["18", 0];
+    controlNetInputs.start_percent = 0;
+    controlNetInputs.end_percent = usePoseGuide
+      ? (shotScale === "close" ? 0.92 : shotScale === "medium" ? 0.88 : 0.84)
+      : hasFrameSeed
+        ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
+        : (shotScale === "close" ? 0.42 : 0.5);
   }
   if (samplerInputs) {
     const current = Number(samplerInputs.denoise);
     samplerInputs.denoise =
       Number.isFinite(current) && current > 0
-        ? (hasFrameSeed ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
+        ? ((hasFrameSeed || usePoseGuide) ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
         : denoiseTarget;
-    samplerInputs.steps = Math.max(hasSecondCharacter ? 32 : 30, Number(samplerInputs.steps) || 0);
+    samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 34 : 32) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
     const currentCfg = Number(samplerInputs.cfg);
     samplerInputs.cfg =
       Number.isFinite(currentCfg) && currentCfg > 0
-        ? (hasFrameSeed ? Math.min(currentCfg, hasSecondCharacter ? 6.2 : 5.9) : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
-        : (hasFrameSeed ? (hasSecondCharacter ? 6.2 : 5.9) : (hasSecondCharacter ? 6.8 : 6.2));
+        ? ((hasFrameSeed || usePoseGuide)
+            ? Math.min(currentCfg, usePoseGuide ? (hasSecondCharacter ? 6.4 : 6.1) : (hasSecondCharacter ? 6.2 : 5.9))
+            : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
+        : ((hasFrameSeed || usePoseGuide)
+            ? (usePoseGuide ? (hasSecondCharacter ? 6.4 : 6.1) : (hasSecondCharacter ? 6.2 : 5.9))
+            : (hasSecondCharacter ? 6.8 : 6.2));
   }
 }
 
@@ -7406,6 +7676,7 @@ export async function generateShotAsset(
         };
       }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
+      tokens = await stageStoryboardPoseGuideToken(settings, shot, tokens);
       tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
@@ -7615,6 +7886,7 @@ export async function generateShotAssetOutputs(
         };
       }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
+      tokens = await stageStoryboardPoseGuideToken(settings, shot, tokens);
       tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
       tokens = await stageImageFrameToken(settings, shot, tokens);
     }
