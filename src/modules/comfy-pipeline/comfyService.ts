@@ -4204,10 +4204,10 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (scale === "wide") return 0.34;
-    if (scale === "close") return 0.58;
-    if (scale === "medium") return 0.46;
-    return 0.42;
+    if (scale === "wide") return 0.4;
+    if (scale === "close") return 0.62;
+    if (scale === "medium") return 0.52;
+    return 0.48;
   }
   if (scale === "wide") return 0.38;
   if (scale === "close") return 0.6;
@@ -4386,9 +4386,9 @@ function inferStoryboardCharacterPlacement(
 
   if (isWideWalk && count >= 2) {
     placement = applyClampedPlacement(placement, {
-      centerXRatio: index === 0 ? 0.44 : 0.58,
-      floorYRatio: 0.9,
-      sizeScale: placement.sizeScale * 0.92
+      centerXRatio: index === 0 ? 0.52 : 0.68,
+      floorYRatio: 0.91,
+      sizeScale: placement.sizeScale * 1.04
     });
   }
 
@@ -4410,15 +4410,15 @@ function inferStoryboardCharacterPlacement(
   if (isRiversidePathShot) {
     if (count >= 2) {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: index === 0 ? 0.68 : 0.8,
-        floorYRatio: index === 0 ? 0.9 : 0.89,
-        sizeScale: placement.sizeScale * (index === 0 ? 0.92 : 0.84)
+        centerXRatio: index === 0 ? 0.56 : 0.72,
+        floorYRatio: index === 0 ? 0.91 : 0.9,
+        sizeScale: placement.sizeScale * (index === 0 ? 1.08 : 1.0)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: 0.8,
-        floorYRatio: 0.9,
-        sizeScale: placement.sizeScale * 0.94
+        centerXRatio: 0.62,
+        floorYRatio: 0.91,
+        sizeScale: placement.sizeScale * 1.06
       });
     }
   }
@@ -6535,8 +6535,8 @@ function adaptBuiltinStoryboardWorkflowForShot(
   };
 
   // Prioritize character presence first: use the storyboard frame/composite as the
-  // img2img latent seed when available so the sampler cannot collapse back to an
-  // empty scene. Keep the pure scene image only as the structure/control anchor.
+  // img2img latent seed and, when available, also as the Canny source so the
+  // structure chain preserves the inserted full-body figures instead of erasing them.
   workflow["16"] = {
     inputs: {
       image: hasFrameSeed ? frameImagePath : sceneRefPath,
@@ -6557,7 +6557,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   if (workflow["18"] && typeof workflow["18"] === "object") {
     const cannyInputs = (workflow["18"] as Record<string, unknown>).inputs;
     if (cannyInputs && typeof cannyInputs === "object" && !Array.isArray(cannyInputs)) {
-      (cannyInputs as Record<string, unknown>).image = ["2", 0];
+      (cannyInputs as Record<string, unknown>).image = hasFrameSeed ? ["16", 0] : ["2", 0];
+      (cannyInputs as Record<string, unknown>).low_threshold = hasFrameSeed ? 0.06 : 0.1;
+      (cannyInputs as Record<string, unknown>).high_threshold = hasFrameSeed ? 0.22 : 0.4;
     }
   }
 
@@ -6565,15 +6567,15 @@ function adaptBuiltinStoryboardWorkflowForShot(
     hasFrameSeed
       ? shotScale === "close"
         ? hasSecondCharacter
-          ? 0.62
-          : 0.64
+          ? 0.44
+          : 0.46
         : shotScale === "medium"
           ? hasSecondCharacter
-            ? 0.58
-            : 0.6
+            ? 0.42
+            : 0.44
           : hasSecondCharacter
-            ? 0.54
-            : 0.56
+            ? 0.38
+            : 0.4
       : shotScale === "close"
         ? hasSecondCharacter
           ? 0.72
@@ -6585,23 +6587,41 @@ function adaptBuiltinStoryboardWorkflowForShot(
           : hasSecondCharacter
             ? 0.66
             : 0.62;
-  updateAdapterWeight(sceneAdapterNode, hasSecondCharacter ? 0.02 : 0.05, "cap_at_most", hasSecondCharacter ? 0.16 : 0.22);
-  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.04 : 0.98, "at_least", 1.0);
-  updateAdapterWeight(char1SecondaryAdapterNode, hasSecondCharacter ? 0.12 : 0.24, "at_least", hasSecondCharacter ? 0.34 : 0.52);
-  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 1.0 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
+  updateAdapterWeight(sceneAdapterNode, hasFrameSeed ? 0.01 : (hasSecondCharacter ? 0.02 : 0.05), "cap_at_most", hasFrameSeed ? 0.08 : (hasSecondCharacter ? 0.16 : 0.22));
+  updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.14 : 1.08, "at_least", 1.0);
+  updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 1.12 : 0, "at_least", hasSecondCharacter ? 1.0 : 0.72);
+  if (char1SecondaryAdapterNode && typeof char1SecondaryAdapterNode === "object") {
+    const secondaryInputs = (char1SecondaryAdapterNode as Record<string, unknown>).inputs;
+    if (secondaryInputs && typeof secondaryInputs === "object" && !Array.isArray(secondaryInputs)) {
+      if (hasSecondCharacter) {
+        (secondaryInputs as Record<string, unknown>).weight = 0;
+        (secondaryInputs as Record<string, unknown>).end_at = 0;
+      } else {
+        updateAdapterWeight(char1SecondaryAdapterNode, 0.28, "at_least", 0.56);
+      }
+    }
+  }
 
   if (controlNetInputs) {
     const targetStrength =
-      shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24;
+      hasFrameSeed
+        ? (shotScale === "close" ? 0.34 : shotScale === "medium" ? 0.3 : 0.28)
+        : (shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24);
     controlNetInputs.strength = targetStrength;
-    controlNetInputs.end_percent = shotScale === "close" ? 0.42 : 0.5;
+    controlNetInputs.end_percent = hasFrameSeed ? (shotScale === "close" ? 0.72 : 0.68) : (shotScale === "close" ? 0.42 : 0.5);
   }
   if (samplerInputs) {
     const current = Number(samplerInputs.denoise);
     samplerInputs.denoise =
-      Number.isFinite(current) && current > 0 ? Math.max(current, denoiseTarget) : denoiseTarget;
+      Number.isFinite(current) && current > 0
+        ? (hasFrameSeed ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
+        : denoiseTarget;
     samplerInputs.steps = Math.max(hasSecondCharacter ? 32 : 30, Number(samplerInputs.steps) || 0);
-    samplerInputs.cfg = Math.max(hasSecondCharacter ? 6.8 : 6.2, Number(samplerInputs.cfg) || 0);
+    const currentCfg = Number(samplerInputs.cfg);
+    samplerInputs.cfg =
+      Number.isFinite(currentCfg) && currentCfg > 0
+        ? (hasFrameSeed ? Math.min(currentCfg, hasSecondCharacter ? 6.2 : 5.9) : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
+        : (hasFrameSeed ? (hasSecondCharacter ? 6.2 : 5.9) : (hasSecondCharacter ? 6.8 : 6.2));
   }
 }
 
@@ -7352,18 +7372,18 @@ export async function generateShotAsset(
         ...tokens,
         NEGATIVE_PROMPT: `${tokens.NEGATIVE_PROMPT ?? ""}, empty scene, scenery only, no people, character missing, actor missing, no protagonist`,
         CHAR1_PRIMARY_WEIGHT: String(
-          Math.min(1.28, Math.max(0, Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0") || 0) + 0.2)
+          Math.min(1.36, Math.max(0, Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0") || 0) + 0.26)
         ),
         CHAR1_SECONDARY_WEIGHT: String(
-          Math.min(1.02, Math.max(0, Number(tokens.CHAR1_SECONDARY_WEIGHT ?? "0") || 0) + 0.12)
+          Math.min(0.42, Math.max(0, Number(tokens.CHAR1_SECONDARY_WEIGHT ?? "0") || 0) + 0.04)
         ),
         CHAR2_PRIMARY_WEIGHT: String(
-          Math.min(1.18, Math.max(0, Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0") || 0) + 0.18)
+          Math.min(1.32, Math.max(0, Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0") || 0) + 0.24)
         ),
         STORYBOARD_DENOISE: String(
-          Math.min(0.72, Math.max(0, Number(tokens.STORYBOARD_DENOISE ?? "0.48") || 0.48) + 0.08)
+          Math.min(0.42, Math.max(0.32, Number(tokens.STORYBOARD_DENOISE ?? "0.4") || 0.4))
         ),
-        STORYBOARD_CFG: String(Math.min(8.2, Math.max(0, Number(tokens.STORYBOARD_CFG ?? "4.9") || 4.9) + 0.7))
+        STORYBOARD_CFG: String(Math.min(6.2, Math.max(5.6, Number(tokens.STORYBOARD_CFG ?? "5.8") || 5.8)))
       };
       const rebuilt = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, strengthenedTokens)) as Record<string, unknown>;
       adaptBuiltinStoryboardWorkflowForShot(rebuilt, strengthenedTokens);
