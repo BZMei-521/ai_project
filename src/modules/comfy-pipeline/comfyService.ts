@@ -557,13 +557,13 @@ function resolveStoryboardImageModel(
   const storyboardMode = settings.storyboardImageWorkflowMode ?? "mature_asset_guided";
   const storyboardModel = settings.storyboardImageModelName?.trim() || "";
   const characterModel = settings.characterAssetModelName?.trim() || "";
-  if (storyboardMode === "mature_asset_guided" && hasCharacterRefs) {
-    return "realisticVisionV60B1_v51VAE.safetensors";
-  }
   const hasExplicitStoryboardModel =
     storyboardModel.length > 0 && storyboardModel.toLowerCase() !== "sd_xl_base_1.0.safetensors";
   if (hasExplicitStoryboardModel) return storyboardModel;
   if (hasCharacterRefs && characterModel) return characterModel;
+  if (storyboardMode === "mature_asset_guided" && hasCharacterRefs) {
+    return "realisticVisionV60B1_v51VAE.safetensors";
+  }
   if (storyboardModel) return storyboardModel;
   if (characterModel) return characterModel;
   return "realisticVisionV60B1_v51VAE.safetensors";
@@ -4423,15 +4423,15 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (scale === "wide") return 0.46;
-    if (scale === "close") return 0.68;
-    if (scale === "medium") return 0.58;
-    return 0.54;
+    if (scale === "wide") return 0.42;
+    if (scale === "close") return 0.64;
+    if (scale === "medium") return 0.54;
+    return 0.5;
   }
-  if (scale === "wide") return 0.44;
-  if (scale === "close") return 0.64;
-  if (scale === "medium") return 0.56;
-  return 0.5;
+  if (scale === "wide") return 0.4;
+  if (scale === "close") return 0.6;
+  if (scale === "medium") return 0.52;
+  return 0.46;
 }
 
 function extractCharacterNameFromReferenceLabel(label: string): string {
@@ -4502,9 +4502,9 @@ function applyClampedPlacement(
   patch: Partial<{ centerXRatio: number; floorYRatio: number; sizeScale: number }>
 ): { centerXRatio: number; floorYRatio: number; sizeScale: number } {
   return {
-    centerXRatio: Math.min(0.92, Math.max(0.08, patch.centerXRatio ?? base.centerXRatio)),
-    floorYRatio: Math.min(0.96, Math.max(0.72, patch.floorYRatio ?? base.floorYRatio)),
-    sizeScale: Math.min(1.24, Math.max(0.48, patch.sizeScale ?? base.sizeScale))
+    centerXRatio: Math.min(0.9, Math.max(0.1, patch.centerXRatio ?? base.centerXRatio)),
+    floorYRatio: Math.min(0.95, Math.max(0.74, patch.floorYRatio ?? base.floorYRatio)),
+    sizeScale: Math.min(1.12, Math.max(0.52, patch.sizeScale ?? base.sizeScale))
   };
 }
 
@@ -4513,14 +4513,14 @@ function inferStoryboardCharacterPlacement(
   characterName: string,
   fallback: { centerXRatio: number; floorYRatio: number; sizeScale: number },
   index: number,
-  count: number
+  count: number,
+  focusedCharacterName: string | null = null
 ): { centerXRatio: number; floorYRatio: number; sizeScale: number } {
   const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? []));
   const contexts = collectCharacterMentionContexts(corpus, characterName);
   const lowerCorpus = corpus.toLowerCase();
   const lowerName = characterName.toLowerCase();
-  const focusedName = inferStoryboardFocusedCharacterName(shot, [characterName]);
-  const isFocused = focusedName === characterName;
+  const isFocused = Boolean(focusedCharacterName && focusedCharacterName === characterName);
   const isWideWalk = containsAnyKeyword(lowerCorpus, ["并肩", "walk", "walking", "side by side", "along the same riverside path"]);
   const hasExplicitHorizontalCue = contextsHaveAnyKeyword(contexts, [
     "left edge",
@@ -4669,15 +4669,17 @@ function inferStoryboardCharacterPlacement(
   if (isRiversidePathShot) {
     if (count >= 2) {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : index === 0 ? 0.4 : 0.66,
-        floorYRatio: index === 0 ? 0.92 : 0.91,
-        sizeScale: placement.sizeScale * (index === 0 ? 1.14 : 1.08)
+        // Keep both actors inside the lower-right walkable band instead of
+        // pushing them into the upper willow canopy or open water.
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : index === 0 ? 0.58 : 0.72,
+        floorYRatio: index === 0 ? 0.94 : 0.935,
+        sizeScale: placement.sizeScale * (index === 0 ? 0.98 : 0.9)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.54,
-        floorYRatio: 0.92,
-        sizeScale: placement.sizeScale * 1.1
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.68,
+        floorYRatio: 0.94,
+        sizeScale: placement.sizeScale * 0.96
       });
     }
   }
@@ -4702,55 +4704,85 @@ function inferStoryboardCompositeLayout(
 ): Array<{ centerXRatio: number; floorYRatio: number; sizeScale: number }> {
   const count = characterRefs.length;
   const scale = inferStoryboardCompositeScale(shot);
+  const availableNames = characterRefs.map((ref) => extractCharacterNameFromReferenceLabel(ref.label)).filter((name) => name.length > 0);
+  const focusedCharacterName = inferStoryboardFocusedCharacterName(shot, availableNames);
 
   if (count >= 2) {
     if (scale === "wide") {
       const wideBase = [
-        { centerXRatio: 0.36, floorYRatio: 0.9, sizeScale: 0.82 },
-        { centerXRatio: 0.64, floorYRatio: 0.91, sizeScale: 0.78 }
+        { centerXRatio: 0.44, floorYRatio: 0.91, sizeScale: 0.78 },
+        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.72 }
       ];
       return characterRefs.map((ref, index) =>
-        inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), wideBase[index] ?? wideBase[wideBase.length - 1]!, index, count)
+        inferStoryboardCharacterPlacement(
+          shot,
+          extractCharacterNameFromReferenceLabel(ref.label),
+          wideBase[index] ?? wideBase[wideBase.length - 1]!,
+          index,
+          count,
+          focusedCharacterName
+        )
       );
     }
     if (scale === "close") {
       const closeBase = [
-        { centerXRatio: 0.4, floorYRatio: 0.9, sizeScale: 0.94 },
-        { centerXRatio: 0.68, floorYRatio: 0.92, sizeScale: 0.84 }
+        { centerXRatio: 0.46, floorYRatio: 0.91, sizeScale: 0.9 },
+        { centerXRatio: 0.66, floorYRatio: 0.93, sizeScale: 0.82 }
       ];
       return characterRefs.map((ref, index) =>
-        inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), closeBase[index] ?? closeBase[closeBase.length - 1]!, index, count)
+        inferStoryboardCharacterPlacement(
+          shot,
+          extractCharacterNameFromReferenceLabel(ref.label),
+          closeBase[index] ?? closeBase[closeBase.length - 1]!,
+          index,
+          count,
+          focusedCharacterName
+        )
       );
     }
     if (scale === "medium") {
       const mediumBase = [
-        { centerXRatio: 0.38, floorYRatio: 0.9, sizeScale: 0.86 },
-        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.8 }
+        { centerXRatio: 0.46, floorYRatio: 0.91, sizeScale: 0.82 },
+        { centerXRatio: 0.66, floorYRatio: 0.93, sizeScale: 0.76 }
       ];
       return characterRefs.map((ref, index) =>
-        inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), mediumBase[index] ?? mediumBase[mediumBase.length - 1]!, index, count)
+        inferStoryboardCharacterPlacement(
+          shot,
+          extractCharacterNameFromReferenceLabel(ref.label),
+          mediumBase[index] ?? mediumBase[mediumBase.length - 1]!,
+          index,
+          count,
+          focusedCharacterName
+        )
       );
     }
     const defaultBase = [
-      { centerXRatio: 0.4, floorYRatio: 0.89, sizeScale: 0.84 },
-      { centerXRatio: 0.68, floorYRatio: 0.91, sizeScale: 0.8 }
+      { centerXRatio: 0.46, floorYRatio: 0.9, sizeScale: 0.8 },
+      { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.74 }
     ];
     return characterRefs.map((ref, index) =>
-      inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), defaultBase[index] ?? defaultBase[defaultBase.length - 1]!, index, count)
+      inferStoryboardCharacterPlacement(
+        shot,
+        extractCharacterNameFromReferenceLabel(ref.label),
+        defaultBase[index] ?? defaultBase[defaultBase.length - 1]!,
+        index,
+        count,
+        focusedCharacterName
+      )
     );
   }
 
   const fallbackName = characterRefs[0] ? extractCharacterNameFromReferenceLabel(characterRefs[0].label) : "";
   if (scale === "close") {
-    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 1.08 }, 0, 1)];
+    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 1.0 }, 0, 1, focusedCharacterName)];
   }
   if (scale === "medium") {
-    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.6, floorYRatio: 0.89, sizeScale: 1.0 }, 0, 1)];
+    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.62, floorYRatio: 0.9, sizeScale: 0.94 }, 0, 1, focusedCharacterName)];
   }
   if (scale === "wide") {
-    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.72, floorYRatio: 0.88, sizeScale: 0.94 }, 0, 1)];
+    return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.68, floorYRatio: 0.9, sizeScale: 0.88 }, 0, 1, focusedCharacterName)];
   }
-  return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1.0 }, 0, 1)];
+  return [inferStoryboardCharacterPlacement(shot, fallbackName, { centerXRatio: 0.64, floorYRatio: 0.9, sizeScale: 0.92 }, 0, 1, focusedCharacterName)];
 }
 
 async function buildStoryboardCompositeReference(
@@ -6899,15 +6931,15 @@ function adaptBuiltinStoryboardWorkflowForShot(
     usePoseGuide
       ? shotScale === "close"
         ? hasSecondCharacter
-          ? 0.62
-          : 0.58
+          ? 0.66
+          : 0.62
         : shotScale === "medium"
           ? hasSecondCharacter
+            ? 0.62
+            : 0.58
+          : hasSecondCharacter
             ? 0.58
             : 0.56
-          : hasSecondCharacter
-            ? 0.56
-            : 0.52
       : hasFrameSeed
       ? shotScale === "close"
         ? hasSecondCharacter
@@ -6954,7 +6986,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   if (controlNetInputs) {
     const targetStrength =
       usePoseGuide
-        ? (shotScale === "close" ? 0.7 : shotScale === "medium" ? 0.66 : hasSecondCharacter ? 0.64 : 0.6)
+        ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : hasSecondCharacter ? 0.78 : 0.74)
         : hasFrameSeed
         ? (shotScale === "close" ? 0.56 : shotScale === "medium" ? 0.52 : hasSecondCharacter ? 0.5 : 0.46)
         : (shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24);
@@ -6962,7 +6994,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
     controlNetInputs.image = ["18", 0];
     controlNetInputs.start_percent = 0;
     controlNetInputs.end_percent = usePoseGuide
-      ? (shotScale === "close" ? 0.92 : shotScale === "medium" ? 0.88 : 0.84)
+      ? (shotScale === "close" ? 0.98 : shotScale === "medium" ? 0.96 : 0.94)
       : hasFrameSeed
         ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
         : (shotScale === "close" ? 0.42 : 0.5);
@@ -6971,18 +7003,22 @@ function adaptBuiltinStoryboardWorkflowForShot(
     const current = Number(samplerInputs.denoise);
     samplerInputs.denoise =
       Number.isFinite(current) && current > 0
-        ? ((hasFrameSeed || usePoseGuide) ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
+        ? (usePoseGuide ? Math.max(current, denoiseTarget) : hasFrameSeed ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
         : denoiseTarget;
-    samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 34 : 32) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
+    samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 38 : 34) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
     const currentCfg = Number(samplerInputs.cfg);
     samplerInputs.cfg =
       Number.isFinite(currentCfg) && currentCfg > 0
-        ? ((hasFrameSeed || usePoseGuide)
-            ? Math.min(currentCfg, usePoseGuide ? (hasSecondCharacter ? 6.4 : 6.1) : (hasSecondCharacter ? 6.2 : 5.9))
-            : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
-        : ((hasFrameSeed || usePoseGuide)
-            ? (usePoseGuide ? (hasSecondCharacter ? 6.4 : 6.1) : (hasSecondCharacter ? 6.2 : 5.9))
-            : (hasSecondCharacter ? 6.8 : 6.2));
+        ? (usePoseGuide
+            ? Math.max(currentCfg, hasSecondCharacter ? 6.6 : 6.3)
+            : hasFrameSeed
+              ? Math.min(currentCfg, hasSecondCharacter ? 6.2 : 5.9)
+              : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
+        : (usePoseGuide
+            ? (hasSecondCharacter ? 6.6 : 6.3)
+            : hasFrameSeed
+              ? (hasSecondCharacter ? 6.2 : 5.9)
+              : (hasSecondCharacter ? 6.8 : 6.2));
   }
 }
 
