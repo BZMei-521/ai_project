@@ -197,7 +197,10 @@
   },
   "16": {
     "inputs": {
-      "image": "{{SCENE_REF_PATH}}",
+      "image": [
+        "2",
+        0
+      ],
       "upscale_method": "lanczos",
       "width": "{{RENDER_WIDTH}}",
       "height": "{{RENDER_HEIGHT}}",

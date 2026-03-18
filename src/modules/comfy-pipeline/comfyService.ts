@@ -6593,9 +6593,20 @@ function adaptBuiltinStoryboardWorkflowForShot(
   // Prioritize character presence first: use the storyboard frame/composite as the
   // img2img latent seed and, when available, also as the Canny source so the
   // structure chain preserves the inserted full-body figures instead of erasing them.
+  if (hasFrameSeed) {
+    workflow["21"] = {
+      inputs: {
+        image: frameImagePath,
+        upload: "image"
+      },
+      class_type: "LoadImage"
+    };
+  } else if (workflow["21"]) {
+    delete workflow["21"];
+  }
   workflow["16"] = {
     inputs: {
-      image: hasFrameSeed ? frameImagePath : sceneRefPath,
+      image: hasFrameSeed ? ["21", 0] : ["2", 0],
       upscale_method: "lanczos",
       width: renderWidth,
       height: renderHeight,
