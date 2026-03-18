@@ -4159,37 +4159,13 @@ async function stageStoryboardThreeViewTokens(
   shot: Shot,
   tokens: Record<string, string>
 ): Promise<Record<string, string>> {
-  if (!canProcessStoryboardReferenceImages()) return tokens;
-  const inputDir = inferComfyInputDir(settings);
-  if (!inputDir) return tokens;
-
-  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const nextTokens = { ...tokens };
-  const specs = [
-    {
-      key: "CHAR1_PRIMARY_PATH" as const,
-      sources: [tokens.CHAR1_FRONT_PATH ?? "", tokens.CHAR1_SIDE_PATH ?? "", tokens.CHAR1_BACK_PATH ?? ""],
-      filePath: `${inputDir}/shot_${safeShotId}_char1_threeview_board.png`
-    },
-    {
-      key: "CHAR2_PRIMARY_PATH" as const,
-      sources: [tokens.CHAR2_FRONT_PATH ?? "", tokens.CHAR2_SIDE_PATH ?? "", tokens.CHAR2_BACK_PATH ?? ""],
-      filePath: `${inputDir}/shot_${safeShotId}_char2_threeview_board.png`
-    }
-  ];
-
-  for (const spec of specs) {
-    const canvas = await buildCharacterThreeViewTokenCanvas(settings, spec.sources);
-    if (!canvas) continue;
-    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
-      filePath: spec.filePath,
-      base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
-    });
-    if (!result.filePath) continue;
-    nextTokens[spec.key] = result.filePath.split("/").pop() ?? result.filePath;
-  }
-
-  return nextTokens;
+  void settings;
+  void shot;
+  // Mature storyboard stills must keep CHAR*_PRIMARY_PATH bound to a clean
+  // single-view identity anchor. Replacing it with a stitched three-view board
+  // weakens IPAdapter identity lock and makes the model treat the reference as
+  // a layout/style hint instead of "this exact person must be in frame".
+  return tokens;
 }
 
 function inferStoryboardCompositeScaleFromCorpus(corpus: string): "wide" | "medium" | "close" | "default" {
@@ -4220,15 +4196,15 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (scale === "wide") return 0.4;
-    if (scale === "close") return 0.62;
-    if (scale === "medium") return 0.52;
-    return 0.48;
+    if (scale === "wide") return 0.46;
+    if (scale === "close") return 0.68;
+    if (scale === "medium") return 0.58;
+    return 0.54;
   }
-  if (scale === "wide") return 0.38;
-  if (scale === "close") return 0.6;
-  if (scale === "medium") return 0.5;
-  return 0.44;
+  if (scale === "wide") return 0.44;
+  if (scale === "close") return 0.64;
+  if (scale === "medium") return 0.56;
+  return 0.5;
 }
 
 function extractCharacterNameFromReferenceLabel(label: string): string {
@@ -4319,6 +4295,46 @@ function inferStoryboardCharacterPlacement(
   const focusedName = inferStoryboardFocusedCharacterName(shot, [characterName]);
   const isFocused = focusedName === characterName;
   const isWideWalk = containsAnyKeyword(lowerCorpus, ["并肩", "walk", "walking", "side by side", "along the same riverside path"]);
+  const hasExplicitHorizontalCue = contextsHaveAnyKeyword(contexts, [
+    "left edge",
+    "screen left edge",
+    "画面左边缘",
+    "左边缘",
+    "screen left",
+    "left half",
+    "画面左",
+    "左半",
+    "左侧",
+    "左边",
+    "屏幕左",
+    "center-left",
+    "centre-left",
+    "screen center-left",
+    "画面中左",
+    "偏左",
+    "左中",
+    "right edge",
+    "screen right edge",
+    "画面右边缘",
+    "右边缘",
+    "screen right",
+    "right half",
+    "画面右",
+    "右半",
+    "右侧",
+    "右边",
+    "屏幕右",
+    "center-right",
+    "centre-right",
+    "screen center-right",
+    "画面中右",
+    "偏右",
+    "右中",
+    "center",
+    "centre",
+    "中间",
+    "居中"
+  ]);
 
   let placement = { ...fallback };
 
@@ -4402,9 +4418,9 @@ function inferStoryboardCharacterPlacement(
 
   if (isWideWalk && count >= 2) {
     placement = applyClampedPlacement(placement, {
-      centerXRatio: index === 0 ? 0.52 : 0.68,
+      centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : index === 0 ? 0.4 : 0.66,
       floorYRatio: 0.91,
-      sizeScale: placement.sizeScale * 1.04
+      sizeScale: placement.sizeScale * 1.08
     });
   }
 
@@ -4426,15 +4442,15 @@ function inferStoryboardCharacterPlacement(
   if (isRiversidePathShot) {
     if (count >= 2) {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: index === 0 ? 0.56 : 0.72,
-        floorYRatio: index === 0 ? 0.91 : 0.9,
-        sizeScale: placement.sizeScale * (index === 0 ? 1.08 : 1.0)
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : index === 0 ? 0.4 : 0.66,
+        floorYRatio: index === 0 ? 0.92 : 0.91,
+        sizeScale: placement.sizeScale * (index === 0 ? 1.14 : 1.08)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: 0.62,
-        floorYRatio: 0.91,
-        sizeScale: placement.sizeScale * 1.06
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.54,
+        floorYRatio: 0.92,
+        sizeScale: placement.sizeScale * 1.1
       });
     }
   }
@@ -4463,8 +4479,8 @@ function inferStoryboardCompositeLayout(
   if (count >= 2) {
     if (scale === "wide") {
       const wideBase = [
-        { centerXRatio: 0.34, floorYRatio: 0.89, sizeScale: 0.74 },
-        { centerXRatio: 0.66, floorYRatio: 0.91, sizeScale: 0.68 }
+        { centerXRatio: 0.36, floorYRatio: 0.9, sizeScale: 0.82 },
+        { centerXRatio: 0.64, floorYRatio: 0.91, sizeScale: 0.78 }
       ];
       return characterRefs.map((ref, index) =>
         inferStoryboardCharacterPlacement(shot, extractCharacterNameFromReferenceLabel(ref.label), wideBase[index] ?? wideBase[wideBase.length - 1]!, index, count)
@@ -4569,12 +4585,28 @@ async function buildStoryboardCompositeReference(
     const drawHeight = cutout.height * scale;
     const centerX = placement.centerXRatio * sceneWidth;
     const floorY = sceneHeight * placement.floorYRatio;
-    const drawX = Math.round(centerX - drawWidth / 2);
-    const drawY = Math.round(floorY - drawHeight);
+    const unclampedDrawX = Math.round(centerX - drawWidth / 2);
+    const unclampedDrawY = Math.round(floorY - drawHeight);
+    const horizontalMargin = Math.max(16, Math.round(sceneWidth * 0.02));
+    const topMargin = Math.max(12, Math.round(sceneHeight * 0.02));
+    const clampedDrawX = Math.round(
+      Math.min(
+        Math.max(horizontalMargin, sceneWidth - drawWidth - horizontalMargin),
+        Math.max(horizontalMargin, unclampedDrawX)
+      )
+    );
+    const clampedDrawY = Math.round(
+      Math.min(
+        Math.max(topMargin, sceneHeight - drawHeight - topMargin),
+        Math.max(topMargin, unclampedDrawY)
+      )
+    );
+    const clampedCenterX = clampedDrawX + drawWidth / 2;
+    const clampedFloorY = clampedDrawY + drawHeight;
     const sampleWidth = Math.max(1, Math.round(drawWidth));
     const sampleHeight = Math.max(1, Math.round(drawHeight));
-    const sampleX = Math.max(0, Math.min(sceneWidth - sampleWidth, drawX));
-    const sampleY = Math.max(0, Math.min(sceneHeight - sampleHeight, drawY));
+    const sampleX = Math.max(0, Math.min(sceneWidth - sampleWidth, clampedDrawX));
+    const sampleY = Math.max(0, Math.min(sceneHeight - sampleHeight, clampedDrawY));
     const scenePatch = document.createElement("canvas");
     scenePatch.width = sampleWidth;
     scenePatch.height = sampleHeight;
@@ -4598,19 +4630,27 @@ async function buildStoryboardCompositeReference(
     context.fillStyle = "rgba(0,0,0,0.14)";
     context.beginPath();
     context.filter = "blur(10px)";
-    context.ellipse(centerX, floorY + 5, Math.max(18, drawWidth * 0.2), Math.max(8, drawWidth * 0.07), 0, 0, Math.PI * 2);
+    context.ellipse(
+      clampedCenterX,
+      clampedFloorY + 5,
+      Math.max(18, drawWidth * 0.2),
+      Math.max(8, drawWidth * 0.07),
+      0,
+      0,
+      Math.PI * 2
+    );
     context.fill();
     if (guideFigure) {
-      context.globalAlpha = 0.2;
+      context.globalAlpha = 0.24;
       context.filter = "blur(4px)";
-      context.drawImage(guideFigure, drawX + 1, drawY + 1, drawWidth, drawHeight);
+      context.drawImage(guideFigure, clampedDrawX + 1, clampedDrawY + 1, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "contrast(1.02) brightness(0.98) saturate(0.94)";
-      context.drawImage(guideFigure, drawX, drawY, drawWidth, drawHeight);
+      context.filter = "contrast(1.03) brightness(0.99) saturate(0.96)";
+      context.drawImage(guideFigure, clampedDrawX, clampedDrawY, drawWidth, drawHeight);
     } else {
-      context.globalAlpha = 0.28;
+      context.globalAlpha = 0.34;
       context.filter = "grayscale(1) contrast(0.88) brightness(0.92)";
-      context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
+      context.drawImage(cutout, clampedDrawX, clampedDrawY, drawWidth, drawHeight);
     }
     context.restore();
   });
@@ -6621,10 +6661,10 @@ function adaptBuiltinStoryboardWorkflowForShot(
   if (controlNetInputs) {
     const targetStrength =
       hasFrameSeed
-        ? (shotScale === "close" ? 0.34 : shotScale === "medium" ? 0.3 : 0.28)
+        ? (shotScale === "close" ? 0.56 : shotScale === "medium" ? 0.52 : hasSecondCharacter ? 0.5 : 0.46)
         : (shotScale === "close" ? 0.16 : shotScale === "medium" ? 0.2 : 0.24);
     controlNetInputs.strength = targetStrength;
-    controlNetInputs.end_percent = hasFrameSeed ? (shotScale === "close" ? 0.72 : 0.68) : (shotScale === "close" ? 0.42 : 0.5);
+    controlNetInputs.end_percent = hasFrameSeed ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76) : (shotScale === "close" ? 0.42 : 0.5);
   }
   if (samplerInputs) {
     const current = Number(samplerInputs.denoise);

@@ -494,31 +494,53 @@ function workflowLooksLikeBuiltinStoryboardImageWorkflow(workflowJson: string): 
   );
 }
 
+function workflowNeedsBuiltinMatureStoryboardRewrite(workflowJson: string): boolean {
+  const trimmed = workflowJson.trim();
+  if (!trimmed) return true;
+  if (workflowHasBrokenApiPromptReferences(trimmed)) return true;
+  if (workflowLooksLikeBuiltinStoryboardImageWorkflow(trimmed)) return true;
+  if (isLegacyMixedStoryboardImageWorkflow(trimmed)) return true;
+  if (workflowContainsWanSamplerNodes(trimmed)) return true;
+  if (storyboardWorkflowHasHardcodedReferenceImages(trimmed)) return true;
+
+  const nodeTypes = collectWorkflowNodeTypesForHeuristics(trimmed);
+  const nodeTypeSet = new Set(nodeTypes);
+  const hasSceneSeedChain = nodeTypeSet.has("LoadImage") && nodeTypeSet.has("VAEEncode") && trimmed.includes("{{SCENE_REF_PATH}}");
+  const hasCharacterIdentityBinding =
+    nodeTypes.some((type) => /IPAdapter/i.test(type)) &&
+    (trimmed.includes("{{CHAR1_PRIMARY_PATH}}") || trimmed.includes("{{CHARACTER_FRONT_PATHS}}"));
+  const hasStructuralControl = nodeTypes.some((type) => /ControlNet/i.test(type));
+  const hasImageOutput = nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type));
+
+  return !(hasSceneSeedChain && hasCharacterIdentityBinding && hasStructuralControl && hasImageOutput);
+}
+
 function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetWorkflowModeSpec {
   if (mode === "mature_asset_guided") {
     return {
       label: "成熟资产约束分镜工作流",
       summary:
-        "内置模板改成 scene-first img2img + IPAdapter 多角色一致性。先锁天空盒主面，再叠角色参考，是当前更成熟、更可控的连续分镜基础链路；ControlNet / InstantID / PuLID 作为第二层增强可再加。",
+        "内置模板使用 scene-first img2img + IPAdapter 身份约束 + ControlNet 结构约束。先锁场景底板，再锁人物身份和站位，是当前更稳的连续分镜主链路。",
       requiredNodes: [
         "基础图生图链：CheckpointLoaderSimple / LoadImage / ImageScale / VAEEncode / KSampler / VAEDecode / SaveImage",
         "IPAdapterUnifiedLoader",
-        "IPAdapterAdvanced"
+        "IPAdapterAdvanced",
+        "ControlNetLoader / ControlNetApplyAdvanced"
       ],
       requiredModels: [
-        "主模型：建议 SDXL 写实底模",
-        "IPAdapter Plus：自动走 PLUS 预设，对应 SDXL 需 ip-adapter-plus_sdxl_vit-h.safetensors",
+        "主模型：建议与 ControlNet 同体系的写实底模",
+        "IPAdapter Plus：自动走 PLUS 预设，对应底模需匹配的 IPAdapter 权重",
         "CLIP Vision：clip_vision_h.safetensors"
       ],
       recommendedPlugins: [
         "comfyui_ipadapter_plus",
-        "可选：ComfyUI-Advanced-ControlNet",
+        "ComfyUI-Advanced-ControlNet",
         "可选：ComfyUI_InstantID 或 PuLID_ComfyUI"
       ],
       notes: [
-        "内置成熟模板已经是 scene-first：先吃天空盒主面/场景底图，再叠角色参考。",
-        "双人/远景镜头会自动降低角色权重、提高场景保持；单人镜头会提高主角色权重。",
-        "如果还需要更硬的姿态/构图控制，再在这套模板外层加 ControlNet；当前内置 Qwen 模板只保留兼容用途。"
+        "内置成熟模板已经固定为 scene-first + IPAdapter + ControlNet，不再把 ControlNet 视为可有可无的附加项。",
+        "双人/远景镜头会自动强化人物结构约束，优先保证全身出镜、脚部接地和站位稳定。",
+        "如果还需要更硬的正脸锁定，可在这套模板上继续叠 InstantID / PuLID；当前内置 Qwen 模板只保留兼容用途。"
       ]
     };
   }
@@ -2422,11 +2444,14 @@ function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflo
   if (!hasIpAdapter || !usesCharacterToken) {
     warnings.push("未检测到角色 IPAdapter 参考注入。人物一致性会明显变弱。");
   }
+  if (!hasControlNet) {
+    warnings.push("未检测到 ControlNet。成熟分镜模板需要结构控制来稳定人物位置、完整出镜和脚部接地。");
+  }
   if (!nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type))) {
     warnings.push("未检测到明显图片输出节点，请确认工作流最终会产出分镜图。");
   }
-  notes.push("成熟分镜模板的核心顺序应是：场景底图优先，角色参考其次，文本只补镜头动作和构图。");
-  if (hasControlNet) notes.push("检测到 ControlNet，可用于第二阶段增强姿态或空间稳定性。");
+  notes.push("成熟分镜模板的核心顺序应是：场景底图优先，角色参考其次，ControlNet 锁结构，文本只补镜头动作和构图。");
+  if (hasControlNet) notes.push("检测到 ControlNet，可用于稳定人物站位、完整全身和接地关系。");
   if (hasInstantId || hasPulid) notes.push("检测到 InstantID / PuLID，可用于正脸镜头进一步锁脸。");
   return { warnings, notes };
 }
@@ -2495,11 +2520,7 @@ function loadSettings(): ComfySettings {
     const parsedImageWorkflowJson = typeof parsed.imageWorkflowJson === "string" ? parsed.imageWorkflowJson : "";
     const shouldUpgradeStoryboardWorkflow =
       resolvedStoryboardMode === "mature_asset_guided" &&
-      (!parsedImageWorkflowJson.trim() ||
-        isLegacyMixedStoryboardImageWorkflow(parsedImageWorkflowJson) ||
-        workflowContainsWanSamplerNodes(parsedImageWorkflowJson) ||
-        workflowLooksLikeBuiltinStoryboardImageWorkflow(parsedImageWorkflowJson) ||
-        storyboardWorkflowHasHardcodedReferenceImages(parsedImageWorkflowJson));
+      workflowNeedsBuiltinMatureStoryboardRewrite(parsedImageWorkflowJson);
     const resolvedImageWorkflowJson =
       shouldUpgradeStoryboardWorkflow
         ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
@@ -8910,7 +8931,7 @@ export function ComfyPipelinePanel() {
     );
     appendLog(
       mode === "mature_asset_guided"
-        ? "已写入内置成熟分镜模板：scene-first img2img + IPAdapter"
+        ? "已写入内置成熟分镜模板：scene-first img2img + IPAdapter + ControlNet"
         : "已写入内置 Qwen 兼容分镜模板",
       "info"
     );
@@ -12046,14 +12067,14 @@ export function ComfyPipelinePanel() {
       }
       if (
         (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
-        (!runtimeSettings.imageWorkflowJson.trim() || workflowLooksLikeBuiltinStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson))
+        workflowNeedsBuiltinMatureStoryboardRewrite(runtimeSettings.imageWorkflowJson)
       ) {
         runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
         persistSettings((previous) => ({
           ...previous,
           imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
         }));
-        appendLog("成熟分镜模式检测到旧 Qwen 模板，已自动写入内置 scene-first + IPAdapter 分镜模板", "info");
+        appendLog("成熟分镜模式检测到当前模板缺少 scene-first / IPAdapter / ControlNet 关键链路，已自动写入内置结构化分镜模板", "info");
         pushToast("已自动切换为内置成熟分镜模板", "success");
       }
       if (workflowLooksLikeCharacterThreeViewStoryboardMisuse(runtimeSettings.imageWorkflowJson)) {
@@ -13004,7 +13025,7 @@ export function ComfyPipelinePanel() {
         <div className="timeline-meta">
           当前分镜模式：
           {storyboardImageWorkflowMode === "mature_asset_guided"
-            ? "当前内置成熟模板会先吃天空盒主面/场景底图，再叠 IPAdapter 角色参考；如果还不够，再在这套模板外层加 ControlNet / InstantID。"
+            ? "当前内置成熟模板会先吃场景底图，再叠 IPAdapter 角色身份参考，并用 ControlNet 稳住人物站位、完整出镜和脚部接地。"
             : "继续使用内置 Qwen/Fisher 兼容模板，出图速度快，但一致性较弱。"}
         </div>
         {storyboardImageWorkflowMode === "mature_asset_guided" && workflowLooksLikeBuiltinStoryboardImageWorkflow(settings.imageWorkflowJson) && (
