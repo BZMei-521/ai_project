@@ -6230,11 +6230,11 @@ function inferPromptTokens(
   const preferIdentityFrontPaths =
     kind === "image" &&
     (Boolean(sceneRefPath) || hasCharacters || shotLooksCharacterDrivenInComfy(shot)) &&
-    !prefersAngleMatchedCharacterView;
+    (hasSecondCharacter || !prefersAngleMatchedCharacterView);
   const char1IdentityPath = assetPathForCharacterView(charSlots[0], "front") || characterFrontPaths[0] || continuityCharacterRefPath || "";
   const char1ViewPath =
     assetPathForCharacterView(charSlots[0], characterPlan.primaryView) || char1IdentityPath || "";
-  const char1SecondaryView = characterPlan.secondaryViews[0] ?? "front";
+  const char1SecondaryView = kind === "image" && hasSecondCharacter ? "front" : (characterPlan.secondaryViews[0] ?? "front");
   const char1PrimaryPath = preferIdentityFrontPaths ? char1IdentityPath || char1ViewPath : char1ViewPath;
   const char1SecondaryPath =
     (preferIdentityFrontPaths
@@ -6254,7 +6254,7 @@ function inferPromptTokens(
     char1SecondaryPath ||
     char1PrimaryPath ||
     "";
-  const char2SecondaryView = characterPlan.secondaryViews[0] ?? "front";
+  const char2SecondaryView = kind === "image" && hasSecondCharacter ? "front" : (characterPlan.secondaryViews[0] ?? "front");
   const char2PrimaryPath = preferIdentityFrontPaths ? char2IdentityPath || char2ViewPath : char2ViewPath;
   const char2SecondaryPath =
     (preferIdentityFrontPaths
@@ -7291,7 +7291,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
   const hasSecondCharacter = char2PrimaryPath.length > 0;
-  const hasFrameSeed = frameImagePath.length > 0 && !usePoseGuide;
+  const lockCharacterIdentityAndCount = usePoseGuide && hasSecondCharacter;
+  const useCompositeFrameSeed = lockCharacterIdentityAndCount && frameImagePath.length > 0;
+  const hasFrameSeed = frameImagePath.length > 0 && (!usePoseGuide || useCompositeFrameSeed);
   const shotScale = inferStoryboardCompositeScaleFromCorpus(
     compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
   );
@@ -7413,7 +7415,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
       upscale_method: "lanczos",
       width: renderWidth,
       height: renderHeight,
-      crop: "center"
+      crop: hasFrameSeed ? "disabled" : "center"
     },
     class_type: "ImageScale"
   };
@@ -7448,7 +7450,8 @@ function adaptBuiltinStoryboardWorkflowForShot(
 
   const hasViewSpecificChar1 = char1SecondaryPath.length > 0 && char1SecondaryPath !== char1PrimaryPath;
   const hasViewSpecificChar2 = char2SecondaryPath.length > 0 && char2SecondaryPath !== char2PrimaryPath;
-  const enableChar2ViewAdapter = usePoseGuide && hasSecondCharacter && hasViewSpecificChar2;
+  const enableSecondaryIdentityViews = usePoseGuide ? !lockCharacterIdentityAndCount : true;
+  const enableChar2ViewAdapter = enableSecondaryIdentityViews && usePoseGuide && hasSecondCharacter && hasViewSpecificChar2;
   if (enableChar2ViewAdapter) {
     workflow["22"] = {
       inputs: {
@@ -7482,7 +7485,19 @@ function adaptBuiltinStoryboardWorkflowForShot(
   }
 
   const denoiseTarget =
-    usePoseGuide
+    lockCharacterIdentityAndCount
+      ? shotScale === "close"
+        ? useCompositeFrameSeed
+          ? 0.34
+          : 0.42
+        : shotScale === "medium"
+          ? useCompositeFrameSeed
+            ? 0.32
+            : 0.4
+          : useCompositeFrameSeed
+            ? 0.3
+            : 0.38
+      : usePoseGuide
       ? shotScale === "close"
         ? hasSecondCharacter
           ? 0.6
@@ -7518,15 +7533,27 @@ function adaptBuiltinStoryboardWorkflowForShot(
           ? 0.66
           : 0.62;
   if (usePoseGuide) {
-    clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 1.0, hasSecondCharacter ? 1.06 : 1.1, 0.92);
-    clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.96 : 0, hasSecondCharacter ? 1.04 : 0, hasSecondCharacter ? 0.92 : 0);
+    if (lockCharacterIdentityAndCount) {
+      // In dual-character storyboard shots, front-facing identity anchors are
+      // more stable than mixing additional side/back refs. Keep IPAdapter
+      // present but less aggressive, and let the composite seed preserve count.
+      clampAdapterWeight(char1AdapterNode, 0.84, 0.92, 0.8);
+      clampAdapterWeight(char2AdapterNode, 0.82, 0.9, 0.8);
+    } else {
+      clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 1.0, hasSecondCharacter ? 1.06 : 1.1, 0.92);
+      clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.96 : 0, hasSecondCharacter ? 1.04 : 0, hasSecondCharacter ? 0.92 : 0);
+    }
   } else {
     updateAdapterWeight(char1AdapterNode, hasSecondCharacter ? 1.02 : 0.98, "at_least", 0.9);
     updateAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.98 : 0, "at_least", hasSecondCharacter ? 0.88 : 0.72);
   }
   if (char1SecondaryAdapterInputs) {
     if (usePoseGuide) {
-      if (hasViewSpecificChar1) {
+      if (lockCharacterIdentityAndCount) {
+        char1SecondaryAdapterInputs.weight = 0;
+        char1SecondaryAdapterInputs.start_at = 0;
+        char1SecondaryAdapterInputs.end_at = 0;
+      } else if (hasViewSpecificChar1) {
         char1SecondaryAdapterInputs.weight = hasSecondCharacter ? 0.18 : 0.3;
         char1SecondaryAdapterInputs.start_at = 0;
         char1SecondaryAdapterInputs.end_at = hasSecondCharacter ? 0.56 : 0.68;
@@ -7546,7 +7573,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
 
   if (controlNetInputs) {
     const targetStrength =
-      usePoseGuide
+      lockCharacterIdentityAndCount
+        ? (shotScale === "close" ? 0.74 : shotScale === "medium" ? 0.7 : 0.66)
+        : usePoseGuide
         ? (shotScale === "close" ? 0.8 : shotScale === "medium" ? 0.76 : hasSecondCharacter ? 0.72 : 0.7)
         : hasFrameSeed
         ? (shotScale === "close" ? 0.56 : shotScale === "medium" ? 0.52 : hasSecondCharacter ? 0.5 : 0.46)
@@ -7554,7 +7583,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
     controlNetInputs.strength = targetStrength;
     controlNetInputs.image = ["18", 0];
     controlNetInputs.start_percent = 0;
-    controlNetInputs.end_percent = usePoseGuide
+    controlNetInputs.end_percent = lockCharacterIdentityAndCount
+      ? (shotScale === "close" ? 0.88 : shotScale === "medium" ? 0.84 : 0.8)
+      : usePoseGuide
       ? (shotScale === "close" ? 0.94 : shotScale === "medium" ? 0.9 : 0.86)
       : hasFrameSeed
         ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
@@ -7562,24 +7593,35 @@ function adaptBuiltinStoryboardWorkflowForShot(
   }
   if (samplerInputs) {
     const current = Number(samplerInputs.denoise);
-    samplerInputs.denoise =
-      Number.isFinite(current) && current > 0
-        ? (usePoseGuide ? Math.max(current, denoiseTarget) : hasFrameSeed ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
-        : denoiseTarget;
-    samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 34 : 32) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
-    const currentCfg = Number(samplerInputs.cfg);
-    samplerInputs.cfg =
-      Number.isFinite(currentCfg) && currentCfg > 0
-        ? (usePoseGuide
-            ? Math.max(currentCfg, hasSecondCharacter ? 6.0 : 5.8)
-            : hasFrameSeed
-              ? Math.min(currentCfg, hasSecondCharacter ? 6.2 : 5.9)
-              : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
-        : (usePoseGuide
-            ? (hasSecondCharacter ? 6.0 : 5.8)
-            : hasFrameSeed
-              ? (hasSecondCharacter ? 6.2 : 5.9)
-              : (hasSecondCharacter ? 6.8 : 6.2));
+    if (lockCharacterIdentityAndCount) {
+      samplerInputs.denoise = denoiseTarget;
+      samplerInputs.steps = Math.max(30, Math.min(32, Number(samplerInputs.steps) || 30));
+      samplerInputs.cfg =
+        shotScale === "close"
+          ? 5.4
+          : shotScale === "medium"
+            ? 5.2
+            : 5.0;
+    } else {
+      samplerInputs.denoise =
+        Number.isFinite(current) && current > 0
+          ? (usePoseGuide ? Math.max(current, denoiseTarget) : hasFrameSeed ? Math.min(current, denoiseTarget) : Math.max(current, denoiseTarget))
+          : denoiseTarget;
+      samplerInputs.steps = Math.max(usePoseGuide ? (hasSecondCharacter ? 34 : 32) : (hasSecondCharacter ? 32 : 30), Number(samplerInputs.steps) || 0);
+      const currentCfg = Number(samplerInputs.cfg);
+      samplerInputs.cfg =
+        Number.isFinite(currentCfg) && currentCfg > 0
+          ? (usePoseGuide
+              ? Math.max(currentCfg, hasSecondCharacter ? 6.0 : 5.8)
+              : hasFrameSeed
+                ? Math.min(currentCfg, hasSecondCharacter ? 6.2 : 5.9)
+                : Math.max(hasSecondCharacter ? 6.8 : 6.2, currentCfg))
+          : (usePoseGuide
+              ? (hasSecondCharacter ? 6.0 : 5.8)
+              : hasFrameSeed
+                ? (hasSecondCharacter ? 6.2 : 5.9)
+                : (hasSecondCharacter ? 6.8 : 6.2));
+    }
   }
 }
 
