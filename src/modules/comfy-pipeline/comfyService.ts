@@ -2616,7 +2616,9 @@ function buildShotReferenceDirective(
     }
     lines.push("人物构图硬约束：人物必须在中前景清晰可见，优先完整半身或全身，不得退化成远景小人影、剪影或被场景主体遮挡。");
     lines.push("动作与站位硬约束：必须执行脚本描述的动作和站位，镜头变化时不得沿用上一镜头姿态或无关模板姿势。");
+    lines.push("表情硬约束：每个出镜角色都必须有与当前镜头动作匹配的可读面部表情，不允许面无表情、木讷站桩或统一模板脸。");
     lines.push("人物-场景物理约束：人物脚部与地面接触关系自然，接触阴影方向与场景主光一致，不允许漂浮、穿模、比例失真。");
+    lines.push("人物融合硬约束：人物必须像真实存在于场景中的主体，而不是贴在背景上的纸片；人物边缘、灰度、线条密度、受光和阴影必须与环境一致。");
     lines.push("人物风格硬约束：禁止把角色改成室内写真、自拍、时装摆拍、裸露画面或无关陌生人，必须保持参考角色的身份与服装。");
   }
   if (continuityDirective) {
@@ -2631,20 +2633,20 @@ function buildShotReferenceDirective(
 function buildCharacterPresenceDirective(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `出镜硬要求：画面中必须且只能出现 1 名主要角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；禁止换成其他人、禁止多出陌生人、禁止把主体画成远处小人影。角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证头部到躯干完整。`;
+    return `出镜硬要求：画面中必须且只能出现 1 名主要角色“${characterAssets[0]!.name}”，禁止生成为纯环境空镜；禁止换成其他人、禁止多出陌生人、禁止把主体画成远处小人影。角色必须位于中前景且清晰可辨识，建议占画面高度至少约 35%，并保证完整全身、脚部接地、受光自然、阴影与环境一致。`;
   }
   const names = joinNaturalChineseList(characterAssets.map((item) => item.name));
-  return `出镜硬要求：画面中必须且只能出现 ${characterAssets.length} 名角色${names}，禁止生成为纯环境空镜，禁止缺少任何一人，禁止出现第三人、路人、群演、重复人、融合人或身份互换；每个角色都需各自对应 1 名可辨识人物，不允许用同一张脸或同一套服装冒充两个人，也不允许只出现极远小人、严重裁切或被场景主体完全遮挡。`;
+  return `出镜硬要求：画面中必须且只能出现 ${characterAssets.length} 名角色${names}，禁止生成为纯环境空镜，禁止缺少任何一人，禁止出现第三人、路人、群演、重复人、融合人或身份互换；每个角色都需各自对应 1 名可辨识人物，不允许用同一张脸或同一套服装冒充两个人，也不允许只出现极远小人、严重裁切或被场景主体完全遮挡。所有角色都必须完整接地、阴影自然、比例正确，并作为场景中的真实主体出现。`;
 }
 
 function buildCompactStoryboardPresencePrompt(characterAssets: Asset[]): string {
   if (characterAssets.length === 0) return "";
   if (characterAssets.length === 1) {
-    return `exactly one full body character, character clearly visible, standing in the scene, feet touching the ground, integrated with the environment, not an empty scene`;
+    return `exactly one full body character, character clearly visible, same face same hair same outfit in every shot, visible body action, readable facial expression, standing in the scene, feet touching the ground, shadow matching environment, integrated with the environment, not an empty scene`;
   }
   const names = characterAssets.map((item) => item.name.trim()).filter((item) => item.length > 0);
   const nameText = names.length > 0 ? `exactly ${characterAssets.length} characters: ${names.join(" and ")}` : `exactly ${characterAssets.length} characters`;
-  return `${nameText}, both full body characters clearly visible, both characters inside the scene, feet touching the ground, no missing character, no empty scene, natural interaction with environment`;
+  return `${nameText}, both full body characters clearly visible, same faces same hairstyles same outfits in every shot, visible body acting, readable facial expressions, both characters inside the scene, feet touching the ground, shadow matching environment, no missing character, no empty scene, natural interaction with environment`;
 }
 
 function storyboardScreenZoneLabel(centerXRatio: number): string {
@@ -2714,12 +2716,14 @@ function buildStoryboardBlockingDirective(shot: Shot, characterAssets: Asset[]):
     : "动作硬约束：严格执行本镜头脚本动作，禁止把角色退化为静止站姿、模板摆拍或与剧情无关的姿态。";
 
   const finalActionLines = actionLines.length > 0 ? actionLines : [genericActionLine];
+  const performanceLine =
+    "表演硬约束：所有出镜角色都必须表现出清晰可见的身体动作和与情境一致的面部表情，不允许木讷站立、没有表情、没有反应或像证件照一样僵硬。";
 
   const placementLines = characterAssets.map((asset, index) => {
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.88, sizeScale: 1 };
     return `站位硬约束：角色“${asset.name}”位于${storyboardScreenZoneLabel(placement.centerXRatio)}、${storyboardDepthLabel(placement.floorYRatio)}，画面尺度为${storyboardScaleLabel(placement.sizeScale)}；该角色不得缺失，不得被另一角色替代，也不得缩成不可辨识的小人。`;
   });
-  return [exactCountLine, ...finalActionLines, ...placementLines].join("\n");
+  return [exactCountLine, ...finalActionLines, performanceLine, ...placementLines].join("\n");
 }
 
 function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: boolean): string {
@@ -2735,6 +2739,8 @@ function buildStoryboardStabilityDirective(hasSceneRef: boolean, hasCharacters: 
   if (hasCharacters) {
     parts.push("人物稳定约束：人物解剖正确，四肢完整，站姿自然，禁止畸形肢体、重复身体、拼贴分身。");
     parts.push("人物尺度约束：人物头身比、手脚比例、与环境物体尺度保持常识范围，不允许巨人化或玩偶化。");
+    parts.push("人物融合约束：人物轮廓、灰度、线条密度、材质表现与场景统一，不允许贴纸感、硬边抠图感、白底残留或人物像单独图层漂浮在背景前。");
+    parts.push("表演稳定约束：角色动作要自然符合正常审美和身体重心，面部表情要清楚可读，不允许僵硬站桩、木偶姿势或空白脸。");
   }
   return parts.join("\n");
 }
@@ -2870,6 +2876,9 @@ function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
     );
     pieces.push(
       "Do not output empty environment-only frames when the shot script includes characters. Always place all required characters in visible positions and execute the scripted body actions for this shot."
+    );
+    pieces.push(
+      "Every visible character must show a readable facial expression and a clear body action matching the shot, never an expressionless mannequin pose."
     );
   }
   pieces.push(
@@ -5656,6 +5665,18 @@ function inferPromptTokens(
     characterAssets.length > 0
       ? "indoor selfie, bedroom portrait, glamour photo, fashion editorial, studio portrait crop, sitting on sofa, seated photo pose"
       : "";
+  const stickerLookNegativePrompt =
+    characterAssets.length > 0
+      ? "sticker-like character, flat cutout look, pasted paper doll, separate foreground layer, white edge matte, hard cutout outline, mismatch lighting on character"
+      : "";
+  const performanceFailureNegativePrompt =
+    characterAssets.length > 0
+      ? "expressionless face, blank expression, dead face, mannequin pose, static pose, stiff standing, no visible motion, no acting, empty stare"
+      : "";
+  const continuityFailureNegativePrompt =
+    characterAssets.length > 0
+      ? "different hairstyle, different face, changed outfit, inconsistent costume, changed color palette, identity drift between shots"
+      : "";
   const sanitizedShotNegativePrompt = sanitizeStoryboardNegativePrompt(
     shot.negativePrompt?.trim() || "",
     characterAssets.length > 0
@@ -5669,7 +5690,10 @@ function inferPromptTokens(
     structureChaosNegativePrompt,
     identityDriftNegativePrompt,
     nsfwNegativePrompt,
-    portraitDriftNegativePrompt
+    portraitDriftNegativePrompt,
+    stickerLookNegativePrompt,
+    performanceFailureNegativePrompt,
+    continuityFailureNegativePrompt
   ]
     .filter((item) => item.length > 0)
     .join(", ");

@@ -2007,6 +2007,33 @@ function inferStoryboardGroundContact(action: ReturnType<typeof inferStoryboardG
   return "both feet touching the ground";
 }
 
+function inferStoryboardVisibleAction(text: string, isFocus: boolean): string {
+  const corpus = text.toLowerCase();
+  if (/(回头|turn back|look back)/.test(corpus)) return isFocus ? "turning back with visible shoulder movement" : "reacting with a small turn back";
+  if (/(转头|turn head|head turn)/.test(corpus)) return isFocus ? "turning the head clearly" : "reacting with a small head turn";
+  if (/(抬手|举手|raise hand|lift hand|gesture)/.test(corpus)) return isFocus ? "raising one hand in a readable gesture" : "giving a small reactive hand movement";
+  if (/(停下|停步|stop|halt)/.test(corpus)) return isFocus ? "slowing down and stopping with visible weight shift" : "slowing down with a reactive weight shift";
+  if (/(点头|nod)/.test(corpus)) return isFocus ? "giving a clear nod" : "responding with a small nod";
+  if (/(俯身|弯腰|bend|lean forward)/.test(corpus)) return isFocus ? "bending slightly forward with visible torso motion" : "reacting with a small forward lean";
+  if (/(看向|look at|look toward|glance)/.test(corpus)) return isFocus ? "turning the gaze and shoulders toward the target" : "shifting gaze toward the target";
+  if (/(走|慢走|前行|迈步|walk|walking|step|stepping)/.test(corpus)) return isFocus ? "taking a visible grounded step" : "keeping a readable grounded walking motion";
+  if (/(跑|奔跑|run|running|sprint)/.test(corpus)) return isFocus ? "running with a clear forward body action" : "keeping a readable running motion";
+  return isFocus
+    ? "showing a visible body action with head, shoulders, or hands instead of standing stiff"
+    : "showing a small but readable reactive body movement instead of standing stiff";
+}
+
+function inferStoryboardReadableExpression(text: string, isFocus: boolean): string {
+  const corpus = text.toLowerCase();
+  if (/(警觉|戒备|alert|wary|guarded)/.test(corpus)) return "readable alert expression";
+  if (/(疑惑|怀疑|困惑|puzzled|doubtful|suspicious)/.test(corpus)) return "readable puzzled expression";
+  if (/(担心| concern|concerned|worried)/.test(corpus)) return "readable concerned expression";
+  if (/(严肃|认真|serious|determined)/.test(corpus)) return "readable serious expression";
+  if (/(平静|冷静| calm|calm )/.test(corpus)) return "readable calm expression";
+  if (/(惊讶|吃惊|surprised|shock)/.test(corpus)) return "readable surprised expression";
+  return isFocus ? "readable natural expression matching the shot action" : "readable reaction expression";
+}
+
 function inferStoryboardFocusCharacter(text: string, characterNames: string[], preferred = ""): string {
   const uniqueNames = uniqueEntities(characterNames.map((name) => sanitizeCharacterCandidate(name)).filter(Boolean));
   if (uniqueNames.length === 0) return "";
@@ -2054,7 +2081,19 @@ function buildMandatoryStoryboardNegativePrompt(baseNegativePrompt: string, char
     "tiny distant person",
     "silhouette only",
     "pasted character",
-    "collage"
+    "collage",
+    "sticker-like character",
+    "flat cutout look",
+    "wrong face",
+    "different hairstyle",
+    "changed outfit",
+    "inconsistent costume",
+    "expressionless face",
+    "blank expression",
+    "no expression",
+    "mannequin pose",
+    "static pose",
+    "standing still"
   ].filter(Boolean);
   return [...new Set([...baseItems, ...mandatoryItems])].join(", ");
 }
@@ -2076,6 +2115,7 @@ function buildStoryShotPrompt(
   const groundedAction = inferStoryboardGroundedAction(clean);
   const groundContact = inferStoryboardGroundContact(groundedAction);
   const focusCharacter = inferStoryboardFocusCharacter(clean, uniqueNames, preferredFocusCharacter);
+  const consistencyLine = "keep exact same face, hairstyle, costume, colors, and body proportions in every shot";
   const subjectLine =
     uniqueNames.length === 1
       ? `${focusCharacter} is the main subject of the shot`
@@ -2086,10 +2126,12 @@ function buildStoryShotPrompt(
     .map((name, index) => {
       const isFocus = focusCharacter === name;
       const role = isFocus || !focusCharacter ? "main subject" : "secondary required character";
-      return `${name}, ${role}, full body, clearly visible, in the scene, ${groundedAction} the ${surface} ${storyboardScreenPlacement(index, uniqueNames.length, isFocus)}, ${groundContact}, interacting with the ${environmentLabel}`;
+      const visibleAction = inferStoryboardVisibleAction(clean, isFocus || !focusCharacter);
+      const expression = inferStoryboardReadableExpression(clean, isFocus || !focusCharacter);
+      return `${name}, ${role}, ${consistencyLine}, full body, clearly visible, in the scene, ${visibleAction}, ${expression}, ${groundedAction} the ${surface} ${storyboardScreenPlacement(index, uniqueNames.length, isFocus)}, ${groundContact}, shadow matching environment, correct perspective, contact shadows, naturally integrated with the ${environmentLabel}`;
     })
     .join(". ");
-  return `${clean}。${subjectLine}。${characterLines}。The characters are the subject of the shot, not the empty environment. No pure scenery frame. 电影分镜，${scale}，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
+  return `${clean}。${subjectLine}。${characterLines}。The characters are the subject of the shot, not the empty environment. No pure scenery frame. No pasted cutout look. Visible body acting and readable facial expression are required. 电影分镜，${scale}，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。`;
 }
 
 function buildStoryVideoPrompt(
@@ -2119,7 +2161,7 @@ function buildStoryVideoPrompt(
       ? `the characters keep grounded motion while ${groundedAction} the ${surface}`
       : `the characters keep grounded contact while standing on the ${surface}`;
   const focusLine = focusCharacter ? `${focusCharacter} stays the visual focus` : "the scripted characters stay readable";
-  return `${clean}。${visibilityLine}，${motionLine}，${focusLine}，no empty scenery shot，持续与 ${environmentLabel} 发生互动，镜头稳定。`;
+  return `${clean}。${visibilityLine}，${motionLine}，faces keep readable expression changes，hair and costume remain exactly consistent across shots，shadow matching environment，correct perspective，${focusLine}，no empty scenery shot，持续与 ${environmentLabel} 发生互动，镜头稳定。`;
 }
 
 function inferVideoModeForStory(text: string, dialogue: string): "auto" | "single_frame" | "first_last_frame" {
