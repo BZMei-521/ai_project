@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import fsSync, { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -27,6 +28,7 @@ const dataRoot = resolveDataRoot();
 const workspaceRoot = path.join(dataRoot, "workspace");
 const currentProjectMarker = path.join(dataRoot, "current-project.txt");
 const bridgeLogsRoot = path.join(dataRoot, "logs");
+const comfyViewCacheRoot = path.join(dataRoot, "cache", "comfy-view");
 const pipelineRuntimeLogPath = path.join(bridgeLogsRoot, "pipeline-runtime-latest.log");
 const comfyRuntimeConfigPath = path.join(bridgeLogsRoot, "comfy-runtime-config.json");
 const startupLogPath = path.join(projectRoot, "logs", "windows-web-latest.log");
@@ -616,6 +618,8 @@ async function invokeCommand(cmd, args) {
       return comfyGetHistory(args?.baseUrl, args?.promptId);
     case "comfy_fetch_view_base64":
       return comfyFetchViewBase64(args?.url);
+    case "cache_comfy_view_to_local":
+      return cacheComfyViewToLocal(args);
     case "comfy_discover_endpoints":
       return comfyDiscoverEndpoints();
     case "comfy_discover_local_dirs":
@@ -1483,6 +1487,53 @@ async function comfyFetchViewBase64(url) {
   }
   const arrayBuffer = await response.arrayBuffer();
   return Buffer.from(arrayBuffer).toString("base64");
+}
+
+function sanitizeCachePathSegment(value, fallback = "cache") {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return cleaned || fallback;
+}
+
+async function cacheComfyViewToLocal(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url 不能为空");
+
+  let parsedUrl = null;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    parsedUrl = null;
+  }
+
+  const explicitFilename = String(args?.filename || "").trim();
+  const explicitSubfolder = String(args?.subfolder || "")
+    .trim()
+    .replace(/^[/\\]+|[/\\]+$/g, "");
+  const queryFilename = parsedUrl?.searchParams.get("filename")?.trim() || "";
+  const querySubfolder = (parsedUrl?.searchParams.get("subfolder")?.trim() || "").replace(/^[/\\]+|[/\\]+$/g, "");
+  const filename = sanitizeCachePathSegment(explicitFilename || queryFilename || "comfy_view.png", "comfy_view.png");
+  const subfolderParts = (explicitSubfolder || querySubfolder)
+    .split(/[\\/]+/)
+    .map((part) => sanitizeCachePathSegment(part))
+    .filter(Boolean);
+  const urlHash = createHash("sha1").update(rawUrl).digest("hex").slice(0, 12);
+  const parsedName = path.parse(filename);
+  const safeExt = parsedName.ext || ".png";
+  const safeBase = sanitizeCachePathSegment(parsedName.name || "comfy_view", "comfy_view");
+  const targetDir = path.join(comfyViewCacheRoot, ...subfolderParts);
+  const targetPath = path.join(targetDir, `${safeBase}_${urlHash}${safeExt}`);
+  if (await fileExists(targetPath)) {
+    return { filePath: targetPath, cached: true };
+  }
+  await ensureDir(targetDir);
+  const base64Data = await comfyFetchViewBase64(rawUrl);
+  await fs.writeFile(targetPath, Buffer.from(base64Data, "base64"));
+  return { filePath: targetPath, cached: false };
 }
 
 async function comfyDiscoverEndpoints() {

@@ -9748,12 +9748,24 @@ export function ComfyPipelinePanel() {
           .map((value) => value.replace(/[\\/]+$/, ""))
           .filter(Boolean)
       );
-      if (outputRoots.length <= 0) return "";
-      const candidatePaths = uniqueEntities(
-        outputRoots.map((root) => `${root}${subfolder ? `/${subfolder}` : ""}/${filename}`)
-      );
-      const missing = await filterMissingLocalPaths(candidatePaths);
-      return candidatePaths.find((path) => !missing.has(path)) ?? "";
+      if (outputRoots.length > 0) {
+        const candidatePaths = uniqueEntities(
+          outputRoots.map((root) => `${root}${subfolder ? `/${subfolder}` : ""}/${filename}`)
+        );
+        const missing = await filterMissingLocalPaths(candidatePaths);
+        const matchedPath = candidatePaths.find((path) => !missing.has(path)) ?? "";
+        if (matchedPath) return matchedPath;
+      }
+      try {
+        const cached = await invokeDesktopCommand<{ filePath?: string }>("cache_comfy_view_to_local", {
+          url: trimmed,
+          filename,
+          subfolder
+        });
+        return cached?.filePath?.trim() || "";
+      } catch {
+        return "";
+      }
     } catch {
       return "";
     }
