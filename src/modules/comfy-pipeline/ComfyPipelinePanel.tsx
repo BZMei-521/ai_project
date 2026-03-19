@@ -45,6 +45,7 @@ import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-charact
 import CHARACTER_THREEVIEW_LAYOUT_REF_BASE64 from "./presets/assets/character-threeview-layout-ref.base64";
 import SKYBOX_WORKFLOW_OBJECT from "./presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "./presets/asset-skybox-panorama-default.json";
+import { listAutosaveSnapshots } from "../persistence/autosave";
 import {
   safeStorageGetItem,
   safeStorageSetItem
@@ -3498,15 +3499,90 @@ function buildImportedShotReuseSignature(input: {
   ].join("||");
 }
 
+function listRecoverableStoryboardShots(currentShots: Shot[]) {
+  const reusableShots: Shot[] = [];
+  const seenKeys = new Set<string>();
+  const pushShot = (shot: Shot | null | undefined) => {
+    if (!shot) return;
+    if (!hasUsableGeneratedAsset("image", shot) && !hasUsableGeneratedAsset("video", shot)) return;
+    const keys = [
+      normalizeImportedShotReuseText(shot.generatedImagePath),
+      normalizeImportedShotReuseText(shot.generatedVideoPath),
+      buildImportedShotReuseSignature({
+        title: shot.title,
+        prompt: shot.storyPrompt,
+        dialogue: shot.dialogue,
+        notes: shot.notes,
+        characterNames: shot.sourceCharacterNames,
+        sceneName: shot.sourceSceneName
+      })
+    ].filter(Boolean);
+    if (keys.some((key) => seenKeys.has(key))) return;
+    keys.forEach((key) => seenKeys.add(key));
+    reusableShots.push(shot);
+  };
+
+  currentShots.forEach((shot) => pushShot(shot));
+
+  try {
+    const history = listAutosaveSnapshots()
+      .slice(0, 12)
+      .sort((left, right) => right.timestamp - left.timestamp);
+    for (const entry of history) {
+      for (const shot of entry.snapshot.shots ?? []) {
+        pushShot(shot);
+      }
+    }
+  } catch {
+    // Ignore autosave access issues and keep current-shot recovery available.
+  }
+
+  return reusableShots;
+}
+
+function scoreImportedShotReuseCandidate(item: NormalizedImportedShot, candidate: Shot) {
+  const normalizedItemTitle = normalizeImportedShotReuseText(item.title);
+  const normalizedCandidateTitle = normalizeImportedShotReuseText(candidate.title);
+  const normalizedItemScene = normalizeImportedShotReuseText(item.sceneName);
+  const normalizedCandidateScene = normalizeImportedShotReuseText(candidate.sourceSceneName);
+  const normalizedItemPrompt = normalizeImportedShotReuseText(item.prompt);
+  const normalizedCandidatePrompt = normalizeImportedShotReuseText(candidate.storyPrompt);
+  const normalizedItemDialogue = normalizeImportedShotReuseText(item.dialogue);
+  const normalizedCandidateDialogue = normalizeImportedShotReuseText(candidate.dialogue);
+  const itemCharacters = uniqueEntities(
+    (item.characterNames ?? []).map((value) => normalizeImportedShotReuseText(value)).filter(Boolean)
+  );
+  const candidateCharacters = uniqueEntities(
+    (candidate.sourceCharacterNames ?? []).map((value) => normalizeImportedShotReuseText(value)).filter(Boolean)
+  );
+  const candidateCharacterSet = new Set(candidateCharacters);
+  const overlappedCharacterCount = itemCharacters.filter((value) => candidateCharacterSet.has(value)).length;
+
+  let score = 0;
+  if (item.id.trim() && item.id.trim() === candidate.id.trim()) score += 80;
+  if (normalizedItemTitle && normalizedItemTitle === normalizedCandidateTitle) score += 140;
+  if (normalizedItemScene && normalizedItemScene === normalizedCandidateScene) score += 36;
+  if (normalizedItemPrompt && normalizedItemPrompt === normalizedCandidatePrompt) score += 48;
+  if (normalizedItemDialogue && normalizedItemDialogue === normalizedCandidateDialogue) score += 20;
+  if (overlappedCharacterCount > 0) score += overlappedCharacterCount * 32;
+  if (
+    itemCharacters.length > 0 &&
+    itemCharacters.length === candidateCharacters.length &&
+    overlappedCharacterCount === itemCharacters.length
+  ) {
+    score += 28;
+  }
+  if (!normalizedItemTitle || !normalizedCandidateTitle || normalizedItemTitle !== normalizedCandidateTitle) {
+    if (overlappedCharacterCount <= 0) score -= 120;
+  }
+  return score;
+}
+
 function preserveGeneratedMediaForImportedShots(
   normalizedItems: NormalizedImportedShot[],
-  existingShots: Shot[],
-  currentSequenceId: string
+  existingShots: Shot[]
 ) {
-  const reusableShots = existingShots.filter((shot) => {
-    if (currentSequenceId && shot.sequenceId !== currentSequenceId) return false;
-    return hasUsableGeneratedAsset("image", shot) || hasUsableGeneratedAsset("video", shot);
-  });
+  const reusableShots = listRecoverableStoryboardShots(existingShots);
   if (reusableShots.length <= 0) {
     return {
       items: normalizedItems,
@@ -3569,6 +3645,22 @@ function preserveGeneratedMediaForImportedShots(
     if (!matchedShot && signature) {
       const bucket = shotsBySignature.get(signature) ?? [];
       matchedShot = bucket.find((candidate) => !consumedShotIds.has(candidate.id)) ?? null;
+    }
+
+    if (!matchedShot) {
+      let bestCandidate: Shot | null = null;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (const candidate of reusableShots) {
+        if (consumedShotIds.has(candidate.id)) continue;
+        const nextScore = scoreImportedShotReuseCandidate(item, candidate);
+        if (nextScore > bestScore) {
+          bestScore = nextScore;
+          bestCandidate = candidate;
+        }
+      }
+      if (bestCandidate && bestScore >= 140) {
+        matchedShot = bestCandidate;
+      }
     }
 
     if (!matchedShot) return item;
@@ -9638,7 +9730,7 @@ export function ComfyPipelinePanel() {
   ): Promise<{ path: string; modelName: string } | null> => {
     const normalizedName = name.trim();
     if (!normalizedName) return null;
-    const allShots = useStoryboardStore.getState().shots;
+    const allShots = listRecoverableStoryboardShots(useStoryboardStore.getState().shots);
     const scoredCandidates = allShots
       .map((shot) => {
         const localPath = resolveGeneratedStoryboardStillLocalPath(runtimeSettings, shot.generatedImagePath?.trim() || "");
@@ -11426,8 +11518,7 @@ export function ComfyPipelinePanel() {
     const storyboardState = useStoryboardStore.getState();
     const preservedMedia = preserveGeneratedMediaForImportedShots(
       normalizedItems,
-      storyboardState.shots,
-      storyboardState.currentSequenceId
+      storyboardState.shots
     );
     if (preservedMedia.preservedImageCount > 0 || preservedMedia.preservedVideoCount > 0) {
       appendLog(
