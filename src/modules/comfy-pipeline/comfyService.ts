@@ -3040,7 +3040,26 @@ function shouldUseSecondaryCharacterView(shot: Shot): boolean {
 }
 
 function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
-  if (assets.length <= 1) return assets;
+  const orderedAssets = (() => {
+    if (assets.length <= 1) return assets;
+    const desiredNames = (shot.sourceCharacterNames ?? []).map((item) => item.trim().toLowerCase()).filter(Boolean);
+    if (desiredNames.length === 0) return assets;
+    const ordered: Asset[] = [];
+    const usedIds = new Set<string>();
+    for (const desiredName of desiredNames) {
+      const matched = assets.find((asset) => asset.name.trim().toLowerCase() === desiredName);
+      if (!matched || usedIds.has(matched.id)) continue;
+      ordered.push(matched);
+      usedIds.add(matched.id);
+    }
+    for (const asset of assets) {
+      if (usedIds.has(asset.id)) continue;
+      ordered.push(asset);
+      usedIds.add(asset.id);
+    }
+    return ordered;
+  })();
+  if (orderedAssets.length <= 1) return orderedAssets;
   const explicitlyBoundCharacterCount = Math.max(
     shot.characterRefs?.filter((item) => item.trim().length > 0).length ?? 0,
     shot.sourceCharacterNames?.filter((item) => item.trim().length > 0).length ?? 0
@@ -3060,7 +3079,7 @@ function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
       "二人"
     ])
   ) {
-    return assets.slice(0, 2);
+    return orderedAssets.slice(0, 2);
   }
   const isForcedDual = containsAnyKeyword(corpus, [
     "双人",
@@ -3079,9 +3098,9 @@ function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
     "duel",
     "versus"
   ]);
-  if (isForcedDual) return assets.slice(0, 2);
+  if (isForcedDual) return orderedAssets.slice(0, 2);
 
-  const mentioned = assets.filter((asset) => corpus.includes(asset.name.toLowerCase()));
+  const mentioned = orderedAssets.filter((asset) => corpus.includes(asset.name.toLowerCase()));
   if (mentioned.length === 1) return [mentioned[0]!];
   if (mentioned.length >= 2) return mentioned.slice(0, 2);
 
@@ -3097,8 +3116,8 @@ function selectStoryboardCharacterAssets(shot: Shot, assets: Asset[]): Asset[] {
     "medium close",
     "reaction"
   ]);
-  if (likelySingleFraming) return [assets[0]!];
-  return assets.slice(0, 2);
+  if (likelySingleFraming) return [orderedAssets[0]!];
+  return orderedAssets.slice(0, 2);
 }
 
 function buildQwenReferenceInstruction(tokens: Record<string, string>): string {
@@ -3318,9 +3337,24 @@ function extractImageReferenceSources(
     }
   }
 
-  const selectedCharacters = (shot.characterRefs ?? [])
-    .map((id) => assets.find((item) => item.id === id && item.type === "character"))
-    .filter((item): item is Asset => Boolean(item));
+  const explicitCharacters: Asset[] = [];
+  const usedCharacterIds = new Set<string>();
+  const pushCharacterAsset = (asset: Asset | undefined) => {
+    if (!asset || asset.type !== "character" || usedCharacterIds.has(asset.id)) return;
+    explicitCharacters.push(asset);
+    usedCharacterIds.add(asset.id);
+  };
+  for (const id of shot.characterRefs ?? []) {
+    pushCharacterAsset(assets.find((item) => item.id === id && item.type === "character"));
+  }
+  for (const name of shot.sourceCharacterNames ?? []) {
+    const desiredName = name.trim().toLowerCase();
+    if (!desiredName) continue;
+    pushCharacterAsset(
+      assets.find((item) => item.type === "character" && item.name.trim().toLowerCase() === desiredName)
+    );
+  }
+  const selectedCharacters = selectStoryboardCharacterAssets(shot, explicitCharacters);
   const prefersAngleMatchedView = shouldUseSecondaryCharacterView(shot);
   const shouldPreferFrontIdentityRefs =
     (sceneRefs.length > 0 || selectedCharacters.length > 1 || shotLooksCharacterDrivenInComfy(shot)) &&
@@ -5557,29 +5591,29 @@ function inferStoryboardCharacterPlacement(
       const lanePreset =
         scale === "close"
           ? {
-              leftLaneX: 0.69,
-              rightLaneX: 0.81,
-              leftFloorY: 0.88,
-              rightFloorY: 0.89,
-              leftSize: 1.18,
-              rightSize: 1.1
+              leftLaneX: 0.74,
+              rightLaneX: 0.84,
+              leftFloorY: 0.84,
+              rightFloorY: 0.85,
+              leftSize: 1.08,
+              rightSize: 1.02
             }
           : scale === "medium"
             ? {
-                leftLaneX: 0.7,
-                rightLaneX: 0.81,
-                leftFloorY: 0.85,
-                rightFloorY: 0.865,
-                leftSize: 1.1,
-                rightSize: 1.02
+                leftLaneX: 0.76,
+                rightLaneX: 0.85,
+                leftFloorY: 0.8,
+                rightFloorY: 0.815,
+                leftSize: 1,
+                rightSize: 0.94
               }
             : {
-                leftLaneX: 0.71,
-                rightLaneX: 0.81,
-                leftFloorY: 0.82,
-                rightFloorY: 0.835,
-                leftSize: 1.02,
-                rightSize: 0.96
+                leftLaneX: 0.77,
+                rightLaneX: 0.86,
+                leftFloorY: 0.77,
+                rightFloorY: 0.785,
+                leftSize: 0.92,
+                rightSize: 0.86
               };
       placement = applyClampedPlacement(placement, {
         centerXRatio: hasPathRelativeLeftCue ? lanePreset.leftLaneX : lanePreset.rightLaneX,
@@ -5594,17 +5628,17 @@ function inferStoryboardCharacterPlacement(
       placement = applyClampedPlacement(placement, {
         // Keep both actors on the visible stone path band instead of dropping
         // them onto the rocky shoreline or shrinking them into the far corner.
-        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.71 : 0.81,
-        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.84 : 0.855,
+        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.77 : 0.86,
+        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.79 : 0.805,
         sizeScale: hasPathRelativeLaneCue
           ? placement.sizeScale
-          : placement.sizeScale * (index === 0 ? 1.12 : 1.06)
+          : placement.sizeScale * (index === 0 ? 1.02 : 0.98)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.78,
-        floorYRatio: 0.86,
-        sizeScale: placement.sizeScale * 1.08
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.82,
+        floorYRatio: 0.81,
+        sizeScale: placement.sizeScale * 0.98
       });
     }
   }
@@ -5685,17 +5719,17 @@ function stabilizeStoryboardPairPlacements(
     const riversidePreset =
       scale === "close"
         ? {
-            left: { centerXRatio: 0.69, floorYRatio: 0.88, sizeScale: 1.18 },
-            right: { centerXRatio: 0.81, floorYRatio: 0.895, sizeScale: 1.08 }
+            left: { centerXRatio: 0.74, floorYRatio: 0.84, sizeScale: 1.08 },
+            right: { centerXRatio: 0.84, floorYRatio: 0.85, sizeScale: 1.02 }
           }
         : scale === "medium"
           ? {
-              left: { centerXRatio: 0.7, floorYRatio: 0.85, sizeScale: 1.1 },
-              right: { centerXRatio: 0.81, floorYRatio: 0.865, sizeScale: 1.02 }
+              left: { centerXRatio: 0.76, floorYRatio: 0.8, sizeScale: 1 },
+              right: { centerXRatio: 0.85, floorYRatio: 0.815, sizeScale: 0.94 }
             }
           : {
-              left: { centerXRatio: 0.71, floorYRatio: 0.82, sizeScale: 1.02 },
-              right: { centerXRatio: 0.81, floorYRatio: 0.835, sizeScale: 0.96 }
+              left: { centerXRatio: 0.77, floorYRatio: 0.77, sizeScale: 0.92 },
+              right: { centerXRatio: 0.86, floorYRatio: 0.785, sizeScale: 0.86 }
             };
     stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
       centerXRatio: riversidePreset.left.centerXRatio,
@@ -9165,15 +9199,19 @@ export async function generateShotAsset(
           : "storyboard";
     tokens = applyGlobalStyleToTokens(settings, tokens, kind, styleScope);
     let imageReferenceSources: WeightedImageRef[] = [];
+    let stableStoryboardCompositeSeedSource = "";
     if (kind === "image") {
       imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
-          const [, identityBoardRef] = await Promise.all([
+          const [compositeRef, identityBoardRef] = await Promise.all([
             buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
+          if (compositeRef?.source) {
+            stableStoryboardCompositeSeedSource = compositeRef.source;
+          }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
               ...imageReferenceSources.filter((item) => item.source.trim() !== identityBoardRef.source.trim()),
@@ -9196,6 +9234,22 @@ export async function generateShotAsset(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
+      const shotCharacterCount = Math.max(
+        shot.characterRefs?.filter((item) => item.trim().length > 0).length ?? 0,
+        shot.sourceCharacterNames?.filter((item) => item.trim().length > 0).length ?? 0
+      );
+      if (
+        stableStoryboardCompositeSeedSource &&
+        !assetOutputContext &&
+        shotCharacterCount >= 2 &&
+        isStableStoryboardWorkflowPreset(rewrittenWorkflow)
+      ) {
+        tokens = {
+          ...tokens,
+          FRAME_IMAGE_PATH: stableStoryboardCompositeSeedSource,
+          STORYBOARD_FRAME_SEED_MODE: "composite"
+        };
+      }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageStoryboardPoseGuideToken(settings, shot, tokens);
       tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
