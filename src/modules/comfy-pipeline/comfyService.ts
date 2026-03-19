@@ -7964,6 +7964,7 @@ function adaptStableStoryboardWorkflowForShot(
     char2SecondaryPath.length > 0 &&
     char2SecondaryPath !== char2PrimaryPath &&
     char2SecondaryPath !== char1PrimaryPath;
+  const lockDualCharacterIdentity = hasSecondCharacter;
   const hasContinuitySeed = String(tokens.PREV_SCENE_IMAGE_PATH ?? "").trim().length > 0;
   const frameSeedMode = String(tokens.STORYBOARD_FRAME_SEED_MODE ?? "").trim().toLowerCase();
   const usesCompositeSeed =
@@ -7990,11 +7991,13 @@ function adaptStableStoryboardWorkflowForShot(
     hasSecondCharacter ? 1.08 : 0.96,
     hasSecondCharacter ? 1.3 : 1.18
   );
-  const char1SecondaryWeight = hasUniqueChar1Secondary ? (hasSecondCharacter ? 0.24 : 0.28) : 0;
+  const char1SecondaryWeight = hasUniqueChar1Secondary ? (lockDualCharacterIdentity ? 0 : 0.28) : 0;
   const char2PrimaryWeight = hasSecondCharacter
     ? clamp(Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "1.04") || 1.04, 1.02, 1.26)
     : 0;
-  const char2SecondaryWeight = hasUniqueChar2Secondary ? 0.22 : 0;
+  const char2SecondaryWeight = hasUniqueChar2Secondary ? (lockDualCharacterIdentity ? 0 : 0.22) : 0;
+  const passAModelNodeId = char1SecondaryWeight > 0 ? "11" : "9";
+  const passBModelNodeId = hasSecondCharacter ? (char2SecondaryWeight > 0 ? "15" : "13") : passAModelNodeId;
 
   const passABaseDenoise = Number(tokens.STORYBOARD_DENOISE ?? "0.46") || 0.46;
   const passADenoise = clamp(
@@ -8023,17 +8026,25 @@ function adaptStableStoryboardWorkflowForShot(
     Number(tokens.STORYBOARD_STEPS ?? "32") || 32
   );
   const passACfg = clamp(Number(tokens.STORYBOARD_CFG ?? "5.9") || 5.9, 5.8, 6.4);
-  const passBSteps = hasSecondCharacter ? 14 : 12;
+  const passBSteps = hasSecondCharacter ? 18 : 12;
   const passBCfg = shotScale === "close" ? 5 : 4.9;
-  const passBDenoise = usesCompositeSeed
-    ? 0.08
-    : hasContinuitySeed
-    ? shotScale === "close"
-      ? 0.1
-      : 0.08
-    : shotScale === "close"
-      ? 0.14
-      : 0.12;
+  const passBDenoise = hasSecondCharacter
+    ? hasContinuitySeed
+      ? shotScale === "close"
+        ? 0.2
+        : 0.18
+      : shotScale === "close"
+        ? 0.24
+        : 0.22
+    : usesCompositeSeed
+      ? 0.08
+      : hasContinuitySeed
+        ? shotScale === "close"
+          ? 0.1
+          : 0.08
+        : shotScale === "close"
+          ? 0.14
+          : 0.12;
   const openposeStrength = 1;
   const depthStrength =
     usesCompositeSeed
@@ -8091,7 +8102,7 @@ function adaptStableStoryboardWorkflowForShot(
   if (char1PrimaryInputs) {
     char1PrimaryInputs.model = workflowRef("7");
     char1PrimaryInputs.weight = primaryWeightBase;
-    char1PrimaryInputs.end_at = 1;
+    char1PrimaryInputs.end_at = lockDualCharacterIdentity ? 0.86 : 1;
   }
   if (char1SecondaryInputs) {
     char1SecondaryInputs.model = workflowRef("9");
@@ -8100,7 +8111,7 @@ function adaptStableStoryboardWorkflowForShot(
     char1SecondaryInputs.end_at = char1SecondaryWeight > 0 ? 0.86 : 0;
   }
   if (char2PrimaryInputs) {
-    char2PrimaryInputs.model = workflowRef("11");
+    char2PrimaryInputs.model = workflowRef(passAModelNodeId);
     char2PrimaryInputs.weight = char2PrimaryWeight;
     char2PrimaryInputs.start_at = 0;
     char2PrimaryInputs.end_at = char2PrimaryWeight > 0 ? 1 : 0;
@@ -8142,7 +8153,9 @@ function adaptStableStoryboardWorkflowForShot(
     depthApplyInputs.end_percent = 1;
   }
   if (passAInputs) {
-    passAInputs.model = workflowRef("15");
+    // For dual-character shots, first lock the primary character into the clean scene seed,
+    // then let pass B add the second character on top of that latent.
+    passAInputs.model = workflowRef(hasSecondCharacter ? "9" : passAModelNodeId);
     passAInputs.positive = workflowRef("24");
     passAInputs.negative = workflowRef("24", 1);
     passAInputs.latent_image = workflowRef("6");
@@ -8151,7 +8164,7 @@ function adaptStableStoryboardWorkflowForShot(
     passAInputs.denoise = passADenoise;
   }
   if (passBInputs) {
-    passBInputs.model = workflowRef("15");
+    passBInputs.model = workflowRef(passBModelNodeId);
     passBInputs.positive = workflowRef("24");
     passBInputs.negative = workflowRef("24", 1);
     passBInputs.latent_image = workflowRef("27");
