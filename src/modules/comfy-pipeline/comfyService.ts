@@ -4051,17 +4051,144 @@ function buildIntegratedCharacterCanvas(
   return canvas;
 }
 
+function averageOpaqueRegionColor(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fallback: { r: number; g: number; b: number }
+): { r: number; g: number; b: number } {
+  const safeX = Math.max(0, Math.min(context.canvas.width - 1, Math.round(x)));
+  const safeY = Math.max(0, Math.min(context.canvas.height - 1, Math.round(y)));
+  const safeWidth = Math.max(1, Math.min(context.canvas.width - safeX, Math.round(width)));
+  const safeHeight = Math.max(1, Math.min(context.canvas.height - safeY, Math.round(height)));
+  const image = context.getImageData(safeX, safeY, safeWidth, safeHeight);
+  const data = image.data;
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = (data[index + 3] ?? 0) / 255;
+    if (alpha <= 0.08) continue;
+    sumR += (data[index] ?? 0) * alpha;
+    sumG += (data[index + 1] ?? 0) * alpha;
+    sumB += (data[index + 2] ?? 0) * alpha;
+    count += alpha;
+  }
+  if (count <= 0) return fallback;
+  return {
+    r: sumR / count,
+    g: sumG / count,
+    b: sumB / count
+  };
+}
+
+function colorToRgba(color: { r: number; g: number; b: number }, alpha: number): string {
+  return `rgba(${clampChannel(color.r)}, ${clampChannel(color.g)}, ${clampChannel(color.b)}, ${Math.max(0, Math.min(1, alpha))})`;
+}
+
+function mixRgb(
+  left: { r: number; g: number; b: number },
+  right: { r: number; g: number; b: number },
+  ratio: number
+): { r: number; g: number; b: number } {
+  const t = Math.max(0, Math.min(1, ratio));
+  return {
+    r: left.r * (1 - t) + right.r * t,
+    g: left.g * (1 - t) + right.g * t,
+    b: left.b * (1 - t) + right.b * t
+  };
+}
+
+function offsetPoint(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  distance: number
+): { x: number; y: number } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.max(1e-5, Math.sqrt(dx * dx + dy * dy));
+  return {
+    x: from.x + (dx / length) * distance,
+    y: from.y + (dy / length) * distance
+  };
+}
+
+function drawTaperedLimb(
+  context: CanvasRenderingContext2D,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  startWidth: number,
+  endWidth: number,
+  color: { r: number; g: number; b: number }
+) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+  const nx = -dy / length;
+  const ny = dx / length;
+  const halfStart = startWidth / 2;
+  const halfEnd = endWidth / 2;
+  context.beginPath();
+  context.moveTo(from.x + nx * halfStart, from.y + ny * halfStart);
+  context.lineTo(from.x - nx * halfStart, from.y - ny * halfStart);
+  context.lineTo(to.x - nx * halfEnd, to.y - ny * halfEnd);
+  context.lineTo(to.x + nx * halfEnd, to.y + ny * halfEnd);
+  context.closePath();
+  context.fillStyle = colorToRgba(color, 0.98);
+  context.fill();
+}
+
+function sampleStoryboardGuidePalette(cutout: HTMLCanvasElement) {
+  const context = cutout.getContext("2d");
+  if (!context) {
+    return {
+      hair: { r: 34, g: 34, b: 40 },
+      skin: { r: 230, g: 205, b: 188 },
+      upper: { r: 95, g: 110, b: 145 },
+      lower: { r: 78, g: 82, b: 110 },
+      accent: { r: 40, g: 40, b: 48 },
+      shoes: { r: 30, g: 30, b: 34 },
+      hasLongGarment: true
+    };
+  }
+  const width = cutout.width;
+  const height = cutout.height;
+  const darkFallback = { r: 36, g: 36, b: 42 };
+  const upperFallback = { r: 100, g: 116, b: 150 };
+  const lowerFallback = { r: 88, g: 94, b: 128 };
+  const skinFallback = { r: 228, g: 204, b: 190 };
+  const hair = averageOpaqueRegionColor(context, width * 0.28, height * 0.02, width * 0.44, height * 0.16, darkFallback);
+  const skin = averageOpaqueRegionColor(context, width * 0.34, height * 0.1, width * 0.32, height * 0.16, skinFallback);
+  const upper = averageOpaqueRegionColor(context, width * 0.24, height * 0.22, width * 0.52, height * 0.28, upperFallback);
+  const lower = averageOpaqueRegionColor(context, width * 0.22, height * 0.5, width * 0.56, height * 0.28, lowerFallback);
+  const accent = averageOpaqueRegionColor(context, width * 0.38, height * 0.42, width * 0.24, height * 0.12, darkFallback);
+  const shoes = averageOpaqueRegionColor(context, width * 0.28, height * 0.86, width * 0.44, height * 0.12, darkFallback);
+  const centerLower = context.getImageData(
+    Math.max(0, Math.round(width * 0.42)),
+    Math.max(0, Math.round(height * 0.58)),
+    Math.max(1, Math.round(width * 0.16)),
+    Math.max(1, Math.round(height * 0.24))
+  );
+  let opaqueCount = 0;
+  for (let index = 0; index < centerLower.data.length; index += 4) {
+    if ((centerLower.data[index + 3] ?? 0) > 48) opaqueCount += 1;
+  }
+  const hasLongGarment = opaqueCount >= Math.max(12, centerLower.data.length / 20);
+  return { hair, skin, upper, lower, accent, shoes, hasLongGarment };
+}
+
 function buildStoryboardGuideCharacterCanvas(
   cutout: HTMLCanvasElement,
   drawWidth: number,
   drawHeight: number,
   sceneTint: { r: number; g: number; b: number },
-  scenePatch?: HTMLCanvasElement | null
+  scenePatch?: HTMLCanvasElement | null,
+  action: StoryboardPoseAction = "stand",
+  mirror = false
 ): HTMLCanvasElement | null {
-  const integrated = buildIntegratedCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
-  if (integrated) {
-    return integrated;
-  }
   const width = Math.max(1, Math.round(drawWidth));
   const height = Math.max(1, Math.round(drawHeight));
   const canvas = document.createElement("canvas");
@@ -4070,52 +4197,143 @@ function buildStoryboardGuideCharacterCanvas(
   const context = canvas.getContext("2d");
   if (!context) return null;
   context.clearRect(0, 0, width, height);
-  let patchData: Uint8ClampedArray | null = null;
-  if (scenePatch) {
-    const patchCanvas = document.createElement("canvas");
-    patchCanvas.width = width;
-    patchCanvas.height = height;
-    const patchContext = patchCanvas.getContext("2d");
-    if (patchContext) {
-      patchContext.drawImage(scenePatch, 0, 0, width, height);
-      patchData = patchContext.getImageData(0, 0, width, height).data;
-    }
+  const palette = sampleStoryboardGuidePalette(cutout);
+  const patchInfluence = scenePatch
+    ? sampleSceneRegionColor(
+        (() => {
+          const patchCanvas = document.createElement("canvas");
+          patchCanvas.width = width;
+          patchCanvas.height = height;
+          const patchContext = patchCanvas.getContext("2d");
+          if (patchContext) patchContext.drawImage(scenePatch, 0, 0, width, height);
+          return patchContext ?? context;
+        })(),
+        width * 0.3,
+        height * 0.28,
+        width * 0.4,
+        height * 0.54
+      )
+    : sceneTint;
+  const tonedUpper = mixRgb(palette.upper, patchInfluence, 0.08);
+  const tonedLower = mixRgb(palette.lower, patchInfluence, 0.1);
+  const tonedHair = mixRgb(palette.hair, patchInfluence, 0.04);
+  const tonedSkin = mixRgb(palette.skin, patchInfluence, 0.05);
+  const tonedAccent = mixRgb(palette.accent, patchInfluence, 0.06);
+  const tonedShoes = mixRgb(palette.shoes, patchInfluence, 0.04);
+
+  const geometry = computeStoryboardPoseFigureGeometry(width / 2, height * 0.95, height * 0.92, action, mirror);
+  const shadowCenterX = (geometry.leftAnkle.x + geometry.rightAnkle.x) / 2;
+  const shadowCenterY = Math.max(geometry.leftAnkle.y, geometry.rightAnkle.y) + height * 0.02;
+  const shoulderWidth = Math.abs(geometry.rightShoulder.x - geometry.leftShoulder.x);
+  const hipWidth = Math.abs(geometry.rightHip.x - geometry.leftHip.x);
+  const armWidth = Math.max(10, shoulderWidth * 0.22);
+  const legWidth = Math.max(11, hipWidth * 0.38);
+  const headRadius = Math.max(10, shoulderWidth * 0.34);
+  const waistY = geometry.pelvis.y - height * 0.035;
+  const hemY = palette.hasLongGarment
+    ? Math.min(height * 0.92, Math.max(geometry.leftKnee.y, geometry.rightKnee.y) + height * 0.06)
+    : Math.min(height * 0.78, geometry.pelvis.y + height * 0.14);
+  const bodyCenterX = (geometry.leftShoulder.x + geometry.rightShoulder.x + geometry.leftHip.x + geometry.rightHip.x) / 4;
+  const torsoLeftX = bodyCenterX - shoulderWidth * 0.62;
+  const torsoRightX = bodyCenterX + shoulderWidth * 0.62;
+  const hemLeftX = bodyCenterX - shoulderWidth * (palette.hasLongGarment ? 0.92 : 0.48);
+  const hemRightX = bodyCenterX + shoulderWidth * (palette.hasLongGarment ? 0.92 : 0.48);
+
+  context.save();
+  context.filter = "blur(8px)";
+  context.fillStyle = colorToRgba(mixRgb(sceneTint, { r: 12, g: 12, b: 18 }, 0.48), 0.34);
+  context.beginPath();
+  context.ellipse(
+    shadowCenterX,
+    shadowCenterY,
+    Math.max(16, shoulderWidth * 0.52),
+    Math.max(7, shoulderWidth * 0.16),
+    0,
+    0,
+    Math.PI * 2
+  );
+  context.fill();
+  context.restore();
+
+  context.save();
+  context.filter = "blur(1px)";
+  drawTaperedLimb(context, geometry.leftHip, geometry.leftKnee, legWidth, legWidth * 0.78, tonedLower);
+  drawTaperedLimb(context, geometry.leftKnee, geometry.leftAnkle, legWidth * 0.78, legWidth * 0.62, tonedLower);
+  drawTaperedLimb(context, geometry.rightHip, geometry.rightKnee, legWidth, legWidth * 0.78, tonedLower);
+  drawTaperedLimb(context, geometry.rightKnee, geometry.rightAnkle, legWidth * 0.78, legWidth * 0.62, tonedLower);
+
+  context.beginPath();
+  context.moveTo(geometry.leftShoulder.x, geometry.leftShoulder.y);
+  context.lineTo(geometry.rightShoulder.x, geometry.rightShoulder.y);
+  context.lineTo(torsoRightX, waistY);
+  context.lineTo(hemRightX, hemY);
+  context.lineTo(hemLeftX, hemY);
+  context.lineTo(torsoLeftX, waistY);
+  context.closePath();
+  const garmentGradient = context.createLinearGradient(bodyCenterX, geometry.leftShoulder.y, bodyCenterX, hemY);
+  garmentGradient.addColorStop(0, colorToRgba(tonedUpper, 0.98));
+  garmentGradient.addColorStop(1, colorToRgba(tonedLower, 0.98));
+  context.fillStyle = garmentGradient;
+  context.fill();
+
+  if (palette.hasLongGarment) {
+    context.strokeStyle = colorToRgba(mixRgb(tonedAccent, tonedLower, 0.4), 0.5);
+    context.lineWidth = Math.max(2, shoulderWidth * 0.05);
+    context.beginPath();
+    context.moveTo(bodyCenterX, waistY + height * 0.03);
+    context.lineTo(bodyCenterX + (mirror ? -1 : 1) * shoulderWidth * 0.1, hemY - height * 0.02);
+    context.stroke();
   }
-  const patchCenterIndex = ((Math.max(0, Math.floor(height * 0.65)) * width) + Math.max(0, Math.floor(width * 0.5))) * 4;
-  const patchR = patchData?.[patchCenterIndex] ?? sceneTint.r;
-  const patchG = patchData?.[patchCenterIndex + 1] ?? sceneTint.g;
-  const patchB = patchData?.[patchCenterIndex + 2] ?? sceneTint.b;
-  const patchLuma = patchR * 0.299 + patchG * 0.587 + patchB * 0.114;
-  const guideTone = `rgba(${clampChannel(patchLuma * 0.85)}, ${clampChannel(patchLuma * 0.88)}, ${clampChannel(patchLuma * 0.92)}, 0.72)`;
-  const headRadius = Math.max(10, Math.round(width * 0.105));
-  const torsoWidth = Math.max(18, Math.round(width * 0.34));
-  const torsoHeight = Math.max(52, Math.round(height * 0.44));
-  const centerX = width / 2;
-  const headCenterY = Math.max(headRadius + 6, Math.round(height * 0.18));
-  const torsoTop = headCenterY + headRadius * 0.85;
-  const torsoBottom = torsoTop + torsoHeight;
-  const floorY = Math.round(height * 0.94);
 
-  context.save();
-  context.filter = "blur(5px)";
-  context.fillStyle = guideTone;
+  context.fillStyle = colorToRgba(tonedAccent, 0.92);
+  context.fillRect(
+    bodyCenterX - shoulderWidth * 0.22,
+    waistY - height * 0.022,
+    shoulderWidth * 0.44,
+    Math.max(5, height * 0.032)
+  );
+
+  drawTaperedLimb(context, geometry.leftShoulder, geometry.leftElbow, armWidth, armWidth * 0.84, tonedUpper);
+  drawTaperedLimb(context, geometry.leftElbow, geometry.leftWrist, armWidth * 0.82, armWidth * 0.64, tonedUpper);
+  drawTaperedLimb(context, geometry.rightShoulder, geometry.rightElbow, armWidth, armWidth * 0.84, tonedUpper);
+  drawTaperedLimb(context, geometry.rightElbow, geometry.rightWrist, armWidth * 0.82, armWidth * 0.64, tonedUpper);
+
+  context.fillStyle = colorToRgba(tonedSkin, 0.98);
   context.beginPath();
-  context.ellipse(centerX, floorY, Math.max(14, torsoWidth * 0.4), Math.max(6, torsoWidth * 0.12), 0, 0, Math.PI * 2);
+  context.arc(geometry.head.x, geometry.head.y, headRadius, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(geometry.leftWrist.x, geometry.leftWrist.y, Math.max(4, armWidth * 0.26), 0, Math.PI * 2);
+  context.arc(geometry.rightWrist.x, geometry.rightWrist.y, Math.max(4, armWidth * 0.26), 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = colorToRgba(tonedHair, 0.98);
+  context.beginPath();
+  context.arc(geometry.head.x, geometry.head.y - headRadius * 0.08, headRadius * 1.03, Math.PI, Math.PI * 2);
+  context.lineTo(geometry.head.x + headRadius * 0.88, geometry.head.y + headRadius * 0.24);
+  context.quadraticCurveTo(
+    geometry.head.x,
+    geometry.head.y - headRadius * 0.24,
+    geometry.head.x - headRadius * 0.92,
+    geometry.head.y + headRadius * 0.3
+  );
+  context.closePath();
+  context.fill();
+  context.fillRect(
+    geometry.head.x - headRadius * 0.92,
+    geometry.head.y - headRadius * 0.12,
+    headRadius * 1.84,
+    headRadius * 0.3
+  );
+
+  context.fillStyle = colorToRgba(tonedShoes, 0.98);
+  context.beginPath();
+  context.ellipse(geometry.leftAnkle.x, geometry.leftAnkle.y + height * 0.012, legWidth * 0.34, legWidth * 0.16, 0, 0, Math.PI * 2);
+  context.ellipse(geometry.rightAnkle.x, geometry.rightAnkle.y + height * 0.012, legWidth * 0.34, legWidth * 0.16, 0, 0, Math.PI * 2);
   context.fill();
   context.restore();
 
-  context.save();
-  context.filter = "blur(3px)";
-  context.fillStyle = guideTone;
-  context.beginPath();
-  context.arc(centerX, headCenterY, headRadius, 0, Math.PI * 2);
-  context.fill();
-
-  context.beginPath();
-  context.ellipse(centerX, torsoTop + torsoHeight * 0.52, torsoWidth * 0.46, torsoHeight * 0.5, 0, 0, Math.PI * 2);
-  context.fill();
-  context.restore();
-  return canvas;
+  return buildIntegratedCharacterCanvas(canvas, width, height, sceneTint, scenePatch) ?? canvas;
 }
 
 async function buildStoryboardIdentityBoardReference(
@@ -5334,7 +5552,15 @@ async function buildStoryboardCompositeReference(
     shot,
     cutouts.map(({ ref }) => ref)
   );
+  const characterNames = cutouts.map(({ ref }) => extractCharacterNameFromReferenceLabel(ref.label)).filter((item) => item.length > 0);
+  const focusedCharacterName = inferStoryboardFocusedCharacterName(shot, characterNames);
   cutouts.forEach(({ canvas: cutout }, index) => {
+    const characterName = extractCharacterNameFromReferenceLabel(cutouts[index]?.ref.label ?? "");
+    const action = inferStoryboardPoseAction(
+      shot,
+      characterName,
+      Boolean(focusedCharacterName && focusedCharacterName === characterName) || (!focusedCharacterName && index === 0)
+    );
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.62, floorYRatio: 0.89, sizeScale: 1 };
     const targetHeight = sceneHeight * heightRatio * placement.sizeScale;
     const scale = targetHeight / Math.max(1, cutout.height);
@@ -5382,7 +5608,15 @@ async function buildStoryboardCompositeReference(
       );
     }
     const sceneTint = { r: 132, g: 132, b: 136 };
-    const guideFigure = buildStoryboardGuideCharacterCanvas(cutout, drawWidth, drawHeight, sceneTint, scenePatch);
+    const guideFigure = buildStoryboardGuideCharacterCanvas(
+      cutout,
+      drawWidth,
+      drawHeight,
+      sceneTint,
+      scenePatch,
+      action,
+      index % 2 === 1
+    );
     context.save();
     context.fillStyle = "rgba(0,0,0,0.14)";
     context.beginPath();
@@ -5398,15 +5632,15 @@ async function buildStoryboardCompositeReference(
     );
     context.fill();
     if (guideFigure) {
-      context.globalAlpha = 0.24;
-      context.filter = "blur(4px)";
-      context.drawImage(guideFigure, clampedDrawX + 1, clampedDrawY + 1, drawWidth, drawHeight);
+      context.globalAlpha = 0.18;
+      context.filter = "blur(6px)";
+      context.drawImage(guideFigure, clampedDrawX + 1.5, clampedDrawY + 2, drawWidth, drawHeight);
       context.globalAlpha = 1;
-      context.filter = "contrast(1.03) brightness(0.99) saturate(0.96)";
+      context.filter = "contrast(1.05) brightness(0.995) saturate(0.98)";
       context.drawImage(guideFigure, clampedDrawX, clampedDrawY, drawWidth, drawHeight);
     } else {
-      context.globalAlpha = 0.34;
-      context.filter = "grayscale(1) contrast(0.88) brightness(0.92)";
+      context.globalAlpha = 0.2;
+      context.filter = "grayscale(1) contrast(0.9) brightness(0.92)";
       context.drawImage(cutout, clampedDrawX, clampedDrawY, drawWidth, drawHeight);
     }
     context.restore();
@@ -7556,14 +7790,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
     lockCharacterIdentityAndCount
       ? shotScale === "close"
         ? useCompositeFrameSeed
-          ? 0.34
+          ? 0.46
           : 0.42
         : shotScale === "medium"
           ? useCompositeFrameSeed
-            ? 0.32
+            ? 0.44
             : 0.4
           : useCompositeFrameSeed
-            ? 0.3
+            ? 0.42
             : 0.38
       : usePoseGuide
       ? shotScale === "close"
@@ -7602,11 +7836,10 @@ function adaptBuiltinStoryboardWorkflowForShot(
           : 0.62;
   if (usePoseGuide) {
     if (lockCharacterIdentityAndCount) {
-      // In dual-character storyboard shots, front-facing identity anchors are
-      // more stable than mixing additional side/back refs. Keep IPAdapter
-      // present but less aggressive, and let the composite seed preserve count.
-      clampAdapterWeight(char1AdapterNode, 0.84, 0.92, 0.8);
-      clampAdapterWeight(char2AdapterNode, 0.82, 0.9, 0.8);
+      // With dual-character shots we now rely on a softer pose-aware composite
+      // seed, so front identity anchors can safely be pushed a bit harder.
+      clampAdapterWeight(char1AdapterNode, 0.92, 1.0, 0.82);
+      clampAdapterWeight(char2AdapterNode, 0.9, 0.98, 0.82);
     } else {
       clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 1.0, hasSecondCharacter ? 1.06 : 1.1, 0.92);
       clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.96 : 0, hasSecondCharacter ? 1.04 : 0, hasSecondCharacter ? 0.92 : 0);
@@ -7642,7 +7875,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
   if (controlNetInputs) {
     const targetStrength =
       lockCharacterIdentityAndCount
-        ? (shotScale === "close" ? 0.74 : shotScale === "medium" ? 0.7 : 0.66)
+        ? (shotScale === "close" ? 0.82 : shotScale === "medium" ? 0.78 : 0.74)
         : usePoseGuide
         ? (shotScale === "close" ? 0.8 : shotScale === "medium" ? 0.76 : hasSecondCharacter ? 0.72 : 0.7)
         : hasFrameSeed
@@ -7652,7 +7885,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
     controlNetInputs.image = ["18", 0];
     controlNetInputs.start_percent = 0;
     controlNetInputs.end_percent = lockCharacterIdentityAndCount
-      ? (shotScale === "close" ? 0.88 : shotScale === "medium" ? 0.84 : 0.8)
+      ? (shotScale === "close" ? 0.92 : shotScale === "medium" ? 0.88 : 0.84)
       : usePoseGuide
       ? (shotScale === "close" ? 0.94 : shotScale === "medium" ? 0.9 : 0.86)
       : hasFrameSeed
@@ -7663,13 +7896,13 @@ function adaptBuiltinStoryboardWorkflowForShot(
     const current = Number(samplerInputs.denoise);
     if (lockCharacterIdentityAndCount) {
       samplerInputs.denoise = denoiseTarget;
-      samplerInputs.steps = Math.max(30, Math.min(32, Number(samplerInputs.steps) || 30));
+      samplerInputs.steps = Math.max(32, Math.min(34, Number(samplerInputs.steps) || 32));
       samplerInputs.cfg =
         shotScale === "close"
-          ? 5.4
+          ? 5.8
           : shotScale === "medium"
-            ? 5.2
-            : 5.0;
+            ? 5.6
+            : 5.4;
     } else {
       samplerInputs.denoise =
         Number.isFinite(current) && current > 0
