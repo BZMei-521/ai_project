@@ -5591,29 +5591,29 @@ function inferStoryboardCharacterPlacement(
       const lanePreset =
         scale === "close"
           ? {
-              leftLaneX: 0.8,
+              leftLaneX: 0.76,
               rightLaneX: 0.88,
-              leftFloorY: 0.82,
-              rightFloorY: 0.76,
-              leftSize: 0.98,
-              rightSize: 0.88
+              leftFloorY: 0.86,
+              rightFloorY: 0.82,
+              leftSize: 1.08,
+              rightSize: 0.98
             }
           : scale === "medium"
             ? {
-                leftLaneX: 0.81,
-                rightLaneX: 0.89,
-                leftFloorY: 0.78,
-                rightFloorY: 0.72,
-                leftSize: 0.9,
-                rightSize: 0.8
+                leftLaneX: 0.74,
+                rightLaneX: 0.86,
+                leftFloorY: 0.83,
+                rightFloorY: 0.79,
+                leftSize: 0.98,
+                rightSize: 0.9
               }
             : {
-                leftLaneX: 0.82,
-                rightLaneX: 0.9,
-                leftFloorY: 0.75,
-                rightFloorY: 0.7,
-                leftSize: 0.82,
-                rightSize: 0.72
+                leftLaneX: 0.72,
+                rightLaneX: 0.84,
+                leftFloorY: 0.8,
+                rightFloorY: 0.76,
+                leftSize: 0.9,
+                rightSize: 0.82
               };
       placement = applyClampedPlacement(placement, {
         centerXRatio: hasPathRelativeLeftCue ? lanePreset.leftLaneX : lanePreset.rightLaneX,
@@ -5627,18 +5627,18 @@ function inferStoryboardCharacterPlacement(
     if (count >= 2) {
       placement = applyClampedPlacement(placement, {
         // Keep both actors on the visible stone path band instead of dropping
-        // them onto the rocky shoreline or shrinking them into the far corner.
-        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.82 : 0.9,
-        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.76 : 0.71,
+        // them onto the rocky shoreline or squeezing them against the frame edge.
+        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.74 : 0.86,
+        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.84 : 0.8,
         sizeScale: hasPathRelativeLaneCue
           ? placement.sizeScale
-          : placement.sizeScale * (index === 0 ? 0.92 : 0.84)
+          : placement.sizeScale * (index === 0 ? 1.02 : 0.94)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.86,
-        floorYRatio: 0.76,
-        sizeScale: placement.sizeScale * 0.9
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.8,
+        floorYRatio: 0.83,
+        sizeScale: placement.sizeScale * 0.96
       });
     }
   }
@@ -5719,17 +5719,17 @@ function stabilizeStoryboardPairPlacements(
     const riversidePreset =
       scale === "close"
         ? {
-            left: { centerXRatio: 0.8, floorYRatio: 0.82, sizeScale: 0.98 },
-            right: { centerXRatio: 0.88, floorYRatio: 0.76, sizeScale: 0.88 }
+            left: { centerXRatio: 0.76, floorYRatio: 0.86, sizeScale: 1.08 },
+            right: { centerXRatio: 0.88, floorYRatio: 0.82, sizeScale: 0.98 }
           }
         : scale === "medium"
           ? {
-              left: { centerXRatio: 0.81, floorYRatio: 0.78, sizeScale: 0.9 },
-              right: { centerXRatio: 0.89, floorYRatio: 0.72, sizeScale: 0.8 }
+              left: { centerXRatio: 0.74, floorYRatio: 0.83, sizeScale: 0.98 },
+              right: { centerXRatio: 0.86, floorYRatio: 0.79, sizeScale: 0.9 }
             }
           : {
-              left: { centerXRatio: 0.82, floorYRatio: 0.75, sizeScale: 0.82 },
-              right: { centerXRatio: 0.9, floorYRatio: 0.7, sizeScale: 0.72 }
+              left: { centerXRatio: 0.72, floorYRatio: 0.8, sizeScale: 0.9 },
+              right: { centerXRatio: 0.84, floorYRatio: 0.76, sizeScale: 0.82 }
             };
     stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
       centerXRatio: riversidePreset.left.centerXRatio,
@@ -6970,7 +6970,6 @@ function inferPromptTokens(
   const storyboardFrameSeedPath =
     kind === "image"
       ? (
-          (characterAssets.length > 0 && sceneRefPath ? sceneRefPath : "") ||
           (shouldPreferContinuitySeed ? continuitySceneSeedPath : "") ||
           sceneRefPath ||
           continuitySceneSeedPath ||
@@ -9219,19 +9218,18 @@ export async function generateShotAsset(
           : "storyboard";
     tokens = applyGlobalStyleToTokens(settings, tokens, kind, styleScope);
     let imageReferenceSources: WeightedImageRef[] = [];
-    let stableStoryboardCompositeSeedSource = "";
     if (kind === "image") {
       imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
-          const [compositeRef, identityBoardRef] = await Promise.all([
-            buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
+          const shouldBuildCompositeGuide = !isStableStoryboardWorkflowPreset(rewrittenWorkflow);
+          const [, identityBoardRef] = await Promise.all([
+            shouldBuildCompositeGuide
+              ? buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir)
+              : Promise.resolve(null),
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
-          if (compositeRef?.source) {
-            stableStoryboardCompositeSeedSource = compositeRef.source;
-          }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
               ...imageReferenceSources.filter((item) => item.source.trim() !== identityBoardRef.source.trim()),
@@ -9254,23 +9252,6 @@ export async function generateShotAsset(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
-      const shotCharacterCount = Math.max(
-        shot.characterRefs?.filter((item) => item.trim().length > 0).length ?? 0,
-        shot.sourceCharacterNames?.filter((item) => item.trim().length > 0).length ?? 0
-      );
-      if (
-        stableStoryboardCompositeSeedSource &&
-        !assetOutputContext &&
-        shotCharacterCount >= 2 &&
-        String(tokens.PREV_SCENE_IMAGE_PATH ?? "").trim().length === 0 &&
-        isStableStoryboardWorkflowPreset(rewrittenWorkflow)
-      ) {
-        tokens = {
-          ...tokens,
-          FRAME_IMAGE_PATH: stableStoryboardCompositeSeedSource,
-          STORYBOARD_FRAME_SEED_MODE: "composite"
-        };
-      }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageStoryboardPoseGuideToken(settings, shot, tokens);
       tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
@@ -9447,8 +9428,11 @@ export async function generateShotAssetOutputs(
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
+          const shouldBuildCompositeGuide = !isStableStoryboardWorkflowPreset(rewrittenWorkflow);
           const [, identityBoardRef] = await Promise.all([
-            buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
+            shouldBuildCompositeGuide
+              ? buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir)
+              : Promise.resolve(null),
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
           if (identityBoardRef?.source) {
