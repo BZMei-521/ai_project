@@ -1036,6 +1036,67 @@ function buildCharacterAnchorCleanupWorkflowTemplateJson(checkpointName: string)
   return JSON.stringify(template, null, 2);
 }
 
+function buildCharacterAnchorReferenceRecoveryWorkflowTemplateJson(checkpointName: string): string {
+  const modelName = resolveMvAdapterCharacterModel(checkpointName);
+  const { width, height } = resolveCharacterTemplateSize(modelName, "portrait");
+  const template: Record<string, { inputs: Record<string, unknown>; class_type: string }> = {
+    "1": {
+      inputs: { ckpt_name: modelName },
+      class_type: "CheckpointLoaderSimple"
+    },
+    "2": {
+      inputs: { image: "{{FRAME_IMAGE_PATH}}", upload: "image" },
+      class_type: "LoadImage"
+    },
+    "3": {
+      inputs: {
+        image: ["2", 0],
+        upscale_method: "lanczos",
+        width,
+        height,
+        crop: "disabled"
+      },
+      class_type: "ImageScale"
+    },
+    "4": {
+      inputs: { pixels: ["3", 0], vae: ["1", 2] },
+      class_type: "VAEEncode"
+    },
+    "5": {
+      inputs: { text: "{{PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "6": {
+      inputs: { text: "{{NEGATIVE_PROMPT}}", clip: ["1", 1] },
+      class_type: "CLIPTextEncode"
+    },
+    "7": {
+      inputs: {
+        seed: "{{SEED}}",
+        steps: 30,
+        cfg: 5.6,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        denoise: 0.56,
+        model: ["1", 0],
+        positive: ["5", 0],
+        negative: ["6", 0],
+        latent_image: ["4", 0]
+      },
+      class_type: "KSampler"
+    },
+    "8": {
+      inputs: { samples: ["7", 0], vae: ["1", 2] },
+      class_type: "VAEDecode"
+    },
+    "9": {
+      inputs: { filename_prefix: CHARACTER_ANCHOR_CLEANUP_OUTPUT_PREFIX, images: ["8", 0] },
+      class_type: "SaveImage"
+    }
+  };
+  return JSON.stringify(template, null, 2);
+}
+
 function workflowGraphNodes(workflowJson: string): Array<Record<string, unknown>> {
   try {
     const parsed = JSON.parse(workflowJson) as { nodes?: unknown };
@@ -8030,6 +8091,81 @@ export function ComfyPipelinePanel() {
     }
   };
 
+  const recoverCharacterFrontAnchorFromStoryboardReference = async (
+    runtimeSettings: ComfySettings,
+    name: string,
+    context: string,
+    candidatePath: string,
+    checkpointName: string,
+    negativePrompt: string,
+    seedBase: number,
+    shotPrefix: string,
+    logPrefix: string
+  ) => {
+    const preparedCandidatePath = (await prepareCharacterFrontReferenceCandidate(candidatePath, context)) || candidatePath;
+    let bestPath = preparedCandidatePath;
+    let bestQuality = await evaluateFrontReferenceQuality(bestPath, context);
+    const referenceWorkflow = buildCharacterAnchorReferenceRecoveryWorkflowTemplateJson(checkpointName);
+    const recoveryNegativePrompt = appendNegativePrompt(negativePrompt, CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS);
+    const generatedRecoverySourcePaths = new Set<string>();
+
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const generated = await generateShotAsset(
+          runtimeSettings,
+          makeAssetGenerationShot(
+            `${shotPrefix}_storyboard_recover_${attempt + 1}`,
+            `${name} 分镜锚点恢复`,
+            buildFrontAnchorCleanupPrompt(name, context, attempt),
+            "",
+            seedBase + 8000 + attempt * 977
+          ),
+          0,
+          "image",
+          [],
+          [],
+          {
+            workflowJsonOverride: referenceWorkflow,
+            tokenOverrides: {
+              FRAME_IMAGE_PATH: preparedCandidatePath,
+              NEGATIVE_PROMPT: recoveryNegativePrompt
+            }
+          }
+        );
+        const recoveredPathRaw = (generated.localPath || generated.previewUrl || "").trim();
+        if (!recoveredPathRaw) continue;
+        generatedRecoverySourcePaths.add(recoveredPathRaw);
+        const recoveredPath = await prepareCharacterFrontReferenceCandidate(recoveredPathRaw, context);
+        generatedRecoverySourcePaths.add(recoveredPath);
+        const recoveredQuality = await evaluateFrontReferenceQuality(recoveredPath, context);
+        if (recoveredQuality.score > bestQuality.score) {
+          bestPath = recoveredPath;
+          bestQuality = recoveredQuality;
+        }
+        if (recoveredQuality.acceptable) {
+          appendLog(`${logPrefix}经分镜参考修复后达标：${name}`, "info");
+          return {
+            path: recoveredPath,
+            quality: recoveredQuality
+          };
+        }
+        if (attempt < 2) {
+          appendLog(`${logPrefix}仍未达标（${recoveredQuality.issues.join(" / ") || "质量不足"}），继续尝试分镜参考修复：${name}`, "info");
+        }
+      }
+      return {
+        path: bestPath,
+        quality: bestQuality
+      };
+    } finally {
+      await cleanupGeneratedCharacterFamilies(
+        [...generatedRecoverySourcePaths],
+        bestQuality.acceptable ? [bestPath] : [],
+        `${logPrefix}临时恢复图`
+      );
+    }
+  };
+
   const buildCharacterFallbackSheetPrompt = (name: string, context: string, attempt: number) => {
     const sanitizedContext = sanitizeCharacterViewContext(context);
     const styleProfile = resolveSharedVisualStyleProfile([context]);
@@ -9765,6 +9901,9 @@ export function ComfyPipelinePanel() {
     const candidates = scoredCandidates.filter((item) => !missing.has(item.localPath));
     if (candidates.length <= 0) return null;
 
+    const modelName =
+      preferredCharacterModel.trim() || (await resolveRuntimeCharacterAnchorModel(runtimeSettings, `${sourceLabel}角色分镜回收`, context));
+    const seedBase = stableAssetSeed(`${name}|storyboard_anchor_recovery|${context}|${modelName}`);
     const negativePrompt = appendNegativePrompt(
       buildCharacterViewNegativePrompt(
         "front",
@@ -9773,13 +9912,11 @@ export function ComfyPipelinePanel() {
       ),
       CHARACTER_FRONT_ANCHOR_NEGATIVE_HINTS
     );
-    const modelName =
-      preferredCharacterModel.trim() || (await resolveRuntimeCharacterAnchorModel(runtimeSettings, `${sourceLabel}角色分镜回收`, context));
-    const seedBase = stableAssetSeed(`${name}|storyboard_anchor_recovery|${context}|${modelName}`);
     let best:
       | {
           path: string;
           quality: Awaited<ReturnType<typeof evaluateFrontReferenceQuality>>;
+          shotTitle: string;
         }
       | null = null;
 
@@ -9790,7 +9927,8 @@ export function ComfyPipelinePanel() {
       if (!best || preparedQuality.score > best.quality.score) {
         best = {
           path: preparedPath,
-          quality: preparedQuality
+          quality: preparedQuality,
+          shotTitle: candidate.shot.title
         };
       }
       if (preparedQuality.acceptable) {
@@ -9811,7 +9949,8 @@ export function ComfyPipelinePanel() {
       if (!best || repaired.quality.score > best.quality.score) {
         best = {
           path: repaired.path,
-          quality: repaired.quality
+          quality: repaired.quality,
+          shotTitle: candidate.shot.title
         };
       }
       if (repaired.quality.acceptable) {
@@ -9819,8 +9958,30 @@ export function ComfyPipelinePanel() {
         return { path: repaired.path, modelName };
       }
     }
-
-    return best?.quality.acceptable ? { path: best.path, modelName } : null;
+    if (!best) {
+      appendLog(`${sourceLabel}未找到可用于角色分镜回收的镜头：${name}`, "info");
+      return null;
+    }
+    const recoveredFromReference = await recoverCharacterFrontAnchorFromStoryboardReference(
+      runtimeSettings,
+      name,
+      context,
+      best.path,
+      modelName,
+      negativePrompt,
+      seedBase,
+      `storyboard_anchor_recover_${normalizeEntityKey(name) || Date.now()}`,
+      `${sourceLabel}角色分镜回收`
+    );
+    if (recoveredFromReference.quality.acceptable) {
+      appendLog(`${sourceLabel}从分镜参考强修复出角色正视锚点：${name} <- ${best.shotTitle}`, "info");
+      return { path: recoveredFromReference.path, modelName };
+    }
+    appendLog(
+      `${sourceLabel}分镜回收未达标，将回退其他链路：${name}（${recoveredFromReference.quality.issues.join(" / ") || "参考修复失败"}）`,
+      "info"
+    );
+    return null;
   };
 
   const findProvisionReadyCharacterAnchorAssetIdByName = (name: string) => {
