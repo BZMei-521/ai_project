@@ -620,6 +620,8 @@ async function invokeCommand(cmd, args) {
       return comfyDiscoverEndpoints();
     case "comfy_discover_local_dirs":
       return comfyDiscoverLocalDirs();
+    case "resolve_comfy_output_asset_path":
+      return resolveComfyOutputAssetPath(args);
     case "comfy_get_object_info":
       return comfyGetObjectInfo(args?.baseUrl);
     case "comfy_install_plugins":
@@ -661,6 +663,16 @@ async function saveComfyRuntimeConfig(config) {
   };
   await fs.writeFile(comfyRuntimeConfigPath, JSON.stringify(next, null, 2), "utf8");
   return { path: comfyRuntimeConfigPath };
+}
+
+async function readComfyRuntimeConfig() {
+  try {
+    const raw = await fs.readFile(comfyRuntimeConfigPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 async function readPipelineLogs() {
@@ -1498,10 +1510,15 @@ async function comfyDiscoverEndpoints() {
 async function comfyDiscoverLocalDirs() {
   const home = os.homedir();
   const roots = [
+    path.resolve(projectRoot, "..", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "..", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "..", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
-    path.resolve(projectRoot, "..", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "ComfyUI_JM_windows_portable", "ComfyUI"),
+    path.join(home, "Desktop", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
+    path.join(home, "Desktop", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
+    path.join(home, "Desktop", "ai_project", "ComfyUI_JM_windows_portable", "ComfyUI"),
+    path.join(home, "Documents", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
+    path.join(home, "Documents", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.join(home, "Documents", "ComfyUI"),
     path.join(home, "ComfyUI"),
     path.join(home, "Desktop", "ComfyUI"),
@@ -1528,6 +1545,103 @@ async function comfyDiscoverLocalDirs() {
     inputDir: path.join(best, "input"),
     outputDir: path.join(best, "output")
   };
+}
+
+function normalizeComparablePathValue(value) {
+  return String(value || "").trim().replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function uniquePathValues(values) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values) {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) continue;
+    const key = normalizeComparablePathValue(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(trimmed);
+  }
+  return output;
+}
+
+async function findFileByNameRecursive(rootDir, filename, maxDepth = 4) {
+  const targetName = String(filename || "").trim().toLowerCase();
+  if (!targetName) return "";
+  async function visit(currentDir, depth) {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.toLowerCase() === targetName) {
+        return path.join(currentDir, entry.name);
+      }
+    }
+    if (depth <= 0) return "";
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const found = await visit(path.join(currentDir, entry.name), depth - 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  return visit(rootDir, maxDepth);
+}
+
+async function resolveComfyOutputAssetPath(args) {
+  const filename = String(args?.filename || "").trim();
+  const subfolder = String(args?.subfolder || "")
+    .trim()
+    .replace(/^[/\\]+|[/\\]+$/g, "");
+  const explicitOutputDir = String(args?.outputDir || "").trim();
+  const explicitComfyRootDir = String(args?.comfyRootDir || "").trim();
+  if (!filename) return "";
+
+  const runtimeConfig = await readComfyRuntimeConfig();
+  const discovered = await comfyDiscoverLocalDirs().catch(() => ({
+    rootDir: "",
+    inputDir: "",
+    outputDir: ""
+  }));
+  const extraRoots = [
+    path.resolve(projectRoot, "..", "ComfyUI_JM_windows_portable", "ComfyUI", "output"),
+    path.resolve(projectRoot, "..", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI", "output"),
+    path.resolve(projectRoot, "..", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI", "output"),
+    path.join(os.homedir(), "Desktop", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI", "output"),
+    path.join(os.homedir(), "Desktop", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI", "output"),
+    path.join(os.homedir(), "Desktop", "ai_project", "ComfyUI_JM_windows_portable", "ComfyUI", "output")
+  ];
+  const outputRoots = uniquePathValues([
+    explicitOutputDir,
+    explicitComfyRootDir ? path.join(explicitComfyRootDir, "output") : "",
+    String(runtimeConfig.outputDir || "").trim(),
+    String(runtimeConfig.comfyRootDir || "").trim()
+      ? path.join(String(runtimeConfig.comfyRootDir || "").trim(), "output")
+      : "",
+    discovered.outputDir,
+    discovered.rootDir ? path.join(discovered.rootDir, "output") : "",
+    ...extraRoots
+  ]);
+
+  for (const root of outputRoots) {
+    const direct = path.join(root, subfolder, filename);
+    if (await fileExists(direct)) return direct;
+  }
+
+  if (subfolder) {
+    for (const root of outputRoots) {
+      const scopedRoot = path.join(root, subfolder);
+      if (!(await dirExists(scopedRoot))) continue;
+      const found = await findFileByNameRecursive(scopedRoot, filename, 2);
+      if (found) return found;
+    }
+  }
+
+  for (const root of outputRoots) {
+    if (!(await dirExists(root))) continue;
+    const found = await findFileByNameRecursive(root, filename, 4);
+    if (found) return found;
+  }
+
+  return "";
 }
 
 async function comfyGetObjectInfo(baseUrl) {

@@ -9852,6 +9852,17 @@ export function ComfyPipelinePanel() {
       const subfolder = (url.searchParams.get("subfolder")?.trim() || "").replace(/^[/\\]+|[/\\]+$/g, "");
       const type = (url.searchParams.get("type")?.trim() || "output").toLowerCase();
       if (!filename || type !== "output") return "";
+      try {
+        const resolvedByBridge = await invokeDesktopCommand<string>("resolve_comfy_output_asset_path", {
+          filename,
+          subfolder,
+          outputDir: runtimeSettings.outputDir.trim(),
+          comfyRootDir: runtimeSettings.comfyRootDir.trim()
+        });
+        if (resolvedByBridge?.trim()) return resolvedByBridge.trim();
+      } catch {
+        // Fall through to local candidate probing.
+      }
       const discovered = await discoverComfyLocalDirs().catch(() => ({
         rootDir: "",
         inputDir: "",
