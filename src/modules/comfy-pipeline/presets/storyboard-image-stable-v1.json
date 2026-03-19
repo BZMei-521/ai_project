@@ -1,0 +1,405 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "realisticVisionV60B1_v51VAE.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "{{PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "3": {
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "{{NEGATIVE_PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "4": {
+    "inputs": {
+      "image": "{{FRAME_IMAGE_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "5": {
+    "inputs": {
+      "image": [
+        "4",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": "{{RENDER_WIDTH}}",
+      "height": "{{RENDER_HEIGHT}}",
+      "crop": "center"
+    },
+    "class_type": "ImageScale"
+  },
+  "6": {
+    "inputs": {
+      "pixels": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEEncode"
+  },
+  "7": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "preset": "PLUS (high strength)"
+    },
+    "class_type": "IPAdapterUnifiedLoader"
+  },
+  "8": {
+    "inputs": {
+      "image": "{{CHAR1_PRIMARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "9": {
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "ipadapter": [
+        "7",
+        1
+      ],
+      "image": [
+        "8",
+        0
+      ],
+      "weight": "{{CHAR1_PRIMARY_WEIGHT}}",
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 1,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "10": {
+    "inputs": {
+      "image": "{{CHAR1_SECONDARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "11": {
+    "inputs": {
+      "model": [
+        "9",
+        0
+      ],
+      "ipadapter": [
+        "7",
+        1
+      ],
+      "image": [
+        "10",
+        0
+      ],
+      "weight": "{{CHAR1_SECONDARY_WEIGHT}}",
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 0.72,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "12": {
+    "inputs": {
+      "image": "{{CHAR2_PRIMARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "13": {
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "ipadapter": [
+        "7",
+        1
+      ],
+      "image": [
+        "12",
+        0
+      ],
+      "weight": "{{CHAR2_PRIMARY_WEIGHT}}",
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 1,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "14": {
+    "inputs": {
+      "image": "{{CHAR2_SECONDARY_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "15": {
+    "inputs": {
+      "model": [
+        "13",
+        0
+      ],
+      "ipadapter": [
+        "7",
+        1
+      ],
+      "image": [
+        "14",
+        0
+      ],
+      "weight": 0.18,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0,
+      "end_at": 0.66,
+      "embeds_scaling": "V only"
+    },
+    "class_type": "IPAdapterAdvanced"
+  },
+  "16": {
+    "inputs": {
+      "image": "{{POSE_GUIDE_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "17": {
+    "inputs": {
+      "image": [
+        "16",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": "{{RENDER_WIDTH}}",
+      "height": "{{RENDER_HEIGHT}}",
+      "crop": "disabled"
+    },
+    "class_type": "ImageScale"
+  },
+  "18": {
+    "inputs": {
+      "control_net_name": "control_v11p_sd15_openpose_fp16.safetensors"
+    },
+    "class_type": "ControlNetLoader"
+  },
+  "19": {
+    "inputs": {
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "control_net": [
+        "18",
+        0
+      ],
+      "image": [
+        "17",
+        0
+      ],
+      "strength": 0.94,
+      "start_percent": 0,
+      "end_percent": 1
+    },
+    "class_type": "ControlNetApplyAdvanced"
+  },
+  "20": {
+    "inputs": {
+      "image": "{{SCENE_REF_PATH}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "21": {
+    "inputs": {
+      "image": [
+        "20",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": "{{RENDER_WIDTH}}",
+      "height": "{{RENDER_HEIGHT}}",
+      "crop": "center"
+    },
+    "class_type": "ImageScale"
+  },
+  "22": {
+    "inputs": {
+      "image": [
+        "21",
+        0
+      ],
+      "ckpt_name": "depth_anything_v2_vitl.pth",
+      "resolution": 1024
+    },
+    "class_type": "DepthAnythingV2Preprocessor"
+  },
+  "23": {
+    "inputs": {
+      "control_net_name": "control_v11f1p_sd15_depth_fp16.safetensors"
+    },
+    "class_type": "ControlNetLoader"
+  },
+  "24": {
+    "inputs": {
+      "positive": [
+        "19",
+        0
+      ],
+      "negative": [
+        "19",
+        1
+      ],
+      "control_net": [
+        "23",
+        0
+      ],
+      "image": [
+        "22",
+        0
+      ],
+      "strength": 0.7,
+      "start_percent": 0,
+      "end_percent": 1
+    },
+    "class_type": "ControlNetApplyAdvanced"
+  },
+  "25": {
+    "inputs": {
+      "model": [
+        "15",
+        0
+      ],
+      "positive": [
+        "24",
+        0
+      ],
+      "negative": [
+        "24",
+        1
+      ],
+      "latent_image": [
+        "6",
+        0
+      ],
+      "seed": "{{SEED}}",
+      "steps": "{{STORYBOARD_STEPS}}",
+      "cfg": "{{STORYBOARD_CFG}}",
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": "{{STORYBOARD_DENOISE}}"
+    },
+    "class_type": "KSampler"
+  },
+  "26": {
+    "inputs": {
+      "samples": [
+        "25",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "27": {
+    "inputs": {
+      "pixels": [
+        "26",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEEncode"
+  },
+  "28": {
+    "inputs": {
+      "model": [
+        "15",
+        0
+      ],
+      "positive": [
+        "24",
+        0
+      ],
+      "negative": [
+        "24",
+        1
+      ],
+      "latent_image": [
+        "27",
+        0
+      ],
+      "seed": "{{SEED}}",
+      "steps": 18,
+      "cfg": 5.2,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.16
+    },
+    "class_type": "KSampler"
+  },
+  "29": {
+    "inputs": {
+      "samples": [
+        "28",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "30": {
+    "inputs": {
+      "filename_prefix": "Storyboard/image_asset_guided_{{SHOT_ID}}",
+      "images": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  }
+}

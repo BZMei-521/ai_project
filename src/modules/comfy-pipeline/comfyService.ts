@@ -549,6 +549,132 @@ function preferControlNetOption(
   return null;
 }
 
+function looksLikeOpenPoseControlNet(name: string): boolean {
+  const normalized = basenameModelChoice(name);
+  if (!normalized) return false;
+  return /openpose|posexl|openposexl|dwpose/.test(normalized);
+}
+
+function looksLikeDepthControlNet(name: string): boolean {
+  const normalized = basenameModelChoice(name);
+  if (!normalized) return false;
+  return /depth/.test(normalized);
+}
+
+type StoryboardControlNetTask = "openpose" | "depth" | "canny";
+
+function storyboardControlNetTaskLabel(task: StoryboardControlNetTask): string {
+  if (task === "openpose") return "OpenPose";
+  if (task === "depth") return "Depth";
+  return "Canny";
+}
+
+function storyboardDefaultControlNetName(task: StoryboardControlNetTask, isSdxl: boolean): string {
+  if (task === "openpose") {
+    return isSdxl ? "OpenPoseXL2.safetensors" : "control_v11p_sd15_openpose_fp16.safetensors";
+  }
+  if (task === "depth") {
+    return isSdxl ? "controlnet-depth-sdxl-1.0.safetensors" : "control_v11f1p_sd15_depth_fp16.safetensors";
+  }
+  return isSdxl ? "controlnet-canny-sdxl-1.0.safetensors" : "control_v11p_sd15_canny.pth";
+}
+
+function storyboardControlNetTaskMatcher(task: StoryboardControlNetTask): (value: string) => boolean {
+  if (task === "openpose") return looksLikeOpenPoseControlNet;
+  if (task === "depth") return looksLikeDepthControlNet;
+  return (value) => /canny/i.test(value);
+}
+
+function resolveStoryboardControlNetTaskChoice(
+  storyboardModel: string,
+  task: StoryboardControlNetTask,
+  objectInfo?: Record<string, unknown>
+): {
+  controlNetName: string | null;
+  isMatchedToModelFamily: boolean;
+  missingForModelFamily: boolean;
+} {
+  const isSdxl = looksLikeSdxlCheckpoint(storyboardModel);
+  const preferredDefault = storyboardDefaultControlNetName(task, isSdxl);
+  const options =
+    objectInfo && typeof objectInfo === "object"
+      ? extractComboOptionsFromObjectInfo(objectInfo, "ControlNetLoader", "control_net_name")
+      : [];
+  const taskMatcher = storyboardControlNetTaskMatcher(task);
+  const taskOptions = options.filter((value) => taskMatcher(value));
+
+  if (taskOptions.length === 0) {
+    return {
+      controlNetName: preferredDefault,
+      isMatchedToModelFamily: !objectInfo,
+      missingForModelFamily: Boolean(objectInfo)
+    };
+  }
+
+  if (isSdxl) {
+    const sdxlChoice = preferControlNetOption(taskOptions, [
+      (value) => taskMatcher(value) && looksLikeSdxlControlNet(value) && !looksLikeControlNetLoRA(value) && /\.safetensors$/i.test(value),
+      (value) => taskMatcher(value) && looksLikeSdxlControlNet(value) && !looksLikeControlNetLoRA(value),
+      (value) => taskMatcher(value) && looksLikeSdxlControlNet(value),
+      (value) => taskMatcher(value)
+    ]);
+    if (sdxlChoice && looksLikeSdxlControlNet(sdxlChoice)) {
+      return { controlNetName: sdxlChoice, isMatchedToModelFamily: true, missingForModelFamily: false };
+    }
+    return {
+      controlNetName: sdxlChoice ?? preferredDefault,
+      isMatchedToModelFamily: false,
+      missingForModelFamily: true
+    };
+  }
+
+  const sd15Choice = preferControlNetOption(taskOptions, [
+    (value) => taskMatcher(value) && looksLikeSd15ControlNet(value) && /\.safetensors$/i.test(value),
+    (value) => taskMatcher(value) && looksLikeSd15ControlNet(value),
+    (value) => taskMatcher(value) && !looksLikeSdxlControlNet(value) && !looksLikeFluxOrSd3Model(value),
+    (value) => taskMatcher(value)
+  ]);
+  return {
+    controlNetName: sd15Choice ?? preferredDefault,
+    isMatchedToModelFamily: true,
+    missingForModelFamily: false
+  };
+}
+
+function resolveStoryboardStableControlNetChoice(
+  storyboardModel: string,
+  objectInfo?: Record<string, unknown>
+): {
+  openposeControlNetName: string | null;
+  depthControlNetName: string | null;
+  checkpointOverride: string | null;
+  qualityError: string | null;
+} {
+  const isSdxl = looksLikeSdxlCheckpoint(storyboardModel);
+  const openposeChoice = resolveStoryboardControlNetTaskChoice(storyboardModel, "openpose", objectInfo);
+  const depthChoice = resolveStoryboardControlNetTaskChoice(storyboardModel, "depth", objectInfo);
+
+  if (isSdxl && objectInfo && (!openposeChoice.isMatchedToModelFamily || !depthChoice.isMatchedToModelFamily)) {
+    const missingLabels = [
+      !openposeChoice.isMatchedToModelFamily ? storyboardControlNetTaskLabel("openpose") : "",
+      !depthChoice.isMatchedToModelFamily ? storyboardControlNetTaskLabel("depth") : ""
+    ].filter(Boolean);
+    return {
+      openposeControlNetName: openposeChoice.controlNetName,
+      depthControlNetName: depthChoice.controlNetName,
+      checkpointOverride: null,
+      qualityError: `当前分镜基模“${storyboardModel}”属于 SDXL，但本机未同时检测到匹配同体系的 ${missingLabels.join(" + ")} ControlNet。为避免再次出现维度不匹配和结构崩坏，请补齐 SDXL 版 OpenPose + Depth ControlNet，再继续使用当前基模。`
+    };
+  }
+
+  return {
+    openposeControlNetName: openposeChoice.controlNetName,
+    depthControlNetName: depthChoice.controlNetName,
+    checkpointOverride: null,
+    qualityError: null
+  };
+}
+
 function resolveStoryboardControlNetChoice(
   storyboardModel: string,
   usePoseGuide: boolean,
@@ -614,6 +740,51 @@ function resolveStoryboardControlNetChoice(
     checkpointOverride: null,
     qualityError: null
   };
+}
+
+type StoryboardDepthPreprocessorChoice =
+  | {
+      classType: "DepthAnythingV2Preprocessor";
+      defaults: { ckpt_name: string };
+    }
+  | {
+      classType: "DepthAnythingPreprocessor";
+      defaults: { ckpt_name: string };
+    }
+  | {
+      classType: "MiDaS-DepthMapPreprocessor";
+      defaults: { a: number; bg_threshold: number };
+    };
+
+function resolveStoryboardDepthPreprocessorChoice(
+  objectInfo?: Record<string, unknown>
+): StoryboardDepthPreprocessorChoice | null {
+  const hasNode = (name: string) => Boolean(objectInfo && typeof objectInfo === "object" && objectInfo[name]);
+  if (!objectInfo) {
+    return {
+      classType: "DepthAnythingV2Preprocessor",
+      defaults: { ckpt_name: "depth_anything_v2_vitl.pth" }
+    };
+  }
+  if (hasNode("DepthAnythingV2Preprocessor")) {
+    return {
+      classType: "DepthAnythingV2Preprocessor",
+      defaults: { ckpt_name: "depth_anything_v2_vitl.pth" }
+    };
+  }
+  if (hasNode("DepthAnythingPreprocessor")) {
+    return {
+      classType: "DepthAnythingPreprocessor",
+      defaults: { ckpt_name: "depth_anything_vitl14.pth" }
+    };
+  }
+  if (hasNode("MiDaS-DepthMapPreprocessor")) {
+    return {
+      classType: "MiDaS-DepthMapPreprocessor",
+      defaults: { a: Math.PI * 2, bg_threshold: 0.1 }
+    };
+  }
+  return null;
 }
 
 function snapRenderSize(value: number): number {
@@ -7682,11 +7853,267 @@ function workflowHasNodeType(workflow: Record<string, unknown>, targetType: stri
   });
 }
 
+function isStableStoryboardWorkflowPreset(workflow: Record<string, unknown>): boolean {
+  const passASampler = workflow["25"];
+  const passBSampler = workflow["28"];
+  const depthLoader = workflow["23"];
+  const finalSave = workflow["30"];
+  return Boolean(
+    passASampler &&
+    passBSampler &&
+    depthLoader &&
+    finalSave &&
+    typeof passASampler === "object" &&
+    typeof passBSampler === "object" &&
+    typeof depthLoader === "object" &&
+    typeof finalSave === "object" &&
+    String((passASampler as Record<string, unknown>).class_type ?? "").trim() === "KSampler" &&
+    String((passBSampler as Record<string, unknown>).class_type ?? "").trim() === "KSampler" &&
+    String((depthLoader as Record<string, unknown>).class_type ?? "").trim() === "ControlNetLoader" &&
+    String((finalSave as Record<string, unknown>).class_type ?? "").trim() === "SaveImage"
+  );
+}
+
+function adaptStableStoryboardWorkflowForShot(
+  workflow: Record<string, unknown>,
+  tokens: Record<string, string>,
+  objectInfo?: Record<string, unknown>
+): boolean {
+  if (!isStableStoryboardWorkflowPreset(workflow)) return false;
+
+  const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
+  const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
+  const poseGuidePath = String(tokens.POSE_GUIDE_PATH ?? "").trim();
+  const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
+  const char1SecondaryPath = String(tokens.CHAR1_SECONDARY_PATH ?? "").trim();
+  const char2PrimaryPath = String(tokens.CHAR2_PRIMARY_PATH ?? "").trim();
+  const char2SecondaryPath = String(tokens.CHAR2_SECONDARY_PATH ?? "").trim();
+  const char1Name = String(tokens.CHAR1_NAME ?? "").trim();
+  const char2Name = String(tokens.CHAR2_NAME ?? "").trim();
+  const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
+
+  if (!sceneRefPath) {
+    throw new Error("稳定分镜模板缺少 SCENE_REF_PATH。该流程必须使用固定场景图来锁定透视和环境。");
+  }
+  if (!frameImagePath) {
+    throw new Error("稳定分镜模板缺少 FRAME_IMAGE_PATH。该流程必须使用场景首帧或上一帧作为连续性起图。");
+  }
+  if (!char1PrimaryPath || !char1Name) {
+    throw new Error("稳定分镜模板缺少主角色参考。该流程必须至少提供 1 个角色的固定三视图参考。");
+  }
+  if (!poseGuidePath) {
+    throw new Error("稳定分镜模板缺少 POSE_GUIDE_PATH。该流程必须使用 OpenPose 姿态图来锁定人物动作和落脚点。");
+  }
+
+  const checkpointNode = workflow["1"];
+  const frameScaleNode = workflow["5"];
+  const char1PrimaryNode = workflow["9"];
+  const char1SecondaryNode = workflow["11"];
+  const char2PrimaryNode = workflow["13"];
+  const char2SecondaryNode = workflow["15"];
+  const poseScaleNode = workflow["17"];
+  const openposeLoaderNode = workflow["18"];
+  const openposeApplyNode = workflow["19"];
+  const sceneScaleNode = workflow["21"];
+  const depthPreprocessorNode = workflow["22"];
+  const depthLoaderNode = workflow["23"];
+  const depthApplyNode = workflow["24"];
+  const passASamplerNode = workflow["25"];
+  const passBSamplerNode = workflow["28"];
+
+  const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
+  const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
+  const depthResolution = Math.max(512, Math.min(1024, Math.max(renderWidth, renderHeight)));
+  const hasSecondCharacter = char2Name.length > 0;
+  const hasUniqueChar1Secondary = char1SecondaryPath.length > 0 && char1SecondaryPath !== char1PrimaryPath;
+  const hasUniqueChar2Secondary =
+    hasSecondCharacter &&
+    char2SecondaryPath.length > 0 &&
+    char2SecondaryPath !== char2PrimaryPath &&
+    char2SecondaryPath !== char1PrimaryPath;
+  const hasContinuitySeed = String(tokens.PREV_SCENE_IMAGE_PATH ?? "").trim().length > 0;
+  const shotScale = inferStoryboardCompositeScaleFromCorpus(
+    compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
+  );
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+  const workflowRef = (nodeId: string | number, outputIndex = 0) => [String(nodeId), outputIndex];
+
+  const stableControlNets = resolveStoryboardStableControlNetChoice(storyboardModel, objectInfo);
+  if (stableControlNets.qualityError) {
+    throw new Error(stableControlNets.qualityError);
+  }
+  const depthPreprocessorChoice = resolveStoryboardDepthPreprocessorChoice(objectInfo);
+  if (!depthPreprocessorChoice) {
+    throw new Error(
+      "当前 ComfyUI 未检测到可用的 Depth 预处理节点。请确认已正确加载 comfyui_controlnet_aux，并至少启用 DepthAnythingV2Preprocessor / DepthAnythingPreprocessor / MiDaS-DepthMapPreprocessor 之一。"
+    );
+  }
+
+  const primaryWeightBase = clamp(Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0.9") || 0.9, hasSecondCharacter ? 0.88 : 0.92, hasSecondCharacter ? 1.0 : 1.04);
+  const char1SecondaryWeight = hasUniqueChar1Secondary ? (hasSecondCharacter ? 0.18 : 0.24) : 0;
+  const char2PrimaryWeight = hasSecondCharacter
+    ? clamp(Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0.88") || 0.88, 0.86, 0.98)
+    : 0;
+  const char2SecondaryWeight = hasUniqueChar2Secondary ? 0.16 : 0;
+
+  const passABaseDenoise = Number(tokens.STORYBOARD_DENOISE ?? "0.4") || 0.4;
+  const passADenoise = clamp(
+    hasContinuitySeed
+      ? shotScale === "close"
+        ? passABaseDenoise
+        : shotScale === "medium"
+          ? passABaseDenoise - 0.02
+          : passABaseDenoise - 0.04
+      : shotScale === "close"
+        ? passABaseDenoise + 0.02
+        : shotScale === "wide"
+          ? passABaseDenoise + 0.04
+          : passABaseDenoise,
+    hasContinuitySeed ? 0.28 : 0.36,
+    hasContinuitySeed ? 0.42 : 0.54
+  );
+  const passASteps = Math.max(hasSecondCharacter ? 32 : 30, Number(tokens.STORYBOARD_STEPS ?? "30") || 30);
+  const passACfg = clamp(Number(tokens.STORYBOARD_CFG ?? "5.6") || 5.6, 5.2, 6.0);
+  const passBSteps = hasSecondCharacter ? 20 : 18;
+  const passBCfg = shotScale === "close" ? 5.3 : 5.1;
+  const passBDenoise = hasContinuitySeed
+    ? shotScale === "close"
+      ? 0.16
+      : 0.14
+    : shotScale === "close"
+      ? 0.2
+      : 0.18;
+  const openposeStrength = hasSecondCharacter ? 0.98 : 0.94;
+  const depthStrength =
+    shotScale === "wide"
+      ? 0.76
+      : shotScale === "medium"
+        ? 0.72
+        : 0.66;
+
+  const setNodeInputs = (node: unknown): Record<string, unknown> | null => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return null;
+    const inputs = (node as Record<string, unknown>).inputs;
+    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) return null;
+    return inputs as Record<string, unknown>;
+  };
+
+  const checkpointInputs = setNodeInputs(checkpointNode);
+  const frameScaleInputs = setNodeInputs(frameScaleNode);
+  const char1PrimaryInputs = setNodeInputs(char1PrimaryNode);
+  const char1SecondaryInputs = setNodeInputs(char1SecondaryNode);
+  const char2PrimaryInputs = setNodeInputs(char2PrimaryNode);
+  const char2SecondaryInputs = setNodeInputs(char2SecondaryNode);
+  const poseScaleInputs = setNodeInputs(poseScaleNode);
+  const openposeLoaderInputs = setNodeInputs(openposeLoaderNode);
+  const openposeApplyInputs = setNodeInputs(openposeApplyNode);
+  const sceneScaleInputs = setNodeInputs(sceneScaleNode);
+  const depthLoaderInputs = setNodeInputs(depthLoaderNode);
+  const depthApplyInputs = setNodeInputs(depthApplyNode);
+  const passAInputs = setNodeInputs(passASamplerNode);
+  const passBInputs = setNodeInputs(passBSamplerNode);
+
+  if (checkpointInputs) {
+    checkpointInputs.ckpt_name = stableControlNets.checkpointOverride ?? storyboardModel;
+  }
+  if (frameScaleInputs) {
+    frameScaleInputs.width = renderWidth;
+    frameScaleInputs.height = renderHeight;
+    frameScaleInputs.crop = "center";
+  }
+  if (poseScaleInputs) {
+    poseScaleInputs.width = renderWidth;
+    poseScaleInputs.height = renderHeight;
+    poseScaleInputs.crop = "disabled";
+  }
+  if (sceneScaleInputs) {
+    sceneScaleInputs.width = renderWidth;
+    sceneScaleInputs.height = renderHeight;
+    sceneScaleInputs.crop = "center";
+  }
+  if (char1PrimaryInputs) {
+    char1PrimaryInputs.model = workflowRef("7");
+    char1PrimaryInputs.weight = primaryWeightBase;
+    char1PrimaryInputs.end_at = 1;
+  }
+  if (char1SecondaryInputs) {
+    char1SecondaryInputs.model = workflowRef("9");
+    char1SecondaryInputs.weight = char1SecondaryWeight;
+    char1SecondaryInputs.start_at = 0;
+    char1SecondaryInputs.end_at = char1SecondaryWeight > 0 ? 0.72 : 0;
+  }
+  if (char2PrimaryInputs) {
+    char2PrimaryInputs.model = workflowRef("11");
+    char2PrimaryInputs.weight = char2PrimaryWeight;
+    char2PrimaryInputs.start_at = 0;
+    char2PrimaryInputs.end_at = char2PrimaryWeight > 0 ? 1 : 0;
+  }
+  if (char2SecondaryInputs) {
+    char2SecondaryInputs.model = workflowRef("13");
+    char2SecondaryInputs.weight = char2SecondaryWeight;
+    char2SecondaryInputs.start_at = 0;
+    char2SecondaryInputs.end_at = char2SecondaryWeight > 0 ? 0.66 : 0;
+  }
+  if (openposeLoaderInputs) {
+    openposeLoaderInputs.control_net_name =
+      stableControlNets.openposeControlNetName ?? storyboardDefaultControlNetName("openpose", looksLikeSdxlCheckpoint(storyboardModel));
+  }
+  if (openposeApplyInputs) {
+    openposeApplyInputs.strength = openposeStrength;
+    openposeApplyInputs.start_percent = 0;
+    openposeApplyInputs.end_percent = 1;
+    openposeApplyInputs.image = workflowRef("17");
+  }
+  workflow["22"] = {
+    inputs: {
+      image: workflowRef("21"),
+      resolution: depthResolution,
+      ...depthPreprocessorChoice.defaults
+    },
+    class_type: depthPreprocessorChoice.classType
+  };
+  if (depthLoaderInputs) {
+    depthLoaderInputs.control_net_name =
+      stableControlNets.depthControlNetName ?? storyboardDefaultControlNetName("depth", looksLikeSdxlCheckpoint(storyboardModel));
+  }
+  if (depthApplyInputs) {
+    depthApplyInputs.positive = workflowRef("19");
+    depthApplyInputs.negative = workflowRef("19", 1);
+    depthApplyInputs.image = workflowRef("22");
+    depthApplyInputs.strength = depthStrength;
+    depthApplyInputs.start_percent = 0;
+    depthApplyInputs.end_percent = 1;
+  }
+  if (passAInputs) {
+    passAInputs.model = workflowRef("15");
+    passAInputs.positive = workflowRef("24");
+    passAInputs.negative = workflowRef("24", 1);
+    passAInputs.latent_image = workflowRef("6");
+    passAInputs.steps = passASteps;
+    passAInputs.cfg = passACfg;
+    passAInputs.denoise = passADenoise;
+  }
+  if (passBInputs) {
+    passBInputs.model = workflowRef("15");
+    passBInputs.positive = workflowRef("24");
+    passBInputs.negative = workflowRef("24", 1);
+    passBInputs.latent_image = workflowRef("27");
+    passBInputs.steps = passBSteps;
+    passBInputs.cfg = passBCfg;
+    passBInputs.denoise = passBDenoise;
+  }
+
+  return true;
+}
+
 function adaptBuiltinStoryboardWorkflowForShot(
   workflow: Record<string, unknown>,
   tokens: Record<string, string>,
   objectInfo?: Record<string, unknown>
 ): void {
+  if (adaptStableStoryboardWorkflowForShot(workflow, tokens, objectInfo)) {
+    return;
+  }
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
   const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
   const frameSeedMode = String(tokens.STORYBOARD_FRAME_SEED_MODE ?? "").trim().toLowerCase();

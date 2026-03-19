@@ -38,7 +38,7 @@ import {
 } from "./comfyService";
 import FISHER_WORKFLOW_OBJECT from "./presets/fisher-nextscene-v1.json";
 import STORYBOARD_IMAGE_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
-import STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT from "./presets/storyboard-image-asset-guided-v1.json";
+import STORYBOARD_IMAGE_STABLE_WORKFLOW_OBJECT from "./presets/storyboard-image-stable-v1.json";
 import DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_OBJECT from "../../../examples/river-continuity-test/river_continuity_test_shot_script.json";
 import CHARACTER_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-threeview-default.json";
 import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "./presets/asset-character-kontext-threeview-default.json";
@@ -52,7 +52,7 @@ import {
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
-const STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_OBJECT);
+const STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_STABLE_WORKFLOW_OBJECT);
 const DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_JSON = JSON.stringify(DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_OBJECT, null, 2);
 const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
 type CharacterAssetWorkflowMode = "advanced_multiview";
@@ -505,14 +505,26 @@ function workflowNeedsBuiltinMatureStoryboardRewrite(workflowJson: string): bool
 
   const nodeTypes = collectWorkflowNodeTypesForHeuristics(trimmed);
   const nodeTypeSet = new Set(nodeTypes);
-  const hasSceneSeedChain = nodeTypeSet.has("LoadImage") && nodeTypeSet.has("VAEEncode") && trimmed.includes("{{SCENE_REF_PATH}}");
+  const hasFrameSeedChain =
+    nodeTypeSet.has("LoadImage") && nodeTypeSet.has("ImageScale") && nodeTypeSet.has("VAEEncode") && trimmed.includes("{{FRAME_IMAGE_PATH}}");
+  const hasFixedSceneChain = nodeTypeSet.has("LoadImage") && trimmed.includes("{{SCENE_REF_PATH}}");
   const hasCharacterIdentityBinding =
     nodeTypes.some((type) => /IPAdapter/i.test(type)) &&
     (trimmed.includes("{{CHAR1_PRIMARY_PATH}}") || trimmed.includes("{{CHARACTER_FRONT_PATHS}}"));
-  const hasStructuralControl = nodeTypes.some((type) => /ControlNet/i.test(type));
+  const controlNetApplyCount = nodeTypes.filter((type) => type === "ControlNetApplyAdvanced").length;
+  const hasDepthPreprocessor = nodeTypes.some((type) => /DepthAnythingV2Preprocessor|DepthAnythingPreprocessor|MiDaS-DepthMapPreprocessor/i.test(type));
+  const hasDualStageSampling = nodeTypes.filter((type) => type === "KSampler").length >= 2;
   const hasImageOutput = nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type));
 
-  return !(hasSceneSeedChain && hasCharacterIdentityBinding && hasStructuralControl && hasImageOutput);
+  return !(
+    hasFrameSeedChain &&
+    hasFixedSceneChain &&
+    hasCharacterIdentityBinding &&
+    controlNetApplyCount >= 2 &&
+    hasDepthPreprocessor &&
+    hasDualStageSampling &&
+    hasImageOutput
+  );
 }
 
 function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetWorkflowModeSpec {
@@ -520,26 +532,31 @@ function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetW
     return {
       label: "成熟资产约束分镜工作流",
       summary:
-        "内置模板使用 scene-first img2img + IPAdapter 身份约束 + ControlNet 结构约束。先锁场景底板，再锁人物身份和站位，是当前更稳的连续分镜主链路。",
+        "内置模板固定使用 scene/img2img 起图 + 双 IPAdapter 角色约束 + OpenPose + Depth 双 ControlNet + 两段式采样。它优先锁人物一致性、站位、动作和场景透视，只让镜头在连续镜头间做小幅变化。",
       requiredNodes: [
         "基础图生图链：CheckpointLoaderSimple / LoadImage / ImageScale / VAEEncode / KSampler / VAEDecode / SaveImage",
         "IPAdapterUnifiedLoader",
         "IPAdapterAdvanced",
-        "ControlNetLoader / ControlNetApplyAdvanced"
+        "OpenPose 姿态链：LoadImage / ImageScale / ControlNetLoader / ControlNetApplyAdvanced",
+        "Depth 链：LoadImage / ImageScale / DepthAnythingV2Preprocessor（或 DepthAnything / MiDaS）/ ControlNetLoader / ControlNetApplyAdvanced"
       ],
       requiredModels: [
-        "主模型：建议与 ControlNet 同体系的写实底模",
-        "IPAdapter Plus：自动走 PLUS 预设，对应底模需匹配的 IPAdapter 权重",
-        "CLIP Vision：clip_vision_h.safetensors"
+        "主模型：稳定优先建议 SD1.5 写实底模（默认 realisticVisionV60B1_v51VAE.safetensors）",
+        "IPAdapter Plus：ip-adapter-plus_sd15.safetensors 或匹配底模的 PLUS 版本",
+        "OpenPose ControlNet：control_v11p_sd15_openpose_fp16.safetensors 或匹配体系 XL 版本",
+        "Depth ControlNet：control_v11f1p_sd15_depth_fp16.safetensors 或匹配体系 XL 版本",
+        "CLIP Vision：clip_vision_h.safetensors",
+        "Depth 预处理模型：Depth Anything V2 / Depth Anything / MiDaS 对应权重"
       ],
       recommendedPlugins: [
         "comfyui_ipadapter_plus",
         "ComfyUI-Advanced-ControlNet",
+        "comfyui_controlnet_aux",
         "可选：ComfyUI_InstantID 或 PuLID_ComfyUI"
       ],
       notes: [
-        "内置成熟模板已经固定为 scene-first + IPAdapter + ControlNet，不再把 ControlNet 视为可有可无的附加项。",
-        "双人/远景镜头会自动强化人物结构约束，优先保证全身出镜、脚部接地和站位稳定。",
+        "内置成熟模板已经固定为上一帧回流 + 固定场景深度 + 双人物参考 + 双 ControlNet，不再在 Canny / OpenPose 之间二选一。",
+        "双人镜头会同时锁人物个数、脚部接地和姿态，不再依赖背景合成人像或单张拼贴参考图。",
         "如果还需要更硬的正脸锁定，可在这套模板上继续叠 InstantID / PuLID；当前内置 Qwen 模板只保留兼容用途。"
       ]
     };
@@ -2463,12 +2480,15 @@ function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflo
   const hasVaeEncode = nodeTypes.includes("VAEEncode");
   const hasIpAdapter = nodeTypes.some((type) => /IPAdapter/i.test(type));
   const hasControlNet = nodeTypes.some((type) => /ControlNet/i.test(type));
+  const controlNetApplyCount = nodeTypes.filter((type) => type === "ControlNetApplyAdvanced").length;
   const hasInstantId = nodeTypes.some((type) => /InstantID/i.test(type));
   const hasPulid = nodeTypes.some((type) => /PuLID/i.test(type));
   const hasQwenTemplateNode = nodeTypes.some((type) => /Qwen|ImageEditPlus|promptLine/i.test(type));
   const usesSceneToken = workflowJson.includes("{{SCENE_REF_PATH}}");
   const usesCharacterToken =
     workflowJson.includes("{{CHAR1_PRIMARY_PATH}}") || workflowJson.includes("{{CHARACTER_FRONT_PATHS}}");
+  const hasDepthPreprocessor =
+    nodeTypes.some((type) => /DepthAnythingV2Preprocessor|DepthAnythingPreprocessor|MiDaS-DepthMapPreprocessor/i.test(type));
   const hasHardcodedReferenceImages = storyboardWorkflowHasHardcodedReferenceImages(workflowJson);
 
   if (hasQwenTemplateNode) {
@@ -2489,10 +2509,16 @@ function inspectStoryboardWorkflowHeuristics(workflowJson: string): AssetWorkflo
   if (!hasControlNet) {
     warnings.push("未检测到 ControlNet。成熟分镜模板需要结构控制来稳定人物位置、完整出镜和脚部接地。");
   }
+  if (hasControlNet && controlNetApplyCount < 2) {
+    warnings.push("当前分镜模板只检测到单路 ControlNet。稳定分镜主链路应同时具备 OpenPose + Depth。");
+  }
+  if (!hasDepthPreprocessor) {
+    warnings.push("未检测到 Depth 预处理节点。固定场景透视和地面接触会明显变弱。");
+  }
   if (!nodeTypes.some((type) => /SaveImage|PreviewImage/i.test(type))) {
     warnings.push("未检测到明显图片输出节点，请确认工作流最终会产出分镜图。");
   }
-  notes.push("成熟分镜模板的核心顺序应是：场景底图优先，角色参考其次，ControlNet 锁结构，文本只补镜头动作和构图。");
+  notes.push("成熟分镜模板的核心顺序应是：上一帧/场景起图优先，角色参考其次，OpenPose 锁动作，Depth 锁透视，两段采样做稳定细化。");
   if (hasControlNet) notes.push("检测到 ControlNet，可用于稳定人物站位、完整全身和接地关系。");
   if (hasInstantId || hasPulid) notes.push("检测到 InstantID / PuLID，可用于正脸镜头进一步锁脸。");
   return { warnings, notes };
@@ -2506,7 +2532,7 @@ function loadSettings(): ComfySettings {
       outputDir: "",
       comfyInputDir: "",
       comfyRootDir: "",
-      imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
+      imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON,
       storyboardImageWorkflowMode: DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
       storyboardImageModelName: DEFAULT_STORYBOARD_IMAGE_MODEL,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
@@ -2565,11 +2591,11 @@ function loadSettings(): ComfySettings {
       workflowNeedsBuiltinMatureStoryboardRewrite(parsedImageWorkflowJson);
     const resolvedImageWorkflowJson =
       shouldUpgradeStoryboardWorkflow
-        ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+        ? STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         : parsedImageWorkflowJson.trim().length > 0
           ? parsedImageWorkflowJson
           : resolvedStoryboardMode === "mature_asset_guided"
-            ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+            ? STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
             : STORYBOARD_IMAGE_WORKFLOW_JSON;
     const resolvedVideoWorkflowJson =
       typeof parsed.videoWorkflowJson === "string" && parsed.videoWorkflowJson.trim().length > 0
@@ -2667,7 +2693,7 @@ function loadSettings(): ComfySettings {
       outputDir: "",
       comfyInputDir: "",
       comfyRootDir: "",
-      imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
+      imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON,
       storyboardImageWorkflowMode: DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE,
       storyboardImageModelName: DEFAULT_STORYBOARD_IMAGE_MODEL,
       videoWorkflowJson: FISHER_WORKFLOW_JSON,
@@ -8964,7 +8990,7 @@ export function ComfyPipelinePanel() {
       storyboardImageWorkflowMode: mode,
       imageWorkflowJson:
         mode === "mature_asset_guided"
-          ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          ? STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
           : STORYBOARD_IMAGE_WORKFLOW_JSON
     }));
     pushToast(
@@ -9008,7 +9034,7 @@ export function ComfyPipelinePanel() {
         comfyInputDir,
         outputDir,
         storyboardImageWorkflowMode: "mature_asset_guided",
-        imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON,
+        imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON,
         storyboardImageModelName: storyboardModel,
         characterAssetWorkflowMode: "advanced_multiview",
         skyboxAssetWorkflowMode: "basic_builtin",
@@ -12111,24 +12137,24 @@ export function ComfyPipelinePanel() {
         (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
         workflowNeedsBuiltinMatureStoryboardRewrite(runtimeSettings.imageWorkflowJson)
       ) {
-        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON };
         persistSettings((previous) => ({
           ...previous,
-          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         }));
-        appendLog("成熟分镜模式检测到当前模板缺少 scene-first / IPAdapter / ControlNet 关键链路，已自动写入内置结构化分镜模板", "info");
+        appendLog("成熟分镜模式检测到当前模板缺少双 ControlNet / 双阶段采样等关键链路，已自动写入内置稳定分镜模板", "info");
         pushToast("已自动切换为内置成熟分镜模板", "success");
       }
       if (workflowLooksLikeCharacterThreeViewStoryboardMisuse(runtimeSettings.imageWorkflowJson)) {
         runtimeSettings = {
           ...runtimeSettings,
           storyboardImageWorkflowMode: "mature_asset_guided",
-          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         };
         persistSettings((previous) => ({
           ...previous,
           storyboardImageWorkflowMode: "mature_asset_guided",
-          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         }));
         appendLog("检测到当前图片工作流实际是角色三视图/three_view 资产工作流，已自动切回内置成熟分镜模板，避免把三视图整板当分镜图输出。", "info");
         pushToast("检测到误用三视图工作流，已自动切换成熟分镜模板", "warning");
@@ -12137,17 +12163,17 @@ export function ComfyPipelinePanel() {
         (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided" &&
         storyboardWorkflowHasHardcodedReferenceImages(runtimeSettings.imageWorkflowJson)
       ) {
-        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON };
         persistSettings((previous) => ({
           ...previous,
-          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         }));
         appendLog("检测到分镜工作流中写死了旧测试参考图，已自动切换为当前内置角色优先分镜模板", "info");
         pushToast("检测到旧测试参考图工作流，已自动切换为内置分镜模板", "warning");
       }
       if (isLegacyMixedStoryboardImageWorkflow(runtimeSettings.imageWorkflowJson)) {
-        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON };
-        persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON }));
+        runtimeSettings = { ...runtimeSettings, imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON };
+        persistSettings((previous) => ({ ...previous, imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON }));
         appendLog("检测到旧版混合 Wan 分镜图工作流，已自动切换为内置成熟分镜模板", "info");
         pushToast("已将旧版重型分镜图工作流切换为内置成熟分镜模板", "warning");
       }
@@ -12155,12 +12181,12 @@ export function ComfyPipelinePanel() {
         runtimeSettings = {
           ...runtimeSettings,
           storyboardImageWorkflowMode: "mature_asset_guided",
-          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         };
         persistSettings((previous) => ({
           ...previous,
           storyboardImageWorkflowMode: "mature_asset_guided",
-          imageWorkflowJson: STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+          imageWorkflowJson: STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
         }));
         appendLog("检测到 WanMoeKSampler/Wan 节点（高显存 3D 采样），已自动切换为内置成熟分镜模板以避免 OOM", "info");
         pushToast("检测到 Wan 工作流并已自动切换为成熟分镜模板", "warning");
@@ -12168,7 +12194,7 @@ export function ComfyPipelinePanel() {
       if (!runtimeSettings.imageWorkflowJson.trim()) {
         const fallbackWorkflow =
           (runtimeSettings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE) === "mature_asset_guided"
-            ? STORYBOARD_IMAGE_ASSET_GUIDED_WORKFLOW_JSON
+            ? STORYBOARD_IMAGE_STABLE_WORKFLOW_JSON
             : STORYBOARD_IMAGE_WORKFLOW_JSON;
         runtimeSettings = { ...runtimeSettings, imageWorkflowJson: fallbackWorkflow };
         persistSettings((previous) => ({ ...previous, imageWorkflowJson: fallbackWorkflow }));
