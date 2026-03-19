@@ -2731,8 +2731,22 @@ fn split_threeview_sheet(source_path: String) -> Result<ThreeViewSplitResult, St
     }
 
     let panel_width = width / 3;
-    let widths = [panel_width, panel_width, width - panel_width * 2];
-    let starts = [0, panel_width, panel_width * 2];
+    let overlap = ((panel_width as f32 * 0.08).round() as u32).clamp(6, 48);
+    let starts = [
+        0,
+        panel_width.saturating_sub(overlap),
+        (panel_width * 2).saturating_sub(overlap),
+    ];
+    let ends = [
+        width.min(panel_width + overlap),
+        width.min(panel_width * 2 + overlap),
+        width,
+    ];
+    let widths = [
+        (ends[0]).saturating_sub(starts[0]).max(1),
+        (ends[1]).saturating_sub(starts[1]).max(1),
+        (ends[2]).saturating_sub(starts[2]).max(1),
+    ];
     let stem = source
         .file_stem()
         .and_then(|value| value.to_str())

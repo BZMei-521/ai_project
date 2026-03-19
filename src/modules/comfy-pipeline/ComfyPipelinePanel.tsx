@@ -6386,16 +6386,56 @@ export function ComfyPipelinePanel() {
     if (view === "front") {
       return fitCharacterViewWithinCanvas(normalized, "front");
     }
-    const layout = await analyzeForegroundLayout(normalized);
+    const directPath = (await fitCharacterViewWithinCanvas(normalized, view)) || normalized;
+    const [layout, directLayout, directQuality] = await Promise.all([
+      analyzeForegroundLayout(normalized),
+      analyzeForegroundLayout(directPath),
+      evaluateSingleCharacterViewQuality(directPath, view)
+    ]);
+    const computeClutterScore = (
+      candidate: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
+    ) => {
+      if (!candidate) return Number.POSITIVE_INFINITY;
+      return (
+        candidate.secondaryForegroundRatio * 2.4 +
+        candidate.detachedForegroundRatio * 2.2 +
+        candidate.edgeForegroundRatio * 1.9 +
+        Math.max(0, candidate.mediumComponents - 1) * 0.14 +
+        Math.max(0, candidate.significantComponents - 1) * 0.32
+      );
+    };
     const shouldIsolate =
       layout != null &&
       (layout.significantComponents > 1 ||
         layout.mediumComponents > 4 ||
         layout.secondaryForegroundRatio > 0.18 ||
-        layout.detachedForegroundRatio > 0.16 ||
-        layout.edgeForegroundRatio > 0.18);
-    const prepared = shouldIsolate ? await isolateCharacterPrimarySubject(normalized) : normalized;
-    return fitCharacterViewWithinCanvas(prepared, view);
+        layout.detachedForegroundRatio > 0.12 ||
+        layout.edgeForegroundRatio > 0.12 ||
+        directQuality.issues.some((issue) => /(multi_blob|multi_cluster|secondary_fg|detached_fg|edge_clutter|touching_edge)/i.test(issue)));
+    if (!shouldIsolate) {
+      return directPath;
+    }
+    const isolatedRaw = await isolateCharacterPrimarySubject(normalized);
+    if (!isolatedRaw.trim() || isolatedRaw.trim() === normalized.trim()) {
+      return directPath;
+    }
+    const isolatedPath = (await fitCharacterViewWithinCanvas(isolatedRaw, view)) || isolatedRaw;
+    const [isolatedLayout, isolatedQuality] = await Promise.all([
+      analyzeForegroundLayout(isolatedPath),
+      evaluateSingleCharacterViewQuality(isolatedPath, view)
+    ]);
+    const directClutter = computeClutterScore(directLayout);
+    const isolatedClutter = computeClutterScore(isolatedLayout);
+    if (isolatedQuality.acceptable && !directQuality.acceptable) {
+      return isolatedPath;
+    }
+    if (directQuality.acceptable && !isolatedQuality.acceptable) {
+      return directPath;
+    }
+    if (isolatedClutter + 0.08 < directClutter) {
+      return isolatedPath;
+    }
+    return isolatedQuality.score > directQuality.score + 3 ? isolatedPath : directPath;
   };
 
   const fitCharacterViewWithinCanvas = async (pathOrUrl: string, view: "front" | "side" | "back") => {

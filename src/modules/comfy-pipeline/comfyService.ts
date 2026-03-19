@@ -5092,6 +5092,10 @@ async function stageStoryboardThreeViewTokens(
   if (!inputDir) return tokens;
   const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const nextTokens = { ...tokens };
+  const prefersStableThreeViewPrimary =
+    (settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided";
+  const isUsableIdentityView = (quality: { fragmented: boolean; edgeTouch: boolean; componentCount: number }) =>
+    !quality.fragmented && !quality.edgeTouch && quality.componentCount <= 4;
 
   for (const slot of [1, 2] as const) {
     const frontKey = `CHAR${slot}_FRONT_PATH` as const;
@@ -5105,22 +5109,37 @@ async function stageStoryboardThreeViewTokens(
     const primaryPath = String(nextTokens[primaryKey] ?? "").trim();
     if (!frontPath && !sidePath && !backPath && !primaryPath) continue;
 
-    const [frontQuality, sideQuality, primaryQuality] = await Promise.all([
+    const [frontQuality, sideQuality, backQuality, primaryQuality] = await Promise.all([
       frontPath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, frontPath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 }),
       sidePath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, sidePath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 }),
+      backPath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, backPath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 }),
       primaryPath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, primaryPath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 })
     ]);
 
+    const canonicalFrontPath = frontPath || primaryPath;
+    const usableSidePath = sidePath && isUsableIdentityView(sideQuality) ? sidePath : "";
+    const usableBackPath = backPath && isUsableIdentityView(backQuality) ? backPath : "";
+    const middlePath = usableSidePath || usableBackPath || canonicalFrontPath;
+    const terminalPath = usableBackPath || canonicalFrontPath || middlePath;
+    const boardSources = [canonicalFrontPath, middlePath, terminalPath].filter((item) => item.trim().length > 0);
+    const shouldUseBoardAsPrimary =
+      prefersStableThreeViewPrimary &&
+      Boolean(canonicalFrontPath) &&
+      boardSources.length >= 2 &&
+      (Boolean(usableSidePath) || Boolean(usableBackPath));
     const shouldFallbackToThreeView =
       frontQuality.fragmented ||
       sideQuality.fragmented ||
+      backQuality.fragmented ||
       primaryQuality.fragmented ||
       frontQuality.edgeTouch ||
-      primaryQuality.edgeTouch;
+      sideQuality.edgeTouch ||
+      backQuality.edgeTouch ||
+      primaryQuality.edgeTouch ||
+      shouldUseBoardAsPrimary;
     if (!shouldFallbackToThreeView) continue;
 
-    const sources = [frontPath, sidePath, backPath].filter((item) => item.trim().length > 0);
-    const threeViewCanvas = await buildCharacterThreeViewTokenCanvas(settings, sources);
+    const threeViewCanvas = await buildCharacterThreeViewTokenCanvas(settings, boardSources);
     if (!threeViewCanvas) continue;
     const filePath = `${inputDir}/shot_${safeShotId}_char${slot}_threeview_identity.png`;
     const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
@@ -5129,7 +5148,7 @@ async function stageStoryboardThreeViewTokens(
     });
     if (!result.filePath) continue;
     nextTokens[primaryKey] = result.filePath.split("/").pop() ?? result.filePath;
-    nextTokens[secondaryKey] = backPath || frontPath || nextTokens[secondaryKey] || "";
+    nextTokens[secondaryKey] = canonicalFrontPath || usableBackPath || usableSidePath || nextTokens[secondaryKey] || "";
   }
 
   return nextTokens;
@@ -8395,6 +8414,9 @@ function adaptStableStoryboardWorkflowForShot(
     char2SecondaryPath.length > 0 &&
     char2SecondaryPath !== char2PrimaryPath &&
     char2SecondaryPath !== char1PrimaryPath;
+  const isThreeViewIdentityPath = (path: string) => /threeview_(?:identity|board)|threeview/i.test(path);
+  const char1PrimaryUsesThreeView = isThreeViewIdentityPath(char1PrimaryPath);
+  const char2PrimaryUsesThreeView = isThreeViewIdentityPath(char2PrimaryPath);
   const lockDualCharacterIdentity = hasSecondCharacter;
   const hasContinuitySeed = String(tokens.PREV_SCENE_IMAGE_PATH ?? "").trim().length > 0;
   const frameSeedMode = String(tokens.STORYBOARD_FRAME_SEED_MODE ?? "").trim().toLowerCase();
@@ -8417,16 +8439,46 @@ function adaptStableStoryboardWorkflowForShot(
     );
   }
 
+  const char1PrimaryWeightDefault = hasSecondCharacter
+    ? char1PrimaryUsesThreeView
+      ? 0.98
+      : 1.08
+    : char1PrimaryUsesThreeView
+      ? 0.94
+      : 0.98;
   const primaryWeightBase = clamp(
-    Number(tokens.CHAR1_PRIMARY_WEIGHT ?? (hasSecondCharacter ? "1.08" : "0.98")) || (hasSecondCharacter ? 1.08 : 0.98),
-    hasSecondCharacter ? 1.08 : 0.96,
-    hasSecondCharacter ? 1.3 : 1.18
+    Number(tokens.CHAR1_PRIMARY_WEIGHT ?? String(char1PrimaryWeightDefault)) || char1PrimaryWeightDefault,
+    hasSecondCharacter ? (char1PrimaryUsesThreeView ? 0.92 : 1.08) : char1PrimaryUsesThreeView ? 0.9 : 0.96,
+    hasSecondCharacter ? (char1PrimaryUsesThreeView ? 1.12 : 1.3) : char1PrimaryUsesThreeView ? 1.06 : 1.18
   );
-  const char1SecondaryWeight = hasUniqueChar1Secondary ? (lockDualCharacterIdentity ? 0 : 0.28) : 0;
-  const char2PrimaryWeight = hasSecondCharacter
-    ? clamp(Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "1.04") || 1.04, 1.02, 1.26)
+  const char1UsesDualFrontAnchor = lockDualCharacterIdentity && char1PrimaryUsesThreeView && hasUniqueChar1Secondary;
+  const char1SecondaryWeight = hasUniqueChar1Secondary
+    ? char1UsesDualFrontAnchor
+      ? 0.22
+      : lockDualCharacterIdentity
+        ? 0
+        : 0.28
     : 0;
-  const char2SecondaryWeight = hasUniqueChar2Secondary ? (lockDualCharacterIdentity ? 0 : 0.22) : 0;
+  const char2PrimaryWeightDefault = hasSecondCharacter
+    ? char2PrimaryUsesThreeView
+      ? 0.96
+      : 1.04
+    : 0;
+  const char2PrimaryWeight = hasSecondCharacter
+    ? clamp(
+        Number(tokens.CHAR2_PRIMARY_WEIGHT ?? String(char2PrimaryWeightDefault)) || char2PrimaryWeightDefault,
+        char2PrimaryUsesThreeView ? 0.9 : 1.02,
+        char2PrimaryUsesThreeView ? 1.08 : 1.26
+      )
+    : 0;
+  const char2UsesDualFrontAnchor = lockDualCharacterIdentity && char2PrimaryUsesThreeView && hasUniqueChar2Secondary;
+  const char2SecondaryWeight = hasUniqueChar2Secondary
+    ? char2UsesDualFrontAnchor
+      ? 0.2
+      : lockDualCharacterIdentity
+        ? 0
+        : 0.22
+    : 0;
   const passAModelNodeId = char1SecondaryWeight > 0 ? "11" : "9";
   const passBModelNodeId = hasSecondCharacter ? (char2SecondaryWeight > 0 ? "15" : "13") : passAModelNodeId;
 
@@ -8534,13 +8586,13 @@ function adaptStableStoryboardWorkflowForShot(
   if (char1PrimaryInputs) {
     char1PrimaryInputs.model = workflowRef("7");
     char1PrimaryInputs.weight = primaryWeightBase;
-    char1PrimaryInputs.end_at = lockDualCharacterIdentity ? 0.86 : 1;
+    char1PrimaryInputs.end_at = char1PrimaryUsesThreeView ? 1 : lockDualCharacterIdentity ? 0.86 : 1;
   }
   if (char1SecondaryInputs) {
     char1SecondaryInputs.model = workflowRef("9");
     char1SecondaryInputs.weight = char1SecondaryWeight;
     char1SecondaryInputs.start_at = 0;
-    char1SecondaryInputs.end_at = char1SecondaryWeight > 0 ? 0.86 : 0;
+    char1SecondaryInputs.end_at = char1SecondaryWeight > 0 ? (char1UsesDualFrontAnchor ? 0.76 : 0.86) : 0;
   }
   if (char2PrimaryInputs) {
     char2PrimaryInputs.model = workflowRef(passAModelNodeId);
@@ -8552,7 +8604,7 @@ function adaptStableStoryboardWorkflowForShot(
     char2SecondaryInputs.model = workflowRef("13");
     char2SecondaryInputs.weight = char2SecondaryWeight;
     char2SecondaryInputs.start_at = 0;
-    char2SecondaryInputs.end_at = char2SecondaryWeight > 0 ? 0.82 : 0;
+    char2SecondaryInputs.end_at = char2SecondaryWeight > 0 ? (char2UsesDualFrontAnchor ? 0.74 : 0.82) : 0;
   }
   if (openposeLoaderInputs) {
     openposeLoaderInputs.control_net_name =

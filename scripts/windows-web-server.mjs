@@ -900,15 +900,28 @@ $source = '${escapePowerShellLiteral(source)}'
 $frontPath = '${escapePowerShellLiteral(frontPath)}'
 $sidePath = '${escapePowerShellLiteral(sidePath)}'
 $backPath = '${escapePowerShellLiteral(backPath)}'
-$image = [System.Drawing.Bitmap]::FromFile($source)
+  $image = [System.Drawing.Bitmap]::FromFile($source)
 try {
   if ($image.Width -lt 3 -or $image.Height -lt 1) {
     throw "Three-view sheet has invalid dimensions: $($image.Width)x$($image.Height)"
   }
   $panelWidth = [int][Math]::Floor([double]$image.Width / 3.0)
-  $lastWidth = [int]($image.Width - ($panelWidth * 2))
-  $widths = @([int]$panelWidth, [int]$panelWidth, [int]$lastWidth)
-  $starts = @([int]0, [int]$panelWidth, [int]($panelWidth * 2))
+  $overlap = [int][Math]::Min([Math]::Max([int][Math]::Round($panelWidth * 0.08), 6), 48)
+  $starts = @(
+    [int]0,
+    [int][Math]::Max(0, $panelWidth - $overlap),
+    [int][Math]::Max(0, ($panelWidth * 2) - $overlap)
+  )
+  $ends = @(
+    [int][Math]::Min($image.Width, $panelWidth + $overlap),
+    [int][Math]::Min($image.Width, ($panelWidth * 2) + $overlap),
+    [int]$image.Width
+  )
+  $widths = @(
+    [int][Math]::Max(1, $ends[0] - $starts[0]),
+    [int][Math]::Max(1, $ends[1] - $starts[1]),
+    [int][Math]::Max(1, $ends[2] - $starts[2])
+  )
   $targets = @($frontPath, $sidePath, $backPath)
   for ($i = 0; $i -lt 3; $i++) {
     if (Test-Path -LiteralPath $targets[$i]) {
