@@ -3851,6 +3851,166 @@ function detectReferenceContentBounds(context: CanvasRenderingContext2D, width: 
   };
 }
 
+type OpaqueComponentAnalysis = {
+  labels: Int32Array;
+  components: Array<{
+    id: number;
+    area: number;
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+    touchesEdge: boolean;
+  }>;
+};
+
+function buildReferenceForegroundAlpha(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  background: { r: number; g: number; b: number }
+) {
+  const opaque = new Uint8Array(width * height);
+  for (let index = 0; index < data.length; index += 4) {
+    const sourceAlpha = data[index + 3] ?? 255;
+    if (sourceAlpha <= 8) {
+      data[index + 3] = 0;
+      continue;
+    }
+    const dr = (data[index] ?? 0) - background.r;
+    const dg = (data[index + 1] ?? 0) - background.g;
+    const db = (data[index + 2] ?? 0) - background.b;
+    const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+    const alpha = distance <= 28 ? 0 : distance >= 58 ? 255 : Math.round(((distance - 28) / 30) * 255);
+    data[index + 3] = alpha;
+    if (alpha <= 32) continue;
+    opaque[index / 4] = 1;
+  }
+  return opaque;
+}
+
+function analyzeOpaqueComponents(mask: Uint8Array, width: number, height: number): OpaqueComponentAnalysis {
+  const labels = new Int32Array(width * height);
+  const components: OpaqueComponentAnalysis["components"] = [];
+  let nextId = 1;
+  const queue = new Int32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const start = y * width + x;
+      if (!mask[start] || labels[start] !== 0) continue;
+      let head = 0;
+      let tail = 0;
+      queue[tail++] = start;
+      labels[start] = nextId;
+      let area = 0;
+      let minX = x;
+      let minY = y;
+      let maxX = x;
+      let maxY = y;
+      let touchesEdge = x === 0 || y === 0 || x === width - 1 || y === height - 1;
+      while (head < tail) {
+        const current = queue[head++];
+        const cx = current % width;
+        const cy = Math.floor(current / width);
+        area += 1;
+        if (cx < minX) minX = cx;
+        if (cy < minY) minY = cy;
+        if (cx > maxX) maxX = cx;
+        if (cy > maxY) maxY = cy;
+        if (cx === 0 || cy === 0 || cx === width - 1 || cy === height - 1) touchesEdge = true;
+        const neighbors = [
+          current - 1,
+          current + 1,
+          current - width,
+          current + width
+        ];
+        for (const neighbor of neighbors) {
+          if (neighbor < 0 || neighbor >= mask.length) continue;
+          const nx = neighbor % width;
+          const ny = Math.floor(neighbor / width);
+          if (Math.abs(nx - cx) + Math.abs(ny - cy) !== 1) continue;
+          if (!mask[neighbor] || labels[neighbor] !== 0) continue;
+          labels[neighbor] = nextId;
+          queue[tail++] = neighbor;
+        }
+      }
+      components.push({ id: nextId, area, minX, minY, maxX, maxY, touchesEdge });
+      nextId += 1;
+    }
+  }
+  components.sort((left, right) => right.area - left.area);
+  return { labels, components };
+}
+
+function applyLargestOpaqueComponent(
+  data: Uint8ClampedArray,
+  analysis: OpaqueComponentAnalysis
+) {
+  const largest = analysis.components[0];
+  if (!largest) return;
+  if (analysis.components.length <= 1) return;
+  const minKeepArea = Math.max(48, Math.round(largest.area * 0.18));
+  const keepIds = new Set(
+    analysis.components
+      .filter((component) => component.area >= minKeepArea)
+      .map((component) => component.id)
+  );
+  for (let pixel = 0; pixel < analysis.labels.length; pixel += 1) {
+    const label = analysis.labels[pixel];
+    if (label <= 0 || keepIds.has(label)) continue;
+    data[pixel * 4 + 3] = 0;
+  }
+}
+
+async function analyzeCharacterReferenceQuality(pathOrUrl: string): Promise<{
+  fragmented: boolean;
+  edgeTouch: boolean;
+  componentCount: number;
+}> {
+  const image = await loadReferenceImageElement(pathOrUrl);
+  if (!image) {
+    return { fragmented: false, edgeTouch: false, componentCount: 0 };
+  }
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (width <= 0 || height <= 0) {
+    return { fragmented: false, edgeTouch: false, componentCount: 0 };
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return { fragmented: false, edgeTouch: false, componentCount: 0 };
+  }
+  context.drawImage(image, 0, 0, width, height);
+  const frame = context.getImageData(0, 0, width, height);
+  const background = estimateBorderBackgroundColor(context, width, height);
+  const opaque = buildReferenceForegroundAlpha(frame.data, width, height, background);
+  const analysis = analyzeOpaqueComponents(opaque, width, height);
+  const largest = analysis.components[0];
+  const second = analysis.components[1];
+  if (!largest) {
+    return { fragmented: false, edgeTouch: false, componentCount: 0 };
+  }
+  const fragmentArea = analysis.components.slice(1).reduce((sum, component) => sum + component.area, 0);
+  const fragmented =
+    Boolean(second && second.area >= Math.max(64, Math.round(largest.area * 0.08))) ||
+    fragmentArea >= Math.max(96, Math.round(largest.area * 0.12));
+  const edgeMargin = Math.max(2, Math.round(Math.min(width, height) * 0.01));
+  const edgeTouch =
+    largest.touchesEdge ||
+    largest.minX <= edgeMargin ||
+    largest.minY <= edgeMargin ||
+    largest.maxX >= width - 1 - edgeMargin ||
+    largest.maxY >= height - 1 - edgeMargin;
+  return {
+    fragmented,
+    edgeTouch,
+    componentCount: analysis.components.length
+  };
+}
+
 async function stagePreparedReferenceImage(
   settings: ComfySettings,
   source: string,
@@ -3869,6 +4029,21 @@ async function stagePreparedReferenceImage(
   const height = image.naturalHeight || image.height;
   if (width <= 0 || height <= 0) {
     return stageSourceFileToComfyInput(trimmedSource, targetAbs, settings.baseUrl, settings.outputDir);
+  }
+
+  if (mode === "character") {
+    const preparedCanvas = await buildPreparedCharacterReferenceCanvas(trimmedSource);
+    if (preparedCanvas) {
+      try {
+        const written = await invokeDesktop<FileWriteResult>("write_base64_file", {
+          filePath: targetAbs,
+          base64Data: preparedCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+        });
+        if (written.filePath.trim()) return written.filePath;
+      } catch {
+        // Fall back to regular staging when cleaned character materialization fails.
+      }
+    }
   }
 
   const sampleCanvas = document.createElement("canvas");
@@ -4131,19 +4306,16 @@ async function buildCharacterCutoutCanvas(pathOrUrl: string): Promise<HTMLCanvas
   const frame = context.getImageData(0, 0, width, height);
   const data = frame.data;
   const background = estimateBorderBackgroundColor(context, width, height);
+  const opaque = buildReferenceForegroundAlpha(data, width, height, background);
+  const analysis = analyzeOpaqueComponents(opaque, width, height);
+  applyLargestOpaqueComponent(data, analysis);
   let minX = width;
   let minY = height;
   let maxX = -1;
   let maxY = -1;
-  for (let index = 0; index < data.length; index += 4) {
-    const dr = (data[index] ?? 0) - background.r;
-    const dg = (data[index + 1] ?? 0) - background.g;
-    const db = (data[index + 2] ?? 0) - background.b;
-    const distance = Math.sqrt(dr * dr + dg * dg + db * db);
-    const alpha = distance <= 28 ? 0 : distance >= 58 ? 255 : Math.round(((distance - 28) / 30) * 255);
-    data[index + 3] = alpha;
-    if (alpha <= 0) continue;
-    const pixel = index / 4;
+  for (let pixel = 0; pixel < opaque.length; pixel += 1) {
+    const alpha = data[pixel * 4 + 3] ?? 0;
+    if (alpha <= 32) continue;
     const x = pixel % width;
     const y = Math.floor(pixel / width);
     if (x < minX) minX = x;
@@ -4165,6 +4337,30 @@ async function buildCharacterCutoutCanvas(pathOrUrl: string): Promise<HTMLCanvas
   if (!cutoutContext) return null;
   cutoutContext.drawImage(workCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
   return cutoutCanvas;
+}
+
+async function buildPreparedCharacterReferenceCanvas(pathOrUrl: string): Promise<HTMLCanvasElement | null> {
+  const cutout = await buildCharacterCutoutCanvas(pathOrUrl);
+  if (!cutout) return null;
+  const longestSide = Math.max(cutout.width, cutout.height);
+  const innerPadding = Math.max(36, Math.round(longestSide * 0.12));
+  const canvasSize = longestSide + innerPadding * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.fillStyle = "rgb(244, 241, 236)";
+  context.fillRect(0, 0, canvasSize, canvasSize);
+  const maxDrawWidth = canvasSize - innerPadding * 2;
+  const maxDrawHeight = canvasSize - innerPadding * 2;
+  const scale = Math.min(maxDrawWidth / Math.max(1, cutout.width), maxDrawHeight / Math.max(1, cutout.height));
+  const drawWidth = Math.max(1, Math.round(cutout.width * scale));
+  const drawHeight = Math.max(1, Math.round(cutout.height * scale));
+  const drawX = Math.round((canvasSize - drawWidth) / 2);
+  const drawY = Math.round((canvasSize - drawHeight) / 2);
+  context.drawImage(cutout, drawX, drawY, drawWidth, drawHeight);
+  return canvas;
 }
 
 function clampChannel(value: number): number {
@@ -4891,13 +5087,52 @@ async function stageStoryboardThreeViewTokens(
   shot: Shot,
   tokens: Record<string, string>
 ): Promise<Record<string, string>> {
-  void settings;
-  void shot;
-  // Mature storyboard stills must keep CHAR*_PRIMARY_PATH bound to a clean
-  // single-view identity anchor. Replacing it with a stitched three-view board
-  // weakens IPAdapter identity lock and makes the model treat the reference as
-  // a layout/style hint instead of "this exact person must be in frame".
-  return tokens;
+  if (!canProcessStoryboardReferenceImages()) return tokens;
+  const inputDir = inferComfyInputDir(settings);
+  if (!inputDir) return tokens;
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const nextTokens = { ...tokens };
+
+  for (const slot of [1, 2] as const) {
+    const frontKey = `CHAR${slot}_FRONT_PATH` as const;
+    const sideKey = `CHAR${slot}_SIDE_PATH` as const;
+    const backKey = `CHAR${slot}_BACK_PATH` as const;
+    const primaryKey = `CHAR${slot}_PRIMARY_PATH` as const;
+    const secondaryKey = `CHAR${slot}_SECONDARY_PATH` as const;
+    const frontPath = String(nextTokens[frontKey] ?? "").trim();
+    const sidePath = String(nextTokens[sideKey] ?? "").trim();
+    const backPath = String(nextTokens[backKey] ?? "").trim();
+    const primaryPath = String(nextTokens[primaryKey] ?? "").trim();
+    if (!frontPath && !sidePath && !backPath && !primaryPath) continue;
+
+    const [frontQuality, sideQuality, primaryQuality] = await Promise.all([
+      frontPath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, frontPath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 }),
+      sidePath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, sidePath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 }),
+      primaryPath ? analyzeCharacterReferenceQuality(resolveInputTokenSourcePath(settings, primaryPath)) : Promise.resolve({ fragmented: false, edgeTouch: false, componentCount: 0 })
+    ]);
+
+    const shouldFallbackToThreeView =
+      frontQuality.fragmented ||
+      sideQuality.fragmented ||
+      primaryQuality.fragmented ||
+      frontQuality.edgeTouch ||
+      primaryQuality.edgeTouch;
+    if (!shouldFallbackToThreeView) continue;
+
+    const sources = [frontPath, sidePath, backPath].filter((item) => item.trim().length > 0);
+    const threeViewCanvas = await buildCharacterThreeViewTokenCanvas(settings, sources);
+    if (!threeViewCanvas) continue;
+    const filePath = `${inputDir}/shot_${safeShotId}_char${slot}_threeview_identity.png`;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: threeViewCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    if (!result.filePath) continue;
+    nextTokens[primaryKey] = result.filePath.split("/").pop() ?? result.filePath;
+    nextTokens[secondaryKey] = backPath || frontPath || nextTokens[secondaryKey] || "";
+  }
+
+  return nextTokens;
 }
 
 type StoryboardPoseAction =
