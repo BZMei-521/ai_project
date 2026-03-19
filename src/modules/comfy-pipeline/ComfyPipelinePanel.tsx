@@ -9838,20 +9838,43 @@ export function ComfyPipelinePanel() {
       : null;
   };
 
-  const resolveGeneratedStoryboardStillLocalPath = (runtimeSettings: ComfySettings, generatedImagePath: string) => {
+  const resolveGeneratedStoryboardStillLocalPath = async (
+    runtimeSettings: ComfySettings,
+    generatedImagePath: string
+  ) => {
     const trimmed = generatedImagePath.trim();
     if (!trimmed) return "";
     const mediaSource = toDesktopMediaSource(trimmed).trim();
     if (/^(?:[a-zA-Z]:[\\/]|\/)/.test(mediaSource)) return mediaSource;
-    const outputRoot = runtimeSettings.outputDir.trim().replace(/[\\/]+$/, "");
-    if (!outputRoot) return "";
     try {
       const url = new URL(trimmed, window.location.origin);
       const filename = url.searchParams.get("filename")?.trim() || "";
       const subfolder = (url.searchParams.get("subfolder")?.trim() || "").replace(/^[/\\]+|[/\\]+$/g, "");
       const type = (url.searchParams.get("type")?.trim() || "output").toLowerCase();
       if (!filename || type !== "output") return "";
-      return `${outputRoot}${subfolder ? `/${subfolder}` : ""}/${filename}`;
+      const discovered = await discoverComfyLocalDirs().catch(() => ({
+        rootDir: "",
+        inputDir: "",
+        outputDir: ""
+      }));
+      const outputRoots = uniqueEntities(
+        [
+          runtimeSettings.outputDir.trim(),
+          discovered.outputDir.trim(),
+          runtimeSettings.comfyRootDir.trim()
+            ? `${runtimeSettings.comfyRootDir.trim().replace(/[\\/]+$/, "")}/output`
+            : "",
+          discovered.rootDir.trim() ? `${discovered.rootDir.trim().replace(/[\\/]+$/, "")}/output` : ""
+        ]
+          .map((value) => value.replace(/[\\/]+$/, ""))
+          .filter(Boolean)
+      );
+      if (outputRoots.length <= 0) return "";
+      const candidatePaths = uniqueEntities(
+        outputRoots.map((root) => `${root}${subfolder ? `/${subfolder}` : ""}/${filename}`)
+      );
+      const missing = await filterMissingLocalPaths(candidatePaths);
+      return candidatePaths.find((path) => !missing.has(path)) ?? "";
     } catch {
       return "";
     }
@@ -9867,10 +9890,8 @@ export function ComfyPipelinePanel() {
     const normalizedName = name.trim();
     if (!normalizedName) return null;
     const allShots = listRecoverableStoryboardShots(useStoryboardStore.getState().shots);
-    const scoredCandidates = allShots
-      .map((shot) => {
-        const localPath = resolveGeneratedStoryboardStillLocalPath(runtimeSettings, shot.generatedImagePath?.trim() || "");
-        if (!localPath) return null;
+    const resolvedShots = await Promise.all(
+      allShots.map(async (shot) => {
         const combinedContext = compactTextParts(
           shot.title,
           shot.storyPrompt,
@@ -9880,26 +9901,56 @@ export function ComfyPipelinePanel() {
         );
         const explicitCharacterMatch = (shot.sourceCharacterNames ?? []).includes(normalizedName);
         const textMatch = combinedContext.includes(normalizedName);
-        if (!explicitCharacterMatch && !textMatch) return null;
-        let score = explicitCharacterMatch ? 80 : 60;
-        if (/(近景|特写|close[- ]?up)/i.test(combinedContext)) score += 40;
-        else if (/(中景|medium shot)/i.test(combinedContext)) score += 24;
-        else if (/(远景|大全景|wide shot|establishing)/i.test(combinedContext)) score -= 18;
-        if (/(说话|回应|看向|注视|点头|平视|看着)/i.test(combinedContext)) score += 10;
-        if (/(背影|背面|转身离开|背对)/i.test(combinedContext)) score -= 12;
+        const localPath = await resolveGeneratedStoryboardStillLocalPath(
+          runtimeSettings,
+          shot.generatedImagePath?.trim() || ""
+        );
         return {
           shot,
-          localPath,
+          combinedContext,
+          explicitCharacterMatch,
+          textMatch,
+          localPath
+        };
+      })
+    );
+    const matchedShots = resolvedShots.filter((item) => item.explicitCharacterMatch || item.textMatch);
+    if (matchedShots.length <= 0) {
+      appendLog(`${sourceLabel}角色分镜回收未命中包含该角色的已生成分镜：${name}`, "info");
+      return null;
+    }
+    const resolvedLocalShots = matchedShots.filter((item) => item.localPath);
+    if (resolvedLocalShots.length <= 0) {
+      appendLog(`${sourceLabel}角色分镜回收未解析到可用本地分镜文件：${name}`, "info");
+      return null;
+    }
+    const scoredCandidates = resolvedLocalShots
+      .map((item) => {
+        let score = item.explicitCharacterMatch ? 80 : 60;
+        if (/(近景|特写|close[- ]?up)/i.test(item.combinedContext)) score += 40;
+        else if (/(中景|medium shot)/i.test(item.combinedContext)) score += 24;
+        else if (/(远景|大全景|wide shot|establishing)/i.test(item.combinedContext)) score -= 18;
+        if (/(说话|回应|看向|注视|点头|平视|看着)/i.test(item.combinedContext)) score += 10;
+        if (/(背影|背面|转身离开|背对)/i.test(item.combinedContext)) score -= 12;
+        return {
+          shot: item.shot,
+          localPath: item.localPath,
           score
         };
       })
       .filter((item): item is { shot: Shot; localPath: string; score: number } => Boolean(item))
       .sort((left, right) => right.score - left.score)
       .slice(0, 4);
-    if (scoredCandidates.length <= 0) return null;
+    if (scoredCandidates.length <= 0) {
+      appendLog(`${sourceLabel}角色分镜回收未选出可用候选镜头：${name}`, "info");
+      return null;
+    }
     const missing = await filterMissingLocalPaths(scoredCandidates.map((item) => item.localPath));
     const candidates = scoredCandidates.filter((item) => !missing.has(item.localPath));
-    if (candidates.length <= 0) return null;
+    if (candidates.length <= 0) {
+      appendLog(`${sourceLabel}角色分镜回收命中了镜头，但对应分镜文件不存在：${name}`, "info");
+      return null;
+    }
 
     const modelName =
       preferredCharacterModel.trim() || (await resolveRuntimeCharacterAnchorModel(runtimeSettings, `${sourceLabel}角色分镜回收`, context));
