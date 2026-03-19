@@ -132,11 +132,21 @@ const CHARACTER_ANCHOR_MALE_MODEL_RECOMMEND_ORDER = [
 ] as const;
 const CHARACTER_ANCHOR_ANIME_MODEL_RECOMMEND_ORDER = [
   "animagine-xl-4.0.safetensors",
-  "v1-5-pruned-emaonly-fp16.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
   "dreamshaper_8.safetensors",
-  "sd_xl_base_1.0.safetensors",
   "realisticVisionV60B1_v51VAE.safetensors",
-  "juggernautXL_v8Rundiffusion.safetensors"
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors"
+] as const;
+const CHARACTER_ANCHOR_ANIME_FEMALE_MODEL_RECOMMEND_ORDER = [
+  "animagine-xl-4.0.safetensors",
+  "Qwen-Rapid-AIO-SFW-v5.safetensors",
+  "dreamshaper_8.safetensors",
+  "realisticVisionV60B1_v51VAE.safetensors",
+  "juggernautXL_v8Rundiffusion.safetensors",
+  "v1-5-pruned-emaonly-fp16.safetensors",
+  "sd_xl_base_1.0.safetensors"
 ] as const;
 const CHARACTER_ANCHOR_REALISTIC_MODEL_RECOMMEND_ORDER = [
   "realisticVisionV60B1_v51VAE.safetensors",
@@ -300,10 +310,28 @@ const CHARACTER_FRONT_ANCHOR_NEGATIVE_HINTS = [
   "park crowd",
   "forest crowd",
   "crowd card",
+  "character card",
+  "scene card",
+  "landscape card",
+  "tiny figure",
+  "miniature character",
+  "small distant full body",
+  "lineup of tiny characters",
+  "many tiny people",
   "people in background",
   "lawn background",
   "grass field",
-  "outdoor event"
+  "outdoor event",
+  "grey mannequin",
+  "blank mannequin",
+  "anatomy template",
+  "body template",
+  "skin colored bodysuit",
+  "flesh colored dress form",
+  "white ceremonial dress",
+  "riverside scenery",
+  "bridge background",
+  "tree background"
 ];
 
 function isLegacyMixedStoryboardImageWorkflow(workflowJson: string): boolean {
@@ -686,6 +714,9 @@ function resolveCharacterAnchorRecommendOrder(context: string): readonly string[
   const gender: "" | "female" | "male" = femaleHint && !maleHint ? "female" : maleHint && !femaleHint ? "male" : "";
   const visualStyleKind = inferVisualStyleKindFromText(context);
   if (visualStyleKind === "anime") {
+    if (gender === "female") {
+      return CHARACTER_ANCHOR_ANIME_FEMALE_MODEL_RECOMMEND_ORDER;
+    }
     return CHARACTER_ANCHOR_ANIME_MODEL_RECOMMEND_ORDER;
   }
   if (prefersRealisticCharacterAnchorModel(context)) {
@@ -3441,7 +3472,126 @@ type NormalizedImportedShot = {
   characterNames: string[];
   sceneName: string;
   scenePrompt: string;
+  generatedImagePath?: string;
+  generatedVideoPath?: string;
 };
+
+function normalizeImportedShotReuseText(value: string | undefined) {
+  return value?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+}
+
+function buildImportedShotReuseSignature(input: {
+  title?: string;
+  prompt?: string;
+  dialogue?: string;
+  notes?: string;
+  characterNames?: string[];
+  sceneName?: string;
+}) {
+  return [
+    normalizeImportedShotReuseText(input.title),
+    normalizeImportedShotReuseText(input.prompt),
+    normalizeImportedShotReuseText(input.dialogue),
+    normalizeImportedShotReuseText(input.notes),
+    uniqueEntities((input.characterNames ?? []).map((value) => normalizeImportedShotReuseText(value)).filter(Boolean)).join("|"),
+    normalizeImportedShotReuseText(input.sceneName)
+  ].join("||");
+}
+
+function preserveGeneratedMediaForImportedShots(
+  normalizedItems: NormalizedImportedShot[],
+  existingShots: Shot[],
+  currentSequenceId: string
+) {
+  const reusableShots = existingShots.filter((shot) => {
+    if (currentSequenceId && shot.sequenceId !== currentSequenceId) return false;
+    return hasUsableGeneratedAsset("image", shot) || hasUsableGeneratedAsset("video", shot);
+  });
+  if (reusableShots.length <= 0) {
+    return {
+      items: normalizedItems,
+      preservedImageCount: 0,
+      preservedVideoCount: 0
+    };
+  }
+
+  const shotsById = new Map<string, Shot>();
+  const shotsBySignature = new Map<string, Shot[]>();
+  for (const shot of reusableShots) {
+    const shotId = shot.id.trim();
+    if (shotId) shotsById.set(shotId, shot);
+    const signature = buildImportedShotReuseSignature({
+      title: shot.title,
+      prompt: shot.storyPrompt,
+      dialogue: shot.dialogue,
+      notes: shot.notes,
+      characterNames: shot.sourceCharacterNames,
+      sceneName: shot.sourceSceneName
+    });
+    if (!signature) continue;
+    const bucket = shotsBySignature.get(signature) ?? [];
+    bucket.push(shot);
+    shotsBySignature.set(signature, bucket);
+  }
+
+  const consumedShotIds = new Set<string>();
+  let preservedImageCount = 0;
+  let preservedVideoCount = 0;
+  const items = normalizedItems.map((item) => {
+    const signature = buildImportedShotReuseSignature({
+      title: item.title,
+      prompt: item.prompt,
+      dialogue: item.dialogue,
+      notes: item.notes,
+      characterNames: item.characterNames,
+      sceneName: item.sceneName
+    });
+    const itemId = item.id.trim();
+    let matchedShot: Shot | null = null;
+
+    if (itemId) {
+      const candidate = shotsById.get(itemId);
+      if (candidate && !consumedShotIds.has(candidate.id)) {
+        const candidateSignature = buildImportedShotReuseSignature({
+          title: candidate.title,
+          prompt: candidate.storyPrompt,
+          dialogue: candidate.dialogue,
+          notes: candidate.notes,
+          characterNames: candidate.sourceCharacterNames,
+          sceneName: candidate.sourceSceneName
+        });
+        if (candidateSignature === signature) {
+          matchedShot = candidate;
+        }
+      }
+    }
+
+    if (!matchedShot && signature) {
+      const bucket = shotsBySignature.get(signature) ?? [];
+      matchedShot = bucket.find((candidate) => !consumedShotIds.has(candidate.id)) ?? null;
+    }
+
+    if (!matchedShot) return item;
+
+    consumedShotIds.add(matchedShot.id);
+    const preservedGeneratedImagePath = matchedShot.generatedImagePath?.trim() || "";
+    const preservedGeneratedVideoPath = matchedShot.generatedVideoPath?.trim() || "";
+    if (preservedGeneratedImagePath) preservedImageCount += 1;
+    if (preservedGeneratedVideoPath) preservedVideoCount += 1;
+
+    return {
+      ...item,
+      generatedImagePath: item.generatedImagePath?.trim() || preservedGeneratedImagePath,
+      generatedVideoPath: item.generatedVideoPath?.trim() || preservedGeneratedVideoPath
+    };
+  });
+
+  return {
+    items,
+    preservedImageCount,
+    preservedVideoCount
+  };
+}
 
 type NormalizedImportedCharacterProfile = {
   name: string;
@@ -9377,6 +9527,210 @@ export function ComfyPipelinePanel() {
     };
   };
 
+  const discoverDiskBackedCharacterAssetPaths = async (
+    runtimeSettings: ComfySettings,
+    name: string,
+    context = ""
+  ): Promise<{
+    usableFrontPath: string;
+    usableSidePath: string;
+    usableBackPath: string;
+    issues: string[];
+  } | null> => {
+    const discovered = await discoverComfyLocalDirs().catch(() => ({
+      rootDir: "",
+      inputDir: "",
+      outputDir: ""
+    }));
+    const outputDirs = uniqueEntities(
+      [
+        runtimeSettings.outputDir.trim(),
+        discovered.outputDir.trim(),
+        runtimeSettings.comfyRootDir.trim()
+          ? `${runtimeSettings.comfyRootDir.trim().replace(/[\\/]+$/, "")}/output`
+          : "",
+        discovered.rootDir.trim() ? `${discovered.rootDir.trim().replace(/[\\/]+$/, "")}/output` : ""
+      ]
+        .map((value) => value.replace(/[\\/]+$/, ""))
+        .filter(Boolean)
+    );
+    if (outputDirs.length <= 0) return null;
+
+    let best:
+      | {
+          usableFrontPath: string;
+          usableSidePath: string;
+          usableBackPath: string;
+          issues: string[];
+          score: number;
+        }
+      | null = null;
+
+    const directoryNames = ["人物", "角色", "characters"];
+    for (const outputDir of outputDirs) {
+      for (const directoryName of directoryNames) {
+        const candidateRoot = `${outputDir}/${directoryName}/${name}`;
+        const frontPath = `${candidateRoot}/front.png`;
+        const sidePath = `${candidateRoot}/side.png`;
+        const backPath = `${candidateRoot}/back.png`;
+        const tempAsset = {
+          id: "",
+          projectId: "",
+          type: "character",
+          name,
+          filePath: frontPath,
+          characterFrontPath: frontPath,
+          characterSidePath: sidePath,
+          characterBackPath: backPath
+        } as Asset;
+        const quality = await inspectReusableCharacterAssetPaths(tempAsset, context);
+        const coverage = [
+          quality.usableFrontPath,
+          quality.usableSidePath,
+          quality.usableBackPath
+        ].filter(Boolean).length;
+        if (coverage <= 0) continue;
+        const score = coverage * 100 - quality.issues.length * 12;
+        if (!best || score > best.score) {
+          best = {
+            ...quality,
+            score
+          };
+        }
+      }
+    }
+
+    return best
+      ? {
+          usableFrontPath: best.usableFrontPath,
+          usableSidePath: best.usableSidePath,
+          usableBackPath: best.usableBackPath,
+          issues: best.issues
+        }
+      : null;
+  };
+
+  const resolveGeneratedStoryboardStillLocalPath = (runtimeSettings: ComfySettings, generatedImagePath: string) => {
+    const trimmed = generatedImagePath.trim();
+    if (!trimmed) return "";
+    const mediaSource = toDesktopMediaSource(trimmed).trim();
+    if (/^(?:[a-zA-Z]:[\\/]|\/)/.test(mediaSource)) return mediaSource;
+    const outputRoot = runtimeSettings.outputDir.trim().replace(/[\\/]+$/, "");
+    if (!outputRoot) return "";
+    try {
+      const url = new URL(trimmed, window.location.origin);
+      const filename = url.searchParams.get("filename")?.trim() || "";
+      const subfolder = (url.searchParams.get("subfolder")?.trim() || "").replace(/^[/\\]+|[/\\]+$/g, "");
+      const type = (url.searchParams.get("type")?.trim() || "output").toLowerCase();
+      if (!filename || type !== "output") return "";
+      return `${outputRoot}${subfolder ? `/${subfolder}` : ""}/${filename}`;
+    } catch {
+      return "";
+    }
+  };
+
+  const recoverCharacterAnchorFromStoryboardFrames = async (
+    runtimeSettings: ComfySettings,
+    name: string,
+    context: string,
+    preferredCharacterModel: string,
+    sourceLabel: string
+  ): Promise<{ path: string; modelName: string } | null> => {
+    const normalizedName = name.trim();
+    if (!normalizedName) return null;
+    const allShots = useStoryboardStore.getState().shots;
+    const scoredCandidates = allShots
+      .map((shot) => {
+        const localPath = resolveGeneratedStoryboardStillLocalPath(runtimeSettings, shot.generatedImagePath?.trim() || "");
+        if (!localPath) return null;
+        const combinedContext = compactTextParts(
+          shot.title,
+          shot.storyPrompt,
+          shot.dialogue,
+          shot.notes,
+          ...(shot.sourceCharacterNames ?? [])
+        );
+        const explicitCharacterMatch = (shot.sourceCharacterNames ?? []).includes(normalizedName);
+        const textMatch = combinedContext.includes(normalizedName);
+        if (!explicitCharacterMatch && !textMatch) return null;
+        let score = explicitCharacterMatch ? 80 : 60;
+        if (/(近景|特写|close[- ]?up)/i.test(combinedContext)) score += 40;
+        else if (/(中景|medium shot)/i.test(combinedContext)) score += 24;
+        else if (/(远景|大全景|wide shot|establishing)/i.test(combinedContext)) score -= 18;
+        if (/(说话|回应|看向|注视|点头|平视|看着)/i.test(combinedContext)) score += 10;
+        if (/(背影|背面|转身离开|背对)/i.test(combinedContext)) score -= 12;
+        return {
+          shot,
+          localPath,
+          score
+        };
+      })
+      .filter((item): item is { shot: Shot; localPath: string; score: number } => Boolean(item))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 4);
+    if (scoredCandidates.length <= 0) return null;
+    const missing = await filterMissingLocalPaths(scoredCandidates.map((item) => item.localPath));
+    const candidates = scoredCandidates.filter((item) => !missing.has(item.localPath));
+    if (candidates.length <= 0) return null;
+
+    const negativePrompt = appendNegativePrompt(
+      buildCharacterViewNegativePrompt(
+        "front",
+        runtimeSettings.characterAssetNegativePrompt?.trim() || DEFAULT_CHARACTER_NEGATIVE_PROMPT,
+        context
+      ),
+      CHARACTER_FRONT_ANCHOR_NEGATIVE_HINTS
+    );
+    const modelName =
+      preferredCharacterModel.trim() || (await resolveRuntimeCharacterAnchorModel(runtimeSettings, `${sourceLabel}角色分镜回收`, context));
+    const seedBase = stableAssetSeed(`${name}|storyboard_anchor_recovery|${context}|${modelName}`);
+    let best:
+      | {
+          path: string;
+          quality: Awaited<ReturnType<typeof evaluateFrontReferenceQuality>>;
+        }
+      | null = null;
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index]!;
+      const preparedPath = (await prepareCharacterFrontReferenceCandidate(candidate.localPath, context)) || candidate.localPath;
+      const preparedQuality = await evaluateFrontReferenceQuality(preparedPath, context);
+      if (!best || preparedQuality.score > best.quality.score) {
+        best = {
+          path: preparedPath,
+          quality: preparedQuality
+        };
+      }
+      if (preparedQuality.acceptable) {
+        appendLog(`${sourceLabel}从已生成分镜回收角色正视锚点成功：${name} <- ${candidate.shot.title}`, "info");
+        return { path: preparedPath, modelName };
+      }
+      const repaired = await repairCharacterFrontReferenceCandidate(
+        runtimeSettings,
+        name,
+        context,
+        preparedPath,
+        modelName,
+        negativePrompt,
+        seedBase + index * 733,
+        `storyboard_anchor_recover_${normalizeEntityKey(name) || Date.now()}_${index + 1}`,
+        `${sourceLabel}角色分镜回收`
+      );
+      if (!best || repaired.quality.score > best.quality.score) {
+        best = {
+          path: repaired.path,
+          quality: repaired.quality
+        };
+      }
+      if (repaired.quality.acceptable) {
+        appendLog(`${sourceLabel}从已生成分镜修复出角色正视锚点：${name} <- ${candidate.shot.title}`, "info");
+        return { path: repaired.path, modelName };
+      }
+    }
+
+    return best?.quality.acceptable ? { path: best.path, modelName } : null;
+  };
+
   const findProvisionReadyCharacterAnchorAssetIdByName = (name: string) => {
     const asset = findAssetByName("character", name);
     return asset && hasProvisionReadyCharacterAnchorAsset(asset) ? asset.id : "";
@@ -9403,6 +9757,9 @@ export function ComfyPipelinePanel() {
     for (const profile of profiles) {
       const profileKey = normalizeEntityKey(profile.name);
       let anchorPath = (profile.anchorImagePath || profile.frontPath).trim();
+      let recoveredDiskFrontPath = "";
+      let recoveredDiskSidePath = "";
+      let recoveredDiskBackPath = "";
       const semanticContext = mergeCharacterSemanticContext(profile.description, profile.voiceProfile);
       let bestAnchorModel = "";
       const existingId = findAssetIdByName("character", profile.name);
@@ -9420,6 +9777,36 @@ export function ComfyPipelinePanel() {
         : null;
       if (existingAsset && existingAssetQuality?.hadAnyInvalid) {
         appendLog(`${sourceLabel}检测到角色旧资产质检未通过，已放弃复用并准备重建：${profile.name}（${existingAssetQuality.issues.join(" / ") || "角色资产失效"}）`, "info");
+      }
+      if (!hasExplicitVisualPaths && !existingAssetQuality?.usableFrontPath) {
+        const recoveredDiskAsset = await discoverDiskBackedCharacterAssetPaths(runtimeSettings, profile.name, semanticContext);
+        if (recoveredDiskAsset?.usableFrontPath) {
+          recoveredDiskFrontPath = recoveredDiskAsset.usableFrontPath;
+          recoveredDiskSidePath = recoveredDiskAsset.usableSidePath;
+          recoveredDiskBackPath = recoveredDiskAsset.usableBackPath;
+          anchorPath = anchorPath || recoveredDiskFrontPath;
+          appendLog(
+            `${sourceLabel}从磁盘回收已有角色资产：${profile.name}${recoveredDiskSidePath && recoveredDiskBackPath ? "（front/side/back）" : "（front）"}`,
+            "info"
+          );
+        }
+      }
+      if (!anchorPath && semanticContext.trim().length > 0) {
+        const recoveredStoryboardAnchor = await recoverCharacterAnchorFromStoryboardFrames(
+          runtimeSettings,
+          profile.name,
+          semanticContext,
+          existingAsset?.characterAnchorModelName || "",
+          sourceLabel
+        );
+        if (recoveredStoryboardAnchor?.path) {
+          bestAnchorModel = recoveredStoryboardAnchor.modelName.trim();
+          anchorPath = await normalizeCharacterAnchorBackground(recoveredStoryboardAnchor.path, "white");
+          if (anchorPath) {
+            anchorPath = await persistCharacterAnchorReference(profile.name, anchorPath);
+            appendLog(`${sourceLabel}优先复用已生成分镜回收出的 front 锚点：${profile.name}`, "info");
+          }
+        }
       }
       if (
         options?.preferReuseExisting &&
@@ -9632,15 +10019,38 @@ export function ComfyPipelinePanel() {
       }
       const previousFrontPath = (existingAsset?.characterFrontPath || existingAsset?.filePath || "").trim();
       const nextFilePath =
-        (profile.frontPath || anchorPath || existingAsset?.filePath || existingAsset?.characterFrontPath || "").trim();
-      let nextFrontPath = (profile.frontPath || anchorPath || existingAsset?.characterFrontPath || nextFilePath).trim();
+        (profile.frontPath ||
+          anchorPath ||
+          recoveredDiskFrontPath ||
+          existingAsset?.filePath ||
+          existingAsset?.characterFrontPath ||
+          "").trim();
+      let nextFrontPath = (
+        profile.frontPath ||
+        anchorPath ||
+        recoveredDiskFrontPath ||
+        existingAsset?.characterFrontPath ||
+        nextFilePath
+      ).trim();
+      const hasRecoveredDiskThreeView = Boolean(recoveredDiskSidePath && recoveredDiskBackPath);
       const shouldResetStaleThreeViews =
         nextFrontPath.length > 0 &&
         nextFrontPath !== previousFrontPath &&
         !profile.sidePath.trim() &&
-        !profile.backPath.trim();
-      let nextSidePath = (profile.sidePath || (shouldResetStaleThreeViews ? "" : existingAsset?.characterSidePath) || "").trim();
-      let nextBackPath = (profile.backPath || (shouldResetStaleThreeViews ? "" : existingAsset?.characterBackPath) || "").trim();
+        !profile.backPath.trim() &&
+        !hasRecoveredDiskThreeView;
+      let nextSidePath = (
+        profile.sidePath ||
+        recoveredDiskSidePath ||
+        (shouldResetStaleThreeViews ? "" : existingAsset?.characterSidePath) ||
+        ""
+      ).trim();
+      let nextBackPath = (
+        profile.backPath ||
+        recoveredDiskBackPath ||
+        (shouldResetStaleThreeViews ? "" : existingAsset?.characterBackPath) ||
+        ""
+      ).trim();
 
       if (shouldResetStaleThreeViews) {
         appendLog(`${sourceLabel}检测到角色正视锚点已更新，清空旧 side/back 以避免复用过期三视图：${profile.name}`, "info");
@@ -9820,6 +10230,45 @@ export function ComfyPipelinePanel() {
             viewState: "threeview"
           };
         }
+      }
+      const recoveredDiskAsset =
+        !reusableFrontReferencePath
+          ? await discoverDiskBackedCharacterAssetPaths(runtimeSettings, name, normalizedContext)
+          : null;
+      if (recoveredDiskAsset?.usableFrontPath) {
+        const recoveredPreviewPaths = [
+          recoveredDiskAsset.usableFrontPath,
+          recoveredDiskAsset.usableSidePath,
+          recoveredDiskAsset.usableBackPath
+        ].filter((value): value is string => Boolean(value));
+        const recoveredPatch = {
+          filePath: recoveredDiskAsset.usableFrontPath,
+          characterFrontPath: recoveredDiskAsset.usableFrontPath,
+          characterSidePath: recoveredDiskAsset.usableSidePath,
+          characterBackPath: recoveredDiskAsset.usableBackPath,
+          characterAnchorModelName:
+            (characterAnchorModelByNameRef.current.get(nameKey) || existingAsset?.characterAnchorModelName || "").trim()
+        };
+        if (existingId) {
+          useStoryboardStore.getState().updateAsset(existingId, recoveredPatch);
+        } else {
+          addAsset({
+            type: "character",
+            name,
+            ...recoveredPatch
+          });
+        }
+        const recoveredId = existingId || findAssetIdByName("character", name);
+        appendLog(
+          `从磁盘回收已有角色资产：${name}${recoveredPreviewPaths.length >= 3 ? "（front/side/back）" : "（front）"}`,
+          "info"
+        );
+        return {
+          assetId: recoveredId,
+          previewPaths: recoveredPreviewPaths,
+          reused: true,
+          viewState: recoveredPreviewPaths.length >= 3 ? "threeview" : "front"
+        };
       }
       if (!reusableFrontReferencePath && normalizedContext) {
         appendLog(`角色 front 缺失，开始按脚本描述自动重建：${name}`, "info");
@@ -10974,8 +11423,20 @@ export function ComfyPipelinePanel() {
     if (normalizedItems.length === 0) {
       throw new Error("脚本格式无效：缺少 shots 数组");
     }
+    const storyboardState = useStoryboardStore.getState();
+    const preservedMedia = preserveGeneratedMediaForImportedShots(
+      normalizedItems,
+      storyboardState.shots,
+      storyboardState.currentSequenceId
+    );
+    if (preservedMedia.preservedImageCount > 0 || preservedMedia.preservedVideoCount > 0) {
+      appendLog(
+        `脚本导入已保留已有生成结果：分镜图 ${preservedMedia.preservedImageCount} 条 / 视频 ${preservedMedia.preservedVideoCount} 条，可用于角色锚点回收与连续性复用`,
+        "info"
+      );
+    }
     replaceShotsForCurrentSequence(
-      normalizedItems.map((item) => ({
+      preservedMedia.items.map((item) => ({
         id: item.id,
         title: item.title,
         prompt: item.prompt,
@@ -11000,10 +11461,12 @@ export function ComfyPipelinePanel() {
         sourceScenePrompt: item.scenePrompt,
         dialogue: item.dialogue,
         notes: item.notes,
-        tags: item.tags
+        tags: item.tags,
+        generatedImagePath: item.generatedImagePath,
+        generatedVideoPath: item.generatedVideoPath
       }))
     );
-    return normalizedItems;
+    return preservedMedia.items;
   };
 
   const rebindImportedShotItemsWithCurrentAssets = (

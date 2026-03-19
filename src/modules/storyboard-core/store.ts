@@ -28,6 +28,8 @@ export type ImportedShotScriptItem = {
   dialogue?: string;
   notes?: string;
   tags?: string[];
+  generatedImagePath?: string;
+  generatedVideoPath?: string;
 };
 
 type PlaybackState = {
@@ -868,8 +870,8 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           sourceCharacterNames: item.sourceCharacterNames ?? [],
           sourceSceneName: item.sourceSceneName ?? "",
           sourceScenePrompt: item.sourceScenePrompt ?? "",
-          generatedImagePath: "",
-          generatedVideoPath: ""
+          generatedImagePath: item.generatedImagePath?.trim() ?? "",
+          generatedVideoPath: item.generatedVideoPath?.trim() ?? ""
         });
 
         nextLayers.push({
