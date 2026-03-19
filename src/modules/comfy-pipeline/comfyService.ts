@@ -2924,6 +2924,45 @@ function buildCompactStoryboardPresencePrompt(characterAssets: Asset[]): string 
   return `${nameText}, all characters full body and clearly visible from head to toe with safe top and bottom margins, same faces same hairstyles same outfits in every shot, visible body acting, readable facial expressions, all characters inside the scene, feet touching the ground, shadow matching environment, no missing character, no body crop, no empty scene, natural interaction with environment`;
 }
 
+function buildStableStoryboardPassAPrompt(fullPrompt: string, char1Name: string, char2Name: string): string {
+  const normalized = normalizePromptBody(fullPrompt);
+  if (!normalized || !char1Name || !char2Name) return normalized;
+  const filteredLines = normalized
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !line.startsWith("出镜硬要求："))
+    .filter((line) => !line.startsWith("人物参考："))
+    .filter((line) => !line.startsWith("构图硬约束：本镜头必须清晰呈现"))
+    .filter((line) => !line.includes(`动作硬约束（${char2Name}）`))
+    .filter((line) => !line.includes(`站位硬约束：角色“${char2Name}”`));
+  return [
+    ...filteredLines,
+    `人物参考：${char1Name}`,
+    `过渡采样阶段硬约束：当前阶段只允许角色“${char1Name}”1 人清晰完整地出现在画面中，禁止生成角色“${char2Name}”或任何第二人；当前阶段只锁定角色“${char1Name}”的脸、发型、服装、比例、动作和落脚点，为后续第二名角色保留空间但不要画出第二人实体。`
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
+function buildStableStoryboardPassANegativePrompt(fullNegativePrompt: string, char2Name: string): string {
+  const extra = [
+    "extra person",
+    "second person",
+    "another character",
+    "additional human",
+    "crowd",
+    "group shot",
+    "pair shot",
+    "two people",
+    "duplicate protagonist"
+  ];
+  if (char2Name.trim()) {
+    extra.push(char2Name.trim(), `character ${char2Name.trim()}`);
+  }
+  return appendNegativePrompt(fullNegativePrompt, extra.join(", "));
+}
+
 function storyboardScreenZoneLabel(centerXRatio: number): string {
   if (centerXRatio <= 0.18) return "画面左边缘";
   if (centerXRatio <= 0.36) return "画面左侧";
@@ -5195,26 +5234,62 @@ async function stageStoryboardPoseGuideToken(
   const placements = inferStoryboardCompositeLayout(shot, refs);
   const heightRatio = inferStoryboardCompositeHeightRatio(shot, characterNames.length);
   const focusCharacter = inferStoryboardFocusedCharacterName(shot, characterNames);
-
-  characterNames.forEach((name, index) => {
+  const poseFigures = characterNames.map((name, index) => {
     const placement = placements[index] ?? placements[placements.length - 1] ?? { centerXRatio: 0.5, floorYRatio: 0.9, sizeScale: 1 };
-    const centerX = renderWidth * placement.centerXRatio;
-    const floorY = renderHeight * placement.floorYRatio;
-    const bodyHeight = renderHeight * heightRatio * placement.sizeScale * 0.92;
-    const action = inferStoryboardPoseAction(shot, name, focusCharacter === name || (!focusCharacter && index === 0));
-    buildStoryboardPoseFigure(context, centerX, floorY, bodyHeight, action, index % 2 === 1);
+    return {
+      name,
+      index,
+      centerX: renderWidth * placement.centerXRatio,
+      floorY: renderHeight * placement.floorYRatio,
+      bodyHeight: renderHeight * heightRatio * placement.sizeScale * 0.92,
+      action: inferStoryboardPoseAction(shot, name, focusCharacter === name || (!focusCharacter && index === 0))
+    };
   });
 
-  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filePath = `${inputDir}/shot_${safeShotId}_pose_map.png`;
-  const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
-    filePath,
-    base64Data: canvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+  const writePoseGuide = async (
+    fileSuffix: string,
+    selectedFigures: typeof poseFigures
+  ): Promise<string> => {
+    const poseCanvas = document.createElement("canvas");
+    poseCanvas.width = renderWidth;
+    poseCanvas.height = renderHeight;
+    const poseContext = poseCanvas.getContext("2d");
+    if (!poseContext) return "";
+    poseContext.fillStyle = "black";
+    poseContext.fillRect(0, 0, renderWidth, renderHeight);
+    selectedFigures.forEach((figure) => {
+      buildStoryboardPoseFigure(
+        poseContext,
+        figure.centerX,
+        figure.floorY,
+        figure.bodyHeight,
+        figure.action,
+        figure.index % 2 === 1
+      );
+    });
+    const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const filePath = `${inputDir}/shot_${safeShotId}_${fileSuffix}.png`;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: poseCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath ? result.filePath.split("/").pop() ?? result.filePath : "";
+  };
+
+  poseFigures.forEach((figure) => {
+    buildStoryboardPoseFigure(context, figure.centerX, figure.floorY, figure.bodyHeight, figure.action, figure.index % 2 === 1);
   });
-  if (!result.filePath) return tokens;
+
+  const fullPosePath = await writePoseGuide("pose_map", poseFigures);
+  if (!fullPosePath) return tokens;
+  const passAPosePath = await writePoseGuide("char1_pose_map", poseFigures.slice(0, 1));
+  const passBPosePath =
+    poseFigures.length >= 2 ? await writePoseGuide("char2_pose_map", poseFigures.slice(1, 2)) : fullPosePath;
   return {
     ...tokens,
-    POSE_GUIDE_PATH: result.filePath.split("/").pop() ?? result.filePath
+    POSE_GUIDE_PATH: fullPosePath,
+    PASS_A_POSE_GUIDE_PATH: passAPosePath || fullPosePath,
+    PASS_B_POSE_GUIDE_PATH: passBPosePath || fullPosePath
   };
 }
 
@@ -5245,15 +5320,25 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
+  const corpus = compactTextParts(shot.title, shot.storyPrompt, shot.notes, shot.dialogue, shot.videoPrompt, ...(shot.tags ?? [])).toLowerCase();
+  const isRiversidePathShot = containsAnyKeyword(corpus, [
+    "河边",
+    "河岸",
+    "riverside",
+    "riverbank",
+    "stone path",
+    "沿河石路",
+    "桥边"
+  ]);
   if (count >= 2) {
-    if (scale === "wide") return 0.48;
-    if (scale === "close") return 0.62;
-    if (scale === "medium") return 0.56;
+    if (scale === "wide") return isRiversidePathShot ? 0.58 : 0.48;
+    if (scale === "close") return isRiversidePathShot ? 0.68 : 0.62;
+    if (scale === "medium") return isRiversidePathShot ? 0.62 : 0.56;
     return 0.52;
   }
-  if (scale === "wide") return 0.52;
-  if (scale === "close") return 0.68;
-  if (scale === "medium") return 0.6;
+  if (scale === "wide") return isRiversidePathShot ? 0.6 : 0.52;
+  if (scale === "close") return isRiversidePathShot ? 0.72 : 0.68;
+  if (scale === "medium") return isRiversidePathShot ? 0.66 : 0.6;
   return 0.56;
 }
 
@@ -5591,29 +5676,29 @@ function inferStoryboardCharacterPlacement(
       const lanePreset =
         scale === "close"
           ? {
-              leftLaneX: 0.76,
-              rightLaneX: 0.88,
-              leftFloorY: 0.86,
-              rightFloorY: 0.82,
-              leftSize: 1.08,
-              rightSize: 0.98
+              leftLaneX: 0.7,
+              rightLaneX: 0.8,
+              leftFloorY: 0.89,
+              rightFloorY: 0.86,
+              leftSize: 1.2,
+              rightSize: 1.08
             }
           : scale === "medium"
             ? {
-                leftLaneX: 0.74,
-                rightLaneX: 0.86,
-                leftFloorY: 0.83,
-                rightFloorY: 0.79,
-                leftSize: 0.98,
-                rightSize: 0.9
+                leftLaneX: 0.68,
+                rightLaneX: 0.79,
+                leftFloorY: 0.86,
+                rightFloorY: 0.82,
+                leftSize: 1.08,
+                rightSize: 0.98
               }
             : {
-                leftLaneX: 0.72,
-                rightLaneX: 0.84,
-                leftFloorY: 0.8,
-                rightFloorY: 0.76,
-                leftSize: 0.9,
-                rightSize: 0.82
+                leftLaneX: 0.66,
+                rightLaneX: 0.77,
+                leftFloorY: 0.84,
+                rightFloorY: 0.8,
+                leftSize: 1.0,
+                rightSize: 0.92
               };
       placement = applyClampedPlacement(placement, {
         centerXRatio: hasPathRelativeLeftCue ? lanePreset.leftLaneX : lanePreset.rightLaneX,
@@ -5628,17 +5713,17 @@ function inferStoryboardCharacterPlacement(
       placement = applyClampedPlacement(placement, {
         // Keep both actors on the visible stone path band instead of dropping
         // them onto the rocky shoreline or squeezing them against the frame edge.
-        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.74 : 0.86,
-        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.84 : 0.8,
+        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.68 : 0.79,
+        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.86 : 0.82,
         sizeScale: hasPathRelativeLaneCue
           ? placement.sizeScale
-          : placement.sizeScale * (index === 0 ? 1.02 : 0.94)
+          : placement.sizeScale * (index === 0 ? 1.12 : 1.02)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.8,
-        floorYRatio: 0.83,
-        sizeScale: placement.sizeScale * 0.96
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.74,
+        floorYRatio: 0.86,
+        sizeScale: placement.sizeScale * 1.06
       });
     }
   }
@@ -7924,6 +8009,10 @@ function adaptStableStoryboardWorkflowForShot(
   const char1Name = String(tokens.CHAR1_NAME ?? "").trim();
   const char2Name = String(tokens.CHAR2_NAME ?? "").trim();
   const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
+  const passAPoseGuidePath = String(tokens.PASS_A_POSE_GUIDE_PATH ?? poseGuidePath).trim() || poseGuidePath;
+  const passBPoseGuidePath = String(tokens.PASS_B_POSE_GUIDE_PATH ?? poseGuidePath).trim() || poseGuidePath;
+  const passAPromptText = buildStableStoryboardPassAPrompt(String(tokens.PROMPT ?? "").trim(), char1Name, char2Name);
+  const passANegativePrompt = buildStableStoryboardPassANegativePrompt(String(tokens.NEGATIVE_PROMPT ?? "").trim(), char2Name);
 
   if (!sceneRefPath) {
     throw new Error("稳定分镜模板缺少 SCENE_REF_PATH。该流程必须使用固定场景图来锁定透视和环境。");
@@ -8132,6 +8221,56 @@ function adaptStableStoryboardWorkflowForShot(
     openposeApplyInputs.end_percent = 1;
     openposeApplyInputs.image = workflowRef("17");
   }
+  workflow["16"] = {
+    inputs: {
+      image: hasSecondCharacter ? passBPoseGuidePath : poseGuidePath,
+      upload: "image"
+    },
+    class_type: "LoadImage"
+  };
+  workflow["101"] = {
+    inputs: {
+      clip: workflowRef("1", 1),
+      text: passAPromptText || String(tokens.PROMPT ?? "").trim()
+    },
+    class_type: "CLIPTextEncode"
+  };
+  workflow["102"] = {
+    inputs: {
+      clip: workflowRef("1", 1),
+      text: passANegativePrompt || String(tokens.NEGATIVE_PROMPT ?? "").trim()
+    },
+    class_type: "CLIPTextEncode"
+  };
+  workflow["103"] = {
+    inputs: {
+      image: hasSecondCharacter ? passAPoseGuidePath : poseGuidePath,
+      upload: "image"
+    },
+    class_type: "LoadImage"
+  };
+  workflow["104"] = {
+    inputs: {
+      image: workflowRef("103"),
+      upscale_method: "lanczos",
+      width: renderWidth,
+      height: renderHeight,
+      crop: "disabled"
+    },
+    class_type: "ImageScale"
+  };
+  workflow["105"] = {
+    inputs: {
+      positive: workflowRef("101"),
+      negative: workflowRef("102"),
+      control_net: workflowRef("18"),
+      image: workflowRef("104"),
+      strength: openposeStrength,
+      start_percent: 0,
+      end_percent: 1
+    },
+    class_type: "ControlNetApplyAdvanced"
+  };
   workflow["22"] = {
     inputs: {
       image: workflowRef("21"),
@@ -8152,12 +8291,24 @@ function adaptStableStoryboardWorkflowForShot(
     depthApplyInputs.start_percent = 0;
     depthApplyInputs.end_percent = 1;
   }
+  workflow["106"] = {
+    inputs: {
+      positive: workflowRef("105"),
+      negative: workflowRef("105", 1),
+      control_net: workflowRef("23"),
+      image: workflowRef("22"),
+      strength: depthStrength,
+      start_percent: 0,
+      end_percent: 1
+    },
+    class_type: "ControlNetApplyAdvanced"
+  };
   if (passAInputs) {
     // For dual-character shots, first lock the primary character into the clean scene seed,
     // then let pass B add the second character on top of that latent.
-    passAInputs.model = workflowRef(hasSecondCharacter ? "9" : passAModelNodeId);
-    passAInputs.positive = workflowRef("24");
-    passAInputs.negative = workflowRef("24", 1);
+    passAInputs.model = workflowRef(passAModelNodeId);
+    passAInputs.positive = hasSecondCharacter ? workflowRef("106") : workflowRef("24");
+    passAInputs.negative = hasSecondCharacter ? workflowRef("106", 1) : workflowRef("24", 1);
     passAInputs.latent_image = workflowRef("6");
     passAInputs.steps = passASteps;
     passAInputs.cfg = passACfg;
