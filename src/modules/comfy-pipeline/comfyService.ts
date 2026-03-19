@@ -4197,6 +4197,14 @@ function buildStoryboardGuideCharacterCanvas(
   const context = canvas.getContext("2d");
   if (!context) return null;
   context.clearRect(0, 0, width, height);
+  const baseIntegrated = buildIntegratedCharacterCanvas(cutout, width, height, sceneTint, scenePatch);
+  if (baseIntegrated) {
+    context.save();
+    context.globalAlpha = 0.9;
+    context.filter = "blur(0.4px)";
+    context.drawImage(baseIntegrated, 0, 0, width, height);
+    context.restore();
+  }
   const palette = sampleStoryboardGuidePalette(cutout);
   const patchInfluence = scenePatch
     ? sampleSceneRegionColor(
@@ -4241,7 +4249,7 @@ function buildStoryboardGuideCharacterCanvas(
 
   context.save();
   context.filter = "blur(8px)";
-  context.fillStyle = colorToRgba(mixRgb(sceneTint, { r: 12, g: 12, b: 18 }, 0.48), 0.34);
+  context.fillStyle = colorToRgba(mixRgb(sceneTint, { r: 12, g: 12, b: 18 }, 0.48), 0.22);
   context.beginPath();
   context.ellipse(
     shadowCenterX,
@@ -4256,6 +4264,7 @@ function buildStoryboardGuideCharacterCanvas(
   context.restore();
 
   context.save();
+  context.globalAlpha = 0.26;
   context.filter = "blur(1px)";
   drawTaperedLimb(context, geometry.leftHip, geometry.leftKnee, legWidth, legWidth * 0.78, tonedLower);
   drawTaperedLimb(context, geometry.leftKnee, geometry.leftAnkle, legWidth * 0.78, legWidth * 0.62, tonedLower);
@@ -4298,7 +4307,7 @@ function buildStoryboardGuideCharacterCanvas(
   drawTaperedLimb(context, geometry.rightShoulder, geometry.rightElbow, armWidth, armWidth * 0.84, tonedUpper);
   drawTaperedLimb(context, geometry.rightElbow, geometry.rightWrist, armWidth * 0.82, armWidth * 0.64, tonedUpper);
 
-  context.fillStyle = colorToRgba(tonedSkin, 0.98);
+  context.fillStyle = colorToRgba(tonedSkin, 0.86);
   context.beginPath();
   context.arc(geometry.head.x, geometry.head.y, headRadius, 0, Math.PI * 2);
   context.fill();
@@ -4307,7 +4316,7 @@ function buildStoryboardGuideCharacterCanvas(
   context.arc(geometry.rightWrist.x, geometry.rightWrist.y, Math.max(4, armWidth * 0.26), 0, Math.PI * 2);
   context.fill();
 
-  context.fillStyle = colorToRgba(tonedHair, 0.98);
+  context.fillStyle = colorToRgba(tonedHair, 0.82);
   context.beginPath();
   context.arc(geometry.head.x, geometry.head.y - headRadius * 0.08, headRadius * 1.03, Math.PI, Math.PI * 2);
   context.lineTo(geometry.head.x + headRadius * 0.88, geometry.head.y + headRadius * 0.24);
@@ -4333,7 +4342,16 @@ function buildStoryboardGuideCharacterCanvas(
   context.fill();
   context.restore();
 
-  return buildIntegratedCharacterCanvas(canvas, width, height, sceneTint, scenePatch) ?? canvas;
+  const integratedGuide = buildIntegratedCharacterCanvas(canvas, width, height, sceneTint, scenePatch);
+  if (integratedGuide) {
+    context.save();
+    context.globalAlpha = 0.42;
+    context.filter = "blur(0.6px)";
+    context.drawImage(integratedGuide, 0, 0, width, height);
+    context.restore();
+  }
+
+  return canvas;
 }
 
 async function buildStoryboardIdentityBoardReference(
@@ -7790,14 +7808,14 @@ function adaptBuiltinStoryboardWorkflowForShot(
     lockCharacterIdentityAndCount
       ? shotScale === "close"
         ? useCompositeFrameSeed
-          ? 0.46
+          ? 0.4
           : 0.42
         : shotScale === "medium"
           ? useCompositeFrameSeed
-            ? 0.44
+            ? 0.38
             : 0.4
           : useCompositeFrameSeed
-            ? 0.42
+            ? 0.36
             : 0.38
       : usePoseGuide
       ? shotScale === "close"
