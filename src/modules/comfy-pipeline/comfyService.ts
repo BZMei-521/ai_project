@@ -5202,6 +5202,77 @@ function buildStoryboardPoseFigure(
   }
 }
 
+function buildStoryboardCharacterMaskFigure(
+  context: CanvasRenderingContext2D,
+  centerX: number,
+  floorY: number,
+  bodyHeight: number,
+  action: StoryboardPoseAction,
+  mirror = false
+) {
+  const geometry = computeStoryboardPoseFigureGeometry(centerX, floorY, bodyHeight, action, mirror);
+  const {
+    head,
+    neck,
+    pelvis,
+    leftShoulder,
+    rightShoulder,
+    leftHip,
+    rightHip,
+    leftElbow,
+    rightElbow,
+    leftWrist,
+    rightWrist,
+    leftKnee,
+    rightKnee,
+    leftAnkle,
+    rightAnkle
+  } = geometry;
+  const torsoWidth = Math.max(22, Math.round(bodyHeight * 0.14));
+  const limbWidth = Math.max(18, Math.round(bodyHeight * 0.11));
+  const jointRadius = Math.max(10, Math.round(bodyHeight * 0.07));
+  const headRadius = Math.max(16, Math.round(bodyHeight * 0.1));
+  const drawStroke = (from: { x: number; y: number }, to: { x: number; y: number }, width: number) => {
+    context.save();
+    context.strokeStyle = "white";
+    context.lineWidth = width;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    context.moveTo(from.x, from.y);
+    context.lineTo(to.x, to.y);
+    context.stroke();
+    context.restore();
+  };
+  const drawDot = (point: { x: number; y: number }, radius: number) => {
+    context.save();
+    context.fillStyle = "white";
+    context.beginPath();
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  };
+
+  drawStroke(neck, pelvis, torsoWidth);
+  drawStroke(leftShoulder, rightShoulder, torsoWidth * 0.84);
+  drawStroke(leftHip, rightHip, torsoWidth * 0.78);
+  drawStroke(leftShoulder, leftElbow, limbWidth);
+  drawStroke(leftElbow, leftWrist, limbWidth * 0.92);
+  drawStroke(rightShoulder, rightElbow, limbWidth);
+  drawStroke(rightElbow, rightWrist, limbWidth * 0.92);
+  drawStroke(leftHip, leftKnee, limbWidth);
+  drawStroke(leftKnee, leftAnkle, limbWidth * 0.96);
+  drawStroke(rightHip, rightKnee, limbWidth);
+  drawStroke(rightKnee, rightAnkle, limbWidth * 0.96);
+  drawDot(head, headRadius);
+  drawDot(neck, jointRadius);
+  drawDot(pelvis, jointRadius);
+  drawDot(leftShoulder, jointRadius);
+  drawDot(rightShoulder, jointRadius);
+  drawDot(leftHip, jointRadius * 0.92);
+  drawDot(rightHip, jointRadius * 0.92);
+}
+
 async function stageStoryboardPoseGuideToken(
   settings: ComfySettings,
   shot: Shot,
@@ -5246,6 +5317,8 @@ async function stageStoryboardPoseGuideToken(
     };
   });
 
+  const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+
   const writePoseGuide = async (
     fileSuffix: string,
     selectedFigures: typeof poseFigures
@@ -5267,11 +5340,38 @@ async function stageStoryboardPoseGuideToken(
         figure.index % 2 === 1
       );
     });
-    const safeShotId = shot.id.replace(/[^a-zA-Z0-9_-]/g, "_");
     const filePath = `${inputDir}/shot_${safeShotId}_${fileSuffix}.png`;
     const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
       filePath,
       base64Data: poseCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
+    });
+    return result.filePath ? result.filePath.split("/").pop() ?? result.filePath : "";
+  };
+
+  const writeCharacterMaskGuide = async (
+    fileSuffix: string,
+    figure: (typeof poseFigures)[number] | undefined
+  ): Promise<string> => {
+    if (!figure) return "";
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = renderWidth;
+    maskCanvas.height = renderHeight;
+    const maskContext = maskCanvas.getContext("2d");
+    if (!maskContext) return "";
+    maskContext.fillStyle = "black";
+    maskContext.fillRect(0, 0, renderWidth, renderHeight);
+    buildStoryboardCharacterMaskFigure(
+      maskContext,
+      figure.centerX,
+      figure.floorY,
+      figure.bodyHeight * 1.08,
+      figure.action,
+      figure.index % 2 === 1
+    );
+    const filePath = `${inputDir}/shot_${safeShotId}_${fileSuffix}.png`;
+    const result = await invokeDesktopCommand<{ filePath: string }>("write_base64_file", {
+      filePath,
+      base64Data: maskCanvas.toDataURL("image/png").replace(/^data:[^,]+,/, "")
     });
     return result.filePath ? result.filePath.split("/").pop() ?? result.filePath : "";
   };
@@ -5285,11 +5385,16 @@ async function stageStoryboardPoseGuideToken(
   const passAPosePath = await writePoseGuide("char1_pose_map", poseFigures.slice(0, 1));
   const passBPosePath =
     poseFigures.length >= 2 ? await writePoseGuide("char2_pose_map", poseFigures.slice(1, 2)) : fullPosePath;
+  const passAMaskPath = await writeCharacterMaskGuide("char1_mask", poseFigures[0]);
+  const passBMaskPath =
+    poseFigures.length >= 2 ? await writeCharacterMaskGuide("char2_mask", poseFigures[1]) : passAMaskPath;
   return {
     ...tokens,
     POSE_GUIDE_PATH: fullPosePath,
     PASS_A_POSE_GUIDE_PATH: passAPosePath || fullPosePath,
-    PASS_B_POSE_GUIDE_PATH: passBPosePath || fullPosePath
+    PASS_B_POSE_GUIDE_PATH: passBPosePath || fullPosePath,
+    PASS_A_CHARACTER_MASK_PATH: passAMaskPath,
+    PASS_B_CHARACTER_MASK_PATH: passBMaskPath || passAMaskPath
   };
 }
 
@@ -8011,6 +8116,7 @@ function adaptStableStoryboardWorkflowForShot(
   const storyboardModel = String(tokens.STORYBOARD_IMAGE_MODEL ?? "").trim() || "realisticVisionV60B1_v51VAE.safetensors";
   const passAPoseGuidePath = String(tokens.PASS_A_POSE_GUIDE_PATH ?? poseGuidePath).trim() || poseGuidePath;
   const passBPoseGuidePath = String(tokens.PASS_B_POSE_GUIDE_PATH ?? poseGuidePath).trim() || poseGuidePath;
+  const passBCharacterMaskPath = String(tokens.PASS_B_CHARACTER_MASK_PATH ?? "").trim();
   const passAPromptText = buildStableStoryboardPassAPrompt(String(tokens.PROMPT ?? "").trim(), char1Name, char2Name);
   const passANegativePrompt = buildStableStoryboardPassANegativePrompt(String(tokens.NEGATIVE_PROMPT ?? "").trim(), char2Name);
 
@@ -8042,6 +8148,7 @@ function adaptStableStoryboardWorkflowForShot(
   const depthApplyNode = workflow["24"];
   const passASamplerNode = workflow["25"];
   const passBSamplerNode = workflow["28"];
+  const finalDecodeNode = workflow["29"];
 
   const renderWidth = Math.max(64, Number.parseInt(String(tokens.RENDER_WIDTH ?? "1024"), 10) || 1024);
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
@@ -8169,6 +8276,7 @@ function adaptStableStoryboardWorkflowForShot(
   const depthApplyInputs = setNodeInputs(depthApplyNode);
   const passAInputs = setNodeInputs(passASamplerNode);
   const passBInputs = setNodeInputs(passBSamplerNode);
+  const finalDecodeInputs = setNodeInputs(finalDecodeNode);
 
   if (checkpointInputs) {
     checkpointInputs.ckpt_name = stableControlNets.checkpointOverride ?? storyboardModel;
@@ -8303,6 +8411,33 @@ function adaptStableStoryboardWorkflowForShot(
     },
     class_type: "ControlNetApplyAdvanced"
   };
+  if (hasSecondCharacter && passBCharacterMaskPath) {
+    workflow["107"] = {
+      inputs: {
+        image: passBCharacterMaskPath,
+        channel: "red"
+      },
+      class_type: "LoadImageMask"
+    };
+    workflow["108"] = {
+      inputs: {
+        samples: workflowRef("27"),
+        mask: workflowRef("107")
+      },
+      class_type: "SetLatentNoiseMask"
+    };
+    workflow["109"] = {
+      inputs: {
+        destination: workflowRef("27"),
+        source: workflowRef("28"),
+        x: 0,
+        y: 0,
+        resize_source: false,
+        mask: workflowRef("107")
+      },
+      class_type: "LatentCompositeMasked"
+    };
+  }
   if (passAInputs) {
     // For dual-character shots, first lock the primary character into the clean scene seed,
     // then let pass B add the second character on top of that latent.
@@ -8318,10 +8453,13 @@ function adaptStableStoryboardWorkflowForShot(
     passBInputs.model = workflowRef(passBModelNodeId);
     passBInputs.positive = workflowRef("24");
     passBInputs.negative = workflowRef("24", 1);
-    passBInputs.latent_image = workflowRef("27");
+    passBInputs.latent_image = hasSecondCharacter && passBCharacterMaskPath ? workflowRef("108") : workflowRef("27");
     passBInputs.steps = passBSteps;
     passBInputs.cfg = passBCfg;
     passBInputs.denoise = passBDenoise;
+  }
+  if (finalDecodeInputs) {
+    finalDecodeInputs.samples = hasSecondCharacter && passBCharacterMaskPath ? workflowRef("109") : workflowRef("28");
   }
 
   return true;
