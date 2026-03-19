@@ -8407,10 +8407,16 @@ export function ComfyPipelinePanel() {
   };
 
   const resolveCharacterAnchorRenderPreset = (
-    _runtimeSettings: ComfySettings,
+    runtimeSettings: ComfySettings,
     context = ""
   ): "stable_fullbody" | "clean_reference" | "strict_anchor" =>
-    inferVisualStyleKindFromText(context) === "anime" ? "strict_anchor" : "strict_anchor";
+    runtimeSettings.characterRenderPreset === "stable_fullbody" ||
+    runtimeSettings.characterRenderPreset === "clean_reference" ||
+    runtimeSettings.characterRenderPreset === "strict_anchor"
+      ? runtimeSettings.characterRenderPreset
+      : inferVisualStyleKindFromText(context) === "realistic"
+        ? "stable_fullbody"
+        : "clean_reference";
 
   const shouldFallbackAssetWorkflow = (error: unknown): boolean => {
     const text = String(error ?? "").toLowerCase();
