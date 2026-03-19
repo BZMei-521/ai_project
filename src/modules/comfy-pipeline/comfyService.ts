@@ -6765,12 +6765,23 @@ function inferPromptTokens(
   const storyboardFrameSeedPath =
     kind === "image"
       ? (
+          (characterAssets.length > 0 && sceneRefPath ? sceneRefPath : "") ||
           (shouldPreferContinuitySeed ? continuitySceneSeedPath : "") ||
           sceneRefPath ||
           continuitySceneSeedPath ||
           defaultFramePath
         )
       : defaultFramePath;
+  const storyboardFrameSeedMode =
+    kind === "image"
+      ? storyboardFrameSeedPath === sceneRefPath && sceneRefPath.length > 0
+        ? "scene"
+        : storyboardFrameSeedPath === continuitySceneSeedPath && continuitySceneSeedPath.length > 0
+          ? "continuity"
+          : storyboardFrameSeedPath === defaultFramePath && defaultFramePath.length > 0
+            ? "generated"
+            : ""
+      : "";
   const firstFramePath = parseComfyViewPath(
     shot.videoStartFramePath?.trim() || defaultFramePath
   );
@@ -6913,6 +6924,7 @@ function inferPromptTokens(
     STORYBOARD_STEPS: String(storyboardWeights.steps),
     STORYBOARD_CFG: String(storyboardWeights.cfg),
     STORYBOARD_IMAGE_MODEL: effectiveStoryboardModel,
+    STORYBOARD_FRAME_SEED_MODE: storyboardFrameSeedMode,
     POSE_GUIDE_PATH: "",
     FRAME_IMAGE_PATH: storyboardFrameSeedPath,
     FIRST_FRAME_PATH: firstFramePath,
@@ -7677,6 +7689,7 @@ function adaptBuiltinStoryboardWorkflowForShot(
 ): void {
   const sceneRefPath = String(tokens.SCENE_REF_PATH ?? "").trim();
   const frameImagePath = String(tokens.FRAME_IMAGE_PATH ?? "").trim();
+  const frameSeedMode = String(tokens.STORYBOARD_FRAME_SEED_MODE ?? "").trim().toLowerCase();
   const poseGuidePath = String(tokens.POSE_GUIDE_PATH ?? "").trim();
   const char1PrimaryPath = String(tokens.CHAR1_PRIMARY_PATH ?? "").trim();
   const char1SecondaryPath = String(tokens.CHAR1_SECONDARY_PATH ?? "").trim();
@@ -7726,8 +7739,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   const renderHeight = Math.max(64, Number.parseInt(String(tokens.RENDER_HEIGHT ?? "576"), 10) || 576);
   const hasSecondCharacter = char2PrimaryPath.length > 0;
   const lockCharacterIdentityAndCount = usePoseGuide && hasSecondCharacter;
-  const useCompositeFrameSeed = lockCharacterIdentityAndCount && frameImagePath.length > 0;
-  const hasFrameSeed = frameImagePath.length > 0 && (!usePoseGuide || useCompositeFrameSeed);
+  const useCompositeFrameSeed = lockCharacterIdentityAndCount && frameSeedMode === "composite" && frameImagePath.length > 0;
+  const useSceneFrameSeed = frameImagePath.length > 0 && !useCompositeFrameSeed;
+  const hasFrameSeed = frameImagePath.length > 0;
   const shotScale = inferStoryboardCompositeScaleFromCorpus(
     compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
   );
@@ -7829,10 +7843,10 @@ function adaptBuiltinStoryboardWorkflowForShot(
     (inputs as Record<string, unknown>).end_at = 0;
   };
 
-  // Dual-character storyboard shots are stabilized by reusing the composed
-  // scene+character frame as a low-denoise seed. This keeps count and blocking
-  // far more stable than asking the model to redraw both actors from a blank
-  // scene latent on every shot.
+  // Dual-character storyboard shots are more reliable when they start from a
+  // clean scene/continuity frame and let pose + identity controls redraw the
+  // people. Seeding from a precomposed fake-person frame locks in broken
+  // anatomy and sticker artifacts.
   if (hasFrameSeed) {
     workflow["21"] = {
       inputs: {
@@ -7924,14 +7938,20 @@ function adaptBuiltinStoryboardWorkflowForShot(
       ? shotScale === "close"
         ? useCompositeFrameSeed
           ? 0.44
-          : 0.42
+          : useSceneFrameSeed
+            ? 0.64
+            : 0.42
         : shotScale === "medium"
           ? useCompositeFrameSeed
             ? 0.42
-            : 0.4
+            : useSceneFrameSeed
+              ? 0.6
+              : 0.4
           : useCompositeFrameSeed
             ? 0.4
-            : 0.38
+            : useSceneFrameSeed
+              ? 0.56
+              : 0.38
       : usePoseGuide
       ? shotScale === "close"
         ? hasSecondCharacter
@@ -7969,11 +7989,13 @@ function adaptBuiltinStoryboardWorkflowForShot(
           : 0.62;
   if (usePoseGuide) {
     if (lockCharacterIdentityAndCount) {
-      // With dual-character shots we now rely on a softer pose-aware composite
-      // seed, so identity can stay strong early while ending a bit sooner to
-      // let pose and scene integration reshape the final frame.
-      clampAdapterWeight(char1AdapterNode, 0.94, 1.02, 0.76);
-      clampAdapterWeight(char2AdapterNode, 0.92, 1.0, 0.76);
+      if (useSceneFrameSeed) {
+        clampAdapterWeight(char1AdapterNode, 1.0, 1.08, 0.88);
+        clampAdapterWeight(char2AdapterNode, 0.98, 1.06, 0.88);
+      } else {
+        clampAdapterWeight(char1AdapterNode, 0.94, 1.02, 0.76);
+        clampAdapterWeight(char2AdapterNode, 0.92, 1.0, 0.76);
+      }
     } else {
       clampAdapterWeight(char1AdapterNode, hasSecondCharacter ? 0.98 : 1.0, hasSecondCharacter ? 1.06 : 1.1, 0.92);
       clampAdapterWeight(char2AdapterNode, hasSecondCharacter ? 0.96 : 0, hasSecondCharacter ? 1.04 : 0, hasSecondCharacter ? 0.92 : 0);
@@ -8009,7 +8031,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
   if (controlNetInputs) {
     const targetStrength =
       lockCharacterIdentityAndCount
-        ? (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
+        ? useSceneFrameSeed
+          ? (shotScale === "close" ? 0.92 : shotScale === "medium" ? 0.88 : 0.84)
+          : (shotScale === "close" ? 0.84 : shotScale === "medium" ? 0.8 : 0.76)
         : usePoseGuide
         ? (shotScale === "close" ? 0.8 : shotScale === "medium" ? 0.76 : hasSecondCharacter ? 0.72 : 0.7)
         : hasFrameSeed
@@ -8019,7 +8043,9 @@ function adaptBuiltinStoryboardWorkflowForShot(
     controlNetInputs.image = ["18", 0];
     controlNetInputs.start_percent = 0;
     controlNetInputs.end_percent = lockCharacterIdentityAndCount
-      ? (shotScale === "close" ? 0.94 : shotScale === "medium" ? 0.9 : 0.86)
+      ? useSceneFrameSeed
+        ? (shotScale === "close" ? 0.98 : shotScale === "medium" ? 0.95 : 0.92)
+        : (shotScale === "close" ? 0.94 : shotScale === "medium" ? 0.9 : 0.86)
       : usePoseGuide
       ? (shotScale === "close" ? 0.94 : shotScale === "medium" ? 0.9 : 0.86)
       : hasFrameSeed
@@ -8708,19 +8734,15 @@ export async function generateShotAsset(
           : "storyboard";
     tokens = applyGlobalStyleToTokens(settings, tokens, kind, styleScope);
     let imageReferenceSources: WeightedImageRef[] = [];
-    let storyboardCompositeFrameSource = "";
     if (kind === "image") {
       imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
-          const [compositeRef, identityBoardRef] = await Promise.all([
+          const [, identityBoardRef] = await Promise.all([
             buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
-          if (compositeRef?.source) {
-            storyboardCompositeFrameSource = compositeRef.source.trim();
-          }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
               ...imageReferenceSources.filter((item) => item.source.trim() !== identityBoardRef.source.trim()),
@@ -8743,12 +8765,6 @@ export async function generateShotAsset(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
-      if (storyboardCompositeFrameSource) {
-        tokens = {
-          ...tokens,
-          FRAME_IMAGE_PATH: storyboardCompositeFrameSource
-        };
-      }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageStoryboardPoseGuideToken(settings, shot, tokens);
       tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
@@ -8920,19 +8936,15 @@ export async function generateShotAssetOutputs(
     }
     tokens = applyGlobalStyleToTokens(settings, tokens, kind);
     let imageReferenceSources: WeightedImageRef[] = [];
-    let storyboardCompositeFrameSource = "";
     if (kind === "image") {
       imageReferenceSources = extractImageReferenceSources(shot, assets, index, allShots);
       if ((settings.storyboardImageWorkflowMode ?? "mature_asset_guided") === "mature_asset_guided" && !assetOutputContext) {
         const inputDir = inferComfyInputDir(settings);
         if (inputDir) {
-          const [compositeRef, identityBoardRef] = await Promise.all([
+          const [, identityBoardRef] = await Promise.all([
             buildStoryboardCompositeReference(settings, shot, imageReferenceSources, inputDir),
             buildStoryboardIdentityBoardReference(shot, imageReferenceSources, inputDir, assets)
           ]);
-          if (compositeRef?.source) {
-            storyboardCompositeFrameSource = compositeRef.source.trim();
-          }
           if (identityBoardRef?.source) {
             imageReferenceSources = [
               ...imageReferenceSources.filter((item) => item.source.trim() !== identityBoardRef.source.trim()),
@@ -8955,12 +8967,6 @@ export async function generateShotAssetOutputs(
       tokens = await stageVideoFrameTokens(settings, shot, tokens);
     }
     if (kind === "image") {
-      if (storyboardCompositeFrameSource) {
-        tokens = {
-          ...tokens,
-          FRAME_IMAGE_PATH: storyboardCompositeFrameSource
-        };
-      }
       tokens = await stageImageReferenceTokens(settings, shot, tokens);
       tokens = await stageStoryboardPoseGuideToken(settings, shot, tokens);
       tokens = await stageStoryboardThreeViewTokens(settings, shot, tokens);
