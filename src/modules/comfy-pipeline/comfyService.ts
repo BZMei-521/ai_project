@@ -5212,15 +5212,15 @@ function inferStoryboardCompositeScale(shot: Shot): "wide" | "medium" | "close" 
 function inferStoryboardCompositeHeightRatio(shot: Shot, count: number): number {
   const scale = inferStoryboardCompositeScale(shot);
   if (count >= 2) {
-    if (scale === "wide") return 0.38;
-    if (scale === "close") return 0.54;
-    if (scale === "medium") return 0.48;
-    return 0.44;
+    if (scale === "wide") return 0.48;
+    if (scale === "close") return 0.62;
+    if (scale === "medium") return 0.56;
+    return 0.52;
   }
-  if (scale === "wide") return 0.42;
-  if (scale === "close") return 0.56;
-  if (scale === "medium") return 0.5;
-  return 0.46;
+  if (scale === "wide") return 0.52;
+  if (scale === "close") return 0.68;
+  if (scale === "medium") return 0.6;
+  return 0.56;
 }
 
 function extractCharacterNameFromReferenceLabel(label: string): string {
@@ -5350,8 +5350,8 @@ function applyClampedPlacement(
 ): { centerXRatio: number; floorYRatio: number; sizeScale: number } {
   return {
     centerXRatio: Math.min(0.9, Math.max(0.1, patch.centerXRatio ?? base.centerXRatio)),
-    floorYRatio: Math.min(0.95, Math.max(0.74, patch.floorYRatio ?? base.floorYRatio)),
-    sizeScale: Math.min(1.12, Math.max(0.52, patch.sizeScale ?? base.sizeScale))
+    floorYRatio: Math.min(0.95, Math.max(0.72, patch.floorYRatio ?? base.floorYRatio)),
+    sizeScale: Math.min(1.3, Math.max(0.56, patch.sizeScale ?? base.sizeScale))
   };
 }
 
@@ -5557,29 +5557,29 @@ function inferStoryboardCharacterPlacement(
       const lanePreset =
         scale === "close"
           ? {
-              leftLaneX: 0.72,
-              rightLaneX: 0.83,
-              leftFloorY: 0.9,
-              rightFloorY: 0.885,
-              leftSize: 0.96,
-              rightSize: 0.9
+              leftLaneX: 0.69,
+              rightLaneX: 0.81,
+              leftFloorY: 0.88,
+              rightFloorY: 0.89,
+              leftSize: 1.18,
+              rightSize: 1.1
             }
           : scale === "medium"
             ? {
                 leftLaneX: 0.7,
                 rightLaneX: 0.81,
-                leftFloorY: 0.905,
-                rightFloorY: 0.89,
-                leftSize: 0.9,
-                rightSize: 0.84
+                leftFloorY: 0.85,
+                rightFloorY: 0.865,
+                leftSize: 1.1,
+                rightSize: 1.02
               }
             : {
-                leftLaneX: 0.68,
-                rightLaneX: 0.78,
-                leftFloorY: 0.91,
-                rightFloorY: 0.895,
-                leftSize: 0.84,
-                rightSize: 0.78
+                leftLaneX: 0.71,
+                rightLaneX: 0.81,
+                leftFloorY: 0.82,
+                rightFloorY: 0.835,
+                leftSize: 1.02,
+                rightSize: 0.96
               };
       placement = applyClampedPlacement(placement, {
         centerXRatio: hasPathRelativeLeftCue ? lanePreset.leftLaneX : lanePreset.rightLaneX,
@@ -5592,19 +5592,19 @@ function inferStoryboardCharacterPlacement(
     }
     if (count >= 2) {
       placement = applyClampedPlacement(placement, {
-        // Keep both actors inside the lower-right walkable band instead of
-        // pushing them into the upper willow canopy or open water.
-        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.64 : 0.78,
-        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.915 : 0.9,
+        // Keep both actors on the visible stone path band instead of dropping
+        // them onto the rocky shoreline or shrinking them into the far corner.
+        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.71 : 0.81,
+        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.84 : 0.855,
         sizeScale: hasPathRelativeLaneCue
           ? placement.sizeScale
-          : placement.sizeScale * (index === 0 ? 0.98 : 0.92)
+          : placement.sizeScale * (index === 0 ? 1.12 : 1.06)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.68,
-        floorYRatio: 0.92,
-        sizeScale: placement.sizeScale * 0.92
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.78,
+        floorYRatio: 0.86,
+        sizeScale: placement.sizeScale * 1.08
       });
     }
   }
@@ -5685,17 +5685,17 @@ function stabilizeStoryboardPairPlacements(
     const riversidePreset =
       scale === "close"
         ? {
-            left: { centerXRatio: 0.64, floorYRatio: 0.91, sizeScale: 0.96 },
-            right: { centerXRatio: 0.77, floorYRatio: 0.895, sizeScale: 0.88 }
+            left: { centerXRatio: 0.69, floorYRatio: 0.88, sizeScale: 1.18 },
+            right: { centerXRatio: 0.81, floorYRatio: 0.895, sizeScale: 1.08 }
           }
         : scale === "medium"
           ? {
-              left: { centerXRatio: 0.66, floorYRatio: 0.915, sizeScale: 0.9 },
-              right: { centerXRatio: 0.79, floorYRatio: 0.9, sizeScale: 0.84 }
+              left: { centerXRatio: 0.7, floorYRatio: 0.85, sizeScale: 1.1 },
+              right: { centerXRatio: 0.81, floorYRatio: 0.865, sizeScale: 1.02 }
             }
           : {
-              left: { centerXRatio: 0.68, floorYRatio: 0.92, sizeScale: 0.82 },
-              right: { centerXRatio: 0.8, floorYRatio: 0.905, sizeScale: 0.76 }
+              left: { centerXRatio: 0.71, floorYRatio: 0.82, sizeScale: 1.02 },
+              right: { centerXRatio: 0.81, floorYRatio: 0.835, sizeScale: 0.96 }
             };
     stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
       centerXRatio: riversidePreset.left.centerXRatio,
@@ -5766,28 +5766,28 @@ function inferStoryboardCompositeLayout(
       );
     if (scale === "wide") {
       const wideBase = [
-        { centerXRatio: 0.44, floorYRatio: 0.91, sizeScale: 0.78 },
-        { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.72 }
+        { centerXRatio: 0.44, floorYRatio: 0.86, sizeScale: 0.94 },
+        { centerXRatio: 0.66, floorYRatio: 0.87, sizeScale: 0.88 }
       ];
       return buildPairPlacements(wideBase);
     }
     if (scale === "close") {
       const closeBase = [
-        { centerXRatio: 0.46, floorYRatio: 0.91, sizeScale: 0.9 },
-        { centerXRatio: 0.66, floorYRatio: 0.93, sizeScale: 0.82 }
+        { centerXRatio: 0.46, floorYRatio: 0.88, sizeScale: 1.08 },
+        { centerXRatio: 0.66, floorYRatio: 0.9, sizeScale: 1 }
       ];
       return buildPairPlacements(closeBase);
     }
     if (scale === "medium") {
       const mediumBase = [
-        { centerXRatio: 0.46, floorYRatio: 0.91, sizeScale: 0.82 },
-        { centerXRatio: 0.66, floorYRatio: 0.93, sizeScale: 0.76 }
+        { centerXRatio: 0.46, floorYRatio: 0.87, sizeScale: 0.98 },
+        { centerXRatio: 0.66, floorYRatio: 0.89, sizeScale: 0.92 }
       ];
       return buildPairPlacements(mediumBase);
     }
     const defaultBase = [
-      { centerXRatio: 0.46, floorYRatio: 0.9, sizeScale: 0.8 },
-      { centerXRatio: 0.66, floorYRatio: 0.92, sizeScale: 0.74 }
+      { centerXRatio: 0.46, floorYRatio: 0.87, sizeScale: 0.96 },
+      { centerXRatio: 0.66, floorYRatio: 0.89, sizeScale: 0.9 }
     ];
     return buildPairPlacements(defaultBase);
   }
@@ -7949,47 +7949,51 @@ function adaptStableStoryboardWorkflowForShot(
     );
   }
 
-  const primaryWeightBase = clamp(Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0.9") || 0.9, hasSecondCharacter ? 0.88 : 0.92, hasSecondCharacter ? 1.0 : 1.04);
-  const char1SecondaryWeight = hasUniqueChar1Secondary ? (hasSecondCharacter ? 0.18 : 0.24) : 0;
+  const primaryWeightBase = clamp(
+    Number(tokens.CHAR1_PRIMARY_WEIGHT ?? (hasSecondCharacter ? "1.08" : "0.98")) || (hasSecondCharacter ? 1.08 : 0.98),
+    hasSecondCharacter ? 1.08 : 0.96,
+    hasSecondCharacter ? 1.3 : 1.18
+  );
+  const char1SecondaryWeight = hasUniqueChar1Secondary ? (hasSecondCharacter ? 0.24 : 0.28) : 0;
   const char2PrimaryWeight = hasSecondCharacter
-    ? clamp(Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0.88") || 0.88, 0.86, 0.98)
+    ? clamp(Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "1.04") || 1.04, 1.02, 1.26)
     : 0;
-  const char2SecondaryWeight = hasUniqueChar2Secondary ? 0.16 : 0;
+  const char2SecondaryWeight = hasUniqueChar2Secondary ? 0.22 : 0;
 
-  const passABaseDenoise = Number(tokens.STORYBOARD_DENOISE ?? "0.4") || 0.4;
+  const passABaseDenoise = Number(tokens.STORYBOARD_DENOISE ?? "0.46") || 0.46;
   const passADenoise = clamp(
     hasContinuitySeed
       ? shotScale === "close"
-        ? passABaseDenoise
+        ? passABaseDenoise + 0.08
         : shotScale === "medium"
-          ? passABaseDenoise - 0.02
-          : passABaseDenoise - 0.04
+          ? passABaseDenoise + 0.06
+          : passABaseDenoise + 0.04
       : shotScale === "close"
-        ? passABaseDenoise + 0.02
+        ? passABaseDenoise + 0.12
         : shotScale === "wide"
-          ? passABaseDenoise + 0.04
-          : passABaseDenoise,
-    hasContinuitySeed ? 0.28 : 0.36,
-    hasContinuitySeed ? 0.42 : 0.54
+          ? passABaseDenoise + 0.14
+          : passABaseDenoise + 0.12,
+    hasContinuitySeed ? 0.48 : 0.52,
+    hasContinuitySeed ? 0.62 : 0.66
   );
-  const passASteps = Math.max(hasSecondCharacter ? 32 : 30, Number(tokens.STORYBOARD_STEPS ?? "30") || 30);
-  const passACfg = clamp(Number(tokens.STORYBOARD_CFG ?? "5.6") || 5.6, 5.2, 6.0);
-  const passBSteps = hasSecondCharacter ? 20 : 18;
-  const passBCfg = shotScale === "close" ? 5.3 : 5.1;
+  const passASteps = Math.max(hasSecondCharacter ? 36 : 32, Number(tokens.STORYBOARD_STEPS ?? "32") || 32);
+  const passACfg = clamp(Number(tokens.STORYBOARD_CFG ?? "5.9") || 5.9, 5.8, 6.4);
+  const passBSteps = hasSecondCharacter ? 14 : 12;
+  const passBCfg = shotScale === "close" ? 5 : 4.9;
   const passBDenoise = hasContinuitySeed
     ? shotScale === "close"
-      ? 0.16
-      : 0.14
+      ? 0.1
+      : 0.08
     : shotScale === "close"
-      ? 0.2
-      : 0.18;
-  const openposeStrength = hasSecondCharacter ? 0.98 : 0.94;
+      ? 0.14
+      : 0.12;
+  const openposeStrength = 1;
   const depthStrength =
     shotScale === "wide"
-      ? 0.76
+      ? 0.5
       : shotScale === "medium"
-        ? 0.72
-        : 0.66;
+        ? 0.46
+        : 0.42;
 
   const setNodeInputs = (node: unknown): Record<string, unknown> | null => {
     if (!node || typeof node !== "object" || Array.isArray(node)) return null;
@@ -8040,7 +8044,7 @@ function adaptStableStoryboardWorkflowForShot(
     char1SecondaryInputs.model = workflowRef("9");
     char1SecondaryInputs.weight = char1SecondaryWeight;
     char1SecondaryInputs.start_at = 0;
-    char1SecondaryInputs.end_at = char1SecondaryWeight > 0 ? 0.72 : 0;
+    char1SecondaryInputs.end_at = char1SecondaryWeight > 0 ? 0.86 : 0;
   }
   if (char2PrimaryInputs) {
     char2PrimaryInputs.model = workflowRef("11");
@@ -8052,7 +8056,7 @@ function adaptStableStoryboardWorkflowForShot(
     char2SecondaryInputs.model = workflowRef("13");
     char2SecondaryInputs.weight = char2SecondaryWeight;
     char2SecondaryInputs.start_at = 0;
-    char2SecondaryInputs.end_at = char2SecondaryWeight > 0 ? 0.66 : 0;
+    char2SecondaryInputs.end_at = char2SecondaryWeight > 0 ? 0.82 : 0;
   }
   if (openposeLoaderInputs) {
     openposeLoaderInputs.control_net_name =
@@ -9253,18 +9257,18 @@ export async function generateShotAsset(
         ...tokens,
         NEGATIVE_PROMPT: `${tokens.NEGATIVE_PROMPT ?? ""}, empty scene, scenery only, no people, character missing, actor missing, no protagonist`,
         CHAR1_PRIMARY_WEIGHT: String(
-          Math.min(1.36, Math.max(0, Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0") || 0) + 0.26)
+          Math.min(1.52, Math.max(0, Number(tokens.CHAR1_PRIMARY_WEIGHT ?? "0") || 0) + 0.32)
         ),
         CHAR1_SECONDARY_WEIGHT: String(
-          Math.min(0.42, Math.max(0, Number(tokens.CHAR1_SECONDARY_WEIGHT ?? "0") || 0) + 0.04)
+          Math.min(0.52, Math.max(0, Number(tokens.CHAR1_SECONDARY_WEIGHT ?? "0") || 0) + 0.08)
         ),
         CHAR2_PRIMARY_WEIGHT: String(
-          Math.min(1.32, Math.max(0, Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0") || 0) + 0.24)
+          Math.min(1.48, Math.max(0, Number(tokens.CHAR2_PRIMARY_WEIGHT ?? "0") || 0) + 0.3)
         ),
         STORYBOARD_DENOISE: String(
-          Math.min(0.42, Math.max(0.32, Number(tokens.STORYBOARD_DENOISE ?? "0.4") || 0.4))
+          Math.min(0.64, Math.max(0.56, Number(tokens.STORYBOARD_DENOISE ?? "0.46") || 0.46))
         ),
-        STORYBOARD_CFG: String(Math.min(6.2, Math.max(5.6, Number(tokens.STORYBOARD_CFG ?? "5.8") || 5.8)))
+        STORYBOARD_CFG: String(Math.min(6.4, Math.max(6, Number(tokens.STORYBOARD_CFG ?? "5.9") || 5.9)))
       };
       const rebuilt = coerceWorkflowLiteralValues(deepReplaceTokens(rewrittenWorkflow, strengthenedTokens)) as Record<string, unknown>;
       adaptBuiltinStoryboardWorkflowForShot(rebuilt, strengthenedTokens, objectInfo);
