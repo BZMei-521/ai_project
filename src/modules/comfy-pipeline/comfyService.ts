@@ -5591,29 +5591,29 @@ function inferStoryboardCharacterPlacement(
       const lanePreset =
         scale === "close"
           ? {
-              leftLaneX: 0.74,
-              rightLaneX: 0.84,
-              leftFloorY: 0.84,
-              rightFloorY: 0.85,
-              leftSize: 1.08,
-              rightSize: 1.02
+              leftLaneX: 0.8,
+              rightLaneX: 0.88,
+              leftFloorY: 0.82,
+              rightFloorY: 0.76,
+              leftSize: 0.98,
+              rightSize: 0.88
             }
           : scale === "medium"
             ? {
-                leftLaneX: 0.76,
-                rightLaneX: 0.85,
-                leftFloorY: 0.8,
-                rightFloorY: 0.815,
-                leftSize: 1,
-                rightSize: 0.94
+                leftLaneX: 0.81,
+                rightLaneX: 0.89,
+                leftFloorY: 0.78,
+                rightFloorY: 0.72,
+                leftSize: 0.9,
+                rightSize: 0.8
               }
             : {
-                leftLaneX: 0.77,
-                rightLaneX: 0.86,
-                leftFloorY: 0.77,
-                rightFloorY: 0.785,
-                leftSize: 0.92,
-                rightSize: 0.86
+                leftLaneX: 0.82,
+                rightLaneX: 0.9,
+                leftFloorY: 0.75,
+                rightFloorY: 0.7,
+                leftSize: 0.82,
+                rightSize: 0.72
               };
       placement = applyClampedPlacement(placement, {
         centerXRatio: hasPathRelativeLeftCue ? lanePreset.leftLaneX : lanePreset.rightLaneX,
@@ -5628,17 +5628,17 @@ function inferStoryboardCharacterPlacement(
       placement = applyClampedPlacement(placement, {
         // Keep both actors on the visible stone path band instead of dropping
         // them onto the rocky shoreline or shrinking them into the far corner.
-        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.77 : 0.86,
-        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.79 : 0.805,
+        centerXRatio: hasExplicitHorizontalCue || hasPathRelativeLaneCue ? placement.centerXRatio : index === 0 ? 0.82 : 0.9,
+        floorYRatio: hasPathRelativeLaneCue ? placement.floorYRatio : index === 0 ? 0.76 : 0.71,
         sizeScale: hasPathRelativeLaneCue
           ? placement.sizeScale
-          : placement.sizeScale * (index === 0 ? 1.02 : 0.98)
+          : placement.sizeScale * (index === 0 ? 0.92 : 0.84)
       });
     } else {
       placement = applyClampedPlacement(placement, {
-        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.82,
-        floorYRatio: 0.81,
-        sizeScale: placement.sizeScale * 0.98
+        centerXRatio: hasExplicitHorizontalCue ? placement.centerXRatio : 0.86,
+        floorYRatio: 0.76,
+        sizeScale: placement.sizeScale * 0.9
       });
     }
   }
@@ -5719,17 +5719,17 @@ function stabilizeStoryboardPairPlacements(
     const riversidePreset =
       scale === "close"
         ? {
-            left: { centerXRatio: 0.74, floorYRatio: 0.84, sizeScale: 1.08 },
-            right: { centerXRatio: 0.84, floorYRatio: 0.85, sizeScale: 1.02 }
+            left: { centerXRatio: 0.8, floorYRatio: 0.82, sizeScale: 0.98 },
+            right: { centerXRatio: 0.88, floorYRatio: 0.76, sizeScale: 0.88 }
           }
         : scale === "medium"
           ? {
-              left: { centerXRatio: 0.76, floorYRatio: 0.8, sizeScale: 1 },
-              right: { centerXRatio: 0.85, floorYRatio: 0.815, sizeScale: 0.94 }
+              left: { centerXRatio: 0.81, floorYRatio: 0.78, sizeScale: 0.9 },
+              right: { centerXRatio: 0.89, floorYRatio: 0.72, sizeScale: 0.8 }
             }
           : {
-              left: { centerXRatio: 0.77, floorYRatio: 0.77, sizeScale: 0.92 },
-              right: { centerXRatio: 0.86, floorYRatio: 0.785, sizeScale: 0.86 }
+              left: { centerXRatio: 0.82, floorYRatio: 0.75, sizeScale: 0.82 },
+              right: { centerXRatio: 0.9, floorYRatio: 0.7, sizeScale: 0.72 }
             };
     stabilized[leftIndex] = applyClampedPlacement(stabilized[leftIndex]!, {
       centerXRatio: riversidePreset.left.centerXRatio,
@@ -7966,6 +7966,9 @@ function adaptStableStoryboardWorkflowForShot(
     char2SecondaryPath !== char2PrimaryPath &&
     char2SecondaryPath !== char1PrimaryPath;
   const hasContinuitySeed = String(tokens.PREV_SCENE_IMAGE_PATH ?? "").trim().length > 0;
+  const frameSeedMode = String(tokens.STORYBOARD_FRAME_SEED_MODE ?? "").trim().toLowerCase();
+  const usesCompositeSeed =
+    frameSeedMode === "composite" || frameImagePath.toLowerCase().includes("scene_character_composite");
   const shotScale = inferStoryboardCompositeScaleFromCorpus(
     compactTextParts(tokens.SHOT_TITLE, tokens.STORY_PROMPT, tokens.NOTES, tokens.DIALOGUE).toLowerCase()
   );
@@ -7996,7 +7999,13 @@ function adaptStableStoryboardWorkflowForShot(
 
   const passABaseDenoise = Number(tokens.STORYBOARD_DENOISE ?? "0.46") || 0.46;
   const passADenoise = clamp(
-    hasContinuitySeed
+    usesCompositeSeed
+      ? shotScale === "close"
+        ? passABaseDenoise + 0.18
+        : shotScale === "medium"
+          ? passABaseDenoise + 0.2
+          : passABaseDenoise + 0.22
+      : hasContinuitySeed
       ? shotScale === "close"
         ? passABaseDenoise + 0.08
         : shotScale === "medium"
@@ -8007,14 +8016,19 @@ function adaptStableStoryboardWorkflowForShot(
         : shotScale === "wide"
           ? passABaseDenoise + 0.14
           : passABaseDenoise + 0.12,
-    hasContinuitySeed ? 0.48 : 0.52,
-    hasContinuitySeed ? 0.62 : 0.66
+    usesCompositeSeed ? 0.64 : hasContinuitySeed ? 0.48 : 0.52,
+    usesCompositeSeed ? 0.78 : hasContinuitySeed ? 0.62 : 0.66
   );
-  const passASteps = Math.max(hasSecondCharacter ? 36 : 32, Number(tokens.STORYBOARD_STEPS ?? "32") || 32);
+  const passASteps = Math.max(
+    usesCompositeSeed ? (hasSecondCharacter ? 40 : 36) : hasSecondCharacter ? 36 : 32,
+    Number(tokens.STORYBOARD_STEPS ?? "32") || 32
+  );
   const passACfg = clamp(Number(tokens.STORYBOARD_CFG ?? "5.9") || 5.9, 5.8, 6.4);
   const passBSteps = hasSecondCharacter ? 14 : 12;
   const passBCfg = shotScale === "close" ? 5 : 4.9;
-  const passBDenoise = hasContinuitySeed
+  const passBDenoise = usesCompositeSeed
+    ? 0.08
+    : hasContinuitySeed
     ? shotScale === "close"
       ? 0.1
       : 0.08
@@ -8023,7 +8037,13 @@ function adaptStableStoryboardWorkflowForShot(
       : 0.12;
   const openposeStrength = 1;
   const depthStrength =
-    shotScale === "wide"
+    usesCompositeSeed
+      ? shotScale === "wide"
+        ? 0.34
+        : shotScale === "medium"
+          ? 0.32
+          : 0.3
+      : shotScale === "wide"
       ? 0.5
       : shotScale === "medium"
         ? 0.46
@@ -9242,6 +9262,7 @@ export async function generateShotAsset(
         stableStoryboardCompositeSeedSource &&
         !assetOutputContext &&
         shotCharacterCount >= 2 &&
+        String(tokens.PREV_SCENE_IMAGE_PATH ?? "").trim().length === 0 &&
         isStableStoryboardWorkflowPreset(rewrittenWorkflow)
       ) {
         tokens = {
