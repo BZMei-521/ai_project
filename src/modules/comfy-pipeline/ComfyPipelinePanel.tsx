@@ -272,11 +272,11 @@ const STORYBOARD_IMAGE_MIN_SHARPNESS_SCORE = 14;
 const CHARACTER_FALLBACK_REPEAT_HASH_THRESHOLD = 4;
 const CHARACTER_FALLBACK_REPEAT_ABORT_STREAK = 1;
 const CHARACTER_ANCHOR_MAX_MODEL_CANDIDATES = 5;
-const CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL = 2;
-const CHARACTER_REFERENCE_MAX_ATTEMPTS = 2;
-const CHARACTER_THREEVIEW_MAX_RETRIES = 3;
-const CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS = 2;
-const CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS = 2;
+const CHARACTER_ANCHOR_MAX_ATTEMPTS_PER_MODEL = 3;
+const CHARACTER_REFERENCE_MAX_ATTEMPTS = 3;
+const CHARACTER_THREEVIEW_MAX_RETRIES = 4;
+const CHARACTER_FALLBACK_VIEW_MAX_ATTEMPTS = 3;
+const CHARACTER_FALLBACK_ROUND_MAX_ATTEMPTS = 3;
 const CHARACTER_FRONT_CLEANUP_NEGATIVE_HINTS = [
   "blurry face",
   "smeared face",
@@ -5378,125 +5378,6 @@ export function ComfyPipelinePanel() {
     }
   };
 
-  const analyzeFrontContextConsistency = async (
-    pathOrUrl: string,
-    context: string,
-    layout: NonNullable<Awaited<ReturnType<typeof analyzeForegroundLayout>>> | null
-  ) => {
-    const normalizedContext = normalizeStoryInput(context);
-    if (!normalizedContext || !layout || typeof window === "undefined" || typeof document === "undefined") return null;
-    const expectsDarkHair = /(黑色(?:中长|长|短)?发|黑发|乌黑|black hair)/i.test(normalizedContext);
-    const expectsBlueGrayOutfit = /(浅灰蓝|灰蓝|蓝灰|blue gray|blue-grey|muted blue gray)/i.test(normalizedContext);
-    if (!expectsDarkHair && !expectsBlueGrayOutfit) return null;
-    const src = toDesktopMediaSource(pathOrUrl);
-    if (!src) return null;
-    try {
-      const image = await loadImageForHash(src);
-      const size = 128;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const context2d = canvas.getContext("2d");
-      if (!context2d) return null;
-      context2d.drawImage(image, 0, 0, size, size);
-      const data = context2d.getImageData(0, 0, size, size).data;
-      let borderR = 0;
-      let borderG = 0;
-      let borderB = 0;
-      let borderCount = 0;
-      const sampleBorder = (x: number, y: number) => {
-        const index = (y * size + x) * 4;
-        borderR += data[index] ?? 0;
-        borderG += data[index + 1] ?? 0;
-        borderB += data[index + 2] ?? 0;
-        borderCount += 1;
-      };
-      for (let x = 0; x < size; x += 1) {
-        sampleBorder(x, 0);
-        sampleBorder(x, size - 1);
-      }
-      for (let y = 1; y < size - 1; y += 1) {
-        sampleBorder(0, y);
-        sampleBorder(size - 1, y);
-      }
-      if (borderCount <= 0) return null;
-      const bgR = borderR / borderCount;
-      const bgG = borderG / borderCount;
-      const bgB = borderB / borderCount;
-      const bboxWidth = Math.max(1, layout.bbox.maxX - layout.bbox.minX + 1);
-      const bboxHeight = Math.max(1, layout.bbox.maxY - layout.bbox.minY + 1);
-      let headForeground = 0;
-      let headDark = 0;
-      let headBrightNeutral = 0;
-      let outfitForeground = 0;
-      let outfitBlueGray = 0;
-      let outfitWhite = 0;
-      for (let y = layout.bbox.minY; y <= layout.bbox.maxY; y += 1) {
-        for (let x = layout.bbox.minX; x <= layout.bbox.maxX; x += 1) {
-          const pixelIndex = (y * size + x) * 4;
-          const r = data[pixelIndex] ?? 0;
-          const g = data[pixelIndex + 1] ?? 0;
-          const b = data[pixelIndex + 2] ?? 0;
-          const distance = Math.sqrt((r - bgR) ** 2 + (g - bgG) ** 2 + (b - bgB) ** 2);
-          if (distance < 38) continue;
-          const relX = (x - layout.bbox.minX) / bboxWidth;
-          const relY = (y - layout.bbox.minY) / bboxHeight;
-          const maxChannel = Math.max(r, g, b);
-          const minChannel = Math.min(r, g, b);
-          const chroma = maxChannel - minChannel;
-          if (relY <= 0.3 && relX >= 0.18 && relX <= 0.82) {
-            headForeground += 1;
-            if (maxChannel < 86) headDark += 1;
-            if (maxChannel > 176 && chroma < 34) headBrightNeutral += 1;
-          }
-          if (relY >= 0.24 && relY <= 0.82 && relX >= 0.12 && relX <= 0.88) {
-            outfitForeground += 1;
-            const isBlueGray =
-              b >= r + 4 &&
-              g >= r &&
-              maxChannel >= 70 &&
-              chroma >= 10 &&
-              chroma <= 80 &&
-              Math.abs(b - g) <= 42;
-            const isWhiteGarment = maxChannel > 178 && chroma < 32;
-            if (isBlueGray) outfitBlueGray += 1;
-            if (isWhiteGarment) outfitWhite += 1;
-          }
-        }
-      }
-      return {
-        expectsDarkHair,
-        expectsBlueGrayOutfit,
-        headDarkRatio: headForeground > 0 ? headDark / headForeground : 0,
-        headBrightNeutralRatio: headForeground > 0 ? headBrightNeutral / headForeground : 0,
-        outfitBlueGrayRatio: outfitForeground > 0 ? outfitBlueGray / outfitForeground : 0,
-        outfitWhiteRatio: outfitForeground > 0 ? outfitWhite / outfitForeground : 0
-      };
-    } catch {
-      return null;
-    }
-  };
-
-  const hasDarkHairMismatch = (
-    appearance:
-      | {
-          expectsDarkHair: boolean;
-          expectsBlueGrayOutfit: boolean;
-          headDarkRatio: number;
-          headBrightNeutralRatio: number;
-          outfitBlueGrayRatio: number;
-          outfitWhiteRatio: number;
-        }
-      | null
-      | undefined
-  ) =>
-    Boolean(
-      appearance?.expectsDarkHair &&
-        appearance.headBrightNeutralRatio > 0.2 &&
-        appearance.headDarkRatio < 0.3 &&
-        appearance.headBrightNeutralRatio > appearance.headDarkRatio + 0.08
-    );
-
   const analyzeScenePlateAppearance = async (pathOrUrl: string) => {
     if (typeof window === "undefined" || typeof document === "undefined") return null;
     const src = toDesktopMediaSource(pathOrUrl);
@@ -5974,14 +5855,13 @@ export function ComfyPipelinePanel() {
     return !primaryScenePath || isInvalidStoryboardReferencePath(primaryScenePath);
   };
 
-  const evaluateFrontReferenceQuality = async (pathOrUrl: string, context = "") => {
+  const evaluateFrontReferenceQuality = async (pathOrUrl: string, _context = "") => {
     const [sharpness, symmetry, layout, appearance] = await Promise.all([
       computeImageSharpnessScore(pathOrUrl),
       computeHorizontalMirrorSimilarity(pathOrUrl),
       analyzeForegroundLayout(pathOrUrl),
       analyzeCharacterTemplateAppearance(pathOrUrl)
     ]);
-    const semanticAppearance = await analyzeFrontContextConsistency(pathOrUrl, context, layout);
     const lowSharpness =
       typeof sharpness === "number" && sharpness < CHARACTER_FRONT_REFERENCE_MIN_SHARPNESS_SCORE;
     const lowSymmetry =
@@ -6042,13 +5922,6 @@ export function ComfyPipelinePanel() {
       appearance?.likelyNudeFigure
         ? `裸露过多或疑似裸模(skin=${appearance.skinExposureRatio.toFixed(2)},torso=${appearance.torsoSkinRatio.toFixed(2)})`
         : "",
-      hasDarkHairMismatch(semanticAppearance)
-        ? `发色与描述不符(head_dark=${semanticAppearance?.headDarkRatio?.toFixed(2) ?? "0.00"},head_light=${semanticAppearance?.headBrightNeutralRatio?.toFixed(2) ?? "0.00"})`
-        : "",
-      semanticAppearance?.expectsBlueGrayOutfit &&
-      (semanticAppearance.outfitBlueGrayRatio < 0.08 || semanticAppearance.outfitWhiteRatio > 0.24)
-        ? `服装主色与描述不符(blue_gray=${semanticAppearance.outfitBlueGrayRatio.toFixed(2)},white=${semanticAppearance.outfitWhiteRatio.toFixed(2)})`
-        : "",
       abnormalFullBodySilhouette && layout
         ? `主体轮廓不像标准全身角色设定图(w=${layout.bbox.widthRatio.toFixed(2)},h=${layout.bbox.heightRatio.toFixed(2)},fg=${layout.foregroundRatio.toFixed(2)})`
         : ""
@@ -6074,11 +5947,6 @@ export function ComfyPipelinePanel() {
       (appearance?.likelyTemplateFigure ? 56 : 0) +
       (appearance?.likelyGlowPosterFigure ? 74 : 0) +
       (appearance?.likelyNudeFigure ? 80 : 0) +
-      (hasDarkHairMismatch(semanticAppearance) ? 62 : 0) +
-      (semanticAppearance?.expectsBlueGrayOutfit &&
-      (semanticAppearance.outfitBlueGrayRatio < 0.08 || semanticAppearance.outfitWhiteRatio > 0.24)
-        ? 58
-        : 0) +
       (abnormalFullBodySilhouette ? 28 : 0);
     return {
       sharpness,
@@ -10586,7 +10454,7 @@ export function ComfyPipelinePanel() {
         };
       }
       if (!reusableFrontReferencePath && normalizedContext) {
-        appendLog(`角色 front 缺失，开始按脚本描述自动重建：${name}`, "info");
+        appendLog(`角色 front 缺失，开始按脚本描述自动重建（仅兜底，稳定性低于已有 front 或分镜回收）：${name}`, "info");
         await upsertImportedCharacterAssets(
           [
             {
@@ -10630,7 +10498,7 @@ export function ComfyPipelinePanel() {
         }
       }
       if (!reusableFrontReferencePath) {
-        const message = `角色 ${name} 缺少正视锚点图，自动资产阶段需要先有可用的 front 锚点；front 通过后才会自动续跑三视图。请先在人物库中确认 front。`;
+        const message = `角色 ${name} 缺少正视锚点图，自动资产阶段需要先有可用的 front 锚点；纯提示词 front 只作为兜底，无法保证任意提示词稳定出图。front 通过后才会自动续跑三视图。请先在人物库中确认 front。`;
         appendLog(message, "error");
         throw new Error(message);
       }

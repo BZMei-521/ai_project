@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:threeview-guards": "node scripts/check-threeview-stability-guards.mjs",
     "web:build": "tsc -b && vite build",
     "web:start": "node scripts/windows-web-server.mjs",
     "web:start:open": "node scripts/windows-web-server.mjs --open",
