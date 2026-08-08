@@ -42,6 +42,5 @@ export const inspectCharacterProvider = runtimeInspect as (
   environment?: CharacterProviderEnvironment
 ) => CharacterProviderInspection;
 export const selectCharacterProvider = runtimeSelect as (
-  environment?: CharacterProviderEnvironment,
-  providers?: readonly CharacterGenerationProviderDefinition[]
+  environment?: CharacterProviderEnvironment
 ) => CharacterProviderSelection;

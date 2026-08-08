@@ -50,4 +50,19 @@ assert.deepEqual(CHARACTER_GENERATION_PROVIDERS.map((provider) => provider.id), 
   "qwen_image_edit_2511",
   "flux2_klein_4b"
 ]);
+
+const injectedNineB = {
+  id: "flux2_klein_9b",
+  displayName: "FLUX.2 Klein 9B",
+  commercialUse: true,
+  license: "Apache-2.0",
+  requiredModels: [],
+  requiredNodes: [],
+  referenceMode: "multi_reference",
+  score: 999,
+  hardwareNote: "Must not be selectable."
+};
+const canonicalSelection = selectCharacterProvider(readyEnvironment, [injectedNineB]);
+assert.equal(canonicalSelection.selected?.id, "qwen_image_edit_2511");
+assert.equal(canonicalSelection.inspections.some((inspection) => inspection.provider.id === "flux2_klein_9b"), false);
 console.log("PASS commercial character provider registry");

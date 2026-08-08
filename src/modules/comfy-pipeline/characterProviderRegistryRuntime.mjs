@@ -44,8 +44,8 @@ export function inspectCharacterProvider(provider, environment = {}) {
   };
 }
 
-export function selectCharacterProvider(environment = {}, providers = CHARACTER_GENERATION_PROVIDERS) {
-  const inspections = [...providers]
+export function selectCharacterProvider(environment = {}) {
+  const inspections = [...CHARACTER_GENERATION_PROVIDERS]
     .map((provider) => inspectCharacterProvider(provider, environment))
     .sort((left, right) => right.provider.score - left.provider.score);
   return { selected: inspections.find((inspection) => inspection.available)?.provider, inspections };
