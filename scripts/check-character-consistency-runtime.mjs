@@ -35,7 +35,9 @@ assert.equal(inferCharacterView(360), "front");
 
 for (const [text, scale] of [
   ["面部特写，眼神变化", "close"], ["close-up portrait", "close"],
+  ["close", "close"],
   ["河边远景，两人全身", "wide"], ["establishing long shot", "wide"],
+  ["wide", "wide"], ["long", "wide"],
   ["两人对话", "medium"]
 ]) assert.equal(inferShotScale(text), scale, text);
 

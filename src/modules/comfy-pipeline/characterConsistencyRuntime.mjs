@@ -20,8 +20,8 @@ export function inferCharacterView(yaw = 0) {
 
 export function inferShotScale(text = "") {
   const value = String(text).toLowerCase();
-  if (/特写|近景|close[- ]?up|close shot|portrait/.test(value)) return "close";
-  if (/远景|全景|建立镜头|wide shot|long shot|establishing/.test(value)) return "wide";
+  if (/特写|近景|close(?:[- ]?up| shot)?|portrait/.test(value)) return "close";
+  if (/远景|全景|建立镜头|wide(?: shot)?|long(?: shot)?|establishing/.test(value)) return "wide";
   return "medium";
 }
 

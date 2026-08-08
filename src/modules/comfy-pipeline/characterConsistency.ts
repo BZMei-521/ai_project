@@ -1,4 +1,4 @@
-import type { Asset, CharacterIdentityPack, Shot } from "../storyboard-core/types";
+import type { Shot } from "../storyboard-core/types";
 
 export type CharacterView = "front" | "left_three_quarter" | "right_three_quarter" | "left_profile" | "right_profile" | "back";
 export type ShotScale = "close" | "medium" | "wide";
@@ -8,11 +8,31 @@ export type CharacterReferenceSelection = {
   path: string;
 };
 
+export type CharacterIdentityPackInput = {
+  triggerWord: string;
+  faceMasterPath: string;
+  faceLeftPath?: string;
+  faceRightPath?: string;
+  hairBackPath?: string;
+  bodyFrontPath: string;
+  bodySidePath?: string;
+  bodyBackPath?: string;
+};
+
+export type CharacterGenerationProvider = "qwen_image_edit_2511" | "flux2_klein_4b";
+
+export type CharacterAssetInput = {
+  id: string;
+  name: string;
+  characterIdentityPack?: CharacterIdentityPackInput;
+  continuityPath?: string;
+};
+
 export type CharacterPassPlan = {
   characterAssetId: string;
   characterName: string;
   roleIndex: number;
-  provider: string;
+  provider: CharacterGenerationProvider;
   view: CharacterView;
   shotScale: ShotScale;
   references: CharacterReferenceSelection[];
@@ -22,7 +42,7 @@ export type CharacterPassPlan = {
 };
 
 export type CharacterReferenceRoutingInput = {
-  identityPack: CharacterIdentityPack;
+  identityPack: CharacterIdentityPackInput;
   view: CharacterView;
   shotScale: ShotScale;
   continuityPath?: string;
@@ -30,8 +50,8 @@ export type CharacterReferenceRoutingInput = {
 
 export type CharacterPassPlanInput = {
   shot: Pick<Shot, "id" | "title" | "cameraYaw" | "storyPrompt" | "notes" | "tags">;
-  characters: Array<Pick<Asset, "id" | "name" | "characterIdentityPack"> & { continuityPath?: string }>;
-  provider: string;
+  characters: CharacterAssetInput[];
+  provider: CharacterGenerationProvider;
   continuityPath?: string;
 };
 
