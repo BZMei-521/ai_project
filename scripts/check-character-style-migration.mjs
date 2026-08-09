@@ -3,10 +3,14 @@ import { lstat, mkdtemp, mkdir, readdir, readFile, rename, rm, symlink, unlink, 
 import { join, resolve } from "node:path";
 
 import {
+  buildMigrationIdentityDescriptor,
+  buildPassPrompt,
+  classifyMigrationTrait,
   compileStyleMigrationWorkflow,
   loadStyleMigrationSubject,
   parseStyleMigrationArgs,
   runCharacterStyleMigration,
+  sanitizeMigrationTraits,
   writeMigrationManifestExclusive
 } from "./run-character-style-migration.mjs";
 
@@ -20,13 +24,71 @@ const parsed = parseStyleMigrationArgs([
   "--provider", "flux2_klein_4b",
   "--base-url", "http://127.0.0.1:8188",
   "--workflow", "examples/character-consistency-benchmark/workflows/flux2-klein-4b-style-migration-api.json",
-  "--output", "logs/shen-yan-style-migration-v1"
+  "--output", "logs/shen-yan-style-migration-v1",
+  "--revision", "2"
 ]);
 assert.equal(parsed.character, CHARACTER_ID);
+assert.equal(parsed.revision, 2);
+assert.equal(parseStyleMigrationArgs([
+  "--project", "examples/character-consistency-benchmark/current-project-klein-release-subject.json",
+  "--character", CHARACTER_ID,
+  "--provider", "flux2_klein_4b",
+  "--base-url", "http://127.0.0.1:8188",
+  "--workflow", "examples/character-consistency-benchmark/workflows/flux2-klein-4b-style-migration-api.json",
+  "--output", "logs/shen-yan-style-migration-v1"
+]).revision, 1);
+for (const revision of ["0", "-1", "1.5", "two", ""]) {
+  assert.throws(() => parseStyleMigrationArgs([
+    "--project", "project.json", "--character", CHARACTER_ID, "--provider", "flux2_klein_4b",
+    "--base-url", "http://127.0.0.1:8188", "--workflow", "workflow.json", "--output", "logs/out",
+    "--revision", revision
+  ]), /revision.*positive integer|invalid argument/i);
+}
 assert.throws(() => parseStyleMigrationArgs(["--project", "../outside.json", "--character", CHARACTER_ID, "--provider", "flux2_klein_4b", "--base-url", "http://127.0.0.1:8188", "--workflow", "workflow.json", "--output", "logs/out"]), /workspace/i);
 assert.throws(() => parseStyleMigrationArgs(["--project", "project.json", "--character", CHARACTER_ID, "--provider", "qwen_image_edit_2511", "--base-url", "http://127.0.0.1:8188", "--workflow", "workflow.json", "--output", "logs/out"]), /flux2_klein_4b/);
 
 const workflowPath = resolve(WORKSPACE, "examples/character-consistency-benchmark/workflows/flux2-klein-4b-style-migration-api.json");
+const currentProjectFixturePath = resolve(WORKSPACE, "examples/character-consistency-benchmark/current-project-klein-release-subject.json");
+const currentProjectFixtureBytes = await readFile(currentProjectFixturePath);
+const currentProjectFixture = JSON.parse(currentProjectFixtureBytes.toString("utf8"));
+const currentIdentityPack = currentProjectFixture.snapshot.assets.find((asset) => asset.id === CHARACTER_ID).characterIdentityPack;
+assert.deepEqual(classifyMigrationTrait("large blue eyes", "immutable"), {
+  action: "rewrite",
+  source: "large blue eyes",
+  canonical: "natural-sized blue eyes",
+  reason: "preserve_eye_color_without_juvenile_scale"
+});
+const currentSanitized = sanitizeMigrationTraits(currentIdentityPack);
+assert.deepEqual(currentSanitized.identityTraits, [
+  "short dark brown side-swept hair",
+  "natural-sized blue eyes",
+  "teal long-sleeve tunic",
+  "dark navy sleeveless long coat",
+  "brown belt and knee-high brown boots",
+  "established adult male identity"
+]);
+assert.deepEqual(currentSanitized.preservationConstraints, [
+  "preserve established face shape and blue eye color",
+  "preserve hair color, length, fringe, and silhouette",
+  "preserve the teal tunic, navy long coat, brown belt, and brown boots"
+]);
+assert.deepEqual(currentSanitized.excludedSourceTraits.map(({ source }) => source), [
+  "do not change age, gender presentation, or body proportions",
+  "do not switch from clean 2D animated character styling to photorealism"
+]);
+const fixtureSubject = { identityPack: currentIdentityPack, species: "human" };
+const canonicalDescriptor = buildMigrationIdentityDescriptor(fixtureSubject);
+for (const pass of [{ id: "front" }, { id: "side" }, { id: "back" }]) {
+  const migrationPrompt = buildPassPrompt(fixtureSubject, pass);
+  assert.match(migrationPrompt, /adult male.*25-30 years old.*mature facial bone structure/i);
+  assert.match(migrationPrompt, /natural-sized almond-shaped blue eyes.*normal iris proportions/i);
+  assert.match(migrationPrompt, /restrained expression.*slender adult body proportions/i);
+  assert.match(migrationPrompt, /cinematic semi-realistic Chinese 3D donghua/i);
+  assert.match(migrationPrompt, /not western family animation.*not toy-like.*not a child/i);
+  assert.ok(migrationPrompt.includes(canonicalDescriptor), "every view must contain the same canonical identity descriptor");
+  assert.doesNotMatch(migrationPrompt, /large blue eyes|youthful animated face|do not change age, gender presentation, or body proportions|do not switch from clean 2D animated character styling to photorealism/i);
+}
+assert.deepEqual(await readFile(currentProjectFixturePath), currentProjectFixtureBytes, "trait sanitization must leave the real source project byte-for-byte unchanged");
 const workflow = JSON.parse(await readFile(workflowPath, "utf8"));
 const compiled = compileStyleMigrationWorkflow(workflow, {
   REFERENCE_IMAGE_A: "migration/front-a.png",
@@ -212,6 +274,7 @@ await assert.rejects(writeMigrationManifestExclusive(resolve(tempRoot, "..", "ou
 }), /workspace/i, "the manifest helper must reject paths outside its workspace before attempting a write");
 
 const calls = [];
+const queuedPrompts = [];
 let activeQueues = 0;
 const transport = {
   async uploadImage({ fileName, bytes }) {
@@ -224,6 +287,7 @@ const transport = {
     assert.equal(activeQueues, 1, "passes must queue serially");
     assert.equal(outputNodeId, "19");
     calls.push(["queue", pass.id, queuedWorkflow["13"].inputs.noise_seed]);
+    queuedPrompts.push(queuedWorkflow["7"].inputs.text);
     assert.match(queuedWorkflow["7"].inputs.text, new RegExp(`${pass.id}.*cinematic_3d_donghua_v1|cinematic_3d_donghua_v1.*${pass.id}`, "i"));
     assert.match(queuedWorkflow["7"].inputs.text, /blue eyes.*human ears only.*no animal ears.*no tail.*no horns.*no animal muzzle/i);
     activeQueues -= 1;
@@ -351,12 +415,14 @@ const manifest = await runCharacterStyleMigration({
   baseUrl: "http://127.0.0.1:8188",
   workflow: workflowPath,
   output: outputDirectory,
+  revision: 2,
   workspaceRoot: WORKSPACE
 }, { transport });
 assert.deepEqual(await readFile(projectPath), beforeProject, "migration must never mutate the project JSON");
 assert.equal(manifest.status, "awaiting_operator_approval");
 assert.equal(manifest.styleContract.id, "cinematic_3d_donghua_v1");
 assert.equal(manifest.styleContract.version, "1.0.0");
+assert.equal(manifest.proposedIdentityPackVersion, "shen-yan-identity-v1-cinematic3d-v2");
 assert.match(manifest.styleContract.digest, /^[a-f0-9]{64}$/);
 assert.equal(manifest.candidates.length, 3);
 assert.deepEqual(manifest.candidates.map((candidate) => [candidate.view, candidate.seed]), [
@@ -365,6 +431,10 @@ assert.deepEqual(manifest.candidates.map((candidate) => [candidate.view, candida
 assert.ok(manifest.candidates.every((candidate) => /^[a-f0-9]{64}$/.test(candidate.sourceSha256) && /^[a-f0-9]{64}$/.test(candidate.outputSha256)));
 assert.ok(manifest.candidates.every((candidate) => candidate.sourceReferences.length === 2 && candidate.sourceReferences.every((source) => /^[a-f0-9]{64}$/.test(source.sha256))));
 assert.deepEqual(calls.filter(([kind]) => kind === "queue").map(([, view]) => view), ["front", "side", "back"]);
+for (const prompt of queuedPrompts) {
+  assert.ok(prompt.includes(`Canonical identity descriptor: ${buildMigrationIdentityDescriptor(subject)}.`), "all passes must share the exact canonical descriptor");
+  assert.doesNotMatch(prompt, /large blue eyes|youthful animated face|do not change age, gender presentation, or body proportions|do not switch from clean 2D animated character styling to photorealism/i);
+}
 assert.equal(JSON.parse(await readFile(join(outputDirectory, "migration-manifest.json"), "utf8")).status, "awaiting_operator_approval");
 for (const view of ["front", "side", "back"]) assert.deepEqual(await readFile(join(outputDirectory, `${view}.png`)), PNG);
 assert.deepEqual((await readdir(outputDirectory)).sort(), ["back.png", "front.png", "migration-manifest.json", "side.png"]);

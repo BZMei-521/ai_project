@@ -24,6 +24,7 @@ const MODEL_NAME = "flux-2-klein-4b-fp8.safetensors";
 const MANIFEST_NAME = "migration-manifest.json";
 const MAX_OUTPUT_BYTES = 40 * 1024 * 1024;
 const REQUIRED_ARGUMENTS = Object.freeze(["project", "character", "provider", "base-url", "workflow", "output"]);
+const OPTIONAL_ARGUMENTS = Object.freeze(["revision"]);
 const WORKFLOW_TOKENS = Object.freeze([
   "REFERENCE_IMAGE_A",
   "REFERENCE_IMAGE_B",
@@ -517,11 +518,15 @@ export function parseStyleMigrationArgs(argv) {
     const value = argv[index + 1];
     if (!nonEmptyString(flag) || !flag.startsWith("--") || !nonEmptyString(value)) throw new Error(`Invalid argument near ${String(flag)}.`);
     const key = flag.slice(2);
-    if (!REQUIRED_ARGUMENTS.includes(key)) throw new Error(`Unknown argument --${key}.`);
+    if (![...REQUIRED_ARGUMENTS, ...OPTIONAL_ARGUMENTS].includes(key)) throw new Error(`Unknown argument --${key}.`);
     if (hasOwn(values, key)) throw new Error(`Duplicate argument --${key}.`);
     values[key] = value.trim();
   }
   for (const key of REQUIRED_ARGUMENTS) if (!hasOwn(values, key)) throw new Error(`Missing --${key}.`);
+  const revision = hasOwn(values, "revision") ? Number(values.revision) : 1;
+  if (!Number.isSafeInteger(revision) || revision < 1 || String(revision) !== String(values.revision ?? "1")) {
+    throw new Error("--revision must be a positive integer.");
+  }
   if (values.provider !== PROVIDER) throw new Error(`--provider must be ${PROVIDER}.`);
   let endpoint;
   try {
@@ -542,7 +547,8 @@ export function parseStyleMigrationArgs(argv) {
     provider: values.provider,
     baseUrl: endpoint.href.replace(/\/$/, ""),
     workflow,
-    output
+    output,
+    revision
   };
 }
 
@@ -615,10 +621,76 @@ export function compileStyleMigrationWorkflow(template, tokens) {
   return compiled;
 }
 
-function buildPassPrompt(subject, pass) {
+function normalizeTraitText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+export function classifyMigrationTrait(value, kind = "immutable") {
+  const source = normalizeTraitText(value);
+  if (!source) throw new Error("Migration traits must be non-empty strings.");
+  if (!["immutable", "forbidden"].includes(kind)) throw new Error("Migration trait kind must be immutable or forbidden.");
+  const normalized = source.toLowerCase();
+
+  if (kind === "immutable") {
+    if (normalized === "large blue eyes") return {
+      action: "rewrite", source, canonical: "natural-sized blue eyes", reason: "preserve_eye_color_without_juvenile_scale"
+    };
+    if (normalized === "clean youthful animated male face") return {
+      action: "rewrite", source, canonical: "established adult male identity", reason: "remove_juvenile_style_coupling"
+    };
+    if (/\b(youthful|juvenile|childlike|chibi|pixar|toy-like|clean 2d|flat 2d)\b/i.test(source)) return {
+      action: "exclude", source, reason: "exclude_age_or_style_coupled_trait"
+    };
+    return { action: "preserve", source, canonical: source, reason: "identity_fact" };
+  }
+
+  if (/\bage\b.*\bbody proportions\b|\bbody proportions\b.*\bage\b/i.test(source)) return {
+    action: "exclude", source, reason: "exclude_age_and_proportion_lock"
+  };
+  if (/\b(2d|photoreal|pixar|disney|western cartoon|toy-like|chibi)\b/i.test(source)) return {
+    action: "exclude", source, reason: "exclude_source_rendering_lock"
+  };
+  const preservationRewrites = Object.freeze({
+    "do not change face shape or blue eye color": "preserve established face shape and blue eye color",
+    "do not change hair color, length, fringe, or silhouette": "preserve hair color, length, fringe, and silhouette",
+    "do not change the teal tunic, navy long coat, brown belt, or brown boots": "preserve the teal tunic, navy long coat, brown belt, and brown boots"
+  });
+  if (hasOwn(preservationRewrites, normalized)) return {
+    action: "rewrite", source, canonical: preservationRewrites[normalized], reason: "identity_preservation_constraint"
+  };
+  const canonical = source.replace(/^do not change\s+/i, "preserve ");
+  return { action: canonical === source ? "preserve" : "rewrite", source, canonical, reason: "identity_preservation_constraint" };
+}
+
+export function sanitizeMigrationTraits(identityPack) {
+  if (!isPlainObject(identityPack) || !Array.isArray(identityPack.immutableTraits) || identityPack.immutableTraits.length === 0) {
+    throw new Error("Migration requires immutableTraits.");
+  }
+  if (hasOwn(identityPack, "forbiddenChanges") && !Array.isArray(identityPack.forbiddenChanges)) {
+    throw new Error("Migration forbiddenChanges must be an array when present.");
+  }
+  const immutable = identityPack.immutableTraits.map((trait) => classifyMigrationTrait(trait, "immutable"));
+  const forbidden = (identityPack.forbiddenChanges ?? []).map((trait) => classifyMigrationTrait(trait, "forbidden"));
+  return Object.freeze({
+    identityTraits: Object.freeze(immutable.filter(({ action }) => action !== "exclude").map(({ canonical }) => canonical)),
+    preservationConstraints: Object.freeze(forbidden.filter(({ action }) => action !== "exclude").map(({ canonical }) => canonical)),
+    excludedSourceTraits: Object.freeze([...immutable, ...forbidden].filter(({ action }) => action === "exclude").map((entry) => Object.freeze(entry)))
+  });
+}
+
+export function buildMigrationIdentityDescriptor(subject) {
+  if (!isPlainObject(subject) || subject.species !== "human") throw new Error("Migration identity descriptor is human-only.");
+  const sanitized = sanitizeMigrationTraits(subject.identityPack);
+  return [...sanitized.identityTraits, ...sanitized.preservationConstraints].join("; ");
+}
+
+export function buildPassPrompt(subject, pass) {
+  const descriptor = buildMigrationIdentityDescriptor(subject);
   return [
-    `Preserve immutable character traits exactly: ${subject.identityPack.immutableTraits.map((trait) => trait.trim()).join("; ")}.`,
-    `Generate the exact ${pass.id} view of the same youthful adult human character.`,
+    `Canonical identity descriptor: ${descriptor}.`,
+    `Generate the exact ${pass.id} view of the same adult male character, approximately 25-30 years old, with mature facial bone structure.`,
+    "Use natural-sized almond-shaped blue eyes with normal iris proportions, a restrained expression, and slender adult body proportions.",
+    "Rendering target: cinematic semi-realistic Chinese 3D donghua, refined adult anime facial anatomy, detailed hair strands and skin, physically readable costume materials, cinematic depth of field and controlled rim light; stylized and semi-realistic, not western family animation, not toy-like, not a child.",
     `${CINEMATIC_3D_DONGHUA_CONTRACT.id} ${CINEMATIC_3D_DONGHUA_CONTRACT.version}: ${CINEMATIC_3D_DONGHUA_CONTRACT.positivePrompt}.`,
     "Human-only anatomy constraint: human ears only, no animal ears, no tail, no horns, no animal muzzle.",
     "Return one clean model-generated character image; do not create a collage, character sheet, fallback cutout, or copied screenshot."
@@ -734,6 +806,8 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
   const outputDirectory = resolveWorkspaceArgument(options.output, "output", workspaceRoot);
   if (options.provider !== PROVIDER) throw new Error(`Migration provider must be ${PROVIDER}.`);
   if (!nonEmptyString(options.character)) throw new Error("Migration character is required.");
+  const revision = options.revision ?? 1;
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("Migration revision must be a positive integer.");
   if (outputDirectory === projectPath || outputDirectory === workflowPath) throw new Error("Output must not target an input file.");
   let parsedEndpoint;
   try { parsedEndpoint = new URL(options.baseUrl); } catch { throw new Error("Migration base URL must be valid."); }
@@ -834,7 +908,7 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
       status: "awaiting_operator_approval",
       characterAssetId: subject.characterAssetId,
       sourceIdentityPackVersion: subject.identityPack.version,
-      proposedIdentityPackVersion: `${subject.identityPack.version}-cinematic3d-v1`,
+      proposedIdentityPackVersion: `${subject.identityPack.version}-cinematic3d-v${revision}`,
       styleContract: {
         id: CINEMATIC_3D_DONGHUA_CONTRACT.id,
         version: CINEMATIC_3D_DONGHUA_CONTRACT.version,
