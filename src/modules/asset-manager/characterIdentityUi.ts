@@ -24,7 +24,7 @@ export const parseCharacterIdentityList = runtime.parseCharacterIdentityList as 
 export const resolveCharacterLoraProvider = runtime.resolveCharacterLoraProvider as (
   provider?: string
 ) => CharacterLoraProviderOption;
-export type CharacterBenchmarkEvidenceContext = {
+export type CharacterBenchmarkEvidenceCoreContext = {
   characterAssetId: string;
   identityPackVersion: string;
   provider: CharacterLoraProviderId;
@@ -39,6 +39,23 @@ export type CharacterBenchmarkEvidenceContext = {
     authoritativeModelBindings: Array<{ model: string }>;
   };
 };
+export type CharacterBenchmarkEvidenceLegacyContext = CharacterBenchmarkEvidenceCoreContext & {
+  referenceManifestDigest?: never;
+  evaluatorId?: never;
+  evaluatorVersion?: never;
+  evaluatorImplementationHash?: never;
+  evaluatorPolicyHash?: never;
+};
+export type CharacterBenchmarkEvidenceCurrentLoraContext = CharacterBenchmarkEvidenceCoreContext & {
+  referenceManifestDigest: string;
+  evaluatorId: string;
+  evaluatorVersion: string;
+  evaluatorImplementationHash: string;
+  evaluatorPolicyHash: string;
+};
+export type CharacterBenchmarkEvidenceContext =
+  | CharacterBenchmarkEvidenceLegacyContext
+  | CharacterBenchmarkEvidenceCurrentLoraContext;
 export type CharacterGenerationEvidenceContext = {
   generationMode: CharacterGenerationMode;
   characterAssetId: string;

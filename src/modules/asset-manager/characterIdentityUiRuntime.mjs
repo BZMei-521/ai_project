@@ -72,8 +72,7 @@ import {
 const nonEmptyText = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
 const plainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-function buildLoraCompatibilityContext(source, context) {
-  const evaluator = plainObject(source?.evaluatorProof) ? source.evaluatorProof : source;
+function buildLoraCompatibilityContext(context) {
   return {
     generationMode: "lora_augmented",
     characterAssetId: context?.characterAssetId,
@@ -85,11 +84,11 @@ function buildLoraCompatibilityContext(source, context) {
     loraStrength: context?.loraStrength,
     candidateStatus: context?.candidateStatus,
     workflowProof: context?.workflowProof,
-    referenceManifestDigest: source?.referenceManifestDigest,
-    evaluatorId: evaluator?.id ?? source?.evaluatorId,
-    evaluatorVersion: evaluator?.version ?? source?.evaluatorVersion,
-    evaluatorImplementationHash: evaluator?.implementationHash ?? source?.evaluatorImplementationHash,
-    evaluatorPolicyHash: evaluator?.policyHash ?? source?.evaluatorPolicyHash
+    referenceManifestDigest: context?.referenceManifestDigest,
+    evaluatorId: context?.evaluatorId,
+    evaluatorVersion: context?.evaluatorVersion,
+    evaluatorImplementationHash: context?.evaluatorImplementationHash,
+    evaluatorPolicyHash: context?.evaluatorPolicyHash
   };
 }
 
@@ -97,19 +96,25 @@ function hasValidLegacyLoraContext(context) {
   return [context?.loraName, context?.loraVersion, context?.modelName, context?.characterAssetId, context?.identityPackVersion, context?.provider].every(nonEmptyText) && Number.isFinite(context?.loraStrength) && context.loraStrength > 0;
 }
 
+function hasCurrentEvidenceContext(context) {
+  return [context?.referenceManifestDigest, context?.evaluatorId, context?.evaluatorVersion, context?.evaluatorImplementationHash, context?.evaluatorPolicyHash].every(nonEmptyText);
+}
+
 export function importCharacterBenchmarkEvidence(report, context, options) {
   if (!plainObject(report) || !nonEmptyText(report.generationMode)) return { valid: false, reason: "legacy_report_not_importable" };
   if (report.generationMode !== "lora_augmented") return { valid: false, reason: "compatibility_mode_not_lora" };
   if (!hasValidLegacyLoraContext(context)) return { valid: false, reason: "legacy_lora_context_invalid" };
-  return importCharacterGenerationEvidence(report, buildLoraCompatibilityContext(report, context), options);
+  if (!hasCurrentEvidenceContext(context)) return { valid: false, reason: "evidence_context_incomplete" };
+  return importCharacterGenerationEvidence(report, buildLoraCompatibilityContext(context), options);
 }
 
 export function validateStoredCharacterBenchmarkEvidence(evidence, context) {
   if (!plainObject(evidence)) return { valid: false, reason: "evidence_missing", expectedDigest: null };
   if (!hasValidLegacyLoraContext(context)) return { valid: false, reason: "legacy_lora_context_invalid" };
-  if (!nonEmptyText(evidence.generationMode)) return validateStoredCharacterGenerationEvidence(evidence, buildLoraCompatibilityContext(evidence, context));
+  if (!nonEmptyText(evidence.generationMode)) return validateStoredCharacterGenerationEvidence(evidence, buildLoraCompatibilityContext(context));
   if (evidence.generationMode !== "lora_augmented") return { valid: false, reason: "compatibility_mode_not_lora" };
-  return validateStoredCharacterGenerationEvidence(evidence, buildLoraCompatibilityContext(evidence, context));
+  if (!hasCurrentEvidenceContext(context)) return { valid: false, reason: "evidence_context_incomplete" };
+  return validateStoredCharacterGenerationEvidence(evidence, buildLoraCompatibilityContext(context));
 }
 
 export {

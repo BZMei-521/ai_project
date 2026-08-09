@@ -169,8 +169,17 @@ const assetPanelLoraContext = {
 const assetPanelImportedEvidence = importCharacterBenchmarkEvidence(makeEvidenceReport(), assetPanelLoraContext, {
   now: () => "2026-08-08T08:00:00.000Z"
 });
-assert.equal(assetPanelImportedEvidence.valid, true, "legacy UI context adapts a valid new LoRA envelope");
-assert.equal(validateStoredCharacterBenchmarkEvidence(assetPanelImportedEvidence.evidence, assetPanelLoraContext).valid, true, "legacy UI context revalidates the imported new LoRA envelope");
+assert.equal(assetPanelImportedEvidence.reason, "evidence_context_incomplete", "legacy UI context cannot import a new LoRA envelope without current proof context");
+assert.equal(validateStoredCharacterBenchmarkEvidence(importedEvidence.evidence, assetPanelLoraContext).reason, "evidence_context_incomplete", "legacy UI context cannot revalidate new stored evidence without current proof context");
+for (const [label, contextPatch] of [
+  ["reference manifest", { referenceManifestDigest: "f".repeat(64) }],
+  ["evaluator ID", { evaluatorId: "other-scorer" }],
+  ["evaluator version", { evaluatorVersion: "evaluator-v2" }],
+  ["evaluator implementation", { evaluatorImplementationHash: "f".repeat(64) }],
+  ["evaluator policy", { evaluatorPolicyHash: "f".repeat(64) }]
+]) {
+  assert.equal(validateStoredCharacterBenchmarkEvidence(importedEvidence.evidence, { ...evidenceContext, ...contextPatch }).valid, false, `changed ${label} is rejected`);
+}
 const zeroShotCompatibilityReport = makeEvidenceReport();
 zeroShotCompatibilityReport.generationMode = "zero_shot_multi_reference";
 zeroShotCompatibilityReport.subject = { ...zeroShotCompatibilityReport.subject };
@@ -190,6 +199,7 @@ const legacyStoredEvidence = {
 };
 legacyStoredEvidence.evidenceDigest = recomputeStoredCharacterBenchmarkEvidenceDigest(legacyStoredEvidence);
 assert.equal(validateStoredCharacterBenchmarkEvidence(legacyStoredEvidence, evidenceContext).legacy, true, "stored legacy LoRA evidence remains separately compatible");
+assert.equal(validateStoredCharacterBenchmarkEvidence(legacyStoredEvidence, assetPanelLoraContext).legacy, true, "stored legacy LoRA evidence remains compatible with the old UI context");
 assert.equal(
   importCharacterBenchmarkEvidence(makeEvidenceReport(), { ...evidenceContext, candidateStatus: "training" }).valid,
   false,
