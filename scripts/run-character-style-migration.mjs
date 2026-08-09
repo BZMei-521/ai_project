@@ -8,6 +8,7 @@ import {
   readFile,
   realpath,
   rm,
+  unlink,
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,7 +19,6 @@ import {
   CINEMATIC_3D_DONGHUA_CONTRACT,
   computeCharacterStyleContractDigest
 } from "../src/modules/comfy-pipeline/characterStyleContractRuntime.mjs";
-import { verifyCompiledCharacterReferenceBindings } from "../src/modules/comfy-pipeline/characterEvidenceContextRuntime.mjs";
 
 const PROVIDER = "flux2_klein_4b";
 const MODEL_NAME = "flux-2-klein-4b-fp8.safetensors";
@@ -49,6 +49,27 @@ const IDENTITY_PATHS = Object.freeze({
   body_side: "bodySidePath",
   hair_back: "hairBackPath",
   body_back: "bodyBackPath"
+});
+
+const NODE_SCHEMAS = Object.freeze({
+  LoadImage: Object.freeze({ inputs: Object.freeze({}), outputs: Object.freeze(["IMAGE", "MASK"]) }),
+  UNETLoader: Object.freeze({ inputs: Object.freeze({}), outputs: Object.freeze(["MODEL"]) }),
+  CLIPLoader: Object.freeze({ inputs: Object.freeze({}), outputs: Object.freeze(["CLIP"]) }),
+  VAELoader: Object.freeze({ inputs: Object.freeze({}), outputs: Object.freeze(["VAE"]) }),
+  ImageScaleToTotalPixels: Object.freeze({ inputs: Object.freeze({ image: "IMAGE" }), outputs: Object.freeze(["IMAGE"]) }),
+  GetImageSize: Object.freeze({ inputs: Object.freeze({ image: "IMAGE" }), outputs: Object.freeze(["INT", "INT"]) }),
+  CLIPTextEncode: Object.freeze({ inputs: Object.freeze({ clip: "CLIP" }), outputs: Object.freeze(["CONDITIONING"]) }),
+  ConditioningZeroOut: Object.freeze({ inputs: Object.freeze({ conditioning: "CONDITIONING" }), outputs: Object.freeze(["CONDITIONING"]) }),
+  VAEEncode: Object.freeze({ inputs: Object.freeze({ pixels: "IMAGE", vae: "VAE" }), outputs: Object.freeze(["LATENT"]) }),
+  ReferenceLatent: Object.freeze({ inputs: Object.freeze({ conditioning: "CONDITIONING", latent: "LATENT" }), outputs: Object.freeze(["CONDITIONING"]) }),
+  EmptyFlux2LatentImage: Object.freeze({ inputs: Object.freeze({ width: "INT", height: "INT" }), outputs: Object.freeze(["LATENT"]) }),
+  RandomNoise: Object.freeze({ inputs: Object.freeze({}), outputs: Object.freeze(["NOISE"]) }),
+  CFGGuider: Object.freeze({ inputs: Object.freeze({ model: "MODEL", positive: "CONDITIONING", negative: "CONDITIONING" }), outputs: Object.freeze(["GUIDER"]) }),
+  KSamplerSelect: Object.freeze({ inputs: Object.freeze({}), outputs: Object.freeze(["SAMPLER"]) }),
+  Flux2Scheduler: Object.freeze({ inputs: Object.freeze({ width: "INT", height: "INT" }), outputs: Object.freeze(["SIGMAS"]) }),
+  SamplerCustomAdvanced: Object.freeze({ inputs: Object.freeze({ noise: "NOISE", guider: "GUIDER", sampler: "SAMPLER", sigmas: "SIGMAS", latent_image: "LATENT" }), outputs: Object.freeze(["LATENT"]) }),
+  VAEDecode: Object.freeze({ inputs: Object.freeze({ samples: "LATENT", vae: "VAE" }), outputs: Object.freeze(["IMAGE"]) }),
+  SaveImage: Object.freeze({ inputs: Object.freeze({ images: "IMAGE" }), outputs: Object.freeze([]) })
 });
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -99,6 +120,124 @@ async function assertExistingWorkspaceFile(targetPath, workspaceRoot, label, dep
   if (!isPathInside(canonicalRoot, canonicalTarget)) throw new Error(`${label} path must stay inside the workspace.`);
 }
 
+function statIdentity(stats) {
+  return `${String(stats?.dev)}:${String(stats?.ino)}:${String(stats?.birthtimeMs)}`;
+}
+
+async function createOutputDirectoryGuard(outputDirectory, workspaceRoot, dependencies = {}) {
+  const safeOutputDirectory = resolveWorkspaceArgument(outputDirectory, "output", workspaceRoot);
+  const statPath = dependencies.lstat ?? lstat;
+  const canonicalize = dependencies.realpath ?? realpath;
+  const read = dependencies.readFile ?? readFile;
+  const write = dependencies.writeFile ?? writeFile;
+  const removeFile = dependencies.unlink ?? unlink;
+  const canonicalRoot = await canonicalize(workspaceRoot);
+  await assertNoReparseComponents(safeOutputDirectory, dependencies);
+  const initialStats = await statPath(safeOutputDirectory);
+  if (!initialStats.isDirectory() || initialStats.isSymbolicLink()) throw new Error("Migration output directory must be a regular directory.");
+  const canonicalOutput = await canonicalize(safeOutputDirectory);
+  if (!isPathInside(canonicalRoot, canonicalOutput)) throw new Error("Migration output directory escaped the workspace.");
+  const identity = statIdentity(initialStats);
+  const nonce = randomUUID();
+  const sentinelBytes = Buffer.from(`character-style-migration:${nonce}\n`, "utf8");
+  const sentinelPath = join(safeOutputDirectory, `.migration-run-${nonce}.sentinel`);
+  let sentinelCreated = false;
+
+  const verifyDirectoryIdentity = async () => {
+    await assertNoReparseComponents(safeOutputDirectory, dependencies);
+    const currentStats = await statPath(safeOutputDirectory);
+    if (!currentStats.isDirectory() || currentStats.isSymbolicLink()) throw new Error("Migration output directory reparse replacement detected.");
+    const currentCanonical = await canonicalize(safeOutputDirectory);
+    if (currentCanonical !== canonicalOutput || !isPathInside(canonicalRoot, currentCanonical) || statIdentity(currentStats) !== identity) {
+      throw new Error("Migration output directory identity or workspace containment changed.");
+    }
+    return currentCanonical;
+  };
+
+  const verify = async () => {
+    const currentCanonical = await verifyDirectoryIdentity();
+    await assertNoReparseComponents(sentinelPath, dependencies);
+    const sentinelStats = await statPath(sentinelPath);
+    if (!sentinelStats.isFile() || sentinelStats.isSymbolicLink()) throw new Error("Migration output sentinel identity changed.");
+    const canonicalSentinel = await canonicalize(sentinelPath);
+    if (dirname(canonicalSentinel) !== currentCanonical || !isPathInside(canonicalRoot, canonicalSentinel)) {
+      throw new Error("Migration output sentinel escaped its run-owned directory.");
+    }
+    const currentSentinel = Buffer.from(await read(sentinelPath));
+    if (!currentSentinel.equals(sentinelBytes)) throw new Error("Migration output sentinel nonce mismatch.");
+  };
+
+  const cleanupOwnedFile = async (target, expectedBytes) => {
+    try {
+      const stats = await statPath(target);
+      if (!stats.isFile() || stats.isSymbolicLink()) return false;
+      const current = Buffer.from(await read(target));
+      if (!current.equals(expectedBytes)) return false;
+      await removeFile(target);
+      return true;
+    } catch (error) {
+      if (error?.code === "ENOENT") return true;
+      return false;
+    }
+  };
+
+  try {
+    await verifyDirectoryIdentity();
+    await write(sentinelPath, sentinelBytes, { flag: "wx" });
+    sentinelCreated = true;
+    await verify();
+  } catch (error) {
+    if (sentinelCreated) await cleanupOwnedFile(sentinelPath, sentinelBytes);
+    throw error;
+  }
+
+  return {
+    outputDirectory: safeOutputDirectory,
+    async verify() { await verify(); },
+    async writeOwnedExclusive(fileName, bytes) {
+      if (!/^[A-Za-z0-9._-]+$/.test(fileName) || fileName.startsWith(".")) throw new Error("Unsafe migration output filename.");
+      const payload = Buffer.from(bytes);
+      const target = join(safeOutputDirectory, fileName);
+      let created = false;
+      try {
+        await verify();
+        await write(target, payload, { flag: "wx" });
+        created = true;
+        await verify();
+        await assertNoReparseComponents(target, dependencies);
+        const canonicalTarget = await canonicalize(target);
+        if (dirname(canonicalTarget) !== canonicalOutput || !isPathInside(canonicalRoot, canonicalTarget)) {
+          throw new Error("Migration output file escaped the guarded directory.");
+        }
+        const targetStats = await statPath(target);
+        if (!targetStats.isFile() || targetStats.isSymbolicLink() || !Buffer.from(await read(target)).equals(payload)) {
+          throw new Error("Migration output file identity changed after exclusive write.");
+        }
+        return target;
+      } catch (error) {
+        if (created) {
+          const cleaned = await cleanupOwnedFile(target, payload);
+          if (!cleaned) throw new Error(`Migration output directory changed and run-owned file cleanup failed: ${error?.message ?? "unknown error"}`);
+        }
+        throw error;
+      }
+    },
+    async removeSentinel() {
+      if (!sentinelCreated) return;
+      await verify();
+      const removed = await cleanupOwnedFile(sentinelPath, sentinelBytes);
+      if (!removed) throw new Error("Failed to remove the run-owned migration sentinel safely.");
+      sentinelCreated = false;
+      await verifyDirectoryIdentity();
+    },
+    async cleanupSentinel() {
+      if (!sentinelCreated) return;
+      const removed = await cleanupOwnedFile(sentinelPath, sentinelBytes);
+      if (removed) sentinelCreated = false;
+    }
+  };
+}
+
 function imageMagic(bytes) {
   if (!Buffer.isBuffer(bytes)) bytes = Buffer.from(bytes ?? []);
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) return "png";
@@ -111,40 +250,75 @@ function assertPng(bytes, label) {
   if (imageMagic(bytes) !== "png") throw new Error(`${label} has malformed PNG image magic.`);
 }
 
-function collectNodeReferences(value, knownNodeIds, found = new Set()) {
-  if (Array.isArray(value)) {
-    if (value.length === 2 && knownNodeIds.has(String(value[0]))) found.add(String(value[0]));
-    else for (const item of value) collectNodeReferences(item, knownNodeIds, found);
-  } else if (isPlainObject(value)) {
-    for (const item of Object.values(value)) collectNodeReferences(item, knownNodeIds, found);
-  }
-  return found;
-}
-
-function proveSelectedOutputGraph(entries, loaders, modelNodeId, outputNodeId) {
+function buildTypedWorkflowGraph(entries) {
   const nodes = new Map(entries.map(([id, node]) => [String(id), node]));
   const edges = new Map([...nodes.keys()].map((id) => [id, new Set()]));
+  const inputSources = new Map([...nodes.keys()].map((id) => [id, new Map()]));
   for (const [targetId, node] of entries) {
-    for (const sourceId of collectNodeReferences(node?.inputs, new Set(nodes.keys()))) edges.get(sourceId)?.add(String(targetId));
+    const schema = NODE_SCHEMAS[node?.class_type];
+    if (!schema) throw new Error(`Unsupported workflow class_type schema: ${String(node?.class_type)}.`);
+    for (const [inputName, value] of Object.entries(node?.inputs ?? {})) {
+      if (!Array.isArray(value)) continue;
+      const expectedType = schema.inputs[inputName];
+      if (!expectedType) throw new Error(`Workflow schema rejects linked input ${node.class_type}.${inputName}.`);
+      if (value.length !== 2 || !Number.isInteger(value[1]) || !nodes.has(String(value[0]))) {
+        throw new Error(`Workflow schema rejects malformed link ${node.class_type}.${inputName}.`);
+      }
+      const sourceId = String(value[0]);
+      const sourceSchema = NODE_SCHEMAS[nodes.get(sourceId)?.class_type];
+      const outputType = sourceSchema?.outputs?.[value[1]];
+      if (outputType !== expectedType) {
+        throw new Error(`Workflow schema type mismatch for ${node.class_type}.${inputName}; expected ${expectedType}.`);
+      }
+      edges.get(sourceId).add(String(targetId));
+      inputSources.get(String(targetId)).set(inputName, sourceId);
+    }
   }
-  const reachesSelectedOutput = (startId, requireReferenceSink) => {
+  return { nodes, edges, inputSources };
+}
+
+function proveSelectedOutputGraph(entries, loaders, modelNodeId, outputNodeId, tokenEncoderId) {
+  const graph = buildTypedWorkflowGraph(entries);
+  const reachesSelectedOutput = (startId, requiredType) => {
     const pending = [[String(startId), false]];
     const seen = new Set();
     while (pending.length) {
-      const [current, priorSink] = pending.pop();
-      const sink = priorSink || /^(?:ReferenceLatent|TextEncodeQwenImageEdit)|IPAdapter|InstantID|PuLID|PhotoMaker|FaceID/i.test(String(nodes.get(current)?.class_type ?? ""));
-      const state = `${current}:${sink}`;
+      const [current, priorMatch] = pending.pop();
+      const matched = priorMatch || !requiredType || graph.nodes.get(current)?.class_type === requiredType;
+      const state = `${current}:${matched}`;
       if (seen.has(state)) continue;
       seen.add(state);
-      if (current === String(outputNodeId) && (!requireReferenceSink || sink)) return true;
-      for (const next of edges.get(current) ?? []) pending.push([next, sink]);
+      if (current === String(outputNodeId) && matched) return true;
+      for (const next of graph.edges.get(current) ?? []) pending.push([next, matched]);
     }
     return false;
   };
-  if (loaders.some(([id]) => !reachesSelectedOutput(id, true))) {
+  const reachable = (startId, targetId) => {
+    const pending = [String(startId)];
+    const seen = new Set();
+    while (pending.length) {
+      const current = pending.pop();
+      if (seen.has(current)) continue;
+      seen.add(current);
+      if (current === String(targetId)) return true;
+      for (const next of graph.edges.get(current) ?? []) pending.push(next);
+    }
+    return false;
+  };
+  if (loaders.some(([id]) => !reachesSelectedOutput(id, "ReferenceLatent"))) {
     throw new Error("Active reference binding failed: every loader must reach the selected SaveImage through a character reference sink.");
   }
-  if (!reachesSelectedOutput(modelNodeId, false)) throw new Error("The authoritative Klein model must reach the selected SaveImage terminal.");
+  if (!reachesSelectedOutput(modelNodeId)) throw new Error("The authoritative Klein model must reach the selected SaveImage terminal.");
+  if (!reachesSelectedOutput(tokenEncoderId)) throw new Error("Active CLIPTextEncode conditioning tokens must reach the selected SaveImage generation chain.");
+  const activeGuiders = entries.filter(([id, node]) => node?.class_type === "CFGGuider" && reachesSelectedOutput(id));
+  if (activeGuiders.length !== 1) throw new Error("Workflow must have exactly one active CFGGuider reaching the selected SaveImage.");
+  const guiderSources = graph.inputSources.get(String(activeGuiders[0][0]));
+  for (const slot of ["positive", "negative"]) {
+    const conditioningSource = guiderSources.get(slot);
+    if (!conditioningSource || !reachable(tokenEncoderId, conditioningSource)) {
+      throw new Error(`Active CLIPTextEncode must dominate CFGGuider ${slot} conditioning.`);
+    }
+  }
 }
 
 function validateWorkflowTemplate(template) {
@@ -168,11 +342,12 @@ function validateWorkflowTemplate(template) {
   if (outputs.length !== 1) throw new Error("Workflow must contain exactly one selected SaveImage terminal.");
   const allTerminals = entries.filter(([, node]) => /^(?:SaveImage|PreviewImage|VHS_VideoCombine|SaveAnimatedWEBP)$/i.test(String(node?.class_type ?? "")));
   if (allTerminals.length !== 1) throw new Error("The selected SaveImage must be the workflow's only output terminal.");
-  proveSelectedOutputGraph(entries, loaders, models[0][0], outputs[0][0]);
-  const encoded = JSON.stringify(template);
-  for (const token of ["PROMPT", "VIEW", "STYLE_CONTRACT_ID", "STYLE_CONTRACT_VERSION", "CHARACTER_ASSET_ID"]) {
-    if (!encoded.includes(`{{${token}}}`)) throw new Error(`Workflow is missing required token {{${token}}}.`);
+  const requiredConditioningTokens = ["PROMPT", "VIEW", "STYLE_CONTRACT_ID", "STYLE_CONTRACT_VERSION", "CHARACTER_ASSET_ID"];
+  const tokenEncoders = entries.filter(([, node]) => node?.class_type === "CLIPTextEncode" && requiredConditioningTokens.every((token) => String(node?.inputs?.text ?? "").includes(`{{${token}}}`)));
+  if (tokenEncoders.length !== 1) {
+    throw new Error("Exactly one active CLIPTextEncode must contain every required conditioning token.");
   }
+  proveSelectedOutputGraph(entries, loaders, models[0][0], outputs[0][0], tokenEncoders[0][0]);
   return { outputNodeId: outputs[0][0] };
 }
 
@@ -243,8 +418,11 @@ export async function loadStyleMigrationSubject(projectPath, character, dependen
     throw new Error("Character requires a complete versioned identity pack with immutable traits.");
   }
   const species = nonEmptyString(identityPack.species) ? identityPack.species.trim().toLowerCase() : "human";
-  if (species !== "human" || (Array.isArray(identityPack.speciesTraits) && identityPack.speciesTraits.some(nonEmptyString))) {
+  if (species !== "human") {
     throw new Error("Style migration is human-only; Shen Yan metadata must resolve to human.");
+  }
+  if (hasOwn(identityPack, "speciesTraits") && (!Array.isArray(identityPack.speciesTraits) || identityPack.speciesTraits.length !== 0)) {
+    throw new Error("Human speciesTraits must be an empty array when present; legacy omission is the only compatibility case.");
   }
   const sourcePaths = {};
   const sourceBytes = {};
@@ -285,11 +463,6 @@ export function compileStyleMigrationWorkflow(template, tokens) {
   }
   const compiled = replaceWorkflowTokens(template, supplied);
   if (/\{\{[^{}]+\}\}/.test(JSON.stringify(compiled))) throw new Error("Compiled workflow contains unresolved tokens.");
-  const activeReferenceProof = verifyCompiledCharacterReferenceBindings(compiled, [
-    String(supplied.REFERENCE_IMAGE_A),
-    String(supplied.REFERENCE_IMAGE_B)
-  ]);
-  if (!activeReferenceProof.valid) throw new Error("Workflow active reference binding proof failed.");
   return compiled;
 }
 
@@ -391,17 +564,17 @@ export async function writeMigrationManifestExclusive(outputDirectory, manifest,
   }
   const workspaceRoot = resolve(dependencies.workspaceRoot ?? process.cwd());
   const safeOutputDirectory = resolveWorkspaceArgument(outputDirectory, "output", workspaceRoot);
-  await assertNoReparseComponents(safeOutputDirectory, dependencies);
-  const stats = await (dependencies.lstat ?? lstat)(safeOutputDirectory);
-  if (!stats.isDirectory()) throw new Error("Migration output directory must exist.");
-  const target = join(safeOutputDirectory, MANIFEST_NAME);
+  const suppliedGuard = dependencies.outputGuard;
+  const guard = suppliedGuard ?? await createOutputDirectoryGuard(safeOutputDirectory, workspaceRoot, dependencies);
+  const payload = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   try {
-    await (dependencies.writeFile ?? writeFile)(target, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+    return await guard.writeOwnedExclusive(MANIFEST_NAME, payload);
   } catch (error) {
     if (error?.code === "EEXIST") throw new Error("Migration manifest already exists; exclusive publication refused.");
     throw error;
+  } finally {
+    if (!suppliedGuard) await guard.removeSentinel();
   }
-  return target;
 }
 
 export async function runCharacterStyleMigration(options, dependencies = {}) {
@@ -445,6 +618,7 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
     throw error;
   }
 
+  const outputGuard = await createOutputDirectoryGuard(outputDirectory, workspaceRoot, dependencies);
   const temporaryRoot = await (dependencies.mkdtemp ?? mkdtemp)(join(dependencies.tmpdir?.() ?? tmpdir(), "character-style-migration-"));
   const transport = dependencies.transport ?? createDefaultTransport(parsedEndpoint.href, dependencies);
   const candidates = [];
@@ -492,10 +666,7 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
       await assertProjectUnchanged(subject, dependencies);
       const outputBytes = assertModelOutput(result);
       const outputName = `${pass.id}.png`;
-      await assertNoReparseComponents(outputDirectory, dependencies);
-      const outputStats = await (dependencies.lstat ?? lstat)(outputDirectory);
-      if (!outputStats.isDirectory()) throw new Error("Migration output directory is no longer a regular directory.");
-      await (dependencies.writeFile ?? writeFile)(join(outputDirectory, outputName), outputBytes, { flag: "wx" });
+      await outputGuard.writeOwnedExclusive(outputName, outputBytes);
       candidates.push({
         view: pass.id,
         sourceSha256: sha256(sourceDigests.join(":")),
@@ -523,9 +694,11 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
       workflowDigest: sha256(workflowBytes),
       candidates
     };
-    await writeMigrationManifestExclusive(outputDirectory, manifest, { ...dependencies, workspaceRoot });
+    await writeMigrationManifestExclusive(outputDirectory, manifest, { ...dependencies, workspaceRoot, outputGuard });
+    await outputGuard.removeSentinel();
     return manifest;
   } finally {
+    await outputGuard.cleanupSentinel();
     const ownedRoot = resolve(temporaryRoot);
     const systemTemp = resolve(dependencies.tmpdir?.() ?? tmpdir());
     if (!isPathInside(systemTemp, ownedRoot) || basename(ownedRoot).length <= "character-style-migration-".length || !basename(ownedRoot).startsWith("character-style-migration-")) {

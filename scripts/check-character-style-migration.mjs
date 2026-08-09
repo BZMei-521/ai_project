@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import {
@@ -74,6 +74,24 @@ assert.throws(() => compileStyleMigrationWorkflow(previewBypass, {
   STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
   CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
 }), /selected SaveImage|terminal/i, "reference and model chains must reach the selected SaveImage, not a decoy preview terminal");
+const isolatedStyleTokens = structuredClone(workflow);
+isolatedStyleTokens["25"] = { class_type: "CLIPTextEncode", inputs: { text: isolatedStyleTokens["7"].inputs.text, clip: ["3", 0] } };
+isolatedStyleTokens["7"].inputs.text = "unstyled character migration conditioning";
+assert.throws(() => compileStyleMigrationWorkflow(isolatedStyleTokens, {
+  REFERENCE_IMAGE_A: "a.png", REFERENCE_IMAGE_B: "b.png", PROMPT: "p", VIEW: "front",
+  STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
+  CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
+}), /active.*CLIPTextEncode|conditioning.*token/i, "an isolated token-bearing encoder cannot cover an unstyled generation conditioning branch");
+const ignoredReferenceEdges = structuredClone(workflow);
+ignoredReferenceEdges["5"].inputs.image = ["18", 0];
+ignoredReferenceEdges["21"].inputs.image = ["18", 0];
+ignoredReferenceEdges["10"].inputs.ignored_reference_a = ["1", 0];
+ignoredReferenceEdges["23"].inputs.ignored_reference_b = ["20", 0];
+assert.throws(() => compileStyleMigrationWorkflow(ignoredReferenceEdges, {
+  REFERENCE_IMAGE_A: "a.png", REFERENCE_IMAGE_B: "b.png", PROMPT: "p", VIEW: "front",
+  STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
+  CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
+}), /active reference binding|schema/i, "unknown input arrays must not be interpreted as graph edges");
 
 const tempRoot = await mkdtemp(join(WORKSPACE, ".tmp-character-style-migration-"));
 const sourceDirectory = join(tempRoot, "sources");
@@ -123,6 +141,22 @@ assert.equal(subject.species, "human", "legacy source packs default to human wit
 
 const nonHumanProject = await writeProject("non-human.json", { species: "catfolk", speciesTraits: ["cat ears"] });
 await assert.rejects(loadStyleMigrationSubject(nonHumanProject, CHARACTER_ID, { workspaceRoot: WORKSPACE }), /human/i);
+for (const [name, speciesTraits] of [["string-traits.json", "cat ears"], ["object-traits.json", { trait: "cat ears" }], ["blank-traits.json", [""]]]) {
+  const invalidHumanTraitsProject = await writeProject(name, { species: "human", speciesTraits });
+  await assert.rejects(loadStyleMigrationSubject(invalidHumanTraitsProject, CHARACTER_ID, { workspaceRoot: WORKSPACE }), /speciesTraits.*empty array|human/i);
+}
+let invalidTraitsQueued = false;
+const invalidTraitsRunProject = await writeProject("invalid-traits-run.json", { species: "human", speciesTraits: "cat ears" });
+await assert.rejects(runCharacterStyleMigration({
+  project: invalidTraitsRunProject,
+  character: CHARACTER_ID,
+  provider: "flux2_klein_4b",
+  baseUrl: "http://127.0.0.1:8188",
+  workflow: workflowPath,
+  output: join(tempRoot, "invalid-traits-output"),
+  workspaceRoot: WORKSPACE
+}, { transport: { async uploadImage() { throw new Error("must not upload"); }, async queueWorkflow() { invalidTraitsQueued = true; throw new Error("must not queue"); } } }), /speciesTraits.*empty array|human/i);
+assert.equal(invalidTraitsQueued, false, "invalid human speciesTraits must be rejected before prompt compilation or queueing");
 
 const malformedPath = join(sourceDirectory, "malformed.png");
 await writeFile(malformedPath, "not an image", { flag: "wx" });
@@ -222,6 +256,40 @@ await assert.rejects(runCharacterStyleMigration({ project: mutatingProject, char
   }
 }), /project JSON.*mutat/i);
 await assert.rejects(readFile(join(mutationOutput, "migration-manifest.json")), /ENOENT/);
+
+const narrowWorkflowPath = join(tempRoot, "workflow.json");
+await writeFile(narrowWorkflowPath, `${JSON.stringify(workflow)}\n`, { flag: "wx" });
+const swapOutput = join(tempRoot, "swap-output");
+const quarantinedOutput = join(tempRoot, "swap-output-original");
+const outsideWorkspace = await mkdtemp(join(WORKSPACE, ".tmp-style-migration-outside-"));
+let switchedOutput = false;
+try {
+  await assert.rejects(runCharacterStyleMigration({
+    project: projectPath,
+    character: CHARACTER_ID,
+    provider: "flux2_klein_4b",
+    baseUrl: "http://127.0.0.1:8188",
+    workflow: narrowWorkflowPath,
+    output: swapOutput,
+    workspaceRoot: tempRoot
+  }, {
+    transport,
+    async writeFile(target, bytes, options) {
+      if (!switchedOutput && target === join(swapOutput, "front.png")) {
+        await rename(swapOutput, quarantinedOutput);
+        await symlink(outsideWorkspace, swapOutput, "junction");
+        switchedOutput = true;
+      }
+      return writeFile(target, bytes, options);
+    }
+  }), /reparse|identity|workspace/i, "an output-directory junction swap between check and write must fail closed");
+  assert.equal(switchedOutput, true, "the regression must execute the check/write junction switch");
+  assert.deepEqual(await readdir(outsideWorkspace), [], "a rejected junction swap must leave no run-created file outside the workspace");
+} finally {
+  await unlink(swapOutput).catch(() => {});
+  await rm(quarantinedOutput, { recursive: true, force: true });
+  await rm(outsideWorkspace, { recursive: true, force: true });
+}
 
 await rm(tempRoot, { recursive: true, force: true });
 console.log("PASS non-destructive Klein character style migration CLI");
