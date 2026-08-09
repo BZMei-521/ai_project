@@ -1,0 +1,36 @@
+{
+  "evaluatorId": "siglip2-character-consistency",
+  "evaluatorVersion": "1.0.0",
+  "modelId": "google/siglip2-base-patch16-224",
+  "modelRevision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+  "dimensionFloors": {
+    "face": 0.78,
+    "hair": 0.76,
+    "outfit": 0.74,
+    "body": 0.72,
+    "quality": 0.8
+  },
+  "weightsByScale": {
+    "close": {
+      "face": 0.42,
+      "hair": 0.28,
+      "outfit": 0.08,
+      "body": 0.04,
+      "quality": 0.18
+    },
+    "medium": {
+      "face": 0.28,
+      "hair": 0.24,
+      "outfit": 0.2,
+      "body": 0.12,
+      "quality": 0.16
+    },
+    "full_body": {
+      "face": 0.08,
+      "hair": 0.2,
+      "outfit": 0.25,
+      "body": 0.29,
+      "quality": 0.18
+    }
+  }
+}
