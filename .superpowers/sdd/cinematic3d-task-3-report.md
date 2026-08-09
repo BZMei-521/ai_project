@@ -42,4 +42,35 @@ The implementation remains unstaged because `src/modules/comfy-pipeline/comfySer
 
 ## Concern
 
-The strict character-asset gate intentionally rejects legacy callers that construct an `asset_char_*`/`import_char_anchor_*` shot without supplying the single matching persisted `Asset`. This is the required fail-closed behavior; such callers must persist/pass identity metadata before visual generation.
+No open Task 3 blocker. A character's first panel generation uses one in-memory canonical human identity because the store cannot persist a character `Asset` until a front image exists; once persisted, subsequent generation uses the exact stored identity. Truly absent direct-service requests and ambiguous persisted matches remain fail-closed.
+
+## Review remediation
+
+The three Important/P1 review findings were fixed in the current shared working tree:
+
+1. `ComfyPipelinePanel.tsx` now routes all six real character reference/cleanup/three-view/anchor generation call sites through `resolveCharacterAssetGenerationStyleAssets`. An exact persisted match is passed when available; the first generation for a not-yet-persistable character receives one canonical provisional identity record. Duplicate persisted matches remain ambiguous and the service gate still fails closed. The executable style check bundles the real panel export, resolves its identity asset, and composes it through the bundled service.
+2. Style composition now distinguishes an exact canonical positive+negative pair from operator custom text. Canonical requests receive contract ID/version/digest. Custom text is injected into image/video prompt strings, canonical identifiers are removed, and trusted sequential publication rejects with `unversioned_visual_style_evidence_blocked`. The existing visible panel diagnostic remains the operator-facing explanation.
+3. Human characters are no longer sent through the runtime's global human negative builder. All-human requests receive named human exclusions; mixed human/non-human requests keep the human anatomy clause positive and omit global `no animal ears` / `no tail`, preserving declared catfolk anatomy. Both storyboard-image and video mixed-species regressions execute against the production request composer.
+
+### Remediation verification (2026-08-09)
+
+All commands exited 0:
+
+- `npm.cmd run test:character-style` — PASS
+- `npm.cmd run test:character-consistency-ui` — PASS
+- `node scripts/check-storyboard-generation-flow.mjs` — PASS
+- `npm.cmd run test:character-consistency` — PASS
+- `npm.cmd run test:sequential-character-passes` — PASS
+- `npm.cmd run test:character-reference-snapshot` — PASS
+- `npm.cmd run build` — PASS (`tsc -b` and Vite; only the existing large-chunk advisory)
+- `git diff --check -- <Task 3 owned files>` — PASS
+
+### Changed files and self-review
+
+- `src/modules/comfy-pipeline/comfyService.ts`: canonical/custom style routing, unversioned stamping removal/publication guard, scoped mixed-species composition, production settings propagation.
+- `src/modules/comfy-pipeline/ComfyPipelinePanel.tsx`: exact/provisional character identity asset resolver and six production caller integrations.
+- `scripts/check-character-style-contract.mjs`: real panel-to-service character path, canonical/custom stamping, mixed storyboard/video regressions.
+- `scripts/check-character-consistency-ui.mjs`: static production caller and unversioned publication guard checks.
+- `.superpowers/sdd/cinematic3d-task-3-report.md`: this remediation record.
+
+Self-review confirmed style/species data still enters only string token fields; custom input cannot retain preexisting canonical token identifiers; ambiguous persisted character assets are not silently collapsed; mixed requests contain catfolk positive anatomy without global human anatomy exclusions; and no identity-reference loader graph behavior was changed.
