@@ -56,11 +56,45 @@ export function countCharacterIdentityCompleteness(identity = {}) {
 }
 
 export function invalidateCharacterLoraEvidence(lora = {}) {
-  const { benchmarkEvidence: _discardedEvidence, ...profile } = lora;
   return {
-    ...profile,
-    status: String(profile.loraName ?? "").trim() ? "dataset_ready" : "unconfigured"
+    ...lora,
+    status: String(lora.loraName ?? "").trim() ? "dataset_ready" : "unconfigured"
   };
+}
+
+const INVALIDATION_KINDS = new Set(["identity", "reference", "provider", "model", "workflow", "fixture", "evaluator", "lora"]);
+const invalidatedText = (value, kind) => `${String(value ?? "current").trim() || "current"}::invalidated:${kind}`;
+const copyContext = (context) => plainObject(context) ? { ...context, workflowProof: plainObject(context.workflowProof) ? { ...context.workflowProof } : context.workflowProof } : undefined;
+
+function invalidateEvidenceContext(context, changeKind) {
+  const next = copyContext(context);
+  if (!next) return next;
+  if (changeKind === "identity") next.identityPackVersion = invalidatedText(next.identityPackVersion, changeKind);
+  if (changeKind === "reference" || changeKind === "fixture") next.referenceManifestDigest = invalidatedText(next.referenceManifestDigest, changeKind);
+  if (changeKind === "provider") next.provider = invalidatedText(next.provider, changeKind);
+  if (changeKind === "model") next.modelName = invalidatedText(next.modelName, changeKind);
+  if (changeKind === "workflow") {
+    next.workflowProof = { ...(plainObject(next.workflowProof) ? next.workflowProof : {}), workflowDigest: invalidatedText(next.workflowProof?.workflowDigest, changeKind) };
+  }
+  if (changeKind === "evaluator") next.evaluatorPolicyHash = invalidatedText(next.evaluatorPolicyHash, changeKind);
+  if (changeKind === "lora") next.loraVersion = invalidatedText(next.loraVersion, changeKind);
+  return next;
+}
+
+export function invalidateCharacterGenerationEvidence(asset = {}, changeKind) {
+  if (!INVALIDATION_KINDS.has(changeKind)) return { ...asset };
+  const currentZeroContext = copyContext(asset.currentZeroContext ?? asset.currentEvidenceContext);
+  const currentLoraContext = copyContext(asset.currentLoraContext);
+  const lora = plainObject(asset.characterLora) ? asset.characterLora : undefined;
+  const next = { ...asset, currentZeroContext, currentLoraContext };
+  if (changeKind === "lora") {
+    next.currentLoraContext = invalidateEvidenceContext(currentLoraContext, changeKind);
+    if (lora) next.characterLora = invalidateCharacterLoraEvidence(lora);
+    return next;
+  }
+  next.currentZeroContext = invalidateEvidenceContext(currentZeroContext, changeKind);
+  next.currentLoraContext = invalidateEvidenceContext(currentLoraContext, changeKind);
+  return next;
 }
 import {
   importCharacterGenerationEvidence,

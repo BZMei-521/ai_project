@@ -114,3 +114,22 @@ export const recomputeStoredCharacterGenerationEvidenceDigest = generationRuntim
 export const invalidateCharacterLoraEvidence = runtime.invalidateCharacterLoraEvidence as (
   lora: CharacterLoraProfile
 ) => CharacterLoraProfile;
+export type CharacterGenerationEvidenceInvalidationKind =
+  | "identity"
+  | "reference"
+  | "provider"
+  | "model"
+  | "workflow"
+  | "fixture"
+  | "evaluator"
+  | "lora";
+export const invalidateCharacterGenerationEvidence = runtime.invalidateCharacterGenerationEvidence as <T extends {
+  characterLora?: CharacterLoraProfile;
+  characterZeroShotEvidence?: CharacterGenerationEvidence;
+  currentEvidenceContext?: CharacterGenerationEvidenceContext;
+  currentZeroContext?: CharacterGenerationEvidenceContext;
+  currentLoraContext?: CharacterGenerationEvidenceContext;
+}>(asset: T, changeKind: CharacterGenerationEvidenceInvalidationKind) => T & {
+  currentZeroContext?: CharacterGenerationEvidenceContext;
+  currentLoraContext?: CharacterGenerationEvidenceContext;
+};

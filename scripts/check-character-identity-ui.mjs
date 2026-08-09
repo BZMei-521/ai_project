@@ -5,6 +5,7 @@ import {
   clampCharacterLoraStrength,
   countCharacterIdentityCompleteness,
   importCharacterBenchmarkEvidence,
+  invalidateCharacterGenerationEvidence,
   invalidateCharacterLoraEvidence,
   normalizeCharacterTriggerWord,
   parseCharacterIdentityList,
@@ -12,9 +13,12 @@ import {
   validateStoredCharacterBenchmarkEvidence
 } from "../src/modules/asset-manager/characterIdentityUiRuntime.mjs";
 import {
+  importCharacterGenerationEvidence,
   recomputeCharacterBenchmarkEvidenceDigest,
-  recomputeStoredCharacterBenchmarkEvidenceDigest
+  recomputeStoredCharacterBenchmarkEvidenceDigest,
+  validateStoredCharacterGenerationEvidence
 } from "../src/modules/comfy-pipeline/characterBenchmarkEvidenceRuntime.mjs";
+import { resolveCharacterGenerationTrack } from "../src/modules/comfy-pipeline/sequentialCharacterPassRuntime.mjs";
 
 assert.equal(clampCharacterLoraStrength(), 1, "default LoRA strength is finite");
 assert.equal(clampCharacterLoraStrength(Number.NaN), 1, "NaN LoRA strength falls back safely");
@@ -81,13 +85,22 @@ const makeEvidenceReport = () => {
     character: evidenceContext.characterAssetId,
     provider: evidenceContext.provider,
     referenceManifestDigest: evidenceContext.referenceManifestDigest,
-    references: evidenceShotIds.map((shotId, index) => ({
-      shotId,
-      slot: evidenceSlots[index],
-      sourceSha256: String(index + 1).repeat(64),
-      transformedSha256: String(index + 2).repeat(64),
-      transform: index === 1 ? "mirror_x" : index === 2 ? "head_shoulders_crop" : "none"
-    })),
+    references: evidenceShotIds.flatMap((shotId, index) => [
+      {
+        shotId,
+        slot: evidenceSlots[index],
+        sourceSha256: "a".repeat(64),
+        transformedSha256: "b".repeat(64),
+        transform: index === 1 ? "mirror_x" : index === 2 ? "head_shoulders_crop" : "none"
+      },
+      {
+        shotId,
+        slot: evidenceSlots[(index + 1) % evidenceSlots.length],
+        sourceSha256: "c".repeat(64),
+        transformedSha256: "d".repeat(64),
+        transform: "none"
+      }
+    ]),
     subject: {
       characterAssetId: evidenceContext.characterAssetId,
       provider: evidenceContext.provider,
@@ -190,6 +203,93 @@ delete zeroShotCompatibilityReport.subject.candidateStatus;
 zeroShotCompatibilityReport.preflight.providerProof.authoritativeLoraBindings = [];
 zeroShotCompatibilityReport.evidenceDigest = recomputeCharacterBenchmarkEvidenceDigest(zeroShotCompatibilityReport);
 assert.equal(importCharacterBenchmarkEvidence(zeroShotCompatibilityReport, assetPanelLoraContext).reason, "compatibility_mode_not_lora", "legacy UI context is never a zero-shot shortcut");
+const zeroShotContext = {
+  generationMode: "zero_shot_multi_reference",
+  characterAssetId: evidenceContext.characterAssetId,
+  identityPackVersion: evidenceContext.identityPackVersion,
+  provider: evidenceContext.provider,
+  modelName: evidenceContext.modelName,
+  referenceManifestDigest: evidenceContext.referenceManifestDigest,
+  evaluatorId: evidenceContext.evaluatorId,
+  evaluatorVersion: evidenceContext.evaluatorVersion,
+  evaluatorImplementationHash: evidenceContext.evaluatorImplementationHash,
+  evaluatorPolicyHash: evidenceContext.evaluatorPolicyHash,
+  workflowProof: evidenceContext.workflowProof
+};
+const importedZeroShotEvidence = importCharacterGenerationEvidence(zeroShotCompatibilityReport, zeroShotContext, {
+  reportLabel: "ada-zero-shot.json",
+  now: () => "2026-08-08T08:00:00.000Z"
+});
+assert.equal(importedZeroShotEvidence.valid, true, "a complete zero-shot envelope imports against its own current context");
+const validZeroAsset = {
+  characterAssetId: evidenceContext.characterAssetId,
+  identityPackVersion: evidenceContext.identityPackVersion,
+  providerId: evidenceContext.provider,
+  modelName: evidenceContext.modelName,
+  characterZeroShotEvidence: importedZeroShotEvidence.evidence,
+  currentEvidenceContext: zeroShotContext
+};
+assert.deepEqual(resolveCharacterGenerationTrack(validZeroAsset), {
+  mode: "zero_shot_multi_reference",
+  providerId: "qwen_image_edit_2511",
+  modelName: "qwen_image_edit_2511_bf16.safetensors",
+  appliedLora: null
+}, "a valid zero-shot track resolves its proven provider and model");
+assert.equal(
+  resolveCharacterGenerationTrack({ ...validZeroAsset, currentEvidenceContext: { ...zeroShotContext, identityPackVersion: "identity-v4" } }),
+  null,
+  "stale zero-shot evidence fails closed"
+);
+const assetWithBoth = {
+  ...validZeroAsset,
+  characterLora: {
+    provider: evidenceContext.provider,
+    modelName: evidenceContext.modelName,
+    loraName: evidenceContext.loraName,
+    strength: evidenceContext.loraStrength,
+    version: evidenceContext.loraVersion,
+    status: "ready",
+    benchmarkEvidence: importedEvidence.evidence
+  },
+  currentLoraContext: evidenceContext
+};
+assert.equal(validateStoredCharacterGenerationEvidence(assetWithBoth.characterLora.benchmarkEvidence, assetWithBoth.currentLoraContext).valid, true, "LoRA evidence has a valid full current context before priority resolution");
+assert.equal(resolveCharacterGenerationTrack(assetWithBoth).mode, "lora_augmented", "a valid LoRA track wins over valid zero-shot evidence");
+assert.equal(
+  resolveCharacterGenerationTrack({
+    ...assetWithBoth,
+    characterLora: { ...assetWithBoth.characterLora, benchmarkEvidence: { ...importedEvidence.evidence, evidenceDigest: "0".repeat(64) } },
+    compiledWorkflow: { active: { class_type: "LoraLoader", inputs: { lora_name: evidenceContext.loraName, strength_model: 0.9, strength_clip: 0.9 } } }
+  }),
+  null,
+  "an active compiled LoRA blocks unsafe zero-shot fallback when its evidence is invalid"
+);
+const zeroDigest = importedZeroShotEvidence.evidence.evidenceDigest;
+const loraDigest = importedEvidence.evidence.evidenceDigest;
+const afterLoraEdit = invalidateCharacterGenerationEvidence(assetWithBoth, "lora");
+assert.equal(afterLoraEdit.characterZeroShotEvidence.evidenceDigest, zeroDigest, "LoRA edits retain zero-shot audit evidence");
+assert.equal(afterLoraEdit.characterLora.benchmarkEvidence.evidenceDigest, loraDigest, "stale LoRA evidence remains auditable");
+assert.equal(validateStoredCharacterGenerationEvidence(afterLoraEdit.characterZeroShotEvidence, afterLoraEdit.currentZeroContext).valid, true, "LoRA edits preserve valid zero-shot context");
+assert.equal(validateStoredCharacterGenerationEvidence(afterLoraEdit.characterLora.benchmarkEvidence, afterLoraEdit.currentLoraContext).valid, false, "LoRA edits stale only LoRA evidence");
+assert.equal(afterLoraEdit.characterLora.status, "dataset_ready", "LoRA edits downgrade readiness without deleting evidence");
+const afterIdentityEdit = invalidateCharacterGenerationEvidence(assetWithBoth, "identity");
+assert.equal(afterIdentityEdit.characterZeroShotEvidence.evidenceDigest, zeroDigest, "identity edits retain zero-shot audit evidence");
+assert.equal(afterIdentityEdit.characterLora.benchmarkEvidence.evidenceDigest, loraDigest, "identity edits retain LoRA audit evidence");
+assert.equal(validateStoredCharacterGenerationEvidence(afterIdentityEdit.characterZeroShotEvidence, afterIdentityEdit.currentZeroContext).valid, false, "identity edits stale zero-shot evidence");
+assert.equal(validateStoredCharacterGenerationEvidence(afterIdentityEdit.characterLora.benchmarkEvidence, afterIdentityEdit.currentLoraContext).valid, false, "identity edits stale LoRA evidence");
+assert.equal(resolveCharacterGenerationTrack(afterIdentityEdit), null, "track resolution uses invalidated zero-shot context rather than stale input context");
+for (const changeKind of ["reference", "provider", "model", "workflow", "fixture", "evaluator"]) {
+  const invalidated = invalidateCharacterGenerationEvidence(assetWithBoth, changeKind);
+  assert.equal(invalidated.characterZeroShotEvidence.evidenceDigest, zeroDigest, `${changeKind} retains zero-shot history`);
+  assert.equal(invalidated.characterLora.benchmarkEvidence.evidenceDigest, loraDigest, `${changeKind} retains LoRA history`);
+  assert.equal(validateStoredCharacterGenerationEvidence(invalidated.characterZeroShotEvidence, invalidated.currentZeroContext).valid, false, `${changeKind} stales zero-shot evidence`);
+  assert.equal(validateStoredCharacterGenerationEvidence(invalidated.characterLora.benchmarkEvidence, invalidated.currentLoraContext).valid, false, `${changeKind} stales LoRA evidence`);
+}
+for (const [label, patch] of [["filename", { loraName: "ada-v4.safetensors" }], ["strength", { strength: 0.8 }], ["status", { status: "training" }]]) {
+  const invalidated = invalidateCharacterGenerationEvidence({ ...assetWithBoth, characterLora: { ...assetWithBoth.characterLora, ...patch } }, "lora");
+  assert.equal(validateStoredCharacterGenerationEvidence(invalidated.characterZeroShotEvidence, invalidated.currentZeroContext).valid, true, `${label} edits leave zero-shot evidence valid`);
+  assert.equal(validateStoredCharacterGenerationEvidence(invalidated.characterLora.benchmarkEvidence, invalidated.currentLoraContext).valid, false, `${label} edits stale LoRA evidence`);
+}
 const missingModeReport = makeEvidenceReport();
 delete missingModeReport.generationMode;
 missingModeReport.evidenceDigest = recomputeCharacterBenchmarkEvidenceDigest(missingModeReport);
@@ -249,8 +349,8 @@ assert.equal(importCharacterBenchmarkEvidence(wrongEvaluator, evidenceContext).v
 const sevenAccepted = makeEvidenceReport(); sevenAccepted.aggregate.accepted = 7; sevenAccepted.shots = sevenAccepted.shots.slice(0, 7); sevenAccepted.evidenceDigest = recomputeCharacterBenchmarkEvidenceDigest(sevenAccepted);
 assert.equal(importCharacterBenchmarkEvidence(sevenAccepted, evidenceContext).valid, false, "7/8 accepted evidence is rejected");
 assert.equal(validateStoredCharacterBenchmarkEvidence(importedEvidence.evidence, { ...evidenceContext, identityPackVersion: "identity-v4" }).valid, false, "identity edits stale stored evidence");
-assert.deepEqual(invalidateCharacterLoraEvidence({ loraName: "ada.safetensors", status: "ready", benchmarkEvidence: importedEvidence.evidence }), { loraName: "ada.safetensors", status: "dataset_ready" }, "candidate LoRA invalidation removes evidence and downgrades readiness");
-assert.deepEqual(invalidateCharacterLoraEvidence({ loraName: "", status: "ready", benchmarkEvidence: importedEvidence.evidence }), { loraName: "", status: "unconfigured" }, "missing candidate LoRA invalidation becomes unconfigured");
+assert.deepEqual(invalidateCharacterLoraEvidence({ loraName: "ada.safetensors", status: "ready", benchmarkEvidence: importedEvidence.evidence }), { loraName: "ada.safetensors", status: "dataset_ready", benchmarkEvidence: importedEvidence.evidence }, "candidate LoRA invalidation retains auditable evidence and downgrades readiness");
+assert.deepEqual(invalidateCharacterLoraEvidence({ loraName: "", status: "ready", benchmarkEvidence: importedEvidence.evidence }), { loraName: "", status: "unconfigured", benchmarkEvidence: importedEvidence.evidence }, "missing candidate LoRA invalidation retains evidence and becomes unconfigured");
 
 const source = await readFile(new URL("../src/modules/asset-manager/AssetPanel.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../src/styles/global.css", import.meta.url), "utf8");
