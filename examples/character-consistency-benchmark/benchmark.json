@@ -1,0 +1,96 @@
+{
+  "benchmarkVersion": 1,
+  "promptTemplateVersion": "klein-character-v2",
+  "name": "eight-shot-character-consistency",
+  "requiredWorkflowTokens": ["CAMERA_YAW", "SHOT_SCALE", "EXPECTED_VIEW"],
+  "shots": [
+    {
+      "id": "front_close",
+      "title": "Front close portrait",
+      "prompt": "Close portrait, facing camera, preserve canonical face and hairstyle.",
+      "cameraYaw": 0,
+      "scale": "close",
+      "expectedView": "front",
+      "seed": 2026080801,
+      "referencePolicy": { "preferredSlots": ["face_master", "body_front"], "transforms": { "face_master": "head_shoulders_crop", "body_front": "none" } },
+      "evaluation": { "minimumScore": 0.78, "requiredDimensions": ["face", "hair", "quality"] }
+    },
+    {
+      "id": "three_quarter_medium",
+      "title": "Three-quarter medium shot",
+      "prompt": "Medium shot at a three-quarter angle, preserve canonical identity and outfit.",
+      "cameraYaw": 35,
+      "scale": "medium",
+      "expectedView": "three_quarter",
+      "seed": 2026080802,
+      "referencePolicy": { "preferredSlots": ["face_master", "body_side"], "transforms": { "face_master": "head_shoulders_crop", "body_side": "none" } },
+      "evaluation": { "minimumScore": 0.75, "requiredDimensions": ["face", "hair", "outfit", "body"] }
+    },
+    {
+      "id": "left_profile",
+      "title": "Left profile",
+      "prompt": "Left profile portrait, preserve facial silhouette and hairstyle profile.",
+      "cameraYaw": -90,
+      "scale": "medium",
+      "expectedView": "left_profile",
+      "seed": 2026080803,
+      "referencePolicy": { "preferredSlots": ["face_left", "body_side"], "transforms": { "face_left": "head_shoulders_crop", "body_side": "none" } },
+      "evaluation": { "minimumScore": 0.74, "requiredDimensions": ["face", "hair", "quality"] }
+    },
+    {
+      "id": "right_profile",
+      "title": "Right profile",
+      "prompt": "Right profile portrait, preserve facial silhouette and hairstyle profile.",
+      "cameraYaw": 90,
+      "scale": "medium",
+      "expectedView": "right_profile",
+      "seed": 2026080804,
+      "referencePolicy": { "preferredSlots": ["face_right", "body_side"], "transforms": { "face_right": "head_shoulders_crop", "body_side": "none" } },
+      "evaluation": { "minimumScore": 0.74, "requiredDimensions": ["face", "hair", "quality"] }
+    },
+    {
+      "id": "back_view",
+      "title": "Back view",
+      "prompt": "Back view, preserve hair silhouette, outfit, and body proportions.",
+      "cameraYaw": 180,
+      "scale": "medium",
+      "expectedView": "back",
+      "seed": 2026080805,
+      "referencePolicy": { "preferredSlots": ["hair_back", "body_back"], "transforms": { "hair_back": "none", "body_back": "none" } },
+      "evaluation": { "minimumScore": 0.72, "requiredDimensions": ["hair", "outfit", "body", "quality"] }
+    },
+    {
+      "id": "full_body_action",
+      "title": "Full body action",
+      "prompt": "Full body action pose, preserve identity, outfit, and anatomy.",
+      "cameraYaw": 35,
+      "scale": "full_body",
+      "expectedView": "three_quarter",
+      "seed": 2026080806,
+      "referencePolicy": { "preferredSlots": ["body_front", "body_side"], "transforms": { "body_front": "none", "body_side": "none" } },
+      "evaluation": { "minimumScore": 0.73, "requiredDimensions": ["hair", "outfit", "body", "quality"] }
+    },
+    {
+      "id": "strong_expression",
+      "title": "Strong expression",
+      "prompt": "Close front portrait with a strong expression, preserve canonical face and hair.",
+      "cameraYaw": 0,
+      "scale": "close",
+      "expectedView": "front",
+      "seed": 2026080807,
+      "referencePolicy": { "preferredSlots": ["face_master", "expression_neutral"], "transforms": { "face_master": "head_shoulders_crop", "expression_neutral": "none" } },
+      "evaluation": { "minimumScore": 0.78, "requiredDimensions": ["face", "hair", "quality"] }
+    },
+    {
+      "id": "different_lighting",
+      "title": "Different lighting",
+      "prompt": "Medium three-quarter shot under different lighting, preserve canonical identity and outfit.",
+      "cameraYaw": -35,
+      "scale": "medium",
+      "expectedView": "three_quarter",
+      "seed": 2026080808,
+      "referencePolicy": { "preferredSlots": ["face_master", "body_front"], "transforms": { "face_master": "head_shoulders_crop", "body_front": "none" } },
+      "evaluation": { "minimumScore": 0.75, "requiredDimensions": ["face", "hair", "outfit", "body", "quality"] }
+    }
+  ]
+}
