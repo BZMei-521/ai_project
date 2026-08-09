@@ -55,10 +55,36 @@ const currentIdentityPack = currentProjectFixture.snapshot.assets.find((asset) =
 assert.deepEqual(classifyMigrationTrait("large blue eyes", "immutable"), {
   action: "rewrite",
   source: "large blue eyes",
-  canonical: "natural-sized blue eyes",
+  canonicalFacts: ["natural-sized blue eyes"],
   reason: "preserve_eye_color_without_juvenile_scale"
 });
+for (const source of ["oversized blue eyes", "big blue eyes", "huge blue eyes", "enlarged blue eyes"]) {
+  const classified = classifyMigrationTrait(source, "immutable");
+  assert.deepEqual(classified.canonicalFacts, ["natural-sized blue eyes"]);
+  assert.equal(classified.action, "rewrite");
+  assert.doesNotMatch(classified.canonicalFacts.join(" "), /oversized|big|huge|enlarged/i);
+}
+assert.deepEqual(classifyMigrationTrait("youthful blue-eyed face with short dark brown side-swept hair", "immutable"), {
+  action: "rewrite",
+  source: "youthful blue-eyed face with short dark brown side-swept hair",
+  canonicalFacts: ["blue eyes", "short dark brown side-swept hair", "established adult face identity"],
+  reason: "extract_identity_facts_remove_age_or_style_coupling"
+});
+assert.deepEqual(classifyMigrationTrait("huge blue eyes with short dark brown side-swept hair", "immutable"), {
+  action: "rewrite",
+  source: "huge blue eyes with short dark brown side-swept hair",
+  canonicalFacts: ["natural-sized blue eyes", "short dark brown side-swept hair"],
+  reason: "extract_identity_facts_remove_age_or_style_coupling"
+});
+assert.deepEqual(classifyMigrationTrait("Pixar-style teal tunic and navy long coat", "immutable"), {
+  action: "rewrite",
+  source: "Pixar-style teal tunic and navy long coat",
+  canonicalFacts: ["teal tunic", "navy long coat"],
+  reason: "extract_identity_facts_remove_age_or_style_coupling"
+});
 const currentSanitized = sanitizeMigrationTraits(currentIdentityPack);
+assert.equal(currentSanitized.traitDecisions.length, currentIdentityPack.immutableTraits.length + currentIdentityPack.forbiddenChanges.length);
+assert.ok(currentSanitized.traitDecisions.every((decision) => decision.source && decision.action && decision.reason && Array.isArray(decision.canonicalFacts)), "every source trait must have an auditable structured decision");
 assert.deepEqual(currentSanitized.identityTraits, [
   "short dark brown side-swept hair",
   "natural-sized blue eyes",
@@ -84,7 +110,7 @@ for (const pass of [{ id: "front" }, { id: "side" }, { id: "back" }]) {
   assert.match(migrationPrompt, /natural-sized almond-shaped blue eyes.*normal iris proportions/i);
   assert.match(migrationPrompt, /restrained expression.*slender adult body proportions/i);
   assert.match(migrationPrompt, /cinematic semi-realistic Chinese 3D donghua/i);
-  assert.match(migrationPrompt, /not western family animation.*not toy-like.*not a child/i);
+  assert.match(migrationPrompt, /not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child/i);
   assert.ok(migrationPrompt.includes(canonicalDescriptor), "every view must contain the same canonical identity descriptor");
   assert.doesNotMatch(migrationPrompt, /large blue eyes|youthful animated face|do not change age, gender presentation, or body proportions|do not switch from clean 2D animated character styling to photorealism/i);
 }
@@ -290,6 +316,9 @@ const transport = {
     queuedPrompts.push(queuedWorkflow["7"].inputs.text);
     assert.match(queuedWorkflow["7"].inputs.text, new RegExp(`${pass.id}.*cinematic_3d_donghua_v1|cinematic_3d_donghua_v1.*${pass.id}`, "i"));
     assert.match(queuedWorkflow["7"].inputs.text, /blue eyes.*human ears only.*no animal ears.*no tail.*no horns.*no animal muzzle/i);
+    assert.match(queuedWorkflow["7"].inputs.text, /not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child/i);
+    const withoutExplicitExclusions = queuedWorkflow["7"].inputs.text.replace("not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child", "");
+    assert.doesNotMatch(withoutExplicitExclusions, /Pixar-style|Disney-style|\bchibi\b|\btoy-like\b|\bjuvenile\b|\bchild\b/i, "no conflicting positive juvenile or western-family style may remain");
     activeQueues -= 1;
     return { kind: "model_generation", contentType: "image/png", bytes: PNG };
   }

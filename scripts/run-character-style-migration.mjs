@@ -625,6 +625,23 @@ function normalizeTraitText(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
+function extractKnownIdentityFacts(source) {
+  const facts = [];
+  const add = (fact) => { if (!facts.includes(fact)) facts.push(fact); };
+  const eyeColor = source.match(/\b(blue|green|brown|gray|grey|amber|hazel)\s*(?:-eyed\b|eyes?\b)/i)?.[1]?.toLowerCase();
+  if (eyeColor) add(/\b(?:large|oversized|big|huge|enlarged)\b.*\beyes?\b/i.test(source)
+    ? `natural-sized ${eyeColor === "grey" ? "gray" : eyeColor} eyes`
+    : `${eyeColor === "grey" ? "gray" : eyeColor} eyes`);
+  if (/\bshort\s+dark[- ]brown\s+side[- ]swept\s+hair\b/i.test(source)) add("short dark brown side-swept hair");
+  if (/\bteal(?:\s+long-sleeve)?\s+tunic\b/i.test(source)) add(/\blong-sleeve\b/i.test(source) ? "teal long-sleeve tunic" : "teal tunic");
+  if (/\b(?:dark\s+)?navy(?:\s+sleeveless)?\s+long\s+coat\b/i.test(source)) {
+    add(/\bdark\s+navy\s+sleeveless\b/i.test(source) ? "dark navy sleeveless long coat" : "navy long coat");
+  }
+  if (/\bbrown belt\b/i.test(source)) add("brown belt");
+  if (/\b(?:knee-high\s+)?brown boots\b/i.test(source)) add(/\bknee-high\b/i.test(source) ? "knee-high brown boots" : "brown boots");
+  return facts;
+}
+
 export function classifyMigrationTrait(value, kind = "immutable") {
   const source = normalizeTraitText(value);
   if (!source) throw new Error("Migration traits must be non-empty strings.");
@@ -632,23 +649,28 @@ export function classifyMigrationTrait(value, kind = "immutable") {
   const normalized = source.toLowerCase();
 
   if (kind === "immutable") {
-    if (normalized === "large blue eyes") return {
-      action: "rewrite", source, canonical: "natural-sized blue eyes", reason: "preserve_eye_color_without_juvenile_scale"
+    if (/^(?:large|oversized|big|huge|enlarged)\s+blue eyes$/i.test(source)) return {
+      action: "rewrite", source, canonicalFacts: ["natural-sized blue eyes"], reason: "preserve_eye_color_without_juvenile_scale"
     };
     if (normalized === "clean youthful animated male face") return {
-      action: "rewrite", source, canonical: "established adult male identity", reason: "remove_juvenile_style_coupling"
+      action: "rewrite", source, canonicalFacts: ["established adult male identity"], reason: "remove_juvenile_style_coupling"
     };
-    if (/\b(youthful|juvenile|childlike|chibi|pixar|toy-like|clean 2d|flat 2d)\b/i.test(source)) return {
-      action: "exclude", source, reason: "exclude_age_or_style_coupled_trait"
-    };
-    return { action: "preserve", source, canonical: source, reason: "identity_fact" };
+    if (/\b(youthful|juvenile|childlike|chibi|pixar|disney|toy-like|clean 2d|flat 2d|large|oversized|big|huge|enlarged)\b/i.test(source)) {
+      const canonicalFacts = extractKnownIdentityFacts(source);
+      if (/\bface\b/i.test(source)) canonicalFacts.push("established adult face identity");
+      if (canonicalFacts.length > 0) return {
+        action: "rewrite", source, canonicalFacts, reason: "extract_identity_facts_remove_age_or_style_coupling"
+      };
+      return { action: "exclude", source, canonicalFacts: [], reason: "exclude_age_or_style_coupled_trait" };
+    }
+    return { action: "preserve", source, canonicalFacts: [source], reason: "identity_fact" };
   }
 
   if (/\bage\b.*\bbody proportions\b|\bbody proportions\b.*\bage\b/i.test(source)) return {
-    action: "exclude", source, reason: "exclude_age_and_proportion_lock"
+    action: "exclude", source, canonicalFacts: [], reason: "exclude_age_and_proportion_lock"
   };
   if (/\b(2d|photoreal|pixar|disney|western cartoon|toy-like|chibi)\b/i.test(source)) return {
-    action: "exclude", source, reason: "exclude_source_rendering_lock"
+    action: "exclude", source, canonicalFacts: [], reason: "exclude_source_rendering_lock"
   };
   const preservationRewrites = Object.freeze({
     "do not change face shape or blue eye color": "preserve established face shape and blue eye color",
@@ -656,10 +678,10 @@ export function classifyMigrationTrait(value, kind = "immutable") {
     "do not change the teal tunic, navy long coat, brown belt, or brown boots": "preserve the teal tunic, navy long coat, brown belt, and brown boots"
   });
   if (hasOwn(preservationRewrites, normalized)) return {
-    action: "rewrite", source, canonical: preservationRewrites[normalized], reason: "identity_preservation_constraint"
+    action: "rewrite", source, canonicalFacts: [preservationRewrites[normalized]], reason: "identity_preservation_constraint"
   };
   const canonical = source.replace(/^do not change\s+/i, "preserve ");
-  return { action: canonical === source ? "preserve" : "rewrite", source, canonical, reason: "identity_preservation_constraint" };
+  return { action: canonical === source ? "preserve" : "rewrite", source, canonicalFacts: [canonical], reason: "identity_preservation_constraint" };
 }
 
 export function sanitizeMigrationTraits(identityPack) {
@@ -671,10 +693,15 @@ export function sanitizeMigrationTraits(identityPack) {
   }
   const immutable = identityPack.immutableTraits.map((trait) => classifyMigrationTrait(trait, "immutable"));
   const forbidden = (identityPack.forbiddenChanges ?? []).map((trait) => classifyMigrationTrait(trait, "forbidden"));
+  const traitDecisions = Object.freeze([
+    ...immutable.map((entry) => Object.freeze({ kind: "immutable", ...entry, canonicalFacts: Object.freeze([...entry.canonicalFacts]) })),
+    ...forbidden.map((entry) => Object.freeze({ kind: "forbidden", ...entry, canonicalFacts: Object.freeze([...entry.canonicalFacts]) }))
+  ]);
   return Object.freeze({
-    identityTraits: Object.freeze(immutable.filter(({ action }) => action !== "exclude").map(({ canonical }) => canonical)),
-    preservationConstraints: Object.freeze(forbidden.filter(({ action }) => action !== "exclude").map(({ canonical }) => canonical)),
-    excludedSourceTraits: Object.freeze([...immutable, ...forbidden].filter(({ action }) => action === "exclude").map((entry) => Object.freeze(entry)))
+    identityTraits: Object.freeze(traitDecisions.filter(({ kind }) => kind === "immutable").flatMap(({ canonicalFacts }) => canonicalFacts)),
+    preservationConstraints: Object.freeze(traitDecisions.filter(({ kind }) => kind === "forbidden").flatMap(({ canonicalFacts }) => canonicalFacts)),
+    excludedSourceTraits: Object.freeze(traitDecisions.filter(({ action }) => action === "exclude")),
+    traitDecisions
   });
 }
 
@@ -690,7 +717,7 @@ export function buildPassPrompt(subject, pass) {
     `Canonical identity descriptor: ${descriptor}.`,
     `Generate the exact ${pass.id} view of the same adult male character, approximately 25-30 years old, with mature facial bone structure.`,
     "Use natural-sized almond-shaped blue eyes with normal iris proportions, a restrained expression, and slender adult body proportions.",
-    "Rendering target: cinematic semi-realistic Chinese 3D donghua, refined adult anime facial anatomy, detailed hair strands and skin, physically readable costume materials, cinematic depth of field and controlled rim light; stylized and semi-realistic, not western family animation, not toy-like, not a child.",
+    "Rendering target: cinematic semi-realistic Chinese 3D donghua, refined adult anime facial anatomy, detailed hair strands and skin, physically readable costume materials, cinematic depth of field and controlled rim light; stylized and semi-realistic, not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child.",
     `${CINEMATIC_3D_DONGHUA_CONTRACT.id} ${CINEMATIC_3D_DONGHUA_CONTRACT.version}: ${CINEMATIC_3D_DONGHUA_CONTRACT.positivePrompt}.`,
     "Human-only anatomy constraint: human ears only, no animal ears, no tail, no horns, no animal muzzle.",
     "Return one clean model-generated character image; do not create a collage, character sheet, fallback cutout, or copied screenshot."

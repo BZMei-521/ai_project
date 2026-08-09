@@ -35,3 +35,12 @@ The test covers the exact checked-in Shen Yan fixture, exact sanitized traits an
 ## Operator Follow-up
 
 The next live run should use `--revision 2` and a new output directory. Candidates must remain `awaiting_operator_approval`; do not import them automatically.
+
+## Review Remediation
+
+The initial v2 review correctly identified two Important gaps. Both were addressed test-first:
+
+- Trait handling is now fragment-aware and returns structured `canonicalFacts`. `sanitizeMigrationTraits` also returns a frozen `traitDecisions` audit record for every input item, including its kind, source, action, reason, and retained facts. `large`, `oversized`, `big`, `huge`, and `enlarged` blue-eye phrases normalize to `natural-sized blue eyes`, including mixed phrases. Mixed juvenile/style wording retains recognized eye color, hair, face-identity, and costume facts while removing the unsafe qualifier; unsafe text with no safely extractable fact is excluded.
+- Every authoritative queued positive prompt now contains the exact clause `not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child`. Tests remove that clause and verify no conflicting positive occurrence remains.
+
+Additional RED evidence was observed for both remediation cycles: the first failed because the old result exposed one `canonical` string, and the mixed-size regression failed because `huge blue eyes with ... hair` was still preserved wholesale. Both focused regressions now pass.
