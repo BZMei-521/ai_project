@@ -151,6 +151,36 @@ assert.equal(importedEvidence.evidence.reportLabel, "ada-ready.json", "only a sa
 assert.equal(importedEvidence.evidence.acceptedShots, 8);
 assert.equal(importedEvidence.evidence.candidateStatus, "dataset_ready", "stored evidence retains the pre-ready candidate status");
 assert.equal(validateStoredCharacterBenchmarkEvidence(importedEvidence.evidence, evidenceContext).valid, true, "stored evidence revalidates against the current subject");
+const assetPanelLoraContext = {
+  characterAssetId: evidenceContext.characterAssetId,
+  identityPackVersion: evidenceContext.identityPackVersion,
+  provider: evidenceContext.provider,
+  loraName: evidenceContext.loraName,
+  loraVersion: evidenceContext.loraVersion,
+  modelName: evidenceContext.modelName,
+  loraStrength: evidenceContext.loraStrength,
+  candidateStatus: evidenceContext.candidateStatus,
+  workflowProof: {
+    workflowDigest: evidenceContext.workflowProof.workflowDigest,
+    terminalOutputNode: evidenceContext.workflowProof.terminalOutputNode,
+    authoritativeModelBindings: evidenceContext.workflowProof.authoritativeModelBindings
+  }
+};
+const assetPanelImportedEvidence = importCharacterBenchmarkEvidence(makeEvidenceReport(), assetPanelLoraContext, {
+  now: () => "2026-08-08T08:00:00.000Z"
+});
+assert.equal(assetPanelImportedEvidence.valid, true, "legacy UI context adapts a valid new LoRA envelope");
+assert.equal(validateStoredCharacterBenchmarkEvidence(assetPanelImportedEvidence.evidence, assetPanelLoraContext).valid, true, "legacy UI context revalidates the imported new LoRA envelope");
+const zeroShotCompatibilityReport = makeEvidenceReport();
+zeroShotCompatibilityReport.generationMode = "zero_shot_multi_reference";
+zeroShotCompatibilityReport.subject = { ...zeroShotCompatibilityReport.subject };
+delete zeroShotCompatibilityReport.subject.loraName;
+delete zeroShotCompatibilityReport.subject.loraVersion;
+delete zeroShotCompatibilityReport.subject.loraStrength;
+delete zeroShotCompatibilityReport.subject.candidateStatus;
+zeroShotCompatibilityReport.preflight.providerProof.authoritativeLoraBindings = [];
+zeroShotCompatibilityReport.evidenceDigest = recomputeCharacterBenchmarkEvidenceDigest(zeroShotCompatibilityReport);
+assert.equal(importCharacterBenchmarkEvidence(zeroShotCompatibilityReport, assetPanelLoraContext).reason, "compatibility_mode_not_lora", "legacy UI context is never a zero-shot shortcut");
 const missingModeReport = makeEvidenceReport();
 delete missingModeReport.generationMode;
 missingModeReport.evidenceDigest = recomputeCharacterBenchmarkEvidenceDigest(missingModeReport);

@@ -62,7 +62,7 @@ export type CharacterGenerationEvidenceContext = {
   };
 };
 export type CharacterBenchmarkEvidenceValidation =
-  | { valid: true; reason: "ok"; expectedDigest?: string; evidence?: CharacterBenchmarkEvidence }
+  | { valid: true; reason: "ok"; expectedDigest?: string; evidence?: CharacterBenchmarkEvidence; legacy?: true }
   | { valid: false; reason: string; expectedDigest?: string | null };
 export const importCharacterBenchmarkEvidence = runtime.importCharacterBenchmarkEvidence as (
   report: unknown,
