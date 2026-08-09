@@ -9,26 +9,41 @@ const MODULE_PATH = fileURLToPath(import.meta.url);
 const MODULE_DIR = path.dirname(MODULE_PATH);
 const WORKER_PATH = path.join(MODULE_DIR, "siglip2-character-worker.py");
 const POLICY_PATH = path.resolve(MODULE_DIR, "../../examples/character-consistency-benchmark/siglip2-evaluator.example.json");
+const SNAPSHOT_MANIFEST_PATH = path.resolve(MODULE_DIR, "../../examples/character-consistency-benchmark/siglip2-snapshot-manifest.json");
 const DEFAULT_COMFY_PYTHON = "C:\\Users\\Administrator\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\ComfyUI\\ComfyUI\\.venv\\Scripts\\python.exe";
 const DIMENSIONS = Object.freeze(["face", "hair", "outfit", "body", "quality"]);
 const MODEL_REVISION = "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2";
 const POLICY_BYTES = readFileSync(POLICY_PATH);
-const DEFAULT_POLICY = Object.freeze(JSON.parse(POLICY_BYTES.toString("utf8")));
+const SNAPSHOT_MANIFEST_BYTES = readFileSync(SNAPSHOT_MANIFEST_PATH);
 const digest = (chunks) => crypto.createHash("sha256").update(Buffer.concat(chunks.map((value) => Buffer.isBuffer(value) ? value : Buffer.from(value)))).digest("hex");
 const error = (code, message) => Object.assign(new Error(message), { code });
 const plain = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const finiteUnit = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 const rounded = (value) => Number(value.toFixed(6));
+const canonical = (value) => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : plain(value) ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}` : JSON.stringify(value);
+const deepFreeze = (value) => { if (value && typeof value === "object" && !Object.isFrozen(value)) { Object.freeze(value); for (const child of Object.values(value)) deepFreeze(child); } return value; };
+const clonePolicy = (value) => deepFreeze(structuredClone(value));
+const DEFAULT_POLICY = clonePolicy(JSON.parse(POLICY_BYTES.toString("utf8")));
 
 export const evaluatorId = DEFAULT_POLICY.evaluatorId;
 export const evaluatorVersion = DEFAULT_POLICY.evaluatorVersion;
 export const modelId = DEFAULT_POLICY.modelId;
 export const modelRevision = MODEL_REVISION;
 export const evaluatorPolicy = DEFAULT_POLICY;
-export const evaluatorDimensionThreshold = Math.min(...Object.values(DEFAULT_POLICY.dimensionFloors));
-export const evaluatorPolicyHash = digest([POLICY_BYTES, MODEL_REVISION]);
-export const evaluatorImplementationHash = digest([readFileSync(MODULE_PATH), readFileSync(WORKER_PATH), POLICY_BYTES, MODEL_REVISION]);
+export const dimensionThreshold = Math.min(...Object.values(DEFAULT_POLICY.dimensionFloors));
+export const evaluatorDimensionThreshold = dimensionThreshold;
+export const evaluatorPolicyHash = digest([POLICY_BYTES]);
+export const evaluatorSnapshotManifestHash = digest([JSON.stringify(JSON.parse(SNAPSHOT_MANIFEST_BYTES.toString("utf8")))]);
+export const evaluatorImplementationHash = digest([readFileSync(MODULE_PATH), readFileSync(WORKER_PATH), POLICY_BYTES, MODEL_REVISION, SNAPSHOT_MANIFEST_BYTES, evaluatorSnapshotManifestHash]);
 export const requiresLocalOutput = true;
+export const dimensionReferencePolicyVersion = "siglip2-canonical-slots-v1";
+const DIMENSION_SLOTS = deepFreeze({
+  face: ["face_master", "face_left", "face_right"],
+  hair: ["hair_back", "face_master", "face_left", "face_right"],
+  outfit: ["body_front", "body_side", "body_back"],
+  body: ["body_front", "body_side", "body_back"]
+});
+const CANONICAL_SLOTS = new Set(["face_master", "face_left", "face_right", "hair_back", "body_front", "body_side", "body_back", "expression_neutral"]);
 
 function validatePolicy(policy) {
   if (!plain(policy) || policy.evaluatorId !== evaluatorId || policy.evaluatorVersion !== evaluatorVersion || policy.modelId !== modelId || policy.modelRevision !== modelRevision) throw error("EPOLICY", "SigLIP2 evaluator policy model revision or identity is invalid");
@@ -48,7 +63,8 @@ function resolvePython() {
   return process.platform === "win32" ? { command: "py", prefix: ["-3"] } : { command: "python3", prefix: [] };
 }
 
-export function createPersistentSiglip2Worker({ spawnImpl = spawn, python = resolvePython(), workerPath = WORKER_PATH } = {}) {
+export function createPersistentSiglip2Worker({ spawnImpl = spawn, python = resolvePython(), workerPath = WORKER_PATH, closeTimeoutMs = 1_000 } = {}) {
+  if (!Number.isFinite(closeTimeoutMs) || closeTimeoutMs <= 0) throw error("EWORKER", "SigLIP2 worker close timeout is invalid");
   const command = typeof python === "string" ? python : python.command;
   const prefix = typeof python === "string" ? [] : python.prefix ?? [];
   const child = spawnImpl(command, [...prefix, workerPath], { cwd: path.resolve(MODULE_DIR, "../.."), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
@@ -56,20 +72,26 @@ export function createPersistentSiglip2Worker({ spawnImpl = spawn, python = reso
   const pending = new Map();
   let sequence = 0;
   let closed = false;
+  let exited = false;
+  let resolveExited;
+  const exitedPromise = new Promise((resolve) => { resolveExited = resolve; });
 
   const rejectAll = (reason) => {
     for (const request of pending.values()) request.reject(reason);
     pending.clear();
   };
-  const terminate = (reason = error("EWORKER_CLOSED", "SigLIP2 worker closed")) => {
-    if (closed) return;
-    closed = true;
+  const markClosed = (reason) => {
+    if (!closed) closed = true;
     rejectAll(reason);
-    try { child.kill(); } catch { /* process events finalize shutdown */ }
+  };
+  const forceTerminate = (reason) => {
+    markClosed(reason);
+    try { child.stdin?.destroy?.(); } catch { /* process kill remains authoritative */ }
+    try { child.kill("SIGTERM"); } catch { /* close/error event may already have fired */ }
   };
   const protocolFailure = () => {
     const reason = error("EWORKER_PROTOCOL", "malformed NDJSON response from SigLIP2 worker");
-    terminate(reason);
+    forceTerminate(reason);
   };
 
   const lines = readline.createInterface({ input: child.stdout });
@@ -86,25 +108,45 @@ export function createPersistentSiglip2Worker({ spawnImpl = spawn, python = reso
     }
     request.resolve(response);
   });
-  child.once("error", () => terminate(error("EWORKER_START", "SigLIP2 worker could not start")));
-  child.once("close", () => terminate(error("EWORKER_CLOSED", "SigLIP2 worker exited")));
+  child.once("error", () => forceTerminate(error("EWORKER_START", "SigLIP2 worker could not start")));
+  child.once("close", () => { exited = true; markClosed(error("EWORKER_CLOSED", "SigLIP2 worker exited")); lines.close(); resolveExited(); });
 
-  return {
+  const waitForExit = async () => {
+    if (exited) return true;
+    let timer;
+    const timedOut = await Promise.race([exitedPromise.then(() => false), new Promise((resolve) => { timer = setTimeout(() => resolve(true), closeTimeoutMs); })]);
+    if (timer) clearTimeout(timer);
+    return !timedOut;
+  };
+
+  const api = {
+    get pendingCount() { return pending.size; },
+    get closed() { return closed; },
     request(message) {
       if (closed) return Promise.reject(error("EWORKER_CLOSED", "SigLIP2 worker is closed"));
       const id = `siglip2-${process.pid}-${++sequence}`;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         child.stdin.write(`${JSON.stringify({ ...message, id })}\n`, (writeError) => {
-          if (writeError && pending.delete(id)) reject(error("EWORKER_WRITE", "SigLIP2 worker request failed"));
+          if (writeError && pending.has(id)) {
+            const reason = error("EWORKER_WRITE", "SigLIP2 worker request failed"); pending.delete(id); reject(reason); forceTerminate(reason);
+          }
         });
       });
     },
     async close() {
-      lines.close();
-      terminate();
+      if (!closed) {
+        markClosed(error("EWORKER_CLOSED", "SigLIP2 worker closed"));
+        try { child.stdin?.end?.(); } catch { /* bounded escalation below */ }
+      }
+      if (await waitForExit()) return;
+      try { child.kill("SIGTERM"); } catch { /* bounded escalation below */ }
+      if (await waitForExit()) return;
+      try { child.kill("SIGKILL"); } catch { /* process may already have exited */ }
+      await waitForExit();
     }
   };
+  return api;
 }
 
 function normalizedEmbedding(value, expectedLength = null) {
@@ -121,18 +163,13 @@ function similarity(output, reference) {
 }
 
 function mean(values) {
-  if (!values.length) throw error("EREFERENCE", "no routed reference can score this dimension");
+  if (!values.length) throw error("EREFERENCE_DIMENSION", "no canonical reference can score this required dimension");
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function slotsForDimension(entries, dimension) {
-  const matches = entries.filter(({ reference }) => {
-    const slot = String(reference.requestedSlot ?? reference.slot ?? "");
-    if (dimension === "face") return /^(?:face_|expression_)/.test(slot);
-    if (dimension === "hair") return /^(?:hair_|face_|expression_)/.test(slot);
-    return /^body_/.test(slot);
-  });
-  return matches.length ? matches : entries;
+  const allowed = new Set(DIMENSION_SLOTS[dimension] ?? []);
+  return entries.filter(({ reference }) => allowed.has(String(reference.slot ?? "")));
 }
 
 function requestWithDeadline(worker, message, { signal, timeoutMs }) {
@@ -152,7 +189,8 @@ function requestWithDeadline(worker, message, { signal, timeoutMs }) {
 }
 
 export function createSiglip2Evaluator({ worker = null, workerFactory = createPersistentSiglip2Worker, policy = DEFAULT_POLICY, requestTimeoutMs = 30_000 } = {}) {
-  const activePolicy = validatePolicy(policy);
+  const activePolicy = validatePolicy(clonePolicy(policy)); const productionPolicy = canonical(activePolicy) === canonical(DEFAULT_POLICY);
+  const activePolicyHash = productionPolicy ? evaluatorPolicyHash : digest([canonical(activePolicy)]);
   if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) throw error("EPOLICY", "SigLIP2 request timeout is invalid");
   let activeWorker = worker;
   let terminated = false;
@@ -173,11 +211,14 @@ export function createSiglip2Evaluator({ worker = null, workerFactory = createPe
   };
 
   return {
+    evaluatorPolicy: activePolicy,
+    evaluatorPolicyHash: activePolicyHash,
     async evaluateCharacterShot(context) {
       try {
         if (!plain(context) || typeof context.outputPath !== "string" || !context.outputPath.trim()) throw error("EOUTPUT", "a staged local output path is required");
         if (!Array.isArray(context.references) || !context.references.length) throw error("EREFERENCE", "at least one routed local reference is required");
-        if (context.references.some((reference) => !plain(reference) || typeof reference.sourcePath !== "string" || !reference.sourcePath.trim())) throw error("EREFERENCE", "every routed reference requires a local source path");
+        if (context.references.some((reference) => !plain(reference) || !CANONICAL_SLOTS.has(reference.slot) || typeof reference.sourcePath !== "string" || !reference.sourcePath.trim() || typeof reference.sourceSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(reference.sourceSha256))) throw error("EREFERENCE", "every canonical reference requires a slot, local path, and source digest");
+        if (new Set(context.references.map((reference) => reference.slot)).size !== context.references.length) throw error("EREFERENCE", "canonical reference slots must be unique");
         if (context.workerModelRevision !== undefined && context.workerModelRevision !== modelRevision) throw error("EMODEL_REVISION", "worker model revision does not match the pinned SigLIP2 revision");
         const shot = context.shot;
         if (!plain(shot) || typeof shot.id !== "string" || !shot.id.trim() || typeof shot.expectedView !== "string" || !shot.expectedView.trim() || !activePolicy.weightsByScale[shot.scale] || !plain(shot.evaluation) || !Array.isArray(shot.evaluation.requiredDimensions) || shot.evaluation.requiredDimensions.some((dimension) => !DIMENSIONS.includes(dimension)) || !finiteUnit(shot.evaluation.minimumScore)) throw error("ECONTEXT", "shot ID, scale, view, and evaluation policy are required");
@@ -188,6 +229,7 @@ export function createSiglip2Evaluator({ worker = null, workerFactory = createPe
         const verifyResponse = (response) => {
           if (!plain(response) || response.ok !== true) throw error("EWORKER_PROTOCOL", "malformed NDJSON response from SigLIP2 worker");
           if (response.modelId !== modelId || response.modelRevision !== modelRevision) throw error("EMODEL_REVISION", "worker model revision does not match the pinned SigLIP2 revision");
+          if (response.snapshotManifestHash !== evaluatorSnapshotManifestHash) throw error("EMODEL_INTEGRITY", "worker snapshot manifest does not match the trusted evaluator");
           return response;
         };
         verifyResponse(outputResponse);
@@ -199,23 +241,23 @@ export function createSiglip2Evaluator({ worker = null, workerFactory = createPe
           const embedding = normalizedEmbedding(response.embedding, outputEmbedding.length);
           scoredReferences.push({ reference, score: similarity(outputEmbedding, embedding) });
         }
-        const dimensionScores = {
-          face: rounded(mean(slotsForDimension(scoredReferences, "face").map(({ score }) => score))),
-          hair: rounded(mean(slotsForDimension(scoredReferences, "hair").map(({ score }) => score))),
-          outfit: rounded(mean(slotsForDimension(scoredReferences, "outfit").map(({ score }) => score))),
-          body: rounded(mean(slotsForDimension(scoredReferences, "body").map(({ score }) => score))),
-          quality: rounded(outputResponse.quality)
-        };
+        const dimensionScores = { quality: rounded(outputResponse.quality) };
+        for (const dimension of ["face", "hair", "outfit", "body"]) {
+          const matches = slotsForDimension(scoredReferences, dimension);
+          if (!matches.length && shot.evaluation.requiredDimensions.includes(dimension)) throw error("EREFERENCE_DIMENSION", `required ${dimension} dimension has no canonical reference slot (${dimensionReferencePolicyVersion})`);
+          dimensionScores[dimension] = matches.length ? rounded(mean(matches.map(({ score }) => score))) : 0;
+        }
+        const orderedDimensionScores = Object.fromEntries(DIMENSIONS.map((dimension) => [dimension, dimensionScores[dimension]]));
         const weights = activePolicy.weightsByScale[shot.scale];
-        const score = rounded(DIMENSIONS.reduce((sum, dimension) => sum + dimensionScores[dimension] * weights[dimension], 0));
-        const failureDimensions = shot.evaluation.requiredDimensions.filter((dimension) => dimensionScores[dimension] < activePolicy.dimensionFloors[dimension]);
+        const score = rounded(DIMENSIONS.reduce((sum, dimension) => sum + orderedDimensionScores[dimension] * weights[dimension], 0));
+        const failureDimensions = shot.evaluation.requiredDimensions.filter((dimension) => orderedDimensionScores[dimension] < activePolicy.dimensionFloors[dimension]);
         if (score < shot.evaluation.minimumScore && !failureDimensions.length) failureDimensions.push("score");
         return {
           status: failureDimensions.length ? "needs_review" : "accepted",
           provenance: "model_generation",
           actualProvider: provider,
           score,
-          dimensionScores,
+          dimensionScores: orderedDimensionScores,
           failureDimensions,
           failureReason: failureDimensions.length ? "one or more evaluator thresholds were not met" : null,
           references: typeof context.output === "string" ? [context.output] : [],
@@ -223,7 +265,7 @@ export function createSiglip2Evaluator({ worker = null, workerFactory = createPe
           retries: 0,
           evaluatorId,
           evaluatorVersion,
-          evaluatorPolicyHash,
+          evaluatorPolicyHash: activePolicyHash,
           evaluatorImplementationHash,
           modelId,
           modelRevision

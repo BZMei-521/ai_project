@@ -1,25 +1,48 @@
 import assert from "node:assert/strict";
+import { EventEmitter, once } from "node:events";
 import crypto from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import {
+  createPersistentSiglip2Worker,
   createSiglip2Evaluator,
+  dimensionThreshold,
   evaluatorId,
   evaluatorImplementationHash,
   evaluatorPolicyHash,
+  evaluatorSnapshotManifestHash,
   evaluatorVersion,
   modelRevision
 } from "./evaluators/siglip2-character-evaluator.mjs";
-import { createFetchTransport, loadTrustedEvaluator, stageComfyOutputForEvaluation } from "./run-character-consistency-benchmark.mjs";
+import { createFetchTransport, installBenchmarkSignalHandlers, loadTrustedEvaluator, stageComfyOutputForEvaluation } from "./run-character-consistency-benchmark.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const policy = JSON.parse(await readFile(path.join(repoRoot, "examples/character-consistency-benchmark/siglip2-evaluator.example.json"), "utf8"));
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
+const comfyPython = "C:\\Users\\Administrator\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\ComfyUI\\ComfyUI\\.venv\\Scripts\\python.exe";
+
+async function runChild(command, args, { input = null } = {}) {
+  const child = spawn(command, args, { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  let stdout = ""; let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
+  if (input === null) child.stdin.end(); else child.stdin.end(input);
+  const [code] = await once(child, "close"); return { code, stdout, stderr };
+}
+
+function fakeChild({ closeOnEnd = false, closeOnKill = true, writeError = null } = {}) {
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.writes = []; child.kills = [];
+  const originalWrite = child.stdin.write.bind(child.stdin); child.stdin.write = (chunk, callback) => { child.writes.push(String(chunk)); if (writeError) { queueMicrotask(() => callback?.(writeError)); return false; } return originalWrite(chunk, callback); };
+  const originalEnd = child.stdin.end.bind(child.stdin); child.stdin.end = (...args) => { const result = originalEnd(...args); if (closeOnEnd) queueMicrotask(() => child.emit("close", 0, null)); return result; };
+  child.kill = (signal = "SIGTERM") => { child.kills.push(signal); if (closeOnKill) queueMicrotask(() => child.emit("close", null, signal)); return true; };
+  return child;
+}
 
 function workerResponse(embedding, quality = 0.9, extra = {}) {
-  return { ok: true, embedding, quality, modelId: policy.modelId, modelRevision: policy.modelRevision, ...extra };
+  return { ok: true, embedding, quality, modelId: policy.modelId, modelRevision: policy.modelRevision, snapshotManifestHash: evaluatorSnapshotManifestHash, ...extra };
 }
 
 function fakeWorkerFor({ output = [1, 0], face = [1, 0], body = [0.8, 0.6], quality = 0.9, response = null } = {}) {
@@ -50,8 +73,8 @@ function context(root, overrides = {}) {
       evaluation: { minimumScore: 0.75, requiredDimensions: ["face", "hair", "outfit", "body", "quality"] }
     },
     references: [
-      { requestedSlot: "face_master", slot: "face_master", sourcePath: path.join(root, "face.png") },
-      { requestedSlot: "body_side", slot: "body_side", sourcePath: path.join(root, "body.png") }
+      { requestedSlot: "face_master", slot: "face_master", sourcePath: path.join(root, "face.png"), sourceSha256: sha256("face") },
+      { requestedSlot: "body_side", slot: "body_side", sourcePath: path.join(root, "body.png"), sourceSha256: sha256("body") }
     ],
     providerProof: { providerId: "flux2_klein_4b", terminalOutputNode: "6" },
     score: 0,
@@ -81,20 +104,32 @@ try {
   assert.equal(result.evaluatorPolicyHash, evaluatorPolicyHash);
   assert.equal(result.evaluatorImplementationHash, evaluatorImplementationHash);
   assert.equal(result.modelRevision, modelRevision);
+  assert.equal(dimensionThreshold, Math.min(...Object.values(policy.dimensionFloors)));
   assert.match(evaluatorPolicyHash, /^[a-f0-9]{64}$/);
   assert.match(evaluatorImplementationHash, /^[a-f0-9]{64}$/);
   const implementationBytes = Buffer.concat([
     await readFile(path.join(repoRoot, "scripts/evaluators/siglip2-character-evaluator.mjs")),
     await readFile(path.join(repoRoot, "scripts/evaluators/siglip2-character-worker.py")),
     await readFile(path.join(repoRoot, "examples/character-consistency-benchmark/siglip2-evaluator.example.json")),
-    Buffer.from(policy.modelRevision)
+    Buffer.from(policy.modelRevision),
+    await readFile(path.join(repoRoot, "examples/character-consistency-benchmark/siglip2-snapshot-manifest.json")),
+    Buffer.from(evaluatorSnapshotManifestHash)
   ]);
   assert.equal(evaluatorImplementationHash, sha256(implementationBytes), "implementation proof covers exact ESM, Python, policy, and revision bytes");
-  assert.equal(evaluatorPolicyHash, sha256(Buffer.concat([await readFile(path.join(repoRoot, "examples/character-consistency-benchmark/siglip2-evaluator.example.json")), Buffer.from(policy.modelRevision)])));
+  assert.equal(evaluatorSnapshotManifestHash, sha256(JSON.stringify(JSON.parse(await readFile(path.join(repoRoot, "examples/character-consistency-benchmark/siglip2-snapshot-manifest.json"), "utf8")))));
+  assert.equal(evaluatorPolicyHash, sha256(await readFile(path.join(repoRoot, "examples/character-consistency-benchmark/siglip2-evaluator.example.json"))), "production policy hash is the exact policy file hash");
 
   const normalizedWorker = fakeWorkerFor({ output: [10, 0], face: [20, 0], body: [8, 6] });
   const normalized = await createSiglip2Evaluator({ worker: normalizedWorker, policy }).evaluateCharacterShot(context(tempRoot));
   assert.deepEqual(normalized.dimensionScores, result.dimensionScores, "finite embeddings are normalized before cosine scoring");
+
+  const mutablePolicy = structuredClone(policy); mutablePolicy.dimensionFloors.face = 0.1;
+  const customPolicyWorker = fakeWorkerFor(); const customEvaluator = createSiglip2Evaluator({ worker: customPolicyWorker, policy: mutablePolicy });
+  const capturedCustomHash = customEvaluator.evaluatorPolicyHash; mutablePolicy.dimensionFloors.face = 0.99; mutablePolicy.weightsByScale.medium.face = 0;
+  assert.equal(customEvaluator.evaluatorPolicy.dimensionFloors.face, 0.1, "factory deep-clones the active policy");
+  assert.equal(Object.isFrozen(customEvaluator.evaluatorPolicy), true); assert.equal(Object.isFrozen(customEvaluator.evaluatorPolicy.dimensionFloors), true); assert.equal(Object.isFrozen(customEvaluator.evaluatorPolicy.weightsByScale.medium), true);
+  assert.notEqual(capturedCustomHash, evaluatorPolicyHash, "a custom active policy cannot report the production policy hash");
+  const customResult = await customEvaluator.evaluateCharacterShot(context(tempRoot)); assert.equal(customResult.evaluatorPolicyHash, capturedCustomHash);
 
   const closeWorker = fakeWorkerFor({ quality: 0.9 });
   const closeScale = await createSiglip2Evaluator({ worker: closeWorker, policy }).evaluateCharacterShot(context(tempRoot, { shot: { ...context(tempRoot).shot, scale: "close" } }));
@@ -115,6 +150,38 @@ try {
     Object.fromEntries(Object.entries(result.dimensionScores).filter(([key]) => key !== "quality")),
     "quality is independent of reference similarity"
   );
+
+  const slotWorker = fakeWorkerFor({ response: ({ path: imagePath }) => {
+    if (imagePath.endsWith("output.png") || /face|hair/.test(path.basename(imagePath))) return workerResponse([1, 0], 0.95);
+    return workerResponse([0, 1], 0.95);
+  } });
+  const fullBodyContext = context(tempRoot, {
+    shot: { ...context(tempRoot).shot, id: "full_body_action", scale: "full_body", evaluation: { minimumScore: 0.1, requiredDimensions: ["hair", "body"] } },
+    references: [
+      { slot: "face_master", sourcePath: path.join(tempRoot, "face.png"), sourceSha256: sha256("face") },
+      { slot: "hair_back", sourcePath: path.join(tempRoot, "hair.png"), sourceSha256: sha256("hair") },
+      { slot: "body_front", sourcePath: path.join(tempRoot, "body.png"), sourceSha256: sha256("body") }
+    ]
+  });
+  await writeFile(path.join(tempRoot, "hair.png"), "hair");
+  const fullBodySlots = await createSiglip2Evaluator({ worker: slotWorker, policy }).evaluateCharacterShot(fullBodyContext);
+  assert.equal(fullBodySlots.dimensionScores.hair, 1, "full-body hair uses face/hair references, never body fallback"); assert.equal(fullBodySlots.dimensionScores.body, 0.5);
+
+  const profileSlots = await createSiglip2Evaluator({ worker: fakeWorkerFor({ response: ({ path: imagePath }) => workerResponse(imagePath.endsWith("body.png") ? [0, 1] : [1, 0], 0.95) }), policy }).evaluateCharacterShot(context(tempRoot, {
+    shot: { ...context(tempRoot).shot, id: "left_profile", expectedView: "left_profile", evaluation: { minimumScore: 0.1, requiredDimensions: ["face", "body"] } },
+    references: [{ slot: "face_left", sourcePath: path.join(tempRoot, "face.png"), sourceSha256: sha256("face") }, { slot: "body_side", sourcePath: path.join(tempRoot, "body.png"), sourceSha256: sha256("body") }]
+  }));
+  assert.equal(profileSlots.dimensionScores.face, 1); assert.equal(profileSlots.dimensionScores.body, 0.5, "profile uses explicit face_left/body_side mappings");
+
+  const backSlots = await createSiglip2Evaluator({ worker: fakeWorkerFor({ response: ({ path: imagePath }) => workerResponse(imagePath.endsWith("body.png") ? [0, 1] : [1, 0], 0.95) }), policy }).evaluateCharacterShot(context(tempRoot, {
+    shot: { ...context(tempRoot).shot, id: "back_view", expectedView: "back", evaluation: { minimumScore: 0.1, requiredDimensions: ["hair", "outfit", "body"] } },
+    references: [{ slot: "hair_back", sourcePath: path.join(tempRoot, "hair.png"), sourceSha256: sha256("hair") }, { slot: "body_back", sourcePath: path.join(tempRoot, "body.png"), sourceSha256: sha256("body") }]
+  }));
+  assert.equal(backSlots.dimensionScores.hair, 1); assert.equal(backSlots.dimensionScores.outfit, 0.5); assert.equal(backSlots.dimensionScores.body, 0.5);
+
+  await assert.rejects(() => createSiglip2Evaluator({ worker: fakeWorkerFor(), policy }).evaluateCharacterShot(context(tempRoot, {
+    shot: { ...context(tempRoot).shot, evaluation: { minimumScore: 0.1, requiredDimensions: ["outfit"] } }, references: [{ slot: "face_master", sourcePath: path.join(tempRoot, "face.png"), sourceSha256: sha256("face") }]
+  })), (reason) => reason?.code === "EREFERENCE_DIMENSION", "a required dimension without a canonical slot fails closed");
 
   await assert.rejects(() => evaluator.evaluateCharacterShot(context(tempRoot, { outputPath: "" })), /output/i);
   await assert.rejects(() => evaluator.evaluateCharacterShot(context(tempRoot, { references: [] })), /reference/i);
@@ -156,6 +223,25 @@ try {
   assert.equal(trusted.requiresLocalOutput, true);
   await trusted.closeEvaluator();
 
+  const strictModuleSource = ({ id = "strict-character-evaluator", version = "1.2.3", implementationHash = "a".repeat(64), policyHash = "b".repeat(64), threshold = 0.5, omit = null } = {}) => [
+    omit === "evaluatorId" ? "" : `export const evaluatorId = ${JSON.stringify(id)};`,
+    omit === "evaluatorVersion" ? "" : `export const evaluatorVersion = ${JSON.stringify(version)};`,
+    omit === "evaluatorImplementationHash" ? "" : `export const evaluatorImplementationHash = ${JSON.stringify(implementationHash)};`,
+    omit === "evaluatorPolicyHash" ? "" : `export const evaluatorPolicyHash = ${JSON.stringify(policyHash)};`,
+    omit === "dimensionThreshold" ? "" : `export const dimensionThreshold = ${JSON.stringify(threshold)};`,
+    "export async function evaluateCharacterShot() { return {}; }"
+  ].join("\n");
+  for (const missing of ["evaluatorId", "evaluatorVersion", "evaluatorImplementationHash", "evaluatorPolicyHash", "dimensionThreshold"]) {
+    const modulePath = path.join(tempRoot, `missing-${missing}.mjs`); await writeFile(modulePath, strictModuleSource({ omit: missing }));
+    await assert.rejects(() => loadTrustedEvaluator(modulePath, { trustedRoot: tempRoot }), (reason) => reason?.code === "EEVALUATOR" && new RegExp(missing, "i").test(reason.message), `missing ${missing} fails closed`);
+  }
+  for (const [name, overrides] of [
+    ["reserved-id", { id: "programmatic" }], ["reserved-version", { version: "unversioned" }], ["bad-implementation", { implementationHash: "short" }], ["bad-policy", { policyHash: "not-a-hash" }], ["zero-threshold", { threshold: 0 }], ["large-threshold", { threshold: 1.1 }]
+  ]) {
+    const modulePath = path.join(tempRoot, `${name}.mjs`); await writeFile(modulePath, strictModuleSource(overrides));
+    await assert.rejects(() => loadTrustedEvaluator(modulePath, { trustedRoot: tempRoot }), (reason) => reason?.code === "EEVALUATOR", `${name} evaluator proof fails closed`);
+  }
+
   const pngBytes = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63606060f80f0001040100fca2c88f0000000049454e44ae426082", "hex");
   const artifactRoot = path.join(tempRoot, "report-artifacts");
   const staged = await stageComfyOutputForEvaluation({ response: { bytes: pngBytes, contentType: "image/png" }, artifactRoot, shotId: "front_close" });
@@ -170,6 +256,58 @@ try {
   const oversizedTransport = createFetchTransport(async () => ({ ok: true, headers: { get: (name) => name === "content-length" ? String(40 * 1024 * 1024 + 1) : "image/png" }, async arrayBuffer() { oversizedBodyRead = true; return pngBytes; } }));
   await assert.rejects(() => oversizedTransport.getBytes("http://127.0.0.1:8188/view?filename=x.png&subfolder=&type=output"), /40 MiB|large/i);
   assert.equal(oversizedBodyRead, false, "declared oversized output is rejected before buffering the body");
+
+  for (const declaredLength of [null, String(1024)]) {
+    let reads = 0; let cancelledStream = false; let arrayBufferCalled = false; const oneMiB = new Uint8Array(1024 * 1024);
+    const streamingTransport = createFetchTransport(async () => ({
+      ok: true,
+      headers: { get: (name) => name === "content-type" ? "image/png" : declaredLength },
+      body: { getReader: () => ({ async read() { reads += 1; return { done: false, value: oneMiB }; }, async cancel() { cancelledStream = true; } }) },
+      async arrayBuffer() { arrayBufferCalled = true; return pngBytes; }
+    }));
+    await assert.rejects(() => streamingTransport.getBytes("http://127.0.0.1:8188/view?filename=x.png&subfolder=&type=output"), /40 MiB|large/i);
+    assert.equal(reads, 41, "stream stops on the first chunk beyond 40 MiB"); assert.equal(cancelledStream, true); assert.equal(arrayBufferCalled, false, "streaming output never invokes unbounded arrayBuffer");
+  }
+
+  const orderedChild = fakeChild({ closeOnEnd: true }); const client = createPersistentSiglip2Worker({ spawnImpl: () => orderedChild, python: "python", workerPath: "worker.py", closeTimeoutMs: 20 });
+  const firstRequest = client.request({ type: "embed", path: "a" }); const secondRequest = client.request({ type: "embed", path: "b" }); await new Promise((resolve) => setImmediate(resolve));
+  const [firstId, secondId] = orderedChild.writes.map((line) => JSON.parse(line).id);
+  orderedChild.stdout.write(`${JSON.stringify({ id: secondId, ok: true, embedding: [0, 1] })}\n`); orderedChild.stdout.write(`${JSON.stringify({ id: firstId, ok: true, embedding: [1, 0] })}\n`);
+  assert.deepEqual((await secondRequest).embedding, [0, 1]); assert.deepEqual((await firstRequest).embedding, [1, 0]); assert.equal(client.pendingCount, 0, "out-of-order IDs resolve exactly once");
+  let closeSettled = false; const closing = client.close().then(() => { closeSettled = true; }); assert.equal(closeSettled, false); await closing; assert.equal(client.pendingCount, 0);
+
+  for (const protocolCase of ["unknown", "duplicate"]) {
+    const child = fakeChild(); const protocolClient = createPersistentSiglip2Worker({ spawnImpl: () => child, python: "python", workerPath: "worker.py", closeTimeoutMs: 5 });
+    const pending = protocolClient.request({ type: "embed", path: "x" }); await new Promise((resolve) => setImmediate(resolve)); const id = JSON.parse(child.writes[0]).id;
+    if (protocolCase === "unknown") child.stdout.write(`${JSON.stringify({ id: "unknown-id", ok: true })}\n`);
+    else { child.stdout.write(`${JSON.stringify({ id, ok: true, embedding: [1, 0] })}\n`); await pending; child.stdout.write(`${JSON.stringify({ id, ok: true, embedding: [1, 0] })}\n`); }
+    if (protocolCase === "unknown") await assert.rejects(pending, /NDJSON|protocol/i);
+    await new Promise((resolve) => setImmediate(resolve)); assert.equal(protocolClient.closed, true, `${protocolCase} ID closes the client`); assert.equal(protocolClient.pendingCount, 0); await protocolClient.close();
+  }
+
+  const lateChild = fakeChild({ closeOnEnd: false, closeOnKill: false }); const lateClient = createPersistentSiglip2Worker({ spawnImpl: () => lateChild, python: "python", workerPath: "worker.py", closeTimeoutMs: 20 });
+  const latePending = lateClient.request({ type: "embed", path: "late" }); await new Promise((resolve) => setImmediate(resolve)); const lateId = JSON.parse(lateChild.writes[0]).id;
+  const lateClosing = lateClient.close(); await assert.rejects(latePending, /closed/i); lateChild.stdout.write(`${JSON.stringify({ id: lateId, ok: true, embedding: [1, 0] })}\n`); lateChild.emit("close", 0, null); await lateClosing;
+  assert.equal(lateClient.closed, true); assert.equal(lateClient.pendingCount, 0, "late response cannot resurrect a closed request");
+
+  const writeFailureChild = fakeChild({ writeError: new Error("broken pipe") }); const writeFailureClient = createPersistentSiglip2Worker({ spawnImpl: () => writeFailureChild, python: "python", workerPath: "worker.py", closeTimeoutMs: 5 });
+  await assert.rejects(writeFailureClient.request({ type: "embed", path: "x" }), /write|worker/i); assert.equal(writeFailureClient.closed, true); assert.equal(writeFailureClient.pendingCount, 0); await writeFailureClient.close();
+
+  const slowCloseChild = fakeChild({ closeOnEnd: false, closeOnKill: true }); const slowCloseClient = createPersistentSiglip2Worker({ spawnImpl: () => slowCloseChild, python: "python", workerPath: "worker.py", closeTimeoutMs: 5 });
+  await slowCloseClient.close(); assert.ok(slowCloseChild.kills.length >= 1, "bounded graceful close escalates to process kill"); assert.equal(slowCloseClient.pendingCount, 0);
+
+  const processLike = new EventEmitter(); const signalController = new AbortController(); const signalLifecycle = installBenchmarkSignalHandlers(signalController, processLike);
+  processLike.emit("SIGTERM"); assert.equal(signalController.signal.aborted, true); assert.equal(signalController.signal.reason?.code, "ECANCELLED"); assert.equal(signalLifecycle.exitCode(), 143);
+  signalLifecycle.dispose(); assert.equal(processLike.listenerCount("SIGINT"), 0); assert.equal(processLike.listenerCount("SIGTERM"), 0);
+
+  const integrityRoot = path.join(tempRoot, "integrity"); await mkdir(integrityRoot); const miniA = Buffer.from("alpha"); const miniB = Buffer.from("beta"); await writeFile(path.join(integrityRoot, "a.json"), miniA); await writeFile(path.join(integrityRoot, "b.bin"), miniB);
+  const miniManifest = { manifestVersion: 1, modelId: policy.modelId, modelRevision: policy.modelRevision, files: [{ path: "a.json", size: miniA.length, sha256: sha256(miniA) }, { path: "b.bin", size: miniB.length, sha256: sha256(miniB) }] };
+  const miniManifestPath = path.join(tempRoot, "mini-manifest.json"); const miniManifestBytes = Buffer.from(`${JSON.stringify(miniManifest)}\n`); const miniManifestHash = sha256(JSON.stringify(miniManifest)); await writeFile(miniManifestPath, miniManifestBytes);
+  const verifyArgs = [path.join(repoRoot, "scripts/evaluators/siglip2-character-worker.py"), "--verify-snapshot", integrityRoot, miniManifestPath, miniManifestHash];
+  const verifiedMini = await runChild(comfyPython, verifyArgs); assert.equal(verifiedMini.code, 0, verifiedMini.stderr); assert.equal(JSON.parse(verifiedMini.stdout).snapshotManifestHash, miniManifestHash);
+  await unlink(path.join(integrityRoot, "b.bin")); const missingMini = await runChild(comfyPython, verifyArgs); assert.equal(JSON.parse(missingMini.stdout).errorCode, "EMODEL_REVISION");
+  await writeFile(path.join(integrityRoot, "b.bin"), "tampered"); const tamperedMini = await runChild(comfyPython, verifyArgs); assert.equal(JSON.parse(tamperedMini.stdout).errorCode, "EMODEL_INTEGRITY");
+  await writeFile(miniManifestPath, `${JSON.stringify({ ...miniManifest, modelRevision: "tampered" })}\n`); const tamperedManifest = await runChild(comfyPython, verifyArgs); assert.equal(JSON.parse(tamperedManifest.stdout).errorCode, "EMODEL_INTEGRITY");
 
   await evaluator.closeEvaluator();
   assert.equal(worker.closed, 1);

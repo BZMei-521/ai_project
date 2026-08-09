@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import stat
@@ -18,6 +19,8 @@ MODEL_REVISION = "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
 MODEL_DIR = Path(
     r"C:\Users\Administrator\AppData\Local\Comfy-Desktop\ComfyUI-Shared\models\character_evaluators\siglip2-base-patch16-224-75de2d5"
 )
+SNAPSHOT_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "examples" / "character-consistency-benchmark" / "siglip2-snapshot-manifest.json"
+SNAPSHOT_MANIFEST_SHA256 = "451ee614b7cf3349a125ffb24fa757238a455d369cb1b7ce15f6fc19b33a3b68"
 MAX_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_DIMENSION = 8192
 APPROVED_FORMATS = {"PNG", "JPEG", "WEBP"}
@@ -25,6 +28,7 @@ APPROVED_FORMATS = {"PNG", "JPEG", "WEBP"}
 _processor = None
 _model = None
 _device = None
+_snapshot_manifest_hash = None
 
 
 class WorkerError(Exception):
@@ -33,12 +37,70 @@ class WorkerError(Exception):
         self.code = code
 
 
+def _sha256_file(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError as exc:
+        raise WorkerError("EMODEL_REVISION") from exc
+    return digest.hexdigest()
+
+
+def _verify_snapshot(model_dir: Path = MODEL_DIR, manifest_path: Path = SNAPSHOT_MANIFEST_PATH, expected_manifest_hash: str = SNAPSHOT_MANIFEST_SHA256) -> str:
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        raise WorkerError("EMODEL_REVISION") from exc
+    try:
+        manifest = json.loads(manifest_bytes)
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        raise WorkerError("EMODEL_INTEGRITY") from exc
+    if not isinstance(manifest, dict):
+        raise WorkerError("EMODEL_INTEGRITY")
+    canonical_manifest = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    manifest_hash = hashlib.sha256(canonical_manifest).hexdigest()
+    if not isinstance(expected_manifest_hash, str) or len(expected_manifest_hash) != 64 or manifest_hash != expected_manifest_hash.lower():
+        raise WorkerError("EMODEL_INTEGRITY")
+    files = manifest.get("files")
+    if manifest.get("manifestVersion") != 1 or manifest.get("modelId") != MODEL_ID or manifest.get("modelRevision") != MODEL_REVISION or not isinstance(files, list) or not files:
+        raise WorkerError("EMODEL_REVISION")
+    try:
+        root = model_dir.resolve(strict=True)
+    except OSError as exc:
+        raise WorkerError("EMODEL_REVISION") from exc
+    seen = set()
+    for entry in files:
+        relative = entry.get("path") if isinstance(entry, dict) else None
+        size = entry.get("size") if isinstance(entry, dict) else None
+        expected_hash = entry.get("sha256") if isinstance(entry, dict) else None
+        if not isinstance(relative, str) or not relative or relative in seen or "\\" in relative or Path(relative).is_absolute() or any(part in ("", ".", "..") for part in relative.split("/")):
+            raise WorkerError("EMODEL_INTEGRITY")
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0 or not isinstance(expected_hash, str) or len(expected_hash) != 64:
+            raise WorkerError("EMODEL_INTEGRITY")
+        seen.add(relative)
+        try:
+            candidate = (root / Path(*relative.split("/"))).resolve(strict=True)
+            candidate.relative_to(root)
+            file_stat = candidate.stat()
+        except (OSError, ValueError) as exc:
+            raise WorkerError("EMODEL_REVISION") from exc
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise WorkerError("EMODEL_REVISION")
+        if file_stat.st_size != size or _sha256_file(candidate) != expected_hash.lower():
+            raise WorkerError("EMODEL_INTEGRITY")
+    return manifest_hash
+
+
 def _load_model():
-    global _processor, _model, _device
+    global _processor, _model, _device, _snapshot_manifest_hash
     if _model is not None:
         return _processor, _model, _device
-    if not MODEL_DIR.is_dir() or not (MODEL_DIR / "config.json").is_file():
-        raise WorkerError("EMODEL_MISSING")
+    _snapshot_manifest_hash = _verify_snapshot()
     try:
         import torch
         from transformers import AutoModel, AutoProcessor
@@ -137,6 +199,7 @@ def _response(request: Any) -> dict[str, Any]:
             **result,
             "modelId": MODEL_ID,
             "modelRevision": MODEL_REVISION,
+            "snapshotManifestHash": _snapshot_manifest_hash,
             "device": _device,
         }
     except WorkerError as exc:
@@ -170,6 +233,7 @@ def _self_test() -> int:
             "ok": bool(vector) and all(math.isfinite(value) for value in vector) and abs(norm - 1.0) <= 1e-5,
             "modelId": MODEL_ID,
             "modelRevision": MODEL_REVISION,
+            "snapshotManifestHash": _snapshot_manifest_hash,
             "device": _device,
             "embeddingLength": len(vector),
             "embeddingNorm": round(norm, 6),
@@ -187,6 +251,14 @@ def _self_test() -> int:
 def main() -> int:
     if sys.argv[1:] == ["--self-test"]:
         return _self_test()
+    if len(sys.argv) == 5 and sys.argv[1] == "--verify-snapshot":
+        try:
+            manifest_hash = _verify_snapshot(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+            print(json.dumps({"ok": True, "snapshotManifestHash": manifest_hash, "modelId": MODEL_ID, "modelRevision": MODEL_REVISION}, separators=(",", ":")), flush=True)
+            return 0
+        except WorkerError as exc:
+            print(json.dumps({"ok": False, "errorCode": exc.code}, separators=(",", ":")), flush=True)
+            return 1
     if sys.argv[1:]:
         return 2
     for line in sys.stdin:

@@ -53,3 +53,40 @@ DONE
 
 - Scoped commit created with message `feat: score character consistency with local SigLIP2`.
 - The commit includes only the Task 3 `package.json` script hunk; other shared package changes remain unstaged.
+
+## Review remediation
+
+Status: DONE. All Critical, Important, and requested Minor review findings were fixed after commit `833e419`.
+
+### Trusted loader
+
+- `loadTrustedEvaluator` now requires explicit, non-reserved `evaluatorId` and `evaluatorVersion`, explicit 64-hex `evaluatorImplementationHash` and `evaluatorPolicyHash`, and explicit `dimensionThreshold` in `(0, 1]`.
+- Removed all ID, version, source-hash, serialized-policy-hash, and threshold fallbacks.
+- Focused tests create modules missing each export and modules with reserved/invalid values; every case fails with `EEVALUATOR`.
+
+### Snapshot integrity
+
+- Added `siglip2-snapshot-manifest.json` with relative paths, exact sizes, and SHA-256 hashes for all seven model/processor/tokenizer files used by the worker, including the 1.5 GB safetensors file.
+- The worker validates the canonical manifest digest, realpath containment, regular-file type, exact size, and streamed SHA-256 for every entry before any transformers load.
+- Missing manifest/file returns `EMODEL_REVISION`; manifest, size, or content mismatch returns `EMODEL_INTEGRITY`.
+- ESM implementation proof now covers exact manifest bytes plus canonical manifest digest. Worker responses and self-test report the same digest: `451ee614b7cf3349a125ffb24fa757238a455d369cb1b7ce15f6fc19b33a3b68`.
+- Focused negative tests use tiny files to prove missing-file, small-file tamper, and manifest-content tamper failures without modifying the real weights.
+
+### Policy, dimensions, transport, and lifecycle
+
+- Active policies are structured-cloned and recursively frozen. Canonically equivalent default policy uses the exact policy-file SHA-256; modified custom policy instances receive their own canonical active-policy hash.
+- Added versioned `siglip2-canonical-slots-v1` mapping: face uses face master/left/right, hair uses hair back plus face master/left/right, outfit/body use body front/side/back, and quality remains independent. Required dimensions without a matching slot fail `EREFERENCE_DIMENSION`.
+- Runner passes the complete canonical local identity reference manifest to evaluation while leaving the two Comfy references per shot and 16 transformed evidence records unchanged.
+- Terminal downloads now use `response.body.getReader()` with cumulative 40 MiB enforcement, immediate stream cancellation on excess, and no `arrayBuffer()` path. Missing and forged-small Content-Length streams are covered.
+- Persistent client supports out-of-order IDs and fails closed on unknown, duplicate, late IDs and write failures. `close()` clears pending requests, waits for child close, then uses bounded SIGTERM/SIGKILL escalation.
+- CLI SIGINT/SIGTERM handlers abort the benchmark, evaluator cleanup runs before handlers are removed, and exit codes are `130`/`143`. Programmatic evaluator ownership is unchanged.
+
+### Review-fix verification
+
+- RED: expanded focused checker first failed because `dimensionThreshold` was absent; after initial implementation it exposed an incorrect default-equivalent policy instance hash. Both were corrected without restoring fallbacks.
+- `npm.cmd run test:character-evaluator` — PASS
+- `npm.cmd run test:character-benchmark` — PASS
+- `npm.cmd run test:character-generation-evidence` — PASS
+- `npm.cmd run build` — PASS (`450` modules; existing Vite chunk warning only)
+- Manifest-verified real worker `--self-test` — PASS on CUDA, exact revision, manifest digest above, embedding length `768`, norm `1.0`.
+- Targeted Node syntax, Python syntax, and task-file whitespace checks — PASS.

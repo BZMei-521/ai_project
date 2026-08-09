@@ -166,20 +166,20 @@ export async function loadTrustedEvaluator(modulePath, { trustedRoot = PROJECT_R
   const root = await fileSystem.realpath(trustedRoot); const resolved = path.resolve(PROJECT_ROOT, value); let realFile;
   try { realFile = await fileSystem.realpath(resolved); } catch { throw fail("EEVALUATOR", "evaluator module does not exist"); }
   const relative = path.relative(root, realFile); if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !/\.m?js$/i.test(realFile)) throw fail("EEVALUATOR", "evaluator module is outside the trusted project root");
-  let source; try { source = await fileSystem.readFile(realFile); } catch { throw fail("EEVALUATOR", "evaluator module cannot be read"); }
+  try { await fileSystem.access(realFile); } catch { throw fail("EEVALUATOR", "evaluator module cannot be read"); }
   let loaded; try { loaded = await import(pathToFileURL(realFile).href); } catch (error) { throw fail("EEVALUATOR", `evaluator module import failed: ${String(error?.message ?? error)}`); }
   if (typeof loaded.evaluateCharacterShot !== "function") throw fail("EEVALUATOR", "evaluator module must export evaluateCharacterShot(context)");
-  const version = typeof loaded.evaluatorVersion === "string" ? loaded.evaluatorVersion.trim().slice(0, 80) : ""; if (!version || ["unversioned", "programmatic"].includes(version.toLowerCase())) throw fail("EEVALUATOR", "evaluator module must export an explicit stable evaluatorVersion");
-  const id = typeof loaded.evaluatorId === "string" && loaded.evaluatorId.trim() ? loaded.evaluatorId.trim().slice(0, 80) : "trusted_local_character_evaluator";
-  const dimensionThreshold = inRange(loaded.evaluatorDimensionThreshold) ? loaded.evaluatorDimensionThreshold : 0;
-  const policy = plain(loaded.evaluatorPolicy) ? loaded.evaluatorPolicy : { requiredDimensions: [...DIMENSIONS].sort(), dimensionThreshold };
-  const exportedImplementationHash = typeof loaded.evaluatorImplementationHash === "string" && /^[a-f0-9]{64}$/i.test(loaded.evaluatorImplementationHash) ? loaded.evaluatorImplementationHash.toLowerCase() : null;
-  const exportedPolicyHash = typeof loaded.evaluatorPolicyHash === "string" && /^[a-f0-9]{64}$/i.test(loaded.evaluatorPolicyHash) ? loaded.evaluatorPolicyHash.toLowerCase() : null;
+  const reserved = new Set(["default", "placeholder", "programmatic", "trusted_local_character_evaluator", "unknown", "unversioned"]);
+  const explicit = (name) => { const value = loaded[name]; if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(value.trim()) || reserved.has(value.trim().toLowerCase())) throw fail("EEVALUATOR", `evaluator module must explicitly export a non-reserved ${name}`); return value.trim(); };
+  const id = explicit("evaluatorId"); const version = explicit("evaluatorVersion");
+  const exportedHash = (name) => { const value = loaded[name]; if (typeof value !== "string" || !/^[a-f0-9]{64}$/i.test(value)) throw fail("EEVALUATOR", `evaluator module must explicitly export a valid ${name}`); return value.toLowerCase(); };
+  const implementationHash = exportedHash("evaluatorImplementationHash"); const policyHash = exportedHash("evaluatorPolicyHash");
+  const dimensionThreshold = loaded.dimensionThreshold; if (typeof dimensionThreshold !== "number" || !Number.isFinite(dimensionThreshold) || dimensionThreshold <= 0 || dimensionThreshold > 1) throw fail("EEVALUATOR", "evaluator module must explicitly export dimensionThreshold in (0, 1]");
   return {
     evaluateShot: loaded.evaluateCharacterShot,
     closeEvaluator: typeof loaded.closeEvaluator === "function" ? loaded.closeEvaluator : async () => undefined,
     requiresLocalOutput: loaded.requiresLocalOutput === true,
-    proof: { id, version, implementationHash: exportedImplementationHash ?? hash(source), policyHash: exportedPolicyHash ?? hash(stable(policy)), dimensionThreshold, modulePathHash: hash(relative.replace(/\\/g, "/")) }
+    proof: { id, version, implementationHash, policyHash, dimensionThreshold, modulePathHash: hash(relative.replace(/\\/g, "/")) }
   };
 }
 
@@ -284,6 +284,19 @@ export function compileBenchmarkWorkflow({ generationMode, provider, fixture, wo
 }
 
 function classify(error, fallback = "EPROTOCOL") { if (error?.code) return error; if (error?.name === "AbortError") return fail("ECANCELLED", "request cancelled"); return fail(fallback, String(error?.message ?? error)); }
+export function installBenchmarkSignalHandlers(controller, processLike = process) {
+  if (!(controller instanceof AbortController) || typeof processLike?.on !== "function") throw fail("ESIGNAL", "signal lifecycle requires an AbortController and process-like emitter");
+  let received = null;
+  const handlers = {
+    SIGINT: () => { received ??= "SIGINT"; if (!controller.signal.aborted) controller.abort(fail("ECANCELLED", "benchmark interrupted by SIGINT")); },
+    SIGTERM: () => { received ??= "SIGTERM"; if (!controller.signal.aborted) controller.abort(fail("ECANCELLED", "benchmark interrupted by SIGTERM")); }
+  };
+  processLike.on("SIGINT", handlers.SIGINT); processLike.on("SIGTERM", handlers.SIGTERM);
+  return {
+    exitCode: () => received === "SIGINT" ? 130 : received === "SIGTERM" ? 143 : null,
+    dispose() { const remove = typeof processLike.off === "function" ? processLike.off.bind(processLike) : processLike.removeListener?.bind(processLike); remove?.("SIGINT", handlers.SIGINT); remove?.("SIGTERM", handlers.SIGTERM); }
+  };
+}
 function abortError(reason, timedOut = false) { if (timedOut || reason?.code === "ETIMEOUT") return fail("ETIMEOUT", "request timed out"); if (reason?.code) return reason; return fail("ECANCELLED", typeof reason === "string" ? reason : "request cancelled"); }
 function waitPromise(promise, { signal, timeoutMs, label = "request" } = {}) {
   if (signal?.aborted) return Promise.reject(classify(signal.reason ?? fail("ECANCELLED", "request cancelled")));
@@ -291,13 +304,35 @@ function waitPromise(promise, { signal, timeoutMs, label = "request" } = {}) {
   const cancelled = new Promise((_, reject) => { if (signal) { abort = () => reject(classify(signal.reason ?? fail("ECANCELLED", "request cancelled"))); signal.addEventListener("abort", abort, { once: true }); } });
   return Promise.race([promise, timeout, cancelled]).finally(() => { if (timer) clearTimeout(timer); if (signal && abort) signal.removeEventListener("abort", abort); });
 }
+async function readLimitedResponseBody(response, { signal, timeoutMs }) {
+  const reader = response?.body?.getReader?.(); if (!reader || typeof reader.read !== "function" || typeof reader.cancel !== "function") throw fail("EPROTOCOL", "ComfyUI byte response must provide a readable stream");
+  const chunks = []; let total = 0; let complete = false;
+  try {
+    while (true) {
+      const part = await waitPromise(reader.read(), { signal, timeoutMs, label: "ComfyUI response stream" });
+      if (!plain(part) || typeof part.done !== "boolean") throw fail("EPROTOCOL", "ComfyUI response stream chunk is invalid");
+      if (part.done) { complete = true; break; }
+      const chunk = Buffer.from(part.value ?? []); if (!chunk.length) continue; total += chunk.length;
+      if (total > MAX_REFERENCE_BYTES) { await Promise.resolve(reader.cancel("size limit exceeded")).catch(() => undefined); throw fail("EOUTPUT_SIZE", "terminal output exceeds the 40 MiB limit"); }
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, total);
+  } finally { if (!complete && total <= MAX_REFERENCE_BYTES) await Promise.resolve(reader.cancel("response aborted")).catch(() => undefined); }
+}
 export function createFetchTransport(fetchImpl = globalThis.fetch, { requestTimeoutMs = 30_000 } = {}) {
   if (typeof fetchImpl !== "function") throw fail("ETRANSPORT", "fetch is unavailable");
   const request = async (url, init = {}, responseType = "json") => {
     const controller = new AbortController(); const timeoutMs = init.timeoutMs ?? requestTimeoutMs; let timedOut = false; let timer; const parent = init.signal; const abort = () => controller.abort(abortError(parent?.reason));
     if (parent?.aborted) abort(); else parent?.addEventListener("abort", abort, { once: true });
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) timer = setTimeout(() => { timedOut = true; controller.abort(abortError(fail("ETIMEOUT", "request timed out"), true)); }, timeoutMs);
-    let phase = "fetch"; try { const response = await waitPromise(fetchImpl(url, { ...init, signal: controller.signal }), { signal: controller.signal, timeoutMs: timeoutMs + 10, label: "ComfyUI request" }); if (!response?.ok) throw fail("EHTTP", `ComfyUI HTTP ${response?.status ?? "unknown"}`); if (responseType === "bytes") { const declaredLength = Number(response.headers?.get?.("content-length")); if (Number.isFinite(declaredLength) && declaredLength > MAX_REFERENCE_BYTES) throw fail("EOUTPUT_SIZE", "terminal output exceeds the 40 MiB limit"); } phase = "body"; const bodyPromise = responseType === "bytes" ? response.arrayBuffer() : response.json(); const body = await waitPromise(bodyPromise, { signal: controller.signal, timeoutMs: timeoutMs + 10, label: "ComfyUI response body" }); return responseType === "bytes" ? { bytes: Buffer.from(body), contentType: response.headers?.get?.("content-type") ?? null } : body; } catch (error) { if (controller.signal.aborted) throw abortError(controller.signal.reason, timedOut); const classified = classify(error, phase === "body" ? "EPROTOCOL" : "EOFFLINE"); if (classified.code === "EPROTOCOL" && phase === "fetch") throw fail("EOFFLINE", classified.message); throw classified; } finally { if (timer) clearTimeout(timer); parent?.removeEventListener("abort", abort); }
+    let phase = "fetch";
+    try {
+      const response = await waitPromise(fetchImpl(url, { ...init, signal: controller.signal }), { signal: controller.signal, timeoutMs: timeoutMs + 10, label: "ComfyUI request" }); if (!response?.ok) throw fail("EHTTP", `ComfyUI HTTP ${response?.status ?? "unknown"}`);
+      if (responseType === "bytes") { const declaredLength = Number(response.headers?.get?.("content-length")); if (Number.isFinite(declaredLength) && declaredLength > MAX_REFERENCE_BYTES) throw fail("EOUTPUT_SIZE", "terminal output exceeds the 40 MiB limit"); }
+      phase = "body";
+      if (responseType === "bytes") { const bytes = await readLimitedResponseBody(response, { signal: controller.signal, timeoutMs: timeoutMs + 10 }); return { bytes, contentType: response.headers?.get?.("content-type") ?? null }; }
+      return await waitPromise(response.json(), { signal: controller.signal, timeoutMs: timeoutMs + 10, label: "ComfyUI response body" });
+    } catch (error) { if (controller.signal.aborted) throw abortError(controller.signal.reason, timedOut); const classified = classify(error, phase === "body" ? "EPROTOCOL" : "EOFFLINE"); if (classified.code === "EPROTOCOL" && phase === "fetch") throw fail("EOFFLINE", classified.message); throw classified; } finally { if (timer) clearTimeout(timer); parent?.removeEventListener("abort", abort); }
   };
   return {
     getJson: (url, options = {}) => request(url, { method: "GET", ...options }),
@@ -399,7 +434,7 @@ export function createComfyExecutor({ compiledWorkflow, transport, clock = { sle
       const rawOutputBytes = Buffer.isBuffer(outputResponse) ? outputResponse : Buffer.isBuffer(outputResponse?.bytes) ? outputResponse.bytes : null;
       let outputSha256 = rawOutputBytes?.length ? hash(rawOutputBytes) : null; let outputPath = "";
       if (requireStagedOutput) { const staged = await stageComfyOutputForEvaluation({ response: outputResponse, artifactRoot, shotId: shot.id }, { fileSystem }); outputSha256 = staged.outputSha256; outputPath = staged.outputPath; }
-      const localReferences = identityReferenceManifest.length ? routeShotIdentityReferences(shot, identityReferenceManifest).map((item) => ({ requestedSlot: item.requestedSlot, slot: item.slot, sourcePath: item.sourcePath, transform: item.transform, sourceSha256: item.sourceSha256 })) : [];
+      const localReferences = identityReferenceManifest.map((item) => ({ slot: item.slot, sourcePath: item.sourcePath, sourceSha256: item.sourceSha256, logicalLabel: item.logicalLabel })).sort((left, right) => left.slot.localeCompare(right.slot));
       const evaluation = typeof evaluateShot === "function" ? await evaluateShot({ output, outputPath, outputSha256, signal: deadline.signal, shot: structuredClone(shot), character: { id: character, context: characterContext }, providerProof: structuredClone(compiledWorkflow.providerProof), references: structuredClone(localReferences), referenceEvidence: structuredClone(prepared.references), referenceManifest: Array.isArray(identityReferenceManifest) ? identityReferenceManifest.map(safeReferenceSource) : [], execution: { promptId, terminalOutputNode: compiledWorkflow.providerProof.terminalOutputNode } }) : null;
       if (!plain(evaluation)) return { status: "needs_review", actualProvider: compiledWorkflow.providerProof.providerId, bestPreview: output, failureDimensions: ["evaluation"], failureReason: "missing evaluator result", providerProof: compiledWorkflow.providerProof };
       return { status: evaluation.status, actualProvider: compiledWorkflow.providerProof.providerId, evaluatorProvider: evaluation.actualProvider, provenance: evaluation.provenance, score: evaluation.score, dimensionScores: evaluation.dimensionScores, retries: evaluation.retries, references: evaluation.references, referenceEvidence: prepared.references, outputSha256, bestPreview: evaluation.bestPreview, failureDimensions: evaluation.failureDimensions, failureReason: evaluation.failureReason, previewKind: evaluation.previewKind, isFallback: evaluation.isFallback, isCutout: evaluation.isCutout, output, terminalOutputNode: compiledWorkflow.providerProof.terminalOutputNode, providerProof: compiledWorkflow.providerProof };
@@ -460,14 +495,14 @@ export async function runCharacterConsistencyBenchmark(options, dependencies = {
   return finish();
 }
 async function main() {
-  let evaluator;
+  let evaluator; const controller = new AbortController(); const signalLifecycle = installBenchmarkSignalHandlers(controller);
   try {
     const args = parseBenchmarkCliArgs(process.argv.slice(2)); const fixture = JSON.parse(await fs.readFile(path.resolve(args.fixturePath ?? "examples/character-consistency-benchmark/benchmark.json"), "utf8")); const workflowJson = args.workflowPath ? await fs.readFile(path.resolve(args.workflowPath), "utf8") : undefined;
     let evaluatorSetupError; try { if (!args.evaluatorModulePath) throw fail("EEVALUATOR_REQUIRED", "--evaluator-module <trusted-local-esm-path> is required"); evaluator = await loadTrustedEvaluator(args.evaluatorModulePath); } catch (error) { evaluatorSetupError = error; }
     let project; let projectSetupError; try { if (args.projectPath) project = await loadBenchmarkProjectSubject(args.projectPath, args); } catch (error) { projectSetupError = error; }
-    const result = await runCharacterConsistencyBenchmark({ ...args, fixture, workflowJson, ...project }, { evaluateShot: evaluator?.evaluateShot, evaluatorProof: evaluator?.proof, evaluatorSetupError, projectSetupError, requireStagedOutput: evaluator?.requiresLocalOutput });
+    const result = await runCharacterConsistencyBenchmark({ ...args, fixture, workflowJson, ...project }, { evaluateShot: evaluator?.evaluateShot, evaluatorProof: evaluator?.proof, evaluatorSetupError, projectSetupError, requireStagedOutput: evaluator?.requiresLocalOutput, signal: controller.signal });
     console.log(JSON.stringify({ outputPath: result.outputPath, exitCode: result.exitCode, aggregate: result.report.aggregate, evidenceEligible: result.report.evidenceEligible, evidenceDigest: result.report.evidenceDigest }, null, 2)); process.exitCode = result.exitCode;
   } catch (error) { console.error(`${error?.code ?? "EBENCHMARK"}: ${error?.message ?? error}`); process.exitCode = 1; }
-  finally { await evaluator?.closeEvaluator?.().catch(() => undefined); }
+  finally { await evaluator?.closeEvaluator?.().catch(() => undefined); signalLifecycle.dispose(); const signalExitCode = signalLifecycle.exitCode(); if (signalExitCode !== null) process.exitCode = signalExitCode; }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
