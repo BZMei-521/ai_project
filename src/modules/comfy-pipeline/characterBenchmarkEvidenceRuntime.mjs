@@ -57,14 +57,14 @@ function normalizeProof(proof) {
 }
 
 function validReferences(references) {
-  if (!Array.isArray(references) || references.length !== 8) return false;
+  if (!Array.isArray(references) || references.length !== 16) return false;
   const pairs = new Set();
   for (let index = 0; index < references.length; index += 1) {
     const reference = references[index];
-    if (!plain(reference) || reference.shotId !== SHOT_IDS[index] || !REFERENCE_SLOTS.includes(reference.slot) || !sha256Value(reference.sourceSha256) || !sha256Value(reference.transformedSha256) || !TRANSFORMS.includes(reference.transform)) return false;
+    if (!plain(reference) || reference.shotId !== SHOT_IDS[Math.floor(index / 2)] || !REFERENCE_SLOTS.includes(reference.slot) || !sha256Value(reference.sourceSha256) || !sha256Value(reference.transformedSha256) || !TRANSFORMS.includes(reference.transform)) return false;
     const pair = `${reference.shotId}:${reference.slot}`; if (pairs.has(pair)) return false; pairs.add(pair);
   }
-  return true;
+  return SHOT_IDS.every((shotId) => references.filter((reference) => reference.shotId === shotId).length === 2);
 }
 
 function validShots(shots, provider, terminalOutputNode, dimensionThreshold) {

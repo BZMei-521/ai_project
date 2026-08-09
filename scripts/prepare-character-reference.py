@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import warnings
 
 from PIL import Image, ImageOps
 
@@ -23,10 +24,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def prepare(input_path: Path, transform: str) -> Image.Image:
+    warnings.simplefilter("error", Image.DecompressionBombWarning)
     with Image.open(input_path) as source:
-        source.load()
+        if source.format not in {"PNG", "JPEG", "WEBP"}:
+            raise ValueError("unsupported reference image format")
         if source.width > MAX_EDGE or source.height > MAX_EDGE:
             raise ValueError("reference image exceeds 8192x8192")
+        source.load()
         image = source.convert("RGB")
 
     if transform == "mirror_x":

@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { CHARACTER_GENERATION_PROVIDERS, inspectCharacterProvider } from "../src/modules/comfy-pipeline/characterProviderRegistryRuntime.mjs";
 import { inferCharacterView } from "../src/modules/comfy-pipeline/characterConsistencyRuntime.mjs";
@@ -83,15 +82,23 @@ export function parseBenchmarkCliArgs(argv) {
   return { generationMode: CLI_MODES[values.mode], character: text(values.character, "ECHARACTER", "character"), provider: values.provider, baseUrl: normalizeBaseUrl(values["base-url"]), outputPath: text(values.output, "EOUTPUT", "output path"), fixturePath: values.fixture, workflowPath: values.workflow, outputNode: values["output-node"], evaluatorModulePath: values["evaluator-module"], projectPath: values.project, workflowTokens: {} };
 }
 
-export async function loadIdentityReferenceManifest(identity, projectFile, { trustedRoot = PROJECT_ROOT, fileSystem = fs } = {}) {
-  const root = await fileSystem.realpath(trustedRoot); const base = path.dirname(projectFile); const manifest = [];
+function referenceFormat(bytes) {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
+  return null;
+}
+
+export async function loadIdentityReferenceManifest(identity, projectFile, { fileSystem = fs } = {}) {
+  const base = path.dirname(projectFile); const manifest = [];
   for (const [slot, field] of Object.entries(REFERENCE_SLOT_FIELDS)) {
     const value = identity?.[field]; if (typeof value !== "string" || !value.trim()) continue;
     if (/^(?:https?|data|node|file):/i.test(value)) throw fail("EREFERENCE_REQUIRED", `${field} must be a trusted local image`);
     let realFile; try { realFile = await fileSystem.realpath(path.resolve(base, value)); } catch { throw fail("EREFERENCE_REQUIRED", `${field} does not exist`); }
-    const relative = path.relative(root, realFile); if (relative.startsWith("..") || path.isAbsolute(relative) || !/\.(?:png|jpe?g|webp)$/i.test(realFile)) throw fail("EREFERENCE_REQUIRED", `${field} must be a trusted PNG, JPEG, or WebP image`);
+    const extension = path.extname(realFile).toLowerCase(); if (!new Set([".png", ".jpg", ".jpeg", ".webp"]).has(extension)) throw fail("EREFERENCE_REQUIRED", `${field} must be a PNG, JPEG, or WebP image`);
     const stat = await fileSystem.stat(realFile); if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_REFERENCE_BYTES) throw fail("EREFERENCE_REQUIRED", `${field} must be a non-empty regular image no larger than 40 MiB`);
-    const bytes = await fileSystem.readFile(realFile); manifest.push(Object.freeze({ slot, sourceSha256: hash(bytes), logicalLabel: field.replace(/Path$/, ""), sourcePath: realFile }));
+    const bytes = await fileSystem.readFile(realFile); const format = referenceFormat(bytes); const expectedFormat = extension === ".png" ? "png" : extension === ".webp" ? "webp" : "jpeg"; if (format !== expectedFormat) throw fail("EREFERENCE_REQUIRED", `${field} content does not match its approved image extension`);
+    manifest.push(Object.freeze({ slot, sourceSha256: hash(bytes), logicalLabel: field.replace(/Path$/, ""), sourcePath: realFile }));
   }
   if (!manifest.some((item) => item.slot === "face_master") || !manifest.some((item) => item.slot === "body_front") || manifest.length < 3) throw fail("EREFERENCE_REQUIRED", "identity pack must provide face_master, body_front, and at least one additional reference");
   return Object.freeze(manifest.sort((left, right) => left.slot.localeCompare(right.slot)));
@@ -162,7 +169,7 @@ export async function loadTrustedEvaluator(modulePath, { trustedRoot = PROJECT_R
   let source; try { source = await fileSystem.readFile(realFile); } catch { throw fail("EEVALUATOR", "evaluator module cannot be read"); }
   let loaded; try { loaded = await import(pathToFileURL(realFile).href); } catch (error) { throw fail("EEVALUATOR", `evaluator module import failed: ${String(error?.message ?? error)}`); }
   if (typeof loaded.evaluateCharacterShot !== "function") throw fail("EEVALUATOR", "evaluator module must export evaluateCharacterShot(context)");
-  const version = typeof loaded.evaluatorVersion === "string" && loaded.evaluatorVersion.trim() ? loaded.evaluatorVersion.trim().slice(0, 80) : "unversioned";
+  const version = typeof loaded.evaluatorVersion === "string" ? loaded.evaluatorVersion.trim().slice(0, 80) : ""; if (!version || ["unversioned", "programmatic"].includes(version.toLowerCase())) throw fail("EEVALUATOR", "evaluator module must export an explicit stable evaluatorVersion");
   const id = typeof loaded.evaluatorId === "string" && loaded.evaluatorId.trim() ? loaded.evaluatorId.trim().slice(0, 80) : "trusted_local_character_evaluator";
   const dimensionThreshold = inRange(loaded.evaluatorDimensionThreshold) ? loaded.evaluatorDimensionThreshold : 0;
   const policy = plain(loaded.evaluatorPolicy) ? loaded.evaluatorPolicy : { requiredDimensions: [...DIMENSIONS].sort(), dimensionThreshold };
@@ -199,7 +206,7 @@ export function compileBenchmarkWorkflow({ generationMode, provider, fixture, wo
   for (const token of requiredTokens) if (!found.has(token) && !token.startsWith("REFERENCE_IMAGE_")) throw fail("ETOKEN", `workflow is missing required token: ${token}`);
   for (const token of found) if (!known.has(token)) throw fail("ETOKEN", `workflow contains unknown token: ${token}`);
   const terminalProof = proveTerminalProviderWorkflow(provider, graph, outputNode);
-  if (!terminalProof.ok) throw fail(String(terminalProof.reason ?? "").startsWith("terminal_") ? "EOUTPUT_NODE" : "EPROVIDER_PROOF", terminalProof.reason);
+  if (!terminalProof.ok) { const terminalSelectionFailure = String(terminalProof.reason ?? "").startsWith("terminal_"); const code = terminalSelectionFailure ? "EOUTPUT_NODE" : generationMode === "zero_shot_multi_reference" ? "EZERO_SHOT_MODEL_PATH" : "EPROVIDER_PROOF"; throw fail(code, terminalProof.reason); }
   const terminalOutputNode = terminalProof.terminalOutputNode;
   const resolveToken = (value) => { const exact = typeof value === "string" ? value.match(/^\{\{([A-Z][A-Z0-9_]*)\}\}$/) : null; return exact ? workflowTokens[exact[1]] : value; };
   const ancestorIds = new Set((terminalProof.ancestorNodeIds ?? []).map(String));
@@ -260,6 +267,7 @@ export function compileBenchmarkWorkflow({ generationMode, provider, fixture, wo
     );
     if (mismatch) throw fail("EPROVIDER_PROOF", "character_lora_binding_mismatch");
   }
+  if (generationMode === "zero_shot_multi_reference" && (modelConsumers.length === 0 || consumerTraces.some((traced) => !traced.valid))) throw fail("EZERO_SHOT_MODEL_PATH", "zero-shot workflow contains an unprovable terminal MODEL path");
   if (generationMode === "zero_shot_multi_reference" && activeTerminalLora) throw fail("EZERO_SHOT_LORA", "zero-shot workflow contains an active terminal character LoRA");
   if (missingReferenceTokens.length) throw fail("ETOKEN", `workflow is missing required token: ${missingReferenceTokens[0]}`);
   if (generationMode === "lora_augmented" && (!requiresActiveLoraProof || modelConsumers.length === 0 || consumerTraces.some((traced) => !traced.valid || traced.bindings.length === 0))) throw fail("EPROVIDER_PROOF", "character_lora_binding_missing");
@@ -292,12 +300,23 @@ export function createFetchTransport(fetchImpl = globalThis.fetch, { requestTime
   };
 }
 
-async function transformReferenceWithPython({ inputPath, outputPath, transform }) {
+async function resolveReferencePython() {
   let command = process.platform === "win32" ? "py" : "python3"; let prefix = process.platform === "win32" ? ["-3"] : [];
   if (process.platform === "win32" && process.env.LOCALAPPDATA) { const comfyPython = path.join(process.env.LOCALAPPDATA, "Comfy-Desktop", "ComfyUI-Installs", "ComfyUI", "ComfyUI", ".venv", "Scripts", "python.exe"); try { await fs.access(comfyPython); command = comfyPython; prefix = []; } catch { /* use the Python launcher fallback */ } }
-  const child = spawn(command, [...prefix, path.join(PROJECT_ROOT, "scripts/prepare-character-reference.py"), "--input", inputPath, "--output", outputPath, "--transform", transform], { cwd: PROJECT_ROOT, stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
-  let stderr = ""; child.stderr.on("data", (chunk) => { stderr += chunk; }); const [code] = await Promise.race([once(child, "close"), once(child, "error").then(([error]) => { throw fail("EREFERENCE_TRANSFORM", String(error?.message ?? error)); })]);
-  if (code !== 0) throw fail("EREFERENCE_TRANSFORM", safeDiagnostic(stderr || `reference transformer exited ${code}`));
+  return { command, prefix };
+}
+
+export async function transformReferenceWithPython({ inputPath, outputPath, transform, signal }, dependencies = {}) {
+  if (signal?.aborted) throw abortError(signal.reason);
+  const resolved = await (dependencies.resolvePython ?? resolveReferencePython)(); const command = typeof resolved === "string" ? resolved : resolved.command; const prefix = typeof resolved === "string" ? [] : resolved.prefix ?? []; const spawnImpl = dependencies.spawnImpl ?? spawn;
+  const child = spawnImpl(command, [...prefix, path.join(PROJECT_ROOT, "scripts/prepare-character-reference.py"), "--input", inputPath, "--output", outputPath, "--transform", transform], { cwd: PROJECT_ROOT, stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
+  child.stderr?.resume?.();
+  let abortReason = null; const abort = () => { abortReason = abortError(signal?.reason); try { child.kill(); } catch { /* close/error still decides process completion */ } }; signal?.addEventListener("abort", abort, { once: true }); if (signal?.aborted) abort();
+  try {
+    const { code } = await new Promise((resolve, reject) => { child.once("close", (code, exitSignal) => resolve({ code, exitSignal })); child.once("error", () => reject(fail("EREFERENCE_TRANSFORM", "reference transform process could not start"))); });
+    if (abortReason) throw abortReason;
+    if (code !== 0) throw fail("EREFERENCE_TRANSFORM", "reference transform process failed");
+  } finally { signal?.removeEventListener("abort", abort); }
 }
 
 async function uploadComfyReference({ endpoint, bytes, filename, subfolder, overwrite, signal, transport }) {
@@ -306,23 +325,36 @@ async function uploadComfyReference({ endpoint, bytes, filename, subfolder, over
   try { return await transport.postFormData(endpoint, form, { signal }); } catch (error) { throw fail("EREFERENCE_UPLOAD", classify(error).message); }
 }
 
+function validateReferenceUploadResponse(response, { filename, subfolder }) {
+  const normalizedFolder = (value) => typeof value === "string" ? value.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
+  if (!plain(response) || response.name !== filename || normalizedFolder(response.subfolder) !== normalizedFolder(subfolder) || response.type !== "input") throw fail("EREFERENCE_UPLOAD", "ComfyUI returned an invalid content-addressed reference upload response");
+}
+
 export async function prepareShotIdentityReferences({ shot, identityReferenceManifest, baseUrl, stagingRoot, signal }, dependencies = {}) {
   const routed = routeShotIdentityReferences(shot, identityReferenceManifest); const fileSystem = dependencies.fileSystem ?? fs; const ownedRoot = await fileSystem.mkdtemp(path.join(stagingRoot ?? os.tmpdir(), "character-reference-")); const references = []; const workflowTokens = {};
   try {
     for (let index = 0; index < routed.length; index += 1) {
       const item = routed[index]; const outputPath = path.join(ownedRoot, `${index}.png`); const transformReference = dependencies.transformReference ?? transformReferenceWithPython;
-      try { await transformReference({ inputPath: item.sourcePath, outputPath, transform: item.transform, signal }); } catch (error) { if (error?.code) throw error; throw fail("EREFERENCE_TRANSFORM", String(error?.message ?? error)); }
+      try { await transformReference({ inputPath: item.sourcePath, outputPath, transform: item.transform, signal }); } catch (error) { if (error?.code) throw error; throw fail("EREFERENCE_TRANSFORM", "reference transform failed"); }
       let bytes; try { bytes = await fileSystem.readFile(outputPath); } catch { throw fail("EREFERENCE_TRANSFORM", "reference transformer did not produce an output PNG"); }
       if (!bytes.length) throw fail("EREFERENCE_TRANSFORM", "reference transformer produced an empty PNG");
       const transformedSha256 = hash(bytes); const filename = `${transformedSha256}.png`; const subfolder = "character-benchmark"; const uploadReference = dependencies.uploadReference ?? ((input) => uploadComfyReference({ ...input, transport: dependencies.transport }));
-      await uploadReference({ endpoint: `${baseUrl}/upload/image`, bytes, filename, subfolder, overwrite: false, signal });
+      const uploadResponse = await uploadReference({ endpoint: `${baseUrl}/upload/image`, bytes, filename, subfolder, overwrite: false, signal }); validateReferenceUploadResponse(uploadResponse, { filename, subfolder });
       workflowTokens[index === 0 ? "REFERENCE_IMAGE_A" : "REFERENCE_IMAGE_B"] = `${subfolder}/${filename}`;
       references.push(Object.freeze({ shotId: shot.id, slot: item.requestedSlot, sourceSha256: item.sourceSha256, transformedSha256, transform: item.transform }));
     }
     return Object.freeze({ references: Object.freeze(references), workflowTokens: Object.freeze(workflowTokens) });
   } finally { await fileSystem.rm(ownedRoot, { recursive: true, force: true }).catch(() => undefined); }
 }
-function safeDiagnostic(value) { return String(value ?? "").replace(/https?:\/\/[^\s"']+/gi, "[url]").replace(/(?:authorization|api[_ -]?key|token)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]").slice(0, 500); }
+function safeDiagnostic(value) {
+  return String(value ?? "")
+    .replace(/(?:https?|file):\/\/[^\s"']+/gi, "[url]")
+    .replace(/\\\\[^\s"']+/g, "[path]")
+    .replace(/\b[A-Za-z]:[\\/][^\s"']+/g, "[path]")
+    .replace(/(^|[\s(])\/(?!\/)[^\s"']+/g, "$1[path]")
+    .replace(/(?:authorization|api[_ -]?key|token)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .slice(0, 500);
+}
 function statusError(entry) { const status = entry?.status; if (!plain(status)) return null; const state = String(status.status_str ?? status.status ?? "").toLowerCase(); if (["error", "failed", "cancelled"].includes(state)) { let details = status.messages ?? status.execution_errors ?? entry?.errors ?? state; try { details = typeof details === "string" ? details : JSON.stringify(details); } catch { details = state; } return safeDiagnostic(details); } return null; }
 function outputFor(history, promptId, nodeId) { const entry = history?.[promptId]; const executionError = statusError(entry); if (executionError) throw fail("EEXECUTION", executionError); const node = entry?.outputs?.[nodeId]; const image = Array.isArray(node?.images) ? node.images[0] : null; if (!plain(image) || !text(image.filename, "EOUTPUT", "terminal image filename")) { if (entry?.status?.completed === true) throw fail("EOUTPUT", "completed terminal output is missing"); return null; } return image; }
 
@@ -370,7 +402,8 @@ function sanitizeArtifact(value, baseUrl, { terminal = false } = {}) {
 const safeArtifacts = (value, baseUrl, limit = 8) => Array.isArray(value) ? value.slice(0, limit).map((item) => sanitizeArtifact(item, baseUrl)).filter(Boolean) : [];
 function emptyShot(shot) { return { id: shot.id, outputSha256: null, score: null, durationMs: 0, retries: 0, actualProvider: null, references: [], output: null, bestPreview: null, failureDimensions: [], failureReason: null, dimensionScores: {}, provenance: null, terminalOutputNode: null, finalStatus: "cancelled" }; }
 function safeProof(value) { return value?.providerId ? { providerId: safeString(value.providerId, 80), validator: safeString(value.validator, 120), reason: safeString(value.reason, 120), workflowDigest: safeString(value.workflowDigest, 80), terminalOutputNode: safeString(value.terminalOutputNode, 80), requiredTokens: safeArray(value.requiredTokens, 20), ancestorNodeIds: safeArray(value.ancestorNodeIds, 100), authoritativeModelBindings: Array.isArray(value.authoritativeModelBindings) ? value.authoritativeModelBindings.slice(0, 10).map((item) => plain(item) ? { id: safeString(item.id, 80), classType: safeString(item.classType, 80), field: safeString(item.field, 80), model: safeString(item.model, 240) } : null).filter(Boolean) : [], authoritativeLoraBindings: Array.isArray(value.authoritativeLoraBindings) ? value.authoritativeLoraBindings.slice(0, 10).map((item) => plain(item) ? { id: safeString(item.id, 80), classType: safeString(item.classType, 80), field: safeString(item.field, 80), loraName: safeString(item.loraName, 240), strengthModel: typeof item.strengthModel === "number" && Number.isFinite(item.strengthModel) ? item.strengthModel : null, strengthClip: typeof item.strengthClip === "number" && Number.isFinite(item.strengthClip) ? item.strengthClip : null, clipStrengthPolicy: safeString(item.clipStrengthPolicy, 40), modelPathNodeIds: safeArray(item.modelPathNodeIds, 40), modelPathEdges: Array.isArray(item.modelPathEdges) ? item.modelPathEdges.slice(0, 40).map((edge) => plain(edge) && Number.isInteger(edge.fromOutputIndex) ? { fromNodeId: safeString(edge.fromNodeId, 80), fromOutputIndex: edge.fromOutputIndex, toNodeId: safeString(edge.toNodeId, 80), toInput: safeString(edge.toInput, 80) } : null).filter(Boolean) : [] } : null).filter(Boolean) : [] } : null; }
-function safeEvaluatorProof(value) { return plain(value) ? { id: safeString(value.id, 80), version: safeString(value.version, 80) ?? "programmatic", implementationHash: typeof value.implementationHash === "string" && /^[a-f0-9]{64}$/i.test(value.implementationHash) ? value.implementationHash.toLowerCase() : null, policyHash: typeof value.policyHash === "string" && /^[a-f0-9]{64}$/i.test(value.policyHash) ? value.policyHash.toLowerCase() : null, dimensionThreshold: inRange(value.dimensionThreshold) ? value.dimensionThreshold : null, modulePathHash: typeof value.modulePathHash === "string" && /^[a-f0-9]{64}$/i.test(value.modulePathHash) ? value.modulePathHash.toLowerCase() : null } : { id: null, version: "programmatic", implementationHash: null, policyHash: null, dimensionThreshold: null, modulePathHash: null }; }
+function safeEvaluatorProof(value) { const rawVersion = safeString(value?.version, 80); const version = rawVersion && !["unversioned", "programmatic"].includes(rawVersion.toLowerCase()) ? rawVersion : null; return plain(value) ? { id: safeString(value.id, 80), version, implementationHash: typeof value.implementationHash === "string" && /^[a-f0-9]{64}$/i.test(value.implementationHash) ? value.implementationHash.toLowerCase() : null, policyHash: typeof value.policyHash === "string" && /^[a-f0-9]{64}$/i.test(value.policyHash) ? value.policyHash.toLowerCase() : null, dimensionThreshold: inRange(value.dimensionThreshold) ? value.dimensionThreshold : null, modulePathHash: typeof value.modulePathHash === "string" && /^[a-f0-9]{64}$/i.test(value.modulePathHash) ? value.modulePathHash.toLowerCase() : null } : { id: null, version: null, implementationHash: null, policyHash: null, dimensionThreshold: null, modulePathHash: null }; }
+const qualifiedEvaluatorProof = (proof) => Boolean(proof?.id && proof.version && /^[a-f0-9]{64}$/.test(proof.implementationHash ?? "") && /^[a-f0-9]{64}$/.test(proof.policyHash ?? "") && inRange(proof.dimensionThreshold));
 function safeSubject(value) { if (!plain(value)) return null; const subject = { characterAssetId: safeString(value.characterAssetId, 160), provider: safeString(value.provider, 80), identityPackVersion: safeString(value.identityPackVersion, 80), modelName: safeString(value.modelName, 240) }; if ([value.loraName, value.loraVersion, value.loraStrength, value.candidateStatus].some((item) => item !== undefined)) Object.assign(subject, { loraName: safeString(value.loraName, 240), loraVersion: safeString(value.loraVersion, 80), loraStrength: typeof value.loraStrength === "number" && Number.isFinite(value.loraStrength) ? value.loraStrength : null, candidateStatus: safeString(value.candidateStatus, 40) }); return subject; }
 function normalizeResult(raw, shot, proof, baseUrl) {
   const candidate = plain(raw) ? raw : {}; const status = ["accepted", "needs_review", "failed", "cancelled"].includes(candidate.status) ? candidate.status : "needs_review"; const score = inRange(candidate.score) ? candidate.score : null; const dimensions = safeScoreMap(candidate.dimensionScores); const actualProvider = safeString(candidate.actualProvider, 80); const fallback = candidate.previewKind === "fallback" || candidate.isFallback === true || candidate.isCutout === true || /(?:fallback|cutout)/i.test(String(candidate.output ?? ""));
@@ -392,11 +425,11 @@ export async function runCharacterConsistencyBenchmark(options, dependencies = {
   const finish = async () => { report.finishedAt = new Date(clock.now()).toISOString(); report.aggregate = summarizeBenchmark(report.shots); report.evidenceEligible = isCharacterGenerationEvidenceEligible(report); report.evidenceDigest = report.evidenceEligible ? recomputeCharacterGenerationEvidenceDigest(report) : null; await writeBenchmarkReportExclusive(outputPath, report, { fileSystem, randomId: dependencies.randomId }); return { exitCode: report.aggregate.status === "accepted" && report.aggregate.accepted === 8 ? 0 : 1, report, outputPath }; };
   if (dependencies.projectSetupError || dependencies.evaluatorSetupError) { const error = dependencies.projectSetupError ?? dependencies.evaluatorSetupError; report.preflight = safePreflight({ status: "failed", available: false, diagnostics: [`${error.code ?? "EEVALUATOR"}: ${error.message}`] }); return finish(); }
   let compiled; try { compiled = compileBenchmarkWorkflow({ generationMode, provider, fixture, workflow: options.workflow ?? options.workflowJson, outputNode: options.outputNode, workflowTokens: options.workflowTokens }); report.generationParametersDigest = hash(stable(compiled.generationParameters)); } catch (error) { report.preflight = safePreflight({ status: "failed", available: false, diagnostics: [`${error.code ?? "EWORKFLOW"}: ${error.message}`] }); return finish(); }
-  if (typeof dependencies.evaluateShot !== "function") { const error = fail("EEVALUATOR_REQUIRED", "trusted evaluator module or programmatic evaluator is required"); report.preflight = safePreflight({ status: "failed", available: false, diagnostics: [`${error.code}: ${error.message}`] }, compiled.providerProof); return finish(); }
+  if (typeof dependencies.evaluateShot !== "function" || !qualifiedEvaluatorProof(report.evaluatorProof)) { const error = fail("EEVALUATOR_REQUIRED", "a trusted evaluator with an explicit qualified proof is required"); report.preflight = safePreflight({ status: "failed", available: false, diagnostics: [`${error.code}: ${error.message}`] }, compiled.providerProof); return finish(); }
   let transport; try { transport = dependencies.transport ?? createFetchTransport(dependencies.fetchImpl, { requestTimeoutMs: dependencies.requestTimeoutMs }); if (typeof transport?.getJson !== "function" || typeof transport?.postJson !== "function") throw fail("ETRANSPORT", "transport must provide getJson and postJson"); const preflightFn = dependencies.preflight ?? ((input) => preflightCharacterBenchmark(input, { transport, signal, requestTimeoutMs: dependencies.requestTimeoutMs })); report.preflight = safePreflight(await preflightFn({ provider, baseUrl, providerProof: compiled.providerProof }), compiled.providerProof); } catch (error) { report.preflight = safePreflight({ status: "failed", available: false, diagnostics: [`${error.code ?? "EPREFLIGHT"}: ${error.message}`] }, compiled.providerProof); return finish(); }
   if (!report.preflight.available) return finish();
   let executor; try { executor = createComfyExecutor({ compiledWorkflow: compiled, transport, clock: dependencies.clock, evaluateShot: dependencies.evaluateShot, characterContext: options.characterContext, identityReferenceManifest, stagingRoot: dependencies.stagingRoot, transformReference: dependencies.transformReference, uploadReference: dependencies.uploadReference, requestTimeoutMs: dependencies.requestTimeoutMs, overallTimeoutMs: dependencies.overallTimeoutMs }); } catch (error) { report.preflight = safePreflight({ status: "failed", available: false, diagnostics: [`${error.code ?? "EEXECUTOR"}: ${error.message}`] }, compiled.providerProof); return finish(); }
-  for (let index = 0; index < fixture.shots.length; index += 1) { const shot = fixture.shots[index]; const started = clock.now(); try { const normalized = normalizeResult(await executor({ shot, character, baseUrl, signal }), shot, compiled.providerProof, baseUrl); const referenceEvidence = normalized.referenceEvidence; delete normalized.referenceEvidence; if (referenceEvidence.length) report.references.push(referenceEvidence[0]); report.shots[index] = { ...emptyShot(shot), ...normalized, id: shot.id, durationMs: Math.max(0, clock.now() - started) }; } catch (error) { const classified = classify(error); report.shots[index] = { ...emptyShot(shot), durationMs: Math.max(0, clock.now() - started), finalStatus: classified.code === "ECANCELLED" ? "cancelled" : "failed", failureReason: safeDiagnostic(`${classified.code}: ${classified.message}`) }; if (["ECANCELLED", "EOFFLINE", "ETRANSPORT", "EREFERENCE_REQUIRED", "EREFERENCE_TRANSFORM", "EREFERENCE_UPLOAD"].includes(classified.code)) break; } }
+  for (let index = 0; index < fixture.shots.length; index += 1) { const shot = fixture.shots[index]; const started = clock.now(); try { const normalized = normalizeResult(await executor({ shot, character, baseUrl, signal }), shot, compiled.providerProof, baseUrl); const referenceEvidence = normalized.referenceEvidence; delete normalized.referenceEvidence; if (referenceEvidence.length) report.references.push(...referenceEvidence); report.shots[index] = { ...emptyShot(shot), ...normalized, id: shot.id, durationMs: Math.max(0, clock.now() - started) }; } catch (error) { const classified = classify(error); report.shots[index] = { ...emptyShot(shot), durationMs: Math.max(0, clock.now() - started), finalStatus: classified.code === "ECANCELLED" ? "cancelled" : "failed", failureReason: safeDiagnostic(`${classified.code}: ${classified.message}`) }; if (["ECANCELLED", "EOFFLINE", "ETRANSPORT", "EREFERENCE_REQUIRED", "EREFERENCE_TRANSFORM", "EREFERENCE_UPLOAD"].includes(classified.code)) break; } }
   return finish();
 }
 async function main() { try { const args = parseBenchmarkCliArgs(process.argv.slice(2)); const fixture = JSON.parse(await fs.readFile(path.resolve(args.fixturePath ?? "examples/character-consistency-benchmark/benchmark.json"), "utf8")); const workflowJson = args.workflowPath ? await fs.readFile(path.resolve(args.workflowPath), "utf8") : undefined; let evaluator; let evaluatorSetupError; try { if (!args.evaluatorModulePath) throw fail("EEVALUATOR_REQUIRED", "--evaluator-module <trusted-local-esm-path> is required"); evaluator = await loadTrustedEvaluator(args.evaluatorModulePath); } catch (error) { evaluatorSetupError = error; } let project; let projectSetupError; try { if (args.projectPath) project = await loadBenchmarkProjectSubject(args.projectPath, args); } catch (error) { projectSetupError = error; } const result = await runCharacterConsistencyBenchmark({ ...args, fixture, workflowJson, ...project }, { evaluateShot: evaluator?.evaluateShot, evaluatorProof: evaluator?.proof, evaluatorSetupError, projectSetupError }); console.log(JSON.stringify({ outputPath: result.outputPath, exitCode: result.exitCode, aggregate: result.report.aggregate, evidenceEligible: result.report.evidenceEligible, evidenceDigest: result.report.evidenceDigest }, null, 2)); process.exitCode = result.exitCode; } catch (error) { console.error(`${error?.code ?? "EBENCHMARK"}: ${error?.message ?? error}`); process.exitCode = 1; } }

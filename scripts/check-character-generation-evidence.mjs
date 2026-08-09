@@ -52,7 +52,10 @@ function makeReport(mode) {
     character: zeroShotContext.characterAssetId,
     provider: zeroShotContext.provider,
     referenceManifestDigest,
-    references: shotIds.map((shotId, index) => ({ shotId, slot: slots[index], sourceSha256: hash(String(index + 1)), transformedSha256: hash(String(index + 2)), transform: index === 1 ? "mirror_x" : index === 2 ? "head_shoulders_crop" : "none" })),
+    references: shotIds.flatMap((shotId, index) => [
+      { shotId, slot: slots[index], sourceSha256: hash(String(index + 1)), transformedSha256: hash(String(index + 2)), transform: index === 1 ? "mirror_x" : index === 2 ? "head_shoulders_crop" : "none" },
+      { shotId, slot: slots[(index + 1) % slots.length], sourceSha256: hash(String(index + 3)), transformedSha256: hash(String(index + 4)), transform: index === 3 ? "mirror_x" : "none" }
+    ]),
     subject: {
       characterAssetId: zeroShotContext.characterAssetId,
       provider: zeroShotContext.provider,
@@ -81,7 +84,11 @@ function makeReport(mode) {
 
 const validZeroShotReport = makeReport("zero_shot_multi_reference");
 const validLoraReport = makeReport("lora_augmented");
+assert.equal(validZeroShotReport.references.length, 16);
 assert.equal(validateCharacterGenerationReport(validZeroShotReport).valid, true);
+const secondaryReferenceTamper = structuredClone(validZeroShotReport); secondaryReferenceTamper.references[1].transformedSha256 = hash("9"); assert.equal(validateCharacterGenerationReport(secondaryReferenceTamper).valid, false, "secondary transformed digest is evidence-bound"); assert.notEqual(recomputeCharacterGenerationEvidenceDigest(secondaryReferenceTamper), validZeroShotReport.evidenceDigest);
+const duplicateShotSlot = structuredClone(validZeroShotReport); duplicateShotSlot.references[1].slot = duplicateShotSlot.references[0].slot; duplicateShotSlot.evidenceDigest = recomputeCharacterGenerationEvidenceDigest(duplicateShotSlot); assert.equal(validateCharacterGenerationReport(duplicateShotSlot).eligible, false, "each shot requires two unique reference slots");
+const missingSecondary = structuredClone(validZeroShotReport); missingSecondary.references.splice(1, 1); missingSecondary.evidenceDigest = recomputeCharacterGenerationEvidenceDigest(missingSecondary); assert.equal(validateCharacterGenerationReport(missingSecondary).eligible, false, "all eight shots require exactly two references");
 const zeroShotImport = importCharacterGenerationEvidence(validZeroShotReport, zeroShotContext, { now: () => "2026-08-09T08:00:00.000Z" });
 assert.equal(zeroShotImport.valid, true);
 assert.equal(zeroShotImport.evidence.generationMode, "zero_shot_multi_reference");
@@ -129,6 +136,7 @@ storedMutation("workflow digest", (evidence) => { evidence.workflowDigest = hash
 storedMutation("fixture digest", (evidence) => { evidence.fixtureDigest = "not-a-hash"; }, "evidence_shape_invalid");
 storedMutation("reference source digest", (evidence) => { evidence.references[0].sourceSha256 = "not-a-hash"; }, "reference_shape_invalid");
 storedMutation("reference transformed digest", (evidence) => { evidence.references[0].transformedSha256 = "not-a-hash"; }, "reference_shape_invalid");
+storedMutation("secondary reference transformed digest", (evidence) => { evidence.references[1].transformedSha256 = "not-a-hash"; }, "reference_shape_invalid");
 storedMutation("reference transform", (evidence) => { evidence.references[0].transform = "rotate"; }, "reference_shape_invalid");
 storedMutation("evaluator id", (evidence) => { evidence.evaluatorId = "other-scorer"; }, "evaluator_id_mismatch");
 storedMutation("evaluator version", (evidence) => { evidence.evaluatorVersion = "v2"; }, "evaluator_version_mismatch");
