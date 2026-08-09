@@ -63,6 +63,7 @@ function makeReport(mode) {
     evaluatorProof: { id: zeroShotContext.evaluatorId, version: zeroShotContext.evaluatorVersion, implementationHash: evaluatorImplementationHash, policyHash: evaluatorPolicyHash, dimensionThreshold: 0.9 },
     preflight: {
       fallbackUsed: false,
+      cutoutFallbackUsed: false,
       providerProof: {
         providerId: zeroShotContext.provider,
         workflowDigest,
@@ -86,10 +87,34 @@ assert.equal(zeroShotImport.valid, true);
 assert.equal(zeroShotImport.evidence.generationMode, "zero_shot_multi_reference");
 assert.equal(validateCharacterGenerationReport({ ...validZeroShotReport, preflight: { providerProof: validLoraReport.preflight.providerProof } }).valid, false, "zero-shot evidence rejects any active terminal LoRA");
 assert.equal(importCharacterGenerationEvidence(validLoraReport, loraContext, { now: () => "2026-08-09T08:00:00.000Z" }).valid, true);
+const legacyLoraReport = structuredClone(validLoraReport);
+delete legacyLoraReport.generationMode;
+legacyLoraReport.evidenceDigest = recomputeCharacterGenerationEvidenceDigest(legacyLoraReport);
+assert.equal(importCharacterGenerationEvidence(legacyLoraReport, loraContext).reason, "legacy_report_not_importable", "legacy reports are never imported");
+assert.equal(
+  importCharacterGenerationEvidence(legacyLoraReport, { ...zeroShotContext, loraName: loraContext.loraName, loraVersion: loraContext.loraVersion, loraStrength: loraContext.loraStrength, candidateStatus: loraContext.candidateStatus }).reason,
+  "legacy_report_not_importable",
+  "zero-shot contexts cannot use legacy LoRA reports"
+);
+for (const [label, mutate] of [
+  ["fallback", (report) => { report.preflight.fallbackUsed = true; }],
+  ["cutout fallback", (report) => { report.preflight.cutoutFallbackUsed = true; }],
+  ["conflicting final-path model", (report) => { report.preflight.providerProof.authoritativeModelBindings.push({ id: "9", classType: "UNETLoader", field: "unet_name", model: "conflicting-model.safetensors" }); }]
+]) {
+  const mutated = structuredClone(validZeroShotReport);
+  mutate(mutated);
+  mutated.evidenceDigest = recomputeCharacterGenerationEvidenceDigest(mutated);
+  assert.equal(validateCharacterGenerationReport(mutated).valid, false, `report-level ${label} is rejected`);
+}
 const validZeroShotEvidence = zeroShotImport.evidence;
 assert.equal(validateStoredCharacterGenerationEvidence(validZeroShotEvidence, { ...zeroShotContext, identityPackVersion: "v2" }).reason, "identity_version_mismatch");
 assert.equal(validateStoredCharacterGenerationEvidence(validZeroShotEvidence, { ...zeroShotContext, referenceManifestDigest: hash("f") }).reason, "reference_manifest_mismatch");
 assert.equal(validateStoredCharacterGenerationEvidence(validZeroShotEvidence, { ...zeroShotContext, evaluatorImplementationHash: hash("e") }).reason, "evaluator_implementation_mismatch");
+assert.equal(
+  validateStoredCharacterGenerationEvidence(validZeroShotEvidence, { ...zeroShotContext, workflowProof: { ...zeroShotContext.workflowProof, authoritativeModelBindings: [{ model: modelName }, { model: "conflicting-model.safetensors" }] } }).reason,
+  "workflow_model_mismatch",
+  "stored evidence rejects a conflicting final-path model binding"
+);
 
 function storedMutation(label, mutate, reason) {
   const evidence = structuredClone(validZeroShotEvidence);
