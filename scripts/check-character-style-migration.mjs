@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readdir, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import {
@@ -92,6 +92,20 @@ assert.throws(() => compileStyleMigrationWorkflow(ignoredReferenceEdges, {
   STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
   CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
 }), /active reference binding|schema/i, "unknown input arrays must not be interpreted as graph edges");
+const zeroedPositiveStyle = structuredClone(workflow);
+zeroedPositiveStyle["10"].inputs.conditioning = ["8", 0];
+assert.throws(() => compileStyleMigrationWorkflow(zeroedPositiveStyle, {
+  REFERENCE_IMAGE_A: "a.png", REFERENCE_IMAGE_B: "b.png", PROMPT: "p", VIEW: "front",
+  STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
+  CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
+}), /positive.*zero|authoritative.*conditioning/i, "canonical positive style conditioning must not pass through ConditioningZeroOut");
+const referencesOnlyOnNegative = structuredClone(workflow);
+referencesOnlyOnNegative["14"].inputs.positive = ["7", 0];
+assert.throws(() => compileStyleMigrationWorkflow(referencesOnlyOnNegative, {
+  REFERENCE_IMAGE_A: "a.png", REFERENCE_IMAGE_B: "b.png", PROMPT: "p", VIEW: "front",
+  STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
+  CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
+}), /positive.*reference|identity.*positive/i, "both identity references must condition the authoritative positive branch, not only cfg=1 negative conditioning");
 
 const tempRoot = await mkdtemp(join(WORKSPACE, ".tmp-character-style-migration-"));
 const sourceDirectory = join(tempRoot, "sources");
@@ -209,6 +223,48 @@ const transport = {
     return { kind: "model_generation", contentType: "image/png", bytes: PNG };
   }
 };
+
+const mkdtempFailureOutput = join(tempRoot, "mkdtemp-failure-output");
+try {
+  await assert.rejects(runCharacterStyleMigration({
+    project: projectPath,
+    character: CHARACTER_ID,
+    provider: "flux2_klein_4b",
+    baseUrl: "http://127.0.0.1:8188",
+    workflow: workflowPath,
+    output: mkdtempFailureOutput,
+    workspaceRoot: WORKSPACE
+  }, { transport, async mkdtemp() { throw new Error("injected mkdtemp failure"); } }), /injected mkdtemp failure/);
+  assert.deepEqual(await readdir(mkdtempFailureOutput), [], "mkdtemp initialization failure must remove the already-created run sentinel");
+} finally {
+  await rm(mkdtempFailureOutput, { recursive: true, force: true });
+}
+
+const transportFailureOutput = join(tempRoot, "transport-failure-output");
+let transportFailureTemp;
+try {
+  await assert.rejects(runCharacterStyleMigration({
+    project: projectPath,
+    character: CHARACTER_ID,
+    provider: "flux2_klein_4b",
+    baseUrl: "http://127.0.0.1:8188",
+    workflow: workflowPath,
+    output: transportFailureOutput,
+    workspaceRoot: WORKSPACE
+  }, {
+    fetch: 42,
+    tmpdir: () => tempRoot,
+    async mkdtemp(prefix) {
+      transportFailureTemp = await mkdtemp(prefix);
+      return transportFailureTemp;
+    }
+  }), /fetch implementation/i);
+  assert.deepEqual(await readdir(transportFailureOutput), [], "transport construction failure must remove the run sentinel");
+  await assert.rejects(lstat(transportFailureTemp), /ENOENT/, "transport construction failure must remove only its run-owned temporary directory");
+} finally {
+  await rm(transportFailureOutput, { recursive: true, force: true });
+  if (transportFailureTemp) await rm(transportFailureTemp, { recursive: true, force: true });
+}
 
 const outputDirectory = join(tempRoot, "migration-output");
 const beforeProject = await readFile(projectPath);

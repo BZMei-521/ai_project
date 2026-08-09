@@ -305,6 +305,20 @@ function proveSelectedOutputGraph(entries, loaders, modelNodeId, outputNodeId, t
     }
     return false;
   };
+  const reachesTargetThroughType = (startId, targetId, requiredType) => {
+    const pending = [[String(startId), false]];
+    const seen = new Set();
+    while (pending.length) {
+      const [current, priorMatch] = pending.pop();
+      const matched = priorMatch || graph.nodes.get(current)?.class_type === requiredType;
+      const state = `${current}:${matched}`;
+      if (seen.has(state)) continue;
+      seen.add(state);
+      if (current === String(targetId) && matched) return true;
+      for (const next of graph.edges.get(current) ?? []) pending.push([next, matched]);
+    }
+    return false;
+  };
   if (loaders.some(([id]) => !reachesSelectedOutput(id, "ReferenceLatent"))) {
     throw new Error("Active reference binding failed: every loader must reach the selected SaveImage through a character reference sink.");
   }
@@ -313,10 +327,24 @@ function proveSelectedOutputGraph(entries, loaders, modelNodeId, outputNodeId, t
   const activeGuiders = entries.filter(([id, node]) => node?.class_type === "CFGGuider" && reachesSelectedOutput(id));
   if (activeGuiders.length !== 1) throw new Error("Workflow must have exactly one active CFGGuider reaching the selected SaveImage.");
   const guiderSources = graph.inputSources.get(String(activeGuiders[0][0]));
-  for (const slot of ["positive", "negative"]) {
-    const conditioningSource = guiderSources.get(slot);
-    if (!conditioningSource || !reachable(tokenEncoderId, conditioningSource)) {
-      throw new Error(`Active CLIPTextEncode must dominate CFGGuider ${slot} conditioning.`);
+  const positiveSource = guiderSources.get("positive");
+  if (!positiveSource) throw new Error("CFGGuider positive conditioning must be an authoritative typed link.");
+  let conditioningCursor = positiveSource;
+  const conditioningSeen = new Set();
+  while (conditioningCursor !== String(tokenEncoderId)) {
+    if (conditioningSeen.has(conditioningCursor)) throw new Error("Authoritative positive conditioning contains a cycle.");
+    conditioningSeen.add(conditioningCursor);
+    const nodeType = graph.nodes.get(conditioningCursor)?.class_type;
+    if (nodeType === "ConditioningZeroOut") throw new Error("Authoritative positive conditioning must not pass through ConditioningZeroOut.");
+    if (nodeType !== "ReferenceLatent") throw new Error("Authoritative positive conditioning may only preserve canonical tokens through ReferenceLatent nodes.");
+    const priorConditioning = graph.inputSources.get(conditioningCursor)?.get("conditioning");
+    if (!priorConditioning) throw new Error("Authoritative positive conditioning chain is incomplete.");
+    conditioningCursor = priorConditioning;
+  }
+  if (!reachable(tokenEncoderId, positiveSource)) throw new Error("Canonical token encoder must dominate authoritative positive conditioning.");
+  for (const [loaderId] of loaders) {
+    if (!reachesTargetThroughType(loaderId, positiveSource, "ReferenceLatent")) {
+      throw new Error("Both identity LoadImage reference chains must enter the authoritative positive conditioning source.");
     }
   }
 }
@@ -618,11 +646,13 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
     throw error;
   }
 
-  const outputGuard = await createOutputDirectoryGuard(outputDirectory, workspaceRoot, dependencies);
-  const temporaryRoot = await (dependencies.mkdtemp ?? mkdtemp)(join(dependencies.tmpdir?.() ?? tmpdir(), "character-style-migration-"));
-  const transport = dependencies.transport ?? createDefaultTransport(parsedEndpoint.href, dependencies);
-  const candidates = [];
+  let outputGuard;
+  let temporaryRoot;
   try {
+    outputGuard = await createOutputDirectoryGuard(outputDirectory, workspaceRoot, dependencies);
+    temporaryRoot = await (dependencies.mkdtemp ?? mkdtemp)(join(dependencies.tmpdir?.() ?? tmpdir(), "character-style-migration-"));
+    const transport = dependencies.transport ?? createDefaultTransport(parsedEndpoint.href, dependencies);
+    const candidates = [];
     for (const pass of PASSES) {
       const uploaded = [];
       const sourceDigests = [];
@@ -698,13 +728,27 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
     await outputGuard.removeSentinel();
     return manifest;
   } finally {
-    await outputGuard.cleanupSentinel();
-    const ownedRoot = resolve(temporaryRoot);
-    const systemTemp = resolve(dependencies.tmpdir?.() ?? tmpdir());
-    if (!isPathInside(systemTemp, ownedRoot) || basename(ownedRoot).length <= "character-style-migration-".length || !basename(ownedRoot).startsWith("character-style-migration-")) {
-      throw new Error("Refused to clean an unowned migration temporary directory.");
+    let cleanupFailure;
+    if (outputGuard) {
+      try {
+        await outputGuard.cleanupSentinel();
+      } catch (error) {
+        cleanupFailure = error;
+      }
     }
-    await (dependencies.rm ?? rm)(ownedRoot, { recursive: true, force: true });
+    if (temporaryRoot) {
+      try {
+        const ownedRoot = resolve(temporaryRoot);
+        const systemTemp = resolve(dependencies.tmpdir?.() ?? tmpdir());
+        if (!isPathInside(systemTemp, ownedRoot) || basename(ownedRoot).length <= "character-style-migration-".length || !basename(ownedRoot).startsWith("character-style-migration-")) {
+          throw new Error("Refused to clean an unowned migration temporary directory.");
+        }
+        await (dependencies.rm ?? rm)(ownedRoot, { recursive: true, force: true });
+      } catch (error) {
+        cleanupFailure ??= error;
+      }
+    }
+    if (cleanupFailure) throw cleanupFailure;
   }
 }
 
