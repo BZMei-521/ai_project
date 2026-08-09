@@ -48,6 +48,7 @@ assert.throws(() => parseStyleMigrationArgs(["--project", "../outside.json", "--
 assert.throws(() => parseStyleMigrationArgs(["--project", "project.json", "--character", CHARACTER_ID, "--provider", "qwen_image_edit_2511", "--base-url", "http://127.0.0.1:8188", "--workflow", "workflow.json", "--output", "logs/out"]), /flux2_klein_4b/);
 
 const workflowPath = resolve(WORKSPACE, "examples/character-consistency-benchmark/workflows/flux2-klein-4b-style-migration-api.json");
+const baseWorkflowPath = resolve(WORKSPACE, "examples/character-consistency-benchmark/workflows/flux2-klein-base-4b-style-migration-api.json");
 const currentProjectFixturePath = resolve(WORKSPACE, "examples/character-consistency-benchmark/current-project-klein-release-subject.json");
 const currentProjectFixtureBytes = await readFile(currentProjectFixturePath);
 const currentProjectFixture = JSON.parse(currentProjectFixtureBytes.toString("utf8"));
@@ -137,6 +138,7 @@ for (const pass of [{ id: "front" }, { id: "side" }, { id: "back" }]) {
 }
 assert.deepEqual(await readFile(currentProjectFixturePath), currentProjectFixtureBytes, "trait sanitization must leave the real source project byte-for-byte unchanged");
 const workflow = JSON.parse(await readFile(workflowPath, "utf8"));
+const baseWorkflow = JSON.parse(await readFile(baseWorkflowPath, "utf8"));
 const compiled = compileStyleMigrationWorkflow(workflow, {
   REFERENCE_IMAGE_A: "migration/front-a.png",
   REFERENCE_IMAGE_B: "migration/front-b.png",
@@ -150,6 +152,38 @@ const compiled = compileStyleMigrationWorkflow(workflow, {
 assert.equal(Object.values(compiled).filter((node) => node.class_type === "LoadImage").length, 2);
 assert.equal(Object.values(compiled).filter((node) => node.class_type === "SaveImage").length, 1);
 assert.doesNotMatch(JSON.stringify(compiled), /\{\{[^}]+\}\}/);
+const compiledBase = compileStyleMigrationWorkflow(baseWorkflow, {
+  REFERENCE_IMAGE_A: "migration/front-a.png",
+  REFERENCE_IMAGE_B: "migration/front-b.png",
+  PROMPT: "immutable traits and canonical style",
+  VIEW: "front",
+  STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1",
+  STYLE_CONTRACT_VERSION: "1.0.0",
+  CHARACTER_ASSET_ID: CHARACTER_ID,
+  SEED: 2026080901
+});
+assert.equal(compiledBase["2"].inputs.unet_name, "flux-2-klein-base-4b-fp8.safetensors");
+assert.equal(compiledBase["4"].inputs.vae_name, "full_encoder_small_decoder.safetensors");
+assert.equal(compiledBase["14"].inputs.cfg, 5);
+assert.equal(compiledBase["16"].inputs.steps, 20);
+assert.equal(parseStyleMigrationArgs([
+  "--project", "examples/character-consistency-benchmark/current-project-klein-release-subject.json",
+  "--character", CHARACTER_ID,
+  "--provider", "flux2_klein_base_4b",
+  "--base-url", "http://127.0.0.1:8188",
+  "--workflow", "examples/character-consistency-benchmark/workflows/flux2-klein-base-4b-style-migration-api.json",
+  "--output", "logs/shen-yan-style-migration-base-v4",
+  "--revision", "4"
+]).provider, "flux2_klein_base_4b");
+for (const [nodeId, input, invalidValue, message] of [
+  ["4", "vae_name", "flux2-vae.safetensors", /requires VAE/i],
+  ["14", "cfg", 1, /requires CFG 5/i],
+  ["16", "steps", 4, /requires exactly 20 scheduler steps/i]
+]) {
+  const invalidBase = structuredClone(baseWorkflow);
+  invalidBase[nodeId].inputs[input] = invalidValue;
+  assert.throws(() => compileStyleMigrationWorkflow(invalidBase, {}), message);
+}
 
 const oneLoader = structuredClone(workflow);
 delete oneLoader["20"];

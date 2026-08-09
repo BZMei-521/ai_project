@@ -19,8 +19,20 @@ import {
   computeCharacterStyleContractDigest
 } from "../src/modules/comfy-pipeline/characterStyleContractRuntime.mjs";
 
-const PROVIDER = "flux2_klein_4b";
-const MODEL_NAME = "flux-2-klein-4b-fp8.safetensors";
+const PROVIDER_PROFILES = Object.freeze({
+  flux2_klein_4b: Object.freeze({
+    modelName: "flux-2-klein-4b-fp8.safetensors",
+    vaeName: "flux2-vae.safetensors",
+    steps: 4,
+    cfg: 1
+  }),
+  flux2_klein_base_4b: Object.freeze({
+    modelName: "flux-2-klein-base-4b-fp8.safetensors",
+    vaeName: "full_encoder_small_decoder.safetensors",
+    steps: 20,
+    cfg: 5
+  })
+});
 const MANIFEST_NAME = "migration-manifest.json";
 const MAX_OUTPUT_BYTES = 40 * 1024 * 1024;
 const REQUIRED_ARGUMENTS = Object.freeze(["project", "character", "provider", "base-url", "workflow", "output"]);
@@ -471,7 +483,7 @@ function proveSelectedOutputGraph(entries, loaders, modelNodeId, outputNodeId, t
   }
 }
 
-function validateWorkflowTemplate(template) {
+function validateWorkflowTemplate(template, expectedProvider) {
   if (!isPlainObject(template)) throw new Error("Workflow template must be a JSON object.");
   const entries = Object.entries(template);
   const loaders = entries.filter(([, node]) => node?.class_type === "LoadImage");
@@ -484,9 +496,19 @@ function validateWorkflowTemplate(template) {
     throw new Error("The two LoadImage nodes must be reserved for REFERENCE_IMAGE_A and REFERENCE_IMAGE_B.");
   }
   const models = entries.filter(([, node]) => node?.class_type === "UNETLoader");
-  if (models.length !== 1 || models[0][1]?.inputs?.unet_name !== MODEL_NAME || models[0][1]?.inputs?.weight_dtype !== "default") {
-    throw new Error(`Invalid Klein model binding; expected ${MODEL_NAME} with default weight dtype.`);
+  const modelName = models[0]?.[1]?.inputs?.unet_name;
+  const provider = Object.keys(PROVIDER_PROFILES).find((key) => PROVIDER_PROFILES[key].modelName === modelName);
+  if (models.length !== 1 || !provider || models[0][1]?.inputs?.weight_dtype !== "default") {
+    throw new Error("Invalid Klein model binding; expected an approved 4B distilled or base FP8 model with default weight dtype.");
   }
+  if (expectedProvider && provider !== expectedProvider) throw new Error(`Workflow model does not match provider ${expectedProvider}.`);
+  const profile = PROVIDER_PROFILES[provider];
+  const vaes = entries.filter(([, node]) => node?.class_type === "VAELoader");
+  if (vaes.length !== 1 || vaes[0][1]?.inputs?.vae_name !== profile.vaeName) throw new Error(`Provider ${provider} requires VAE ${profile.vaeName}.`);
+  const schedulers = entries.filter(([, node]) => node?.class_type === "Flux2Scheduler");
+  if (schedulers.length !== 1 || schedulers[0][1]?.inputs?.steps !== profile.steps) throw new Error(`Provider ${provider} requires exactly ${profile.steps} scheduler steps.`);
+  const guiders = entries.filter(([, node]) => node?.class_type === "CFGGuider");
+  if (guiders.length !== 1 || guiders[0][1]?.inputs?.cfg !== profile.cfg) throw new Error(`Provider ${provider} requires CFG ${profile.cfg}.`);
   if (entries.some(([, node]) => /lora/i.test(String(node?.class_type ?? "")))) throw new Error("LoRA nodes are forbidden in style migration.");
   const outputs = entries.filter(([, node]) => node?.class_type === "SaveImage");
   if (outputs.length !== 1) throw new Error("Workflow must contain exactly one selected SaveImage terminal.");
@@ -498,7 +520,7 @@ function validateWorkflowTemplate(template) {
     throw new Error("Exactly one active CLIPTextEncode must contain every required conditioning token.");
   }
   proveSelectedOutputGraph(entries, loaders, models[0][0], outputs[0][0], tokenEncoders[0][0]);
-  return { outputNodeId: outputs[0][0] };
+  return { outputNodeId: outputs[0][0], provider, profile };
 }
 
 function replaceWorkflowTokens(value, tokens) {
@@ -527,7 +549,7 @@ export function parseStyleMigrationArgs(argv) {
   if (!Number.isSafeInteger(revision) || revision < 1 || String(revision) !== String(values.revision ?? "1")) {
     throw new Error("--revision must be a positive integer.");
   }
-  if (values.provider !== PROVIDER) throw new Error(`--provider must be ${PROVIDER}.`);
+  if (!hasOwn(PROVIDER_PROFILES, values.provider)) throw new Error(`--provider must be one of ${Object.keys(PROVIDER_PROFILES).join(", ")}.`);
   let endpoint;
   try {
     endpoint = new URL(values["base-url"]);
@@ -842,7 +864,8 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
   const projectPath = resolveWorkspaceArgument(options.project, "project", workspaceRoot);
   const workflowPath = resolveWorkspaceArgument(options.workflow, "workflow", workspaceRoot);
   const outputDirectory = resolveWorkspaceArgument(options.output, "output", workspaceRoot);
-  if (options.provider !== PROVIDER) throw new Error(`Migration provider must be ${PROVIDER}.`);
+  if (!hasOwn(PROVIDER_PROFILES, options.provider)) throw new Error(`Migration provider must be one of ${Object.keys(PROVIDER_PROFILES).join(", ")}.`);
+  const providerProfile = PROVIDER_PROFILES[options.provider];
   if (!nonEmptyString(options.character)) throw new Error("Migration character is required.");
   const revision = options.revision ?? 1;
   if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("Migration revision must be a positive integer.");
@@ -860,7 +883,7 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
   const workflowBytes = Buffer.from(await (dependencies.readFile ?? readFile)(workflowPath));
   let template;
   try { template = JSON.parse(workflowBytes.toString("utf8")); } catch { throw new Error("Workflow JSON is malformed."); }
-  const { outputNodeId } = validateWorkflowTemplate(template);
+  const { outputNodeId } = validateWorkflowTemplate(template, options.provider);
   compileStyleMigrationWorkflow(template, {
     REFERENCE_IMAGE_A: "preflight-a.png",
     REFERENCE_IMAGE_B: "preflight-b.png",
@@ -953,8 +976,8 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
         digest: computeCharacterStyleContractDigest(CINEMATIC_3D_DONGHUA_CONTRACT)
       },
       species: "human",
-      provider: PROVIDER,
-      modelName: MODEL_NAME,
+      provider: options.provider,
+      modelName: providerProfile.modelName,
       workflowDigest: sha256(workflowBytes),
       candidates
     };
