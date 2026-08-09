@@ -175,10 +175,12 @@ export async function loadTrustedEvaluator(modulePath, { trustedRoot = PROJECT_R
   const exportedHash = (name) => { const value = loaded[name]; if (typeof value !== "string" || !/^[a-f0-9]{64}$/i.test(value)) throw fail("EEVALUATOR", `evaluator module must explicitly export a valid ${name}`); return value.toLowerCase(); };
   const implementationHash = exportedHash("evaluatorImplementationHash"); const policyHash = exportedHash("evaluatorPolicyHash");
   const dimensionThreshold = loaded.dimensionThreshold; if (typeof dimensionThreshold !== "number" || !Number.isFinite(dimensionThreshold) || dimensionThreshold <= 0 || dimensionThreshold > 1) throw fail("EEVALUATOR", "evaluator module must explicitly export dimensionThreshold in (0, 1]");
+  if (typeof loaded.closeEvaluator !== "function") throw fail("EEVALUATOR", "evaluator module must explicitly export closeEvaluator()");
+  if (loaded.requiresLocalOutput !== true) throw fail("EEVALUATOR", "evaluator module must explicitly export requiresLocalOutput = true");
   return {
     evaluateShot: loaded.evaluateCharacterShot,
-    closeEvaluator: typeof loaded.closeEvaluator === "function" ? loaded.closeEvaluator : async () => undefined,
-    requiresLocalOutput: loaded.requiresLocalOutput === true,
+    closeEvaluator: loaded.closeEvaluator,
+    requiresLocalOutput: true,
     proof: { id, version, implementationHash, policyHash, dimensionThreshold, modulePathHash: hash(relative.replace(/\\/g, "/")) }
   };
 }

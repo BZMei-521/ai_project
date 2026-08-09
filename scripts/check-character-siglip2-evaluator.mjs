@@ -45,6 +45,11 @@ function workerResponse(embedding, quality = 0.9, extra = {}) {
   return { ok: true, embedding, quality, modelId: policy.modelId, modelRevision: policy.modelRevision, snapshotManifestHash: evaluatorSnapshotManifestHash, ...extra };
 }
 
+function expectedImageDigest(imagePath) {
+  const name = path.basename(imagePath, path.extname(imagePath));
+  return sha256(name === "output" ? "trusted output bytes" : name);
+}
+
 function fakeWorkerFor({ output = [1, 0], face = [1, 0], body = [0.8, 0.6], quality = 0.9, response = null } = {}) {
   const calls = [];
   let closed = 0;
@@ -53,10 +58,8 @@ function fakeWorkerFor({ output = [1, 0], face = [1, 0], body = [0.8, 0.6], qual
     get closed() { return closed; },
     async request(message) {
       calls.push(structuredClone(message));
-      if (response) return response(message);
-      if (message.path.endsWith("output.png")) return workerResponse(output, quality);
-      if (message.path.endsWith("face.png")) return workerResponse(face);
-      return workerResponse(body);
+      const raw = response ? await response(message) : message.path.endsWith("output.png") ? workerResponse(output, quality) : message.path.endsWith("face.png") ? workerResponse(face) : workerResponse(body);
+      return { ...raw, imageSha256: raw.imageSha256 ?? expectedImageDigest(message.path) };
     },
     async close() { closed += 1; }
   };
@@ -194,6 +197,12 @@ try {
   await assert.rejects(() => createSiglip2Evaluator({ worker: wrongRevisionWorker, policy }).evaluateCharacterShot(context(tempRoot)), /revision/i);
   assert.equal(wrongRevisionWorker.closed, 1, "model revision mismatch closes the untrusted worker");
 
+  const swappedOutputWorker = fakeWorkerFor({ response: ({ path: imagePath }) => workerResponse([1, 0], 0.9, { imageSha256: imagePath.endsWith("output.png") ? sha256("swapped output bytes") : expectedImageDigest(imagePath) }) });
+  await assert.rejects(() => createSiglip2Evaluator({ worker: swappedOutputWorker, policy }).evaluateCharacterShot(context(tempRoot)), (reason) => reason?.code === "EOUTPUT_INTEGRITY", "output swapped after staging hash fails closed");
+
+  const swappedReferenceWorker = fakeWorkerFor({ response: ({ path: imagePath }) => workerResponse([1, 0], 0.9, { imageSha256: imagePath.endsWith("face.png") ? sha256("swapped reference bytes") : expectedImageDigest(imagePath) }) });
+  await assert.rejects(() => createSiglip2Evaluator({ worker: swappedReferenceWorker, policy }).evaluateCharacterShot(context(tempRoot)), (reason) => reason?.code === "EREFERENCE_INTEGRITY", "canonical reference swap/tamper fails closed");
+
   for (const embedding of [[Number.NaN, 0], [Number.POSITIVE_INFINITY, 0], [0, 0], [1]]) {
     const invalidWorker = fakeWorkerFor({ response: () => workerResponse(embedding) });
     await assert.rejects(() => createSiglip2Evaluator({ worker: invalidWorker, policy }).evaluateCharacterShot(context(tempRoot)), /embedding/i);
@@ -223,20 +232,22 @@ try {
   assert.equal(trusted.requiresLocalOutput, true);
   await trusted.closeEvaluator();
 
-  const strictModuleSource = ({ id = "strict-character-evaluator", version = "1.2.3", implementationHash = "a".repeat(64), policyHash = "b".repeat(64), threshold = 0.5, omit = null } = {}) => [
+  const strictModuleSource = ({ id = "strict-character-evaluator", version = "1.2.3", implementationHash = "a".repeat(64), policyHash = "b".repeat(64), threshold = 0.5, omit = null, requiresLocalOutput = true } = {}) => [
     omit === "evaluatorId" ? "" : `export const evaluatorId = ${JSON.stringify(id)};`,
     omit === "evaluatorVersion" ? "" : `export const evaluatorVersion = ${JSON.stringify(version)};`,
     omit === "evaluatorImplementationHash" ? "" : `export const evaluatorImplementationHash = ${JSON.stringify(implementationHash)};`,
     omit === "evaluatorPolicyHash" ? "" : `export const evaluatorPolicyHash = ${JSON.stringify(policyHash)};`,
     omit === "dimensionThreshold" ? "" : `export const dimensionThreshold = ${JSON.stringify(threshold)};`,
-    "export async function evaluateCharacterShot() { return {}; }"
+    omit === "requiresLocalOutput" ? "" : `export const requiresLocalOutput = ${JSON.stringify(requiresLocalOutput)};`,
+    "export async function evaluateCharacterShot() { return {}; }",
+    omit === "closeEvaluator" ? "" : "export async function closeEvaluator() {}"
   ].join("\n");
-  for (const missing of ["evaluatorId", "evaluatorVersion", "evaluatorImplementationHash", "evaluatorPolicyHash", "dimensionThreshold"]) {
+  for (const missing of ["evaluatorId", "evaluatorVersion", "evaluatorImplementationHash", "evaluatorPolicyHash", "dimensionThreshold", "closeEvaluator", "requiresLocalOutput"]) {
     const modulePath = path.join(tempRoot, `missing-${missing}.mjs`); await writeFile(modulePath, strictModuleSource({ omit: missing }));
     await assert.rejects(() => loadTrustedEvaluator(modulePath, { trustedRoot: tempRoot }), (reason) => reason?.code === "EEVALUATOR" && new RegExp(missing, "i").test(reason.message), `missing ${missing} fails closed`);
   }
   for (const [name, overrides] of [
-    ["reserved-id", { id: "programmatic" }], ["reserved-version", { version: "unversioned" }], ["bad-implementation", { implementationHash: "short" }], ["bad-policy", { policyHash: "not-a-hash" }], ["zero-threshold", { threshold: 0 }], ["large-threshold", { threshold: 1.1 }]
+    ["reserved-id", { id: "programmatic" }], ["reserved-version", { version: "unversioned" }], ["bad-implementation", { implementationHash: "short" }], ["bad-policy", { policyHash: "not-a-hash" }], ["zero-threshold", { threshold: 0 }], ["large-threshold", { threshold: 1.1 }], ["local-output-false", { requiresLocalOutput: false }]
   ]) {
     const modulePath = path.join(tempRoot, `${name}.mjs`); await writeFile(modulePath, strictModuleSource(overrides));
     await assert.rejects(() => loadTrustedEvaluator(modulePath, { trustedRoot: tempRoot }), (reason) => reason?.code === "EEVALUATOR", `${name} evaluator proof fails closed`);

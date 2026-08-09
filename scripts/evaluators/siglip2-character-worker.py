@@ -11,6 +11,7 @@ import stat
 import sys
 import tempfile
 import warnings
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -118,19 +119,23 @@ def _load_model():
 def _validated_image(path_value: Any):
     if not isinstance(path_value, str) or not path_value.strip() or "\x00" in path_value:
         raise WorkerError("EIMAGE_PATH")
-    image_path = Path(path_value)
     try:
-        file_stat = image_path.stat()
+        with Path(path_value).open("rb") as handle:
+            file_stat = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size <= 0 or file_stat.st_size > MAX_IMAGE_BYTES:
+                raise WorkerError("EIMAGE_PATH")
+            image_bytes = handle.read(MAX_IMAGE_BYTES + 1)
     except OSError as exc:
         raise WorkerError("EIMAGE_PATH") from exc
-    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size <= 0 or file_stat.st_size > MAX_IMAGE_BYTES:
+    if len(image_bytes) != file_stat.st_size or len(image_bytes) > MAX_IMAGE_BYTES:
         raise WorkerError("EIMAGE_PATH")
+    image_sha256 = hashlib.sha256(image_bytes).hexdigest()
     try:
         from PIL import Image
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(image_path) as opened:
+            with Image.open(BytesIO(image_bytes)) as opened:
                 if opened.format not in APPROVED_FORMATS:
                     raise WorkerError("EIMAGE_FORMAT")
                 width, height = opened.size
@@ -142,7 +147,7 @@ def _validated_image(path_value: Any):
         raise
     except Exception as exc:
         raise WorkerError("EIMAGE_DECODE") from exc
-    return image
+    return image, image_sha256
 
 
 def _quality(image) -> float:
@@ -163,7 +168,7 @@ def _quality(image) -> float:
 
 
 def embed(path_value: Any) -> dict[str, Any]:
-    image = _validated_image(path_value)
+    image, image_sha256 = _validated_image(path_value)
     processor, model, device = _load_model()
     try:
         import torch
@@ -180,7 +185,7 @@ def embed(path_value: Any) -> dict[str, Any]:
         embedding = vector.tolist()
         if not embedding or any(not math.isfinite(value) for value in embedding):
             raise WorkerError("EEMBEDDING")
-        return {"embedding": embedding, "quality": _quality(image)}
+        return {"embedding": embedding, "quality": _quality(image), "imageSha256": image_sha256}
     except WorkerError:
         raise
     except Exception as exc:

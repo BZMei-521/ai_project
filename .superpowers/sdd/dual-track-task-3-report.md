@@ -90,3 +90,13 @@ Status: DONE. All Critical, Important, and requested Minor review findings were 
 - `npm.cmd run build` — PASS (`450` modules; existing Vite chunk warning only)
 - Manifest-verified real worker `--self-test` — PASS on CUDA, exact revision, manifest digest above, embedding length `768`, norm `1.0`.
 - Targeted Node syntax, Python syntax, and task-file whitespace checks — PASS.
+
+## Second review remediation
+
+Status: DONE. The remaining two Important findings were fixed after commit `01e630c`.
+
+- Trusted module loading now requires an actual `closeEvaluator` function and literal `requiresLocalOutput === true`; missing/false values fail `EEVALUATOR`. The no-op close fallback was deleted. Programmatic injected evaluators remain caller-owned because only CLI-loaded modules use this lifecycle contract.
+- The worker now opens each image once, checks the open file descriptor and 40 MiB limit, performs one bounded byte read, computes `imageSha256` from those bytes, and decodes the same bytes through `BytesIO` for embedding and quality.
+- The evaluator binds the output worker digest to `context.outputSha256` (`EOUTPUT_INTEGRITY`) and each canonical source worker digest to its identity-manifest `sourceSha256` (`EREFERENCE_INTEGRITY`). Transformed Comfy evidence remains separately bound by the runner and is not incorrectly compared to canonical bytes.
+- RED evidence: the focused checker initially accepted a swapped output after its staging hash. Added output-swap and canonical-reference-swap negatives, normal digest-path coverage, missing-close, missing-local-output, and false-local-output module negatives.
+- Fresh verification: `test:character-evaluator` PASS; `test:character-benchmark` PASS; `test:character-generation-evidence` PASS; `build` PASS; manifest-verified CUDA self-test PASS (`768`, norm `1.0`, digest `451ee614...`).

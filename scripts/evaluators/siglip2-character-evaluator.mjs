@@ -216,6 +216,7 @@ export function createSiglip2Evaluator({ worker = null, workerFactory = createPe
     async evaluateCharacterShot(context) {
       try {
         if (!plain(context) || typeof context.outputPath !== "string" || !context.outputPath.trim()) throw error("EOUTPUT", "a staged local output path is required");
+        if (typeof context.outputSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(context.outputSha256)) throw error("EOUTPUT", "staged output SHA-256 is required");
         if (!Array.isArray(context.references) || !context.references.length) throw error("EREFERENCE", "at least one routed local reference is required");
         if (context.references.some((reference) => !plain(reference) || !CANONICAL_SLOTS.has(reference.slot) || typeof reference.sourcePath !== "string" || !reference.sourcePath.trim() || typeof reference.sourceSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(reference.sourceSha256))) throw error("EREFERENCE", "every canonical reference requires a slot, local path, and source digest");
         if (new Set(context.references.map((reference) => reference.slot)).size !== context.references.length) throw error("EREFERENCE", "canonical reference slots must be unique");
@@ -233,11 +234,13 @@ export function createSiglip2Evaluator({ worker = null, workerFactory = createPe
           return response;
         };
         verifyResponse(outputResponse);
+        if (typeof outputResponse.imageSha256 !== "string" || outputResponse.imageSha256.toLowerCase() !== context.outputSha256.toLowerCase()) throw error("EOUTPUT_INTEGRITY", "staged output bytes do not match the benchmark envelope");
         const outputEmbedding = normalizedEmbedding(outputResponse.embedding);
         if (!finiteUnit(outputResponse.quality)) throw error("EQUALITY", "SigLIP2 worker returned an invalid independent quality score");
         const scoredReferences = [];
         for (const reference of context.references) {
           const response = verifyResponse(await requestWithDeadline(liveWorker, { type: "embed", path: reference.sourcePath }, { signal: context.signal, timeoutMs: requestTimeoutMs }));
+          if (typeof response.imageSha256 !== "string" || response.imageSha256.toLowerCase() !== reference.sourceSha256.toLowerCase()) throw error("EREFERENCE_INTEGRITY", "canonical reference bytes do not match the identity manifest");
           const embedding = normalizedEmbedding(response.embedding, outputEmbedding.length);
           scoredReferences.push({ reference, score: similarity(outputEmbedding, embedding) });
         }
