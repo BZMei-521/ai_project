@@ -625,6 +625,8 @@ function normalizeTraitText(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
+const JUVENILE_AGE_TRAIT_PATTERN = /\b(?:child(?:like|ish)?|children|kid(?:s|like)?|baby|babies|toddler(?:s)?|juvenile|youthful|teen(?:ager|aged|s)?|adolescent(?:s)?)\b/i;
+
 function extractKnownIdentityFacts(source) {
   const facts = [];
   const add = (fact) => { if (!facts.includes(fact)) facts.push(fact); };
@@ -655,7 +657,7 @@ export function classifyMigrationTrait(value, kind = "immutable") {
     if (normalized === "clean youthful animated male face") return {
       action: "rewrite", source, canonicalFacts: ["established adult male identity"], reason: "remove_juvenile_style_coupling"
     };
-    if (/\b(youthful|juvenile|childlike|chibi|pixar|disney|toy-like|clean 2d|flat 2d|large|oversized|big|huge|enlarged)\b/i.test(source)) {
+    if (JUVENILE_AGE_TRAIT_PATTERN.test(source) || /\b(chibi|pixar|disney|toy-like|clean 2d|flat 2d|large|oversized|big|huge|enlarged)\b/i.test(source)) {
       const canonicalFacts = extractKnownIdentityFacts(source);
       if (/\bface\b/i.test(source)) canonicalFacts.push("established adult face identity");
       if (canonicalFacts.length > 0) return {
@@ -672,6 +674,14 @@ export function classifyMigrationTrait(value, kind = "immutable") {
   if (/\b(2d|photoreal|pixar|disney|western cartoon|toy-like|chibi)\b/i.test(source)) return {
     action: "exclude", source, canonicalFacts: [], reason: "exclude_source_rendering_lock"
   };
+  if (JUVENILE_AGE_TRAIT_PATTERN.test(source)) {
+    const canonicalFacts = extractKnownIdentityFacts(source);
+    if (/\bface\b/i.test(source)) canonicalFacts.push("established adult face identity");
+    if (canonicalFacts.length > 0) return {
+      action: "rewrite", source, canonicalFacts, reason: "extract_identity_facts_remove_age_or_style_coupling"
+    };
+    return { action: "exclude", source, canonicalFacts: [], reason: "exclude_age_or_style_coupled_constraint" };
+  }
   const preservationRewrites = Object.freeze({
     "do not change face shape or blue eye color": "preserve established face shape and blue eye color",
     "do not change hair color, length, fringe, or silhouette": "preserve hair color, length, fringe, and silhouette",

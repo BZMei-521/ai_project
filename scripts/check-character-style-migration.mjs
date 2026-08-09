@@ -82,6 +82,24 @@ assert.deepEqual(classifyMigrationTrait("Pixar-style teal tunic and navy long co
   canonicalFacts: ["teal tunic", "navy long coat"],
   reason: "extract_identity_facts_remove_age_or_style_coupling"
 });
+assert.deepEqual(classifyMigrationTrait("child protagonist with a silver pendant", "immutable"), {
+  action: "exclude",
+  source: "child protagonist with a silver pendant",
+  canonicalFacts: [],
+  reason: "exclude_age_or_style_coupled_trait"
+});
+assert.deepEqual(classifyMigrationTrait("do not change childlike proportions", "forbidden"), {
+  action: "exclude",
+  source: "do not change childlike proportions",
+  canonicalFacts: [],
+  reason: "exclude_age_or_style_coupled_constraint"
+});
+assert.deepEqual(classifyMigrationTrait("juvenile blue-eyed face with short dark brown side-swept hair", "immutable"), {
+  action: "rewrite",
+  source: "juvenile blue-eyed face with short dark brown side-swept hair",
+  canonicalFacts: ["blue eyes", "short dark brown side-swept hair", "established adult face identity"],
+  reason: "extract_identity_facts_remove_age_or_style_coupling"
+});
 const currentSanitized = sanitizeMigrationTraits(currentIdentityPack);
 assert.equal(currentSanitized.traitDecisions.length, currentIdentityPack.immutableTraits.length + currentIdentityPack.forbiddenChanges.length);
 assert.ok(currentSanitized.traitDecisions.every((decision) => decision.source && decision.action && decision.reason && Array.isArray(decision.canonicalFacts)), "every source trait must have an auditable structured decision");
