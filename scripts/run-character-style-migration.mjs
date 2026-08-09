@@ -683,7 +683,7 @@ export function classifyMigrationTrait(value, kind = "immutable") {
     return { action: "exclude", source, canonicalFacts: [], reason: "exclude_age_or_style_coupled_constraint" };
   }
   const preservationRewrites = Object.freeze({
-    "do not change face shape or blue eye color": "preserve established face shape and blue eye color",
+    "do not change face shape or blue eye color": "preserve recognizable facial identity and blue eye color while allowing adult target-style facial refinement",
     "do not change hair color, length, fringe, or silhouette": "preserve hair color, length, fringe, and silhouette",
     "do not change the teal tunic, navy long coat, brown belt, or brown boots": "preserve the teal tunic, navy long coat, brown belt, and brown boots"
   });
@@ -725,9 +725,10 @@ export function buildPassPrompt(subject, pass) {
   const descriptor = buildMigrationIdentityDescriptor(subject);
   return [
     `Canonical identity descriptor: ${descriptor}.`,
-    `Generate the exact ${pass.id} view of the same adult male character, approximately 25-30 years old, with mature facial bone structure.`,
-    "Use natural-sized almond-shaped blue eyes with normal iris proportions, a restrained expression, and slender adult body proportions.",
-    "Rendering target: cinematic semi-realistic Chinese 3D donghua, refined adult anime facial anatomy, detailed hair strands and skin, physically readable costume materials, cinematic depth of field and controlled rim light; stylized and semi-realistic, not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child.",
+    `Generate the exact ${pass.id} view of the same handsome young adult male character, approximately 24-28 years old, with refined adult facial planes.`,
+    "Use an elegant softly angular jaw, a slender straight modeled nose, natural-sized almond-shaped blue eyes with normal iris proportions, softly controlled brows, a restrained calm expression, and slender adult body proportions.",
+    "The character is clean-shaven in every view: no beard, no moustache, no stubble, no facial hair shadow.",
+    "Rendering target: premium Chinese 3D donghua animated-feature aesthetic, high-end CG anime character rendering, soft luminous skin with subtle subsurface scattering, detailed individual hair strands, physically readable woven cloth and leather, cinematic depth of field, soft key light and controlled rim light; elegant and slightly stylized, not rugged live-action realism, not a generic western game character, not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child.",
     `${CINEMATIC_3D_DONGHUA_CONTRACT.id} ${CINEMATIC_3D_DONGHUA_CONTRACT.version}: ${CINEMATIC_3D_DONGHUA_CONTRACT.positivePrompt}.`,
     "Human-only anatomy constraint: human ears only, no animal ears, no tail, no horns, no animal muzzle.",
     "Return one clean model-generated character image; do not create a collage, character sheet, fallback cutout, or copied screenshot."

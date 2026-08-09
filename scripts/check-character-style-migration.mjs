@@ -112,7 +112,7 @@ assert.deepEqual(currentSanitized.identityTraits, [
   "established adult male identity"
 ]);
 assert.deepEqual(currentSanitized.preservationConstraints, [
-  "preserve established face shape and blue eye color",
+  "preserve recognizable facial identity and blue eye color while allowing adult target-style facial refinement",
   "preserve hair color, length, fringe, and silhouette",
   "preserve the teal tunic, navy long coat, brown belt, and brown boots"
 ]);
@@ -124,11 +124,14 @@ const fixtureSubject = { identityPack: currentIdentityPack, species: "human" };
 const canonicalDescriptor = buildMigrationIdentityDescriptor(fixtureSubject);
 for (const pass of [{ id: "front" }, { id: "side" }, { id: "back" }]) {
   const migrationPrompt = buildPassPrompt(fixtureSubject, pass);
-  assert.match(migrationPrompt, /adult male.*25-30 years old.*mature facial bone structure/i);
-  assert.match(migrationPrompt, /natural-sized almond-shaped blue eyes.*normal iris proportions/i);
-  assert.match(migrationPrompt, /restrained expression.*slender adult body proportions/i);
-  assert.match(migrationPrompt, /cinematic semi-realistic Chinese 3D donghua/i);
+  assert.match(migrationPrompt, /young adult male.*24-28 years old.*refined adult facial planes/i);
+  assert.match(migrationPrompt, /elegant softly angular jaw.*slender straight modeled nose.*natural-sized almond-shaped blue eyes.*normal iris proportions/i);
+  assert.match(migrationPrompt, /clean-shaven in every view.*no beard.*no moustache.*no stubble/i);
+  assert.match(migrationPrompt, /restrained calm expression.*slender adult body proportions/i);
+  assert.match(migrationPrompt, /premium Chinese 3D donghua animated-feature aesthetic.*high-end CG anime character rendering/i);
+  assert.match(migrationPrompt, /soft luminous skin.*subtle subsurface scattering.*detailed individual hair strands.*physically readable woven cloth and leather/i);
   assert.match(migrationPrompt, /not Pixar-style, not Disney-style, not western family animation, not chibi, not toy-like, not juvenile, not a child/i);
+  assert.match(migrationPrompt, /not rugged live-action realism.*not a generic western game character/i);
   assert.ok(migrationPrompt.includes(canonicalDescriptor), "every view must contain the same canonical identity descriptor");
   assert.doesNotMatch(migrationPrompt, /large blue eyes|youthful animated face|do not change age, gender presentation, or body proportions|do not switch from clean 2D animated character styling to photorealism/i);
 }
