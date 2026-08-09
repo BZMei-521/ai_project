@@ -315,8 +315,8 @@ async function createTemporaryDirectoryGuard(dependencies = {}) {
 
   try {
     await verifyDirectoryIdentity();
-    sentinelMayExist = true;
     await write(sentinelPath, sentinelBytes, { flag: "wx" });
+    sentinelMayExist = true;
     await verifyOwnedFile(sentinelPath, sentinelBytes);
   } catch (error) {
     try { await cleanup(); } catch (cleanupError) { throw cleanupError; }
@@ -330,9 +330,9 @@ async function createTemporaryDirectoryGuard(dependencies = {}) {
       const payload = Buffer.from(bytes);
       const target = join(directory, fileName);
       await verifyDirectoryIdentity();
-      ownedFiles.set(target, payload);
       try {
         await write(target, payload, { flag: "wx" });
+        ownedFiles.set(target, payload);
         await verifyOwnedFile(target, payload);
         return target;
       } catch (error) {

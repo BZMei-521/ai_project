@@ -311,6 +311,37 @@ try {
   if (movedOwnedTemp) await rm(movedOwnedTemp, { recursive: true, force: true });
 }
 
+const competingTempOutput = join(tempRoot, "competing-temp-output");
+let competingTempDirectory;
+let competingTempFile;
+try {
+  await assert.rejects(runCharacterStyleMigration({
+    project: projectPath,
+    character: CHARACTER_ID,
+    provider: "flux2_klein_4b",
+    baseUrl: "http://127.0.0.1:8188",
+    workflow: workflowPath,
+    output: competingTempOutput,
+    workspaceRoot: WORKSPACE
+  }, {
+    transport,
+    tmpdir: () => tempRoot,
+    async mkdtemp(prefix) {
+      competingTempDirectory = await mkdtemp(prefix);
+      competingTempFile = join(competingTempDirectory, "front-1.png");
+      return competingTempDirectory;
+    },
+    async writeFile(target, bytes, options) {
+      if (target === competingTempFile) await writeFile(target, bytes, { flag: "wx" });
+      return writeFile(target, bytes, options);
+    }
+  }), /EEXIST|untracked file/i);
+  assert.deepEqual(await readFile(competingTempFile), PNG, "a same-name same-byte file whose competing wx won must never be registered or deleted as run-owned");
+} finally {
+  await rm(competingTempOutput, { recursive: true, force: true });
+  if (competingTempDirectory) await rm(competingTempDirectory, { recursive: true, force: true });
+}
+
 const outputDirectory = join(tempRoot, "migration-output");
 const beforeProject = await readFile(projectPath);
 const manifest = await runCharacterStyleMigration({
