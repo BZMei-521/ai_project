@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import {
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
-  rm,
+  rmdir,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -238,6 +237,112 @@ async function createOutputDirectoryGuard(outputDirectory, workspaceRoot, depend
   };
 }
 
+async function createTemporaryDirectoryGuard(dependencies = {}) {
+  const systemTemp = resolve(dependencies.tmpdir?.() ?? tmpdir());
+  const createTemp = dependencies.mkdtemp ?? mkdtemp;
+  const statPath = dependencies.lstat ?? lstat;
+  const canonicalize = dependencies.realpath ?? realpath;
+  const read = dependencies.readFile ?? readFile;
+  const write = dependencies.writeFile ?? writeFile;
+  const removeFile = dependencies.unlink ?? unlink;
+  const removeDirectory = dependencies.rmdir ?? rmdir;
+  const listDirectory = dependencies.readdir ?? readdir;
+  const directory = resolve(await createTemp(join(systemTemp, "character-style-migration-")));
+  if (!isPathInside(systemTemp, directory) || basename(directory).length <= "character-style-migration-".length || !basename(directory).startsWith("character-style-migration-")) {
+    throw new Error("Temporary directory provider returned an unowned path.");
+  }
+  const canonicalSystemTemp = await canonicalize(systemTemp);
+  await assertNoReparseComponents(directory, dependencies);
+  const initialStats = await statPath(directory);
+  if (!initialStats.isDirectory() || initialStats.isSymbolicLink()) throw new Error("Run-owned temporary path is not a regular directory.");
+  const canonicalDirectory = await canonicalize(directory);
+  if (!isPathInside(canonicalSystemTemp, canonicalDirectory)) throw new Error("Run-owned temporary directory escaped the system temp root.");
+  const identity = statIdentity(initialStats);
+  const nonce = randomUUID();
+  const sentinelBytes = Buffer.from(`character-style-migration-temp:${nonce}\n`, "utf8");
+  const sentinelPath = join(directory, `.migration-temp-${nonce}.sentinel`);
+  let sentinelMayExist = false;
+  let cleaned = false;
+  const ownedFiles = new Map();
+
+  const verifyDirectoryIdentity = async () => {
+    await assertNoReparseComponents(directory, dependencies);
+    const currentStats = await statPath(directory);
+    if (!currentStats.isDirectory() || currentStats.isSymbolicLink()) throw new Error("Run-owned temp directory replacement detected.");
+    const currentCanonical = await canonicalize(directory);
+    if (currentCanonical !== canonicalDirectory || !isPathInside(canonicalSystemTemp, currentCanonical) || statIdentity(currentStats) !== identity) {
+      throw new Error("Run-owned temp directory identity changed; replacement cleanup refused.");
+    }
+  };
+
+  const verifyOwnedFile = async (target, expectedBytes) => {
+    await verifyDirectoryIdentity();
+    await assertNoReparseComponents(target, dependencies);
+    const stats = await statPath(target);
+    if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("Run-owned temporary file identity changed.");
+    const canonicalTarget = await canonicalize(target);
+    if (dirname(canonicalTarget) !== canonicalDirectory || !isPathInside(canonicalSystemTemp, canonicalTarget)) {
+      throw new Error("Run-owned temporary file escaped its guarded directory.");
+    }
+    if (!Buffer.from(await read(target)).equals(expectedBytes)) throw new Error("Run-owned temporary file bytes changed.");
+  };
+
+  const removeExactOwnedFile = async (target, expectedBytes) => {
+    try {
+      await verifyOwnedFile(target, expectedBytes);
+      await removeFile(target);
+      await verifyDirectoryIdentity();
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  };
+
+  const cleanup = async () => {
+    if (cleaned) return;
+    await verifyDirectoryIdentity();
+    for (const [target, bytes] of ownedFiles) await removeExactOwnedFile(target, bytes);
+    ownedFiles.clear();
+    if (sentinelMayExist) {
+      await removeExactOwnedFile(sentinelPath, sentinelBytes);
+      sentinelMayExist = false;
+    }
+    await verifyDirectoryIdentity();
+    if ((await listDirectory(directory)).length !== 0) throw new Error("Run-owned temporary directory contains an untracked file; cleanup refused.");
+    await verifyDirectoryIdentity();
+    await removeDirectory(directory);
+    cleaned = true;
+  };
+
+  try {
+    await verifyDirectoryIdentity();
+    sentinelMayExist = true;
+    await write(sentinelPath, sentinelBytes, { flag: "wx" });
+    await verifyOwnedFile(sentinelPath, sentinelBytes);
+  } catch (error) {
+    try { await cleanup(); } catch (cleanupError) { throw cleanupError; }
+    throw error;
+  }
+
+  return {
+    directory,
+    async writeOwnedExclusive(fileName, bytes) {
+      if (!/^[A-Za-z0-9._-]+$/.test(fileName) || fileName.startsWith(".")) throw new Error("Unsafe run-owned temporary filename.");
+      const payload = Buffer.from(bytes);
+      const target = join(directory, fileName);
+      await verifyDirectoryIdentity();
+      ownedFiles.set(target, payload);
+      try {
+        await write(target, payload, { flag: "wx" });
+        await verifyOwnedFile(target, payload);
+        return target;
+      } catch (error) {
+        throw error;
+      }
+    },
+    async cleanup() { await cleanup(); }
+  };
+}
+
 function imageMagic(bytes) {
   if (!Buffer.isBuffer(bytes)) bytes = Buffer.from(bytes ?? []);
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) return "png";
@@ -331,20 +436,36 @@ function proveSelectedOutputGraph(entries, loaders, modelNodeId, outputNodeId, t
   if (!positiveSource) throw new Error("CFGGuider positive conditioning must be an authoritative typed link.");
   let conditioningCursor = positiveSource;
   const conditioningSeen = new Set();
+  const positiveReferenceNodes = new Set();
   while (conditioningCursor !== String(tokenEncoderId)) {
     if (conditioningSeen.has(conditioningCursor)) throw new Error("Authoritative positive conditioning contains a cycle.");
     conditioningSeen.add(conditioningCursor);
     const nodeType = graph.nodes.get(conditioningCursor)?.class_type;
     if (nodeType === "ConditioningZeroOut") throw new Error("Authoritative positive conditioning must not pass through ConditioningZeroOut.");
     if (nodeType !== "ReferenceLatent") throw new Error("Authoritative positive conditioning may only preserve canonical tokens through ReferenceLatent nodes.");
+    positiveReferenceNodes.add(conditioningCursor);
     const priorConditioning = graph.inputSources.get(conditioningCursor)?.get("conditioning");
     if (!priorConditioning) throw new Error("Authoritative positive conditioning chain is incomplete.");
     conditioningCursor = priorConditioning;
   }
   if (!reachable(tokenEncoderId, positiveSource)) throw new Error("Canonical token encoder must dominate authoritative positive conditioning.");
+  const contributesIdentityPixels = (loaderId, referenceNodeId) => {
+    const latentSource = graph.inputSources.get(referenceNodeId)?.get("latent");
+    if (!latentSource || graph.nodes.get(latentSource)?.class_type !== "VAEEncode") return false;
+    let pixelCursor = graph.inputSources.get(latentSource)?.get("pixels");
+    const pixelSeen = new Set();
+    while (pixelCursor && pixelCursor !== String(loaderId)) {
+      if (pixelSeen.has(pixelCursor)) return false;
+      pixelSeen.add(pixelCursor);
+      if (graph.nodes.get(pixelCursor)?.class_type !== "ImageScaleToTotalPixels") return false;
+      pixelCursor = graph.inputSources.get(pixelCursor)?.get("image");
+    }
+    return pixelCursor === String(loaderId);
+  };
   for (const [loaderId] of loaders) {
-    if (!reachesTargetThroughType(loaderId, positiveSource, "ReferenceLatent")) {
-      throw new Error("Both identity LoadImage reference chains must enter the authoritative positive conditioning source.");
+    const validPixelReference = [...positiveReferenceNodes].some((referenceNodeId) => contributesIdentityPixels(loaderId, referenceNodeId));
+    if (!validPixelReference || !reachesTargetThroughType(loaderId, positiveSource, "ReferenceLatent")) {
+      throw new Error("Both distinct identity LoadImage pixel chains must enter VAEEncode.pixels and a ReferenceLatent on the authoritative positive conditioning source.");
     }
   }
 }
@@ -647,10 +768,10 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
   }
 
   let outputGuard;
-  let temporaryRoot;
+  let temporaryGuard;
   try {
     outputGuard = await createOutputDirectoryGuard(outputDirectory, workspaceRoot, dependencies);
-    temporaryRoot = await (dependencies.mkdtemp ?? mkdtemp)(join(dependencies.tmpdir?.() ?? tmpdir(), "character-style-migration-"));
+    temporaryGuard = await createTemporaryDirectoryGuard(dependencies);
     const transport = dependencies.transport ?? createDefaultTransport(parsedEndpoint.href, dependencies);
     const candidates = [];
     for (const pass of PASSES) {
@@ -662,11 +783,12 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
         const sourceFormat = subject.sourceFormats[slot];
         const extension = sourceFormat === "jpeg" ? "jpg" : sourceFormat;
         const contentType = sourceFormat === "jpeg" ? "image/jpeg" : `image/${sourceFormat}`;
-        const stagedPath = join(temporaryRoot, `${pass.id}-${index + 1}.${extension}`);
+        const stagedName = `${pass.id}-${index + 1}.${extension}`;
         await assertNoReparseComponents(subject.sourcePaths[slot], dependencies);
-        await (dependencies.copyFile ?? copyFile)(subject.sourcePaths[slot], stagedPath, fsConstants.COPYFILE_EXCL);
+        const currentSourceBytes = Buffer.from(await (dependencies.readFile ?? readFile)(subject.sourcePaths[slot]));
+        if (!currentSourceBytes.equals(originalBytes)) throw new Error(`Source image changed while staging ${slot}.`);
+        const stagedPath = await temporaryGuard.writeOwnedExclusive(stagedName, originalBytes);
         const stagedBytes = Buffer.from(await (dependencies.readFile ?? readFile)(stagedPath));
-        if (!stagedBytes.equals(originalBytes)) throw new Error(`Source image changed while staging ${slot}.`);
         const digest = sha256(stagedBytes);
         sourceDigests.push(digest);
         const remoteName = await transport.uploadImage({
@@ -736,14 +858,9 @@ export async function runCharacterStyleMigration(options, dependencies = {}) {
         cleanupFailure = error;
       }
     }
-    if (temporaryRoot) {
+    if (temporaryGuard) {
       try {
-        const ownedRoot = resolve(temporaryRoot);
-        const systemTemp = resolve(dependencies.tmpdir?.() ?? tmpdir());
-        if (!isPathInside(systemTemp, ownedRoot) || basename(ownedRoot).length <= "character-style-migration-".length || !basename(ownedRoot).startsWith("character-style-migration-")) {
-          throw new Error("Refused to clean an unowned migration temporary directory.");
-        }
-        await (dependencies.rm ?? rm)(ownedRoot, { recursive: true, force: true });
+        await temporaryGuard.cleanup();
       } catch (error) {
         cleanupFailure ??= error;
       }

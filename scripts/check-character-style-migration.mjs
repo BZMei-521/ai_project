@@ -106,6 +106,13 @@ assert.throws(() => compileStyleMigrationWorkflow(referencesOnlyOnNegative, {
   STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
   CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
 }), /positive.*reference|identity.*positive/i, "both identity references must condition the authoritative positive branch, not only cfg=1 negative conditioning");
+const emptyLatentIdentity = structuredClone(workflow);
+emptyLatentIdentity["10"].inputs.latent = ["12", 0];
+assert.throws(() => compileStyleMigrationWorkflow(emptyLatentIdentity, {
+  REFERENCE_IMAGE_A: "a.png", REFERENCE_IMAGE_B: "b.png", PROMPT: "p", VIEW: "front",
+  STYLE_CONTRACT_ID: "cinematic_3d_donghua_v1", STYLE_CONTRACT_VERSION: "1.0.0",
+  CHARACTER_ASSET_ID: CHARACTER_ID, SEED: 1
+}), /pixel|VAEEncode|identity.*latent/i, "LoadImage dimensions feeding EmptyFlux2LatentImage must not count as identity pixel contribution");
 
 const tempRoot = await mkdtemp(join(WORKSPACE, ".tmp-character-style-migration-"));
 const sourceDirectory = join(tempRoot, "sources");
@@ -264,6 +271,44 @@ try {
 } finally {
   await rm(transportFailureOutput, { recursive: true, force: true });
   if (transportFailureTemp) await rm(transportFailureTemp, { recursive: true, force: true });
+}
+
+const tempReplacementOutput = join(tempRoot, "temp-replacement-output");
+let originalOwnedTemp;
+let movedOwnedTemp;
+const victimBytes = Buffer.from("do not delete this victim\n", "utf8");
+try {
+  await assert.rejects(runCharacterStyleMigration({
+    project: projectPath,
+    character: CHARACTER_ID,
+    provider: "flux2_klein_4b",
+    baseUrl: "http://127.0.0.1:8188",
+    workflow: workflowPath,
+    output: tempReplacementOutput,
+    workspaceRoot: WORKSPACE
+  }, {
+    tmpdir: () => tempRoot,
+    async mkdtemp(prefix) {
+      originalOwnedTemp = await mkdtemp(prefix);
+      movedOwnedTemp = `${originalOwnedTemp}-moved`;
+      return originalOwnedTemp;
+    },
+    transport: {
+      async uploadImage() {
+        await rename(originalOwnedTemp, movedOwnedTemp);
+        await mkdir(originalOwnedTemp);
+        await writeFile(join(originalOwnedTemp, "victim.txt"), victimBytes, { flag: "wx" });
+        throw new Error("injected temp replacement");
+      },
+      async queueWorkflow() { throw new Error("must not queue"); }
+    }
+  }), /temp.*identity|temp.*replacement|injected temp replacement/i);
+  assert.deepEqual(await readFile(join(originalOwnedTemp, "victim.txt")), victimBytes, "cleanup must never recursively remove a replacement directory or its victim file");
+  assert.equal((await readdir(movedOwnedTemp)).some((name) => name.endsWith(".sentinel")), true, "an unlocatable moved owned directory may remain for safe operator cleanup");
+} finally {
+  await rm(tempReplacementOutput, { recursive: true, force: true });
+  if (originalOwnedTemp) await rm(originalOwnedTemp, { recursive: true, force: true });
+  if (movedOwnedTemp) await rm(movedOwnedTemp, { recursive: true, force: true });
 }
 
 const outputDirectory = join(tempRoot, "migration-output");
