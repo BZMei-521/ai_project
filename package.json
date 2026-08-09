@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "test:threeview-guards": "node scripts/check-threeview-stability-guards.mjs",
     "test:character-style": "node scripts/check-character-style-contract.mjs",
+    "test:character-style-migration": "node scripts/check-character-style-migration.mjs",
+    "migrate:character-style": "node scripts/run-character-style-migration.mjs",
     "test:character-evaluator": "node scripts/check-character-siglip2-evaluator.mjs",
     "web:build": "tsc -b && vite build",
     "web:start": "node scripts/windows-web-server.mjs",
