@@ -26,6 +26,9 @@ assert.ok(bundle, "The bundled storyboard persistence path should be available."
 const {
   beginDesktopSnapshotSyncTransition,
   blockDesktopSnapshotSync,
+  canManuallySaveDesktopSnapshot,
+  completeDesktopSnapshotLoad,
+  completeDesktopSnapshotSave,
   createDesktopSnapshotSyncState,
   createSnapshotBackup,
   markDesktopSnapshotSynced,
@@ -46,6 +49,38 @@ const snapshotB = { project: { id: "project-b", name: "Target" }, shots: [{ id: 
 const editedSnapshotB = { ...snapshotB, project: { ...snapshotB.project, name: "Target edited" } };
 const syncedA = createDesktopSnapshotSyncState(workspaceA, snapshotA);
 
+const switchNullLoad = completeDesktopSnapshotLoad(
+  blockDesktopSnapshotSync(beginDesktopSnapshotSyncTransition(syncedA), workspaceB),
+  workspaceB,
+  null
+);
+assert.equal(switchNullLoad.phase, "blocked", "switch load null must remain blocked");
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: switchNullLoad, workspacePath: workspaceB, snapshot: editedSnapshotA }),
+  false,
+  "editing after switch load null must not write the previous project into the target"
+);
+assert.equal(
+  canManuallySaveDesktopSnapshot(switchNullLoad, workspaceB),
+  false,
+  "manual save must be denied while the target workspace is blocked"
+);
+assert.equal(
+  canManuallySaveDesktopSnapshot(beginDesktopSnapshotSyncTransition(syncedA), workspaceA),
+  false,
+  "manual save must be denied during a workspace transition"
+);
+assert.equal(canManuallySaveDesktopSnapshot(syncedA, workspaceA), true, "manual save should be allowed for a synchronized workspace");
+assert.equal(canManuallySaveDesktopSnapshot(syncedA, workspaceB), false, "manual save must reject a mismatched active workspace path");
+let guardedManualBackendCalls = 0;
+const attemptGuardedManualSave = (state, workspacePath) => {
+  if (!canManuallySaveDesktopSnapshot(state, workspacePath)) return;
+  guardedManualBackendCalls += 1;
+};
+attemptGuardedManualSave(switchNullLoad, workspaceB);
+attemptGuardedManualSave(beginDesktopSnapshotSyncTransition(syncedA), workspaceA);
+assert.equal(guardedManualBackendCalls, 0, "blocked and transitioning manual saves must not invoke the backend writer");
+
 const createNullTransition = beginDesktopSnapshotSyncTransition(syncedA);
 const createNullRecovered = restoreDesktopSnapshotSyncState(createNullTransition, syncedA);
 assert.equal(createNullRecovered.phase, "synced", "create null must restore the previous synchronized workspace");
@@ -55,7 +90,7 @@ assert.equal(
     state: createNullRecovered,
     workspacePath: workspaceA,
     snapshot: editedSnapshotA,
-    scheduledRevision: syncedA.revision
+    scheduledWorkspaceToken: syncedA.workspaceToken
   }),
   false,
   "create null recovery must invalidate a timeout scheduled before the transition"
@@ -69,6 +104,11 @@ assert.equal(
 const createSaveThrowTransition = beginDesktopSnapshotSyncTransition(syncedA);
 const createSaveThrowRecovered = markDesktopSnapshotUnsynced(createSaveThrowTransition, workspaceB);
 assert.equal(createSaveThrowRecovered.phase, "unsynced", "a created workspace with failed explicit save must remain retryable");
+assert.equal(
+  canManuallySaveDesktopSnapshot(createSaveThrowRecovered, workspaceB),
+  true,
+  "manual save should be allowed to retry an unsynced workspace"
+);
 assert.equal(
   shouldScheduleDesktopSnapshotSave({ state: createSaveThrowRecovered, workspacePath: workspaceB, snapshot: snapshotB }),
   true,
@@ -100,17 +140,35 @@ assert.equal(
   "a real edit after delete replacement reload recovery must autosave safely"
 );
 
-const pendingRevision = syncedA.revision;
+const pendingWorkspaceToken = syncedA.workspaceToken;
 assert.equal(
-  shouldScheduleDesktopSnapshotSave({ state: syncedA, workspacePath: workspaceA, snapshot: editedSnapshotA, scheduledRevision: pendingRevision }),
+  shouldScheduleDesktopSnapshotSave({ state: syncedA, workspacePath: workspaceA, snapshot: editedSnapshotA, scheduledWorkspaceToken: pendingWorkspaceToken }),
   true,
   "an edit should initially schedule autosave"
 );
-const manualSaveCompleted = markDesktopSnapshotSynced(syncedA, workspaceA, editedSnapshotA);
+const manualSaveCompleted = completeDesktopSnapshotSave(syncedA, {
+  workspacePath: workspaceA,
+  workspaceToken: pendingWorkspaceToken,
+  submittedSnapshot: editedSnapshotA
+});
 assert.equal(
-  shouldScheduleDesktopSnapshotSave({ state: manualSaveCompleted, workspacePath: workspaceA, snapshot: editedSnapshotA, scheduledRevision: pendingRevision }),
+  shouldScheduleDesktopSnapshotSave({ state: manualSaveCompleted, workspacePath: workspaceA, snapshot: editedSnapshotA, scheduledWorkspaceToken: pendingWorkspaceToken }),
   false,
-  "manual save success must invalidate a pending autosave flush"
+  "manual save success must skip a pending flush for the same submitted snapshot"
+);
+const editedWhileSaveInFlight = {
+  ...editedSnapshotA,
+  shots: [...editedSnapshotA.shots, { id: "shot-created-while-a-was-saving" }]
+};
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({
+    state: manualSaveCompleted,
+    workspacePath: workspaceA,
+    snapshot: editedWhileSaveInFlight,
+    scheduledWorkspaceToken: pendingWorkspaceToken
+  }),
+  true,
+  "saving submitted snapshot A must not cancel pending snapshot B created while A was in flight"
 );
 assert.equal(
   shouldScheduleDesktopSnapshotSave({
@@ -120,6 +178,85 @@ assert.equal(
   }),
   true,
   "a later edit after manual save must still autosave"
+);
+
+const createInitialSaveState = markDesktopSnapshotUnsynced(
+  beginDesktopSnapshotSyncTransition(syncedA),
+  workspaceB
+);
+const createPendingWorkspaceToken = createInitialSaveState.workspaceToken;
+const createInitialSaveCompleted = completeDesktopSnapshotSave(createInitialSaveState, {
+  workspacePath: workspaceB,
+  workspaceToken: createPendingWorkspaceToken,
+  submittedSnapshot: snapshotB
+});
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({
+    state: createInitialSaveCompleted,
+    workspacePath: workspaceB,
+    snapshot: editedSnapshotB,
+    scheduledWorkspaceToken: createPendingWorkspaceToken
+  }),
+  true,
+  "create initial save must baseline submitted A without cancelling an in-flight edit B"
+);
+
+let asyncSaveState = syncedA;
+let resolveSubmittedA;
+const submittedACompletion = new Promise((resolve) => {
+  resolveSubmittedA = resolve;
+}).then(() => {
+  asyncSaveState = completeDesktopSnapshotSave(asyncSaveState, {
+    workspacePath: workspaceA,
+    workspaceToken: syncedA.workspaceToken,
+    submittedSnapshot: editedSnapshotA
+  });
+});
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({
+    state: asyncSaveState,
+    workspacePath: workspaceA,
+    snapshot: editedWhileSaveInFlight,
+    scheduledWorkspaceToken: syncedA.workspaceToken
+  }),
+  true,
+  "snapshot B should be scheduled while submitted snapshot A is still in flight"
+);
+resolveSubmittedA();
+await submittedACompletion;
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({
+    state: asyncSaveState,
+    workspacePath: workspaceA,
+    snapshot: editedWhileSaveInFlight,
+    scheduledWorkspaceToken: syncedA.workspaceToken
+  }),
+  true,
+  "snapshot B must remain scheduled after the asynchronous completion of submitted snapshot A"
+);
+
+let asyncCreateState = createInitialSaveState;
+let resolveCreateA;
+const createACompletion = new Promise((resolve) => {
+  resolveCreateA = resolve;
+}).then(() => {
+  asyncCreateState = completeDesktopSnapshotSave(asyncCreateState, {
+    workspacePath: workspaceB,
+    workspaceToken: createPendingWorkspaceToken,
+    submittedSnapshot: snapshotB
+  });
+});
+resolveCreateA();
+await createACompletion;
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({
+    state: asyncCreateState,
+    workspacePath: workspaceB,
+    snapshot: editedSnapshotB,
+    scheduledWorkspaceToken: createPendingWorkspaceToken
+  }),
+  true,
+  "an edit during the asynchronous create initial save must remain pending after submitted snapshot A completes"
 );
 
 const defaults = {

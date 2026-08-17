@@ -114,13 +114,49 @@ AssertionError [ERR_ASSERTION]: create null must restore the previous synchroniz
 - `unsynced`：新工作区已由后端创建并成为当前目标，但首次显式保存失败；允许自动重试及后续编辑保存。
 - `blocked`：后端目标已切换，但目标快照加载失败；禁止把旧内存快照写到新目标，成功重新加载后恢复。
 
-每次转移递增 `revision`。自动保存 timeout 捕获安排时 revision，手动或自动保存成功会推进基线并递增 revision，因此旧 pending flush 会失效。
+工作区转换递增 `workspaceToken`，用于失效旧工作区 pending flush；同一工作区的保存完成只推进实际提交快照的指纹基线，不改变 token。同内容 pending flush 因指纹相等自然跳过，保存期间产生的新内容仍可继续保存。
 
 App 失败路径处理：
 
 1. create 返回 null/创建前抛错：恢复创建前完整 Zustand state、workspace sync-state 和路径语义；后续真实编辑仍可正常保存。
 2. create 已返回新路径但 list/显式 save 抛错：新路径进入 `unsynced`，不会永久 not-ready，并可由自动保存重试。
 3. switch/delete 已得到新目标路径但 load 抛错：新路径进入 `blocked`，不会恢复成“新路径 + 旧路径基线 + ready”的无效组合；手动重新加载成功后建立新基线，后续编辑可安全保存。
-4. 手动保存成功：以实际提交的 snapshot 和当前 workspace 推进 `synced` 基线，失效旧 timeout，避免紧接着重复自动写盘。
+4. 手动保存成功：以实际提交的 snapshot 和当前 workspace 推进 `synced` 基线；同内容 timeout 跳过，不取消保存期间产生的新内容。
 
 专项 checker 直接执行生产状态机，覆盖上述失败与恢复路径；没有使用 App source-string 断言，也未硬编码 H3 字段。
+
+## r3 复审修复：null load、手动守卫与 in-flight 编辑
+
+### 三轮 RED
+
+1. switch/delete load 返回 null：
+
+```text
+AssertionError [ERR_ASSERTION]: switch load null must remain blocked
++ actual: 'synced'
+- expected: 'blocked'
+```
+
+2. blocked/transitioning 手动保存：
+
+```text
+AssertionError [ERR_ASSERTION]: manual save must be denied while the target workspace is blocked
+true !== false
+```
+
+3. 保存 A 在途时产生 B：
+
+```text
+AssertionError [ERR_ASSERTION]: saving submitted snapshot A must not cancel pending snapshot B created while A was in flight
+false !== true
+```
+
+### r3 GREEN
+
+- `completeDesktopSnapshotLoad` 把 null 明确转成 `blocked`；switch/delete 只有拿到并 hydrate 真实目标快照后才进入 `synced`。null 后自动编辑不能跨写，手动 reload 成功后恢复。
+- `canManuallySaveDesktopSnapshot` 是自动/手动共享的 phase/path 授权：仅同路径 `synced`/`unsynced` 可保存；`blocked`、`transitioning`、`disabled` 和路径不匹配均不会调用后端 save。
+- `workspaceToken` 只表示工作区转换；begin/restore/switch/delete 使旧工作区 timer 失效，内容保存完成不改变 token。
+- auto/manual/create 初始保存都捕获实际提交的 snapshot 与 workspace token。成功只能用提交的 A 推进基线，不能在 await 后用 latest B；若期间出现 B，B 与基线 A 指纹不同，pending timer 保留并继续保存。
+- 保存完成时若工作区 path/token 已变化，不推进当前基线。
+
+checker 直接执行生产 helper 的 null-load、phase guard、A/B in-flight、create A/B、恢复后编辑以及旧 workspace token 场景。最终专项 checker 与 `npm.cmd run build` 均退出 0；Vite 转换 460 个模块，仅保留既有 chunk 体积警告。
