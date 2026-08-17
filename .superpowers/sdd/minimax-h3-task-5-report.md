@@ -15,6 +15,7 @@ Implemented `generateRoutedVideoShot(request)` as a deterministic H3 binding lay
 - The existing executor is called once with the supplied settings, shot, index, `"video"`, shot/assets collections, rewritten workflow, token overrides, progress callback, and abort signal.
 - Receipts are computed only from the executor's queue-accepted attestation and successful return proof: the post-style, post-staging, post-token-replacement/coercion/object-info canonical queued graph, effective inputs, prompt ID, Comfy provenance, and output identity. Plan digests are explicitly named `planned*` and are never used as receipt evidence.
 - Routed H3 enables strict Comfy execution. Queue failure, post-queue terminal failure, abort, missing/mismatched proof, missing output identity, settings-level local motion, or any legacy fallback rejects without an H3 receipt; legacy callers retain fallback by default.
+- Strict Comfy execution recursively scans the final post-style, post-staging, post-token-replacement/coercion/object-info `built` graph immediately before queueing. Any mixed/lowercase `{{...}}` sequence in a key or value throws `unresolved_workflow_token`; non-strict legacy callers retain their prior behavior.
 
 ## TDD evidence
 
@@ -31,6 +32,8 @@ Implemented `generateRoutedVideoShot(request)` as a deterministic H3 binding lay
 11. Strict fallback RED: with the strict guards temporarily absent, a queue failure was swallowed by legacy local-video fallback (`Missing expected rejection`).
 12. Strict fallback GREEN: queue error, queued terminal error, abort, and settings-level local motion all reject with `localFallbackCalls === 0`; a non-strict legacy call still falls back without a Comfy proof.
 13. End-to-end GREEN: the real binder delegates to the extracted real executor. Its receipt digest equals the executor's actual queued graph digest, differs from the unexecuted preset digest, and a terminal failure after prompt acceptance throws without a receipt.
+14. Final-token RED: a fully canonical T2V request injected `{{untrusted_path}}` through the bound prompt value. The real binder/executor returned successfully and the checker reported `Missing expected rejection`.
+15. Final-token GREEN: the strict executor's final graph gate rejects request-prompt, style-output, and staged-basename placeholder injection. Every case records queue `0`, prompt callbacks `0`, attestations `0`, local fallbacks `0`, and no successful result/receipt source. A non-strict legacy control still queues once.
 
 The checker uses executable implementations. It transpiles the real binder and extracts/transpiles the real `generateShotAsset` function plus its private Task 5 helpers. Only filesystem/network/queue/history/output dependencies are isolated with deterministic stubs; the executor's control flow runs through successful output, terminal failure, abort, and fallback decisions. No source-string assertion is used as behavioral evidence.
 
@@ -61,7 +64,7 @@ PASS (TypeScript and Vite production build; pre-existing chunk-size advisory onl
 - Added `src/modules/video-production/videoGeneration.ts`.
 - Added `scripts/check-minimax-h3-binding.mjs`.
 - Added one `test:minimax-h3-binding` script to `package.json`.
-- Added the private frame-token staging predicate plus minimal optional queue-attestation, successful execution-proof, and strict no-fallback wiring in `src/modules/comfy-pipeline/comfyService.ts`; existing queue/history/output mechanics remain the sole execution path and legacy defaults are unchanged.
+- Added the private frame-token staging predicate plus minimal optional queue-attestation, successful execution-proof, strict no-fallback wiring, and final strict-graph unresolved-token gate in `src/modules/comfy-pipeline/comfyService.ts`; existing queue/history/output mechanics remain the sole execution path and legacy defaults are unchanged.
 - Added this report.
 
 `package.json` and `comfyService.ts` contained extensive unrelated user changes before Task 5. Their Task-specific hunks remain intentionally uncommitted because safely staging those shared files would risk including unrelated edits; no working-tree changes were reset, cleaned, or overwritten. Task 6 was not started.

@@ -87,7 +87,8 @@ async function loadIsolatedGenerateShotAsset() {
   const helperSources = [
     "workflowConsumesVideoFrameTokens",
     "canonicalizeComfyExecutionValue",
-    "canonicalizeComfyQueuedWorkflow"
+    "canonicalizeComfyQueuedWorkflow",
+    "assertNoUnresolvedWorkflowTokens"
   ].map((name) => declarations.get(name) ?? "").join("\n");
   const transpiled = ts.transpileModule(`${helperSources}\n${generateSource}`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
@@ -102,7 +103,14 @@ async function loadIsolatedGenerateShotAsset() {
   let state = {};
   const reset = (nextScenario = {}) => {
     scenario = nextScenario;
-    state = { stagedFrames: 0, queuedGraph: null, queuedAttestations: [], localFallbackCalls: 0 };
+    state = {
+      stagedFrames: 0,
+      queueCalls: 0,
+      promptQueuedCallbacks: 0,
+      queuedGraph: null,
+      queuedAttestations: [],
+      localFallbackCalls: 0
+    };
   };
   reset();
   const replaceTokens = (value, tokens) => {
@@ -134,9 +142,9 @@ async function loadIsolatedGenerateShotAsset() {
       state.stagedFrames += 1;
       return {
         ...tokens,
-        FIRST_FRAME_PATH: tokens.FIRST_FRAME_PATH ? "staged_first.png" : "",
-        LAST_FRAME_PATH: tokens.LAST_FRAME_PATH ? "staged_last.png" : "",
-        FRAME_IMAGE_PATH: tokens.FRAME_IMAGE_PATH ? "staged_frame.png" : ""
+        FIRST_FRAME_PATH: tokens.FIRST_FRAME_PATH ? (scenario.stagedFirstPath ?? "staged_first.png") : "",
+        LAST_FRAME_PATH: tokens.LAST_FRAME_PATH ? (scenario.stagedLastPath ?? "staged_last.png") : "",
+        FRAME_IMAGE_PATH: tokens.FRAME_IMAGE_PATH ? (scenario.stagedFramePath ?? "staged_frame.png") : ""
       };
     },
     fetchObjectInfo: async () => ({ isolated_object_info: true }),
@@ -148,6 +156,7 @@ async function loadIsolatedGenerateShotAsset() {
       if (workflow["1"]?.inputs) workflow["1"].inputs.object_info_bound = true;
     },
     queueComfyPrompt: async (_baseUrl, workflow) => {
+      state.queueCalls += 1;
       state.queuedGraph = structuredClone(workflow);
       if (scenario.queueError) throw scenario.queueError;
       return "prompt-real-queued-001";
@@ -197,6 +206,7 @@ async function loadIsolatedGenerateShotAsset() {
       {
         workflowJsonOverride: JSON.stringify(workflow),
         tokenOverrides,
+        onPromptQueued: () => { state.promptQueuedCallbacks += 1; },
         onQueuedPromptAttested: (attestation) => state.queuedAttestations.push(structuredClone(attestation)),
         ...options
       }
@@ -213,7 +223,20 @@ async function loadIsolatedGenerateShotAsset() {
   };
   const runArgs = async (nextScenario, ...args) => {
     reset(nextScenario);
-    const result = await generateShotAsset(...args);
+    const wrappedArgs = [...args];
+    const originalOptions = wrappedArgs[6] ?? {};
+    wrappedArgs[6] = {
+      ...originalOptions,
+      onPromptQueued: (promptId) => {
+        state.promptQueuedCallbacks += 1;
+        originalOptions.onPromptQueued?.(promptId);
+      },
+      onQueuedPromptAttested: (attestation) => {
+        state.queuedAttestations.push(structuredClone(attestation));
+        originalOptions.onQueuedPromptAttested?.(attestation);
+      }
+    };
+    const result = await generateShotAsset(...wrappedArgs);
     state.lastResult = result;
     return result;
   };
@@ -552,6 +575,60 @@ try {
   assert.notEqual(realExecutorGenerated.videoGenerationReceipt.workflowDigest,
     await sha256ForCheck(canonicalJsonForCheck(await preset("minimax-h3-i2v-v1.json"))),
     "end-to-end receipt must bind the actual staged/coerced graph, not the plan preset");
+
+  const canonicalT2vRequest = {
+    ...request,
+    routeDecision: { status: "selected", profileId: "minimax_h3_t2v", reason: "manual_override" },
+    profileWorkflowJson: JSON.stringify(await preset("minimax-h3-t2v-v1.json")),
+    references: []
+  };
+  const unresolvedInjectionCases = [
+    {
+      label: "request prompt",
+      request: { ...canonicalT2vRequest, prompt: "camera move {{untrusted_path}}" },
+      scenario: {}
+    },
+    {
+      label: "style-contract prompt",
+      request: { ...canonicalT2vRequest, prompt: "safe camera move" },
+      scenario: { stylePrompt: "styled camera {{Mixed_Style_Token}}" }
+    },
+    {
+      label: "staged frame basename",
+      request: { ...realExecutorI2vRequest, prompt: "safe anchored move" },
+      scenario: { stagedFirstPath: "staged_{{lower_Path_Token}}.png" }
+    }
+  ];
+  for (const injectionCase of unresolvedInjectionCases) {
+    globalThis.__MINIMAX_H3_EXECUTOR__ = (...args) => isolatedExecutor.runArgs(
+      injectionCase.scenario,
+      ...args
+    );
+    await assert.rejects(
+      () => generateRoutedVideoShot(injectionCase.request),
+      /unresolved_workflow_token/,
+      `${injectionCase.label} unresolved token must be rejected before queue`
+    );
+    const rejectedState = isolatedExecutor.getState();
+    assert.equal(rejectedState.queueCalls, 0, `${injectionCase.label}: queue must remain untouched`);
+    assert.equal(rejectedState.promptQueuedCallbacks, 0, `${injectionCase.label}: prompt callback must remain untouched`);
+    assert.equal(rejectedState.queuedAttestations.length, 0, `${injectionCase.label}: attestation must remain untouched`);
+    assert.equal(rejectedState.localFallbackCalls, 0, `${injectionCase.label}: local fallback must remain untouched`);
+    assert.equal(rejectedState.lastResult, undefined, `${injectionCase.label}: no executor success/receipt source may exist`);
+  }
+
+  const legacyUnresolved = await isolatedExecutor.execute({
+    workflow: await preset("minimax-h3-t2v-v1.json"),
+    tokenOverrides: {
+      VIDEO_PROMPT: "legacy literal {{kept_for_compatibility}}",
+      VIDEO_WIDTH: "1280",
+      VIDEO_HEIGHT: "720",
+      H3_LENGTH: "124",
+      SEED: "79"
+    }
+  });
+  assert.equal(legacyUnresolved.state.queueCalls, 1,
+    "non-strict legacy execution must retain its previous queue behavior");
 
   globalThis.__MINIMAX_H3_EXECUTOR__ = (...args) => isolatedExecutor.runArgs(
     {
