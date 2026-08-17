@@ -8,6 +8,7 @@ const result = await build({
     contents: `
       export { useStoryboardStore } from "./src/modules/storyboard-core/store.ts";
       export { createSnapshotBackup, parseSnapshotBackup } from "./src/modules/persistence/backupSnapshot.ts";
+      export { createDesktopSnapshotSyncBaseline, shouldSaveDesktopSnapshot } from "./src/modules/persistence/desktopSnapshotSync.ts";
     `,
     loader: "ts",
     resolveDir: repoRoot,
@@ -22,8 +23,81 @@ const result = await build({
 const bundle = result.outputFiles[0]?.text;
 assert.ok(bundle, "The bundled storyboard persistence path should be available.");
 
-const { createSnapshotBackup, parseSnapshotBackup, useStoryboardStore } = await import(
+const {
+  createDesktopSnapshotSyncBaseline,
+  createSnapshotBackup,
+  parseSnapshotBackup,
+  shouldSaveDesktopSnapshot,
+  useStoryboardStore
+} = await import(
   `data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`
+);
+
+const loadedSnapshot = { project: { id: "project-a", name: "Legacy" }, shots: [{ id: "legacy-shot" }] };
+const loadedBaseline = createDesktopSnapshotSyncBaseline("project-a.sbproj", loadedSnapshot);
+assert.equal(
+  shouldSaveDesktopSnapshot({
+    workspacePath: "project-a.sbproj",
+    syncReady: true,
+    snapshot: loadedSnapshot,
+    baseline: null
+  }),
+  false,
+  "sync readiness without an established load baseline must not save"
+);
+assert.equal(
+  shouldSaveDesktopSnapshot({
+    workspacePath: "project-a.sbproj",
+    syncReady: true,
+    snapshot: loadedSnapshot,
+    baseline: loadedBaseline
+  }),
+  false,
+  "initial hydrate must establish a synchronized baseline without saving"
+);
+assert.equal(
+  shouldSaveDesktopSnapshot({
+    workspacePath: "project-a.sbproj",
+    syncReady: true,
+    snapshot: { ...loadedSnapshot, project: { ...loadedSnapshot.project, name: "Edited" } },
+    baseline: loadedBaseline
+  }),
+  true,
+  "a later business edit must be saved"
+);
+const switchedSnapshot = { project: { id: "project-b", name: "Switched" }, shots: [] };
+const switchedBaseline = createDesktopSnapshotSyncBaseline("project-b.sbproj", switchedSnapshot);
+assert.equal(
+  shouldSaveDesktopSnapshot({
+    workspacePath: "project-a.sbproj",
+    syncReady: true,
+    snapshot: loadedSnapshot,
+    baseline: switchedBaseline
+  }),
+  false,
+  "a pending flush from the previous workspace must not write after a switch"
+);
+assert.equal(
+  shouldSaveDesktopSnapshot({
+    workspacePath: "project-b.sbproj",
+    syncReady: true,
+    snapshot: switchedSnapshot,
+    baseline: switchedBaseline
+  }),
+  false,
+  "switching and hydrating a project must not immediately save it"
+);
+const rehydratedSnapshot = JSON.parse(JSON.stringify(switchedSnapshot));
+const rehydratedBaseline = createDesktopSnapshotSyncBaseline("project-b.sbproj", rehydratedSnapshot);
+assert.equal(
+  shouldSaveDesktopSnapshot({
+    workspacePath: "project-b.sbproj",
+    syncReady: true,
+    snapshot: rehydratedSnapshot,
+    baseline: rehydratedBaseline
+  }),
+  false,
+  "rehydrating equivalent persisted data must not schedule a write"
 );
 
 const defaults = {
@@ -146,4 +220,4 @@ try {
   useStoryboardStore.setState(initialState, true);
 }
 
-console.log("PASS video production schema: legacy migration, import, update, serialization, and reload");
+console.log("PASS video production schema: legacy migration, desktop sync policy, import, update, serialization, and reload");

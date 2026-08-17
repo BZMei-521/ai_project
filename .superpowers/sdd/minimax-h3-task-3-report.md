@@ -60,3 +60,31 @@ npm.cmd run build
 - `hydrateFromSnapshot` 的默认迁移是纯内存行为。应用现有自动保存机制后，用户后续正常编辑/保存可能把已迁移默认值写入新快照，这是正常持久化行为；本迁移本身不会主动覆盖源项目。
 - Vite 仍提示少数构建 chunk 超过 500 kB；这是既有打包体积提示，与本任务 schema/store 变更无直接关系。
 - 未开始 Task 4。
+
+## Important 修复：legacy hydrate 不自动写回桌面项目
+
+独立审查指出，旧快照经 `hydrateFromSnapshot` 补齐默认字段后会改变 `shots` 引用，而原桌面自动保存 effect 只检查工作区路径和 ready 状态，导致无编辑也在 1.2 秒后写盘。
+
+### 修复 TDD
+
+先抽取与原 effect 等价的纯同步策略并新增可执行场景。首次运行得到预期 RED：
+
+```text
+AssertionError [ERR_ASSERTION]: initial hydrate must establish a synchronized baseline without saving
+true !== false
+```
+
+GREEN 使用通用的“工作区路径 + 完整持久化快照 JSON 指纹”基线，不包含任何 MiniMax/H3 字段特判：
+
+- 初始化、桌面加载、项目切换及重新 hydrate 后，当前内存快照被标记为已同步，不安排写盘。
+- 同一工作区发生后续真实状态修改，快照指纹变化，自动保存仍会执行。
+- 定时保存 flush 前再次检查当前工作区、ready 状态和最新快照，旧工作区的待执行定时器不能写入新工作区。
+- 自动保存成功后推进基线；创建项目后的显式保存、重命名及删除后切换也建立对应路径基线。
+
+专项 checker 现覆盖：无基线初始化不写、首次 hydrate 不写、后续编辑写、旧工作区 pending flush 不写、项目切换不写、等价重新 hydrate 不写。
+
+### Important 修复提交边界
+
+- 新增纯 helper `src/modules/persistence/desktopSnapshotSync.ts` 可独立安全提交。
+- `scripts/check-video-production-schema.mjs` 与本报告属于已跟踪 Task 3 文件，可提交本次增量。
+- `src/app/App.tsx` 在修复前已有大量 lazy panel、generation task 等其他未提交改动。本次仅做同步基线相关小补丁；若无法从共享 hunks 安全隔离，App 修复保持未暂存并由集成者连同现有共享改动处理。
