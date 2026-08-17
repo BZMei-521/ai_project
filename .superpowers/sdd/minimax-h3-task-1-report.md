@@ -50,6 +50,12 @@ Initial implementation: `5a7cadcc757bb6b327f7c3ec0b89f430ba5a374a`.
 - Remediation validation: `node scripts/check-minimax-h3-presets.mjs` and `npm.cmd run test:workflow-presets` passed.
 - Remediation commit: `dcbce0963c09785553aba02f6214cd22c02a7939`.
 
+## Import-safety remediation
+
+- RED evidence: importing `build-minimax-h3-presets.mjs` from an isolated temporary current directory created `src/modules/comfy-pipeline/presets/minimax-h3-t2v-v1.json`; the new no-side-effect assertion failed as intended.
+- The builder now exports `buildBase`, `buildPrompt`, `presets`, and `writePresets`. Writing occurs only when its file is invoked directly as a CLI entrypoint.
+- GREEN validation: importing the builder leaves the isolated directory unchanged; direct CLI generation and both `test:minimax-h3-presets` and `test:workflow-presets` pass.
+
 ## Known risks
 
 - The presets use the verified MiniMax H3 node and model baseline recorded in the source manifest; availability still depends on the local ComfyUI installation matching that baseline.

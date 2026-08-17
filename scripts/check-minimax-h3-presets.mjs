@@ -3,6 +3,7 @@ import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
 const presetsDirectory = path.join(root, "src", "modules", "comfy-pipeline", "presets");
@@ -149,6 +150,23 @@ try {
   }
 } finally {
   fs.rmSync(generatedDirectory, { recursive: true, force: true });
+}
+
+const importDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "minimax-h3-builder-import-"));
+try {
+  const builderModuleUrl = pathToFileURL(path.join(root, "scripts", "build-minimax-h3-presets.mjs")).href;
+  const imported = childProcess.spawnSync(process.execPath, ["--input-type=module", "--eval", `import(${JSON.stringify(builderModuleUrl)})`], {
+    cwd: importDirectory,
+    encoding: "utf8"
+  });
+  assert.equal(imported.status, 0, `builder import failed: ${imported.stderr}`);
+  assert.equal(
+    fs.existsSync(path.join(importDirectory, "src", "modules", "comfy-pipeline", "presets", "minimax-h3-t2v-v1.json")),
+    false,
+    "builder import must not write default preset artifacts"
+  );
+} finally {
+  fs.rmSync(importDirectory, { recursive: true, force: true });
 }
 
 console.log("PASS minimax h3 API presets");

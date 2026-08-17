@@ -1,12 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const outputDirectoryArg = process.argv.find((argument) => argument.startsWith("--output-dir="));
-const presetsDirectory = outputDirectoryArg
-  ? path.resolve(process.cwd(), outputDirectoryArg.slice("--output-dir=".length))
-  : path.join(process.cwd(), "src", "modules", "comfy-pipeline", "presets");
+const defaultPresetsDirectory = path.join(process.cwd(), "src", "modules", "comfy-pipeline", "presets");
 
-const MODELS = {
+export const MODELS = {
   fl2va: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
   ref2va: "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
   clip: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
@@ -25,7 +23,7 @@ const schedulerInputs = {
   denoise: 1
 };
 
-function buildBase({ mode, teSpeed }) {
+export function buildBase({ mode, teSpeed }) {
   if (teSpeed) throw new Error("TE Speed overlays are not part of production presets");
 
   const isReferenceMode = mode === "r2v";
@@ -68,7 +66,7 @@ function buildBase({ mode, teSpeed }) {
   };
 }
 
-function buildPrompt(mode) {
+export function buildPrompt(mode) {
   const prompt = buildBase({ mode, teSpeed: false });
   if (mode === "i2v" || mode === "flf2v") {
     prompt["15"] = { class_type: "LoadImage", inputs: { image: "{{FIRST_FRAME_PATH}}" } };
@@ -88,14 +86,24 @@ function buildPrompt(mode) {
   return prompt;
 }
 
-const presets = [
+export const presets = [
   ["minimax-h3-t2v-v1.json", "t2v"],
   ["minimax-h3-i2v-v1.json", "i2v"],
   ["minimax-h3-flf2v-v1.json", "flf2v"],
   ["minimax-h3-r2v-v1.json", "r2v"]
 ];
 
-fs.mkdirSync(presetsDirectory, { recursive: true });
-for (const [name, mode] of presets) {
-  fs.writeFileSync(path.join(presetsDirectory, name), `${JSON.stringify(buildPrompt(mode), null, 2)}\n`);
+export function writePresets(presetsDirectory = defaultPresetsDirectory) {
+  fs.mkdirSync(presetsDirectory, { recursive: true });
+  for (const [name, mode] of presets) {
+    fs.writeFileSync(path.join(presetsDirectory, name), `${JSON.stringify(buildPrompt(mode), null, 2)}\n`);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const outputDirectoryArg = process.argv.find((argument) => argument.startsWith("--output-dir="));
+  const outputDirectory = outputDirectoryArg
+    ? path.resolve(process.cwd(), outputDirectoryArg.slice("--output-dir=".length))
+    : defaultPresetsDirectory;
+  writePresets(outputDirectory);
 }
