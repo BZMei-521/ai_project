@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const presetsDirectory = path.join(process.cwd(), "src", "modules", "comfy-pipeline", "presets");
+const outputDirectoryArg = process.argv.find((argument) => argument.startsWith("--output-dir="));
+const presetsDirectory = outputDirectoryArg
+  ? path.resolve(process.cwd(), outputDirectoryArg.slice("--output-dir=".length))
+  : path.join(process.cwd(), "src", "modules", "comfy-pipeline", "presets");
 
 const MODELS = {
   fl2va: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
