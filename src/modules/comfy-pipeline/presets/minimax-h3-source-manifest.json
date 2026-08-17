@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "sourceDirectory": "C:/Users/Administrator/Desktop/工作流",
+  "sources": {
+    "allSeries": "6ca194e4dd4d624a93eeb5ba1bdaef6a9918b22c6c4defdf6e364da102791963",
+    "teSpeed": "363afc99504e88ff1a390ff24f5a925345927d031df0c34ffc52ad0188e0799f",
+    "teSpeedFirstLast": "2a05247ab4d6781d98e579825589d9182bd4ad085e15f4763d0255b67eebc8a8",
+    "i2v": "bb71aecdd3c0b62e56eafe03acb14d1cfeabec7072eaed9cbdf473c2aaf73009",
+    "r2v": "099d24eda6263854818975c7209db6f29ebfd0339936c928f12293d5ab029ffb",
+    "t2v": "31ab33fdb053a7834cc866bd7aa08b887518fc656e4a796c89779c6b5e1786e6"
+  },
+  "verifiedComfyVersion": "0.30.2",
+  "verifiedFrontendVersion": "1.47.12",
+  "nativeFps": 24,
+  "h3LengthRange": [124, 362],
+  "h3LengthGrid": "17k+5"
+}
