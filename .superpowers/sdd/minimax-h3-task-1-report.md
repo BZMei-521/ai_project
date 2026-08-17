@@ -48,7 +48,7 @@ Initial implementation: `5a7cadcc757bb6b327f7c3ec0b89f430ba5a374a`.
 - The strengthened checker now verifies exact models, every required sampler/decode/mux link, full per-mode token surface at the consuming inputs, T2V/I2V/FLF2V/R2V frame/reference semantics, and the manifest's 24 fps / 124–362 / `17k+5` contract.
 - It generates four presets into an isolated temporary directory and compares their bytes with the checked-in artifacts, without modifying checked-in presets.
 - Remediation validation: `node scripts/check-minimax-h3-presets.mjs` and `npm.cmd run test:workflow-presets` passed.
-- Remediation commit SHA is recorded in the follow-up report update.
+- Remediation commit: `dcbce0963c09785553aba02f6214cd22c02a7939`.
 
 ## Known risks
 
