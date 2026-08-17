@@ -160,3 +160,33 @@ false !== true
 - 保存完成时若工作区 path/token 已变化，不推进当前基线。
 
 checker 直接执行生产 helper 的 null-load、phase guard、A/B in-flight、create A/B、恢复后编辑以及旧 workspace token 场景。最终专项 checker 与 `npm.cmd run build` 均退出 0；Vite 转换 460 个模块，仅保留既有 chunk 体积警告。
+
+## r4 复审修复：桌面写入单飞串行化
+
+### RED
+
+用可控 deferred promises 复现原 App 的真实调用方式：同一 workspace 的 A 尚未完成时直接启动 B，再让 B 先完成、A 后完成。首次执行观察到两个后端写入同时在途：
+
+```text
+AssertionError [ERR_ASSERTION]: desktop snapshot writes must be single-flight
+2 !== 1
+```
+
+该时序会使磁盘最终从 B 回退到 A，且两个 completion 依次推进状态后，baseline 同样回退到 A。
+
+### GREEN
+
+- 新增生产 `createDesktopSnapshotSaveCoordinator`，对桌面快照写入执行全局单飞；任意时刻最多一个后端 save。
+- A 在途时到来的 B 保留为 queued；B/C 连续到来时合并为最新 C，写入顺序为 A→C。被合并的手动/自动调用方共同等待实际提交 C 的完成结果，后端错误则正确 reject 对应 waiters。
+- 同 workspace、同快照指纹的手动/自动请求加入同一在途或 queued job，不产生重复磁盘写入。
+- workspace path/token 激活变化会取消旧 workspace queued job；已在途旧 path 可完成，但 App 的 path/token guard 不允许它推进新 workspace 状态。新 workspace 写入等待旧在途调用 settle 后才启动。
+- 单次 writer 失败不会毒化队列：较新的 queued snapshot 继续执行，后续显式重试也可正常启动。
+- App 的 auto、manual、create 初始保存全部通过同一个 coordinator 实例；所有 sync-state 转移通过统一 setter 同步 coordinator 的 workspace key，没有保留直接 `saveSnapshotToDesktop(...)` 旁路。
+
+专项 checker 直接执行生产 coordinator，覆盖最大并发 1、A→B 顺序与最终磁盘/baseline、B/C 合并及手动 completion、旧 workspace queue 取消、跨 workspace 串行、失败后继续与重试。
+
+### r4 提交边界
+
+- `src/modules/persistence/desktopSnapshotSync.ts`、`scripts/check-video-production-schema.mjs` 与本报告可安全隔离提交。
+- `src/app/App.tsx` 是任务开始前已存在大量其他改动的共享脏文件；r4 仅加入 coordinator 实例、统一 sync-state setter 和三个保存入口接线，保持未暂存，由集成者连同共享改动处理。
+- 未执行 reset、checkout 或 clean；未开始 Task 4。

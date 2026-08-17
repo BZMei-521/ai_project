@@ -23,6 +23,9 @@ const result = await build({
 const bundle = result.outputFiles[0]?.text;
 assert.ok(bundle, "The bundled storyboard persistence path should be available.");
 
+const desktopSyncRuntime = await import(
+  `data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`
+);
 const {
   beginDesktopSnapshotSyncTransition,
   blockDesktopSnapshotSync,
@@ -37,9 +40,7 @@ const {
   restoreDesktopSnapshotSyncState,
   shouldScheduleDesktopSnapshotSave,
   useStoryboardStore
-} = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`
-);
+} = desktopSyncRuntime;
 
 const workspaceA = "project-a.sbproj";
 const workspaceB = "project-b.sbproj";
@@ -48,6 +49,219 @@ const editedSnapshotA = { ...snapshotA, project: { ...snapshotA.project, name: "
 const snapshotB = { project: { id: "project-b", name: "Target" }, shots: [{ id: "shot-b" }] };
 const editedSnapshotB = { ...snapshotB, project: { ...snapshotB.project, name: "Target edited" } };
 const syncedA = createDesktopSnapshotSyncState(workspaceA, snapshotA);
+
+const createSaveCoordinator = desktopSyncRuntime.createDesktopSnapshotSaveCoordinator ?? ((writer) => {
+  let activeWorkspacePath = "";
+  let activeWorkspaceToken = 0;
+  return {
+    activateWorkspace(workspacePath, workspaceToken) {
+      activeWorkspacePath = workspacePath;
+      activeWorkspaceToken = workspaceToken;
+    },
+    save(submission) {
+      if (
+        submission.workspacePath !== activeWorkspacePath ||
+        submission.workspaceToken !== activeWorkspaceToken
+      ) {
+        return Promise.resolve({ status: "cancelled", savedPath: null, submission });
+      }
+      return writer(submission.snapshot).then((savedPath) => ({
+        status: "completed",
+        savedPath,
+        submission
+      }));
+    }
+  };
+});
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+{
+  const gates = {
+    A: createDeferred(),
+    B: createDeferred()
+  };
+  const started = [];
+  const completed = [];
+  let backendConcurrency = 0;
+  let maximumBackendConcurrency = 0;
+  let diskSnapshot = null;
+  let saveState = syncedA;
+  const coordinator = createSaveCoordinator(async (snapshot) => {
+    const version = snapshot.version;
+    started.push(version);
+    backendConcurrency += 1;
+    maximumBackendConcurrency = Math.max(maximumBackendConcurrency, backendConcurrency);
+    try {
+      await gates[version].promise;
+      diskSnapshot = snapshot;
+      completed.push(version);
+      return workspaceA;
+    } finally {
+      backendConcurrency -= 1;
+    }
+  });
+  coordinator.activateWorkspace(workspaceA, syncedA.workspaceToken);
+  const saveA = coordinator.save({
+    workspacePath: workspaceA,
+    workspaceToken: syncedA.workspaceToken,
+    snapshot: { version: "A" }
+  }).then((result) => {
+    if (result.status === "completed" && result.savedPath) {
+      saveState = completeDesktopSnapshotSave(saveState, {
+        workspacePath: result.submission.workspacePath,
+        workspaceToken: result.submission.workspaceToken,
+        submittedSnapshot: result.submission.snapshot
+      });
+    }
+    return result;
+  });
+  const saveB = coordinator.save({
+    workspacePath: workspaceA,
+    workspaceToken: syncedA.workspaceToken,
+    snapshot: { version: "B" }
+  }).then((result) => {
+    if (result.status === "completed" && result.savedPath) {
+      saveState = completeDesktopSnapshotSave(saveState, {
+        workspacePath: result.submission.workspacePath,
+        workspaceToken: result.submission.workspaceToken,
+        submittedSnapshot: result.submission.snapshot
+      });
+    }
+    return result;
+  });
+
+  gates.B.resolve();
+  await Promise.resolve();
+  gates.A.resolve();
+  await Promise.all([saveA, saveB]);
+
+  assert.equal(maximumBackendConcurrency, 1, "desktop snapshot writes must be single-flight");
+  assert.deepEqual(started, ["A", "B"], "snapshot B must start only after snapshot A settles");
+  assert.deepEqual(completed, ["A", "B"], "snapshot writes must complete in submission order");
+  assert.deepEqual(diskSnapshot, { version: "B" }, "out-of-order completion must not roll disk content back from B to A");
+  assert.equal(
+    saveState.baseline?.snapshotFingerprint,
+    JSON.stringify({ version: "B" }),
+    "the synchronized baseline must finish at the latest saved snapshot"
+  );
+}
+
+{
+  const gates = {
+    A: createDeferred(),
+    B: createDeferred(),
+    C: createDeferred()
+  };
+  const started = [];
+  let backendConcurrency = 0;
+  let maximumBackendConcurrency = 0;
+  const coordinator = createSaveCoordinator(async (snapshot) => {
+    started.push(snapshot.version);
+    backendConcurrency += 1;
+    maximumBackendConcurrency = Math.max(maximumBackendConcurrency, backendConcurrency);
+    try {
+      await gates[snapshot.version].promise;
+      return workspaceA;
+    } finally {
+      backendConcurrency -= 1;
+    }
+  });
+  coordinator.activateWorkspace(workspaceA, syncedA.workspaceToken);
+  const saveA = coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "A" } });
+  const manualSaveB = coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "B" } });
+  const autoSaveC = coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "C" } });
+
+  gates.B.resolve();
+  gates.C.resolve();
+  gates.A.resolve();
+  const [, manualResult, autoResult] = await Promise.all([saveA, manualSaveB, autoSaveC]);
+
+  assert.deepEqual(started, ["A", "C"], "queued B/C snapshots should coalesce to the latest C");
+  assert.equal(maximumBackendConcurrency, 1, "coalesced saves must keep backend concurrency at one");
+  assert.deepEqual(
+    manualResult.submission.snapshot,
+    { version: "C" },
+    "a manual caller whose queued snapshot was superseded must receive the actual saved snapshot completion"
+  );
+  assert.deepEqual(autoResult.submission.snapshot, { version: "C" }, "all merged callers must observe the actual saved snapshot");
+}
+
+{
+  const gates = {
+    A: createDeferred(),
+    B: createDeferred(),
+    N: createDeferred()
+  };
+  const started = [];
+  let backendConcurrency = 0;
+  let maximumBackendConcurrency = 0;
+  const coordinator = createSaveCoordinator(async (snapshot) => {
+    started.push(snapshot.version);
+    backendConcurrency += 1;
+    maximumBackendConcurrency = Math.max(maximumBackendConcurrency, backendConcurrency);
+    try {
+      await gates[snapshot.version].promise;
+      return snapshot.version === "N" ? workspaceB : workspaceA;
+    } finally {
+      backendConcurrency -= 1;
+    }
+  });
+  coordinator.activateWorkspace(workspaceA, syncedA.workspaceToken);
+  const oldInFlight = coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "A" } });
+  const oldQueued = coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "B" } });
+  coordinator.activateWorkspace(workspaceB, syncedA.workspaceToken + 1);
+  const oldQueuedResult = await oldQueued;
+  const newWorkspaceSave = coordinator.save({ workspacePath: workspaceB, workspaceToken: syncedA.workspaceToken + 1, snapshot: { version: "N" } });
+
+  gates.B.resolve();
+  gates.N.resolve();
+  gates.A.resolve();
+  await Promise.all([oldInFlight, newWorkspaceSave]);
+
+  assert.equal(oldQueuedResult.status, "cancelled", "workspace transition must cancel an old queued snapshot");
+  assert.deepEqual(started, ["A", "N"], "an old queued snapshot must never write after workspace transition");
+  assert.equal(maximumBackendConcurrency, 1, "a new workspace write must wait for the old in-flight backend call to settle");
+}
+
+{
+  const gates = {
+    A: createDeferred(),
+    B: createDeferred(),
+    C: createDeferred()
+  };
+  const started = [];
+  const coordinator = createSaveCoordinator(async (snapshot) => {
+    started.push(snapshot.version);
+    await gates[snapshot.version].promise;
+    return workspaceA;
+  });
+  coordinator.activateWorkspace(workspaceA, syncedA.workspaceToken);
+  const failedSave = coordinator
+    .save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "A" } })
+    .then(() => null, (error) => error);
+  const queuedRecovery = coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "B" } });
+
+  const expectedFailure = new Error("save A failed");
+  gates.B.resolve();
+  gates.A.reject(expectedFailure);
+  assert.equal(await failedSave, expectedFailure, "the failed save caller must receive the backend error");
+  const recoveredResult = await queuedRecovery;
+  assert.equal(recoveredResult.status, "completed", "a queued newer snapshot must still save after an earlier failure");
+
+  gates.C.resolve();
+  const retryResult = await coordinator.save({ workspacePath: workspaceA, workspaceToken: syncedA.workspaceToken, snapshot: { version: "C" } });
+  assert.equal(retryResult.status, "completed", "the coordinator must accept later retries after a failed queue drain");
+  assert.deepEqual(started, ["A", "B", "C"], "save failure must not poison subsequent queue processing");
+}
 
 const switchNullLoad = completeDesktopSnapshotLoad(
   blockDesktopSnapshotSync(beginDesktopSnapshotSyncTransition(syncedA), workspaceB),
@@ -379,4 +593,4 @@ try {
   useStoryboardStore.setState(initialState, true);
 }
 
-console.log("PASS video production schema: legacy migration, desktop sync state machine, import, update, serialization, and reload");
+console.log("PASS video production schema: legacy migration, single-flight desktop sync, import, update, serialization, and reload");

@@ -10,6 +10,159 @@ export type DesktopSnapshotSyncState = {
   workspaceToken: number;
 };
 
+export type DesktopSnapshotSaveSubmission<TSnapshot = unknown> = {
+  workspacePath: string;
+  workspaceToken: number;
+  snapshot: TSnapshot;
+};
+
+export type DesktopSnapshotSaveResult<TSnapshot = unknown> =
+  | {
+      status: "completed";
+      savedPath: string | null;
+      submission: DesktopSnapshotSaveSubmission<TSnapshot>;
+    }
+  | {
+      status: "cancelled";
+      savedPath: null;
+      submission: DesktopSnapshotSaveSubmission<TSnapshot>;
+    };
+
+export type DesktopSnapshotSaveCoordinator<TSnapshot> = {
+  activateWorkspace: (workspacePath: string, workspaceToken: number) => void;
+  save: (
+    submission: DesktopSnapshotSaveSubmission<TSnapshot>
+  ) => Promise<DesktopSnapshotSaveResult<TSnapshot>>;
+};
+
+type DesktopSnapshotSaveWaiter<TSnapshot> = {
+  resolve: (result: DesktopSnapshotSaveResult<TSnapshot>) => void;
+  reject: (error: unknown) => void;
+};
+
+type DesktopSnapshotSaveJob<TSnapshot> = {
+  submission: DesktopSnapshotSaveSubmission<TSnapshot>;
+  snapshotFingerprint: string;
+  waiters: DesktopSnapshotSaveWaiter<TSnapshot>[];
+};
+
+function desktopSnapshotWorkspaceKey(workspacePath: string, workspaceToken: number): string {
+  return `${workspaceToken}:${workspacePath}`;
+}
+
+export function createDesktopSnapshotSaveCoordinator<TSnapshot>(
+  writer: (snapshot: TSnapshot) => Promise<string | null>
+): DesktopSnapshotSaveCoordinator<TSnapshot> {
+  let activeWorkspaceKey = "";
+  let inFlight: DesktopSnapshotSaveJob<TSnapshot> | null = null;
+  let queued: DesktopSnapshotSaveJob<TSnapshot> | null = null;
+
+  const cancelJob = (job: DesktopSnapshotSaveJob<TSnapshot>) => {
+    const result: DesktopSnapshotSaveResult<TSnapshot> = {
+      status: "cancelled",
+      savedPath: null,
+      submission: job.submission
+    };
+    for (const waiter of job.waiters) waiter.resolve(result);
+  };
+
+  const runNext = () => {
+    if (inFlight || !queued) return;
+    const job = queued;
+    queued = null;
+    if (
+      desktopSnapshotWorkspaceKey(
+        job.submission.workspacePath,
+        job.submission.workspaceToken
+      ) !== activeWorkspaceKey
+    ) {
+      cancelJob(job);
+      runNext();
+      return;
+    }
+    inFlight = job;
+    void Promise.resolve()
+      .then(() => writer(job.submission.snapshot))
+      .then((savedPath) => {
+        const result: DesktopSnapshotSaveResult<TSnapshot> = {
+          status: "completed",
+          savedPath,
+          submission: job.submission
+        };
+        for (const waiter of job.waiters) waiter.resolve(result);
+      })
+      .catch((error) => {
+        for (const waiter of job.waiters) waiter.reject(error);
+      })
+      .finally(() => {
+        if (inFlight === job) inFlight = null;
+        runNext();
+      });
+  };
+
+  return {
+    activateWorkspace(workspacePath: string, workspaceToken: number) {
+      activeWorkspaceKey = desktopSnapshotWorkspaceKey(workspacePath, workspaceToken);
+      if (
+        queued &&
+        desktopSnapshotWorkspaceKey(
+          queued.submission.workspacePath,
+          queued.submission.workspaceToken
+        ) !== activeWorkspaceKey
+      ) {
+        const staleJob = queued;
+        queued = null;
+        cancelJob(staleJob);
+      }
+    },
+    save(
+      submission: DesktopSnapshotSaveSubmission<TSnapshot>
+    ): Promise<DesktopSnapshotSaveResult<TSnapshot>> {
+      const workspaceKey = desktopSnapshotWorkspaceKey(
+        submission.workspacePath,
+        submission.workspaceToken
+      );
+      if (workspaceKey !== activeWorkspaceKey) {
+        return Promise.resolve({ status: "cancelled", savedPath: null, submission });
+      }
+
+      const snapshotFingerprint = JSON.stringify(submission.snapshot);
+      return new Promise<DesktopSnapshotSaveResult<TSnapshot>>((resolve, reject) => {
+        const waiter = { resolve, reject };
+        if (queued) {
+          if (
+            desktopSnapshotWorkspaceKey(
+              queued.submission.workspacePath,
+              queued.submission.workspaceToken
+            ) === workspaceKey &&
+            queued.snapshotFingerprint === snapshotFingerprint
+          ) {
+            queued.waiters.push(waiter);
+          } else {
+            queued.submission = submission;
+            queued.snapshotFingerprint = snapshotFingerprint;
+            queued.waiters.push(waiter);
+          }
+          return;
+        }
+        if (
+          inFlight &&
+          desktopSnapshotWorkspaceKey(
+            inFlight.submission.workspacePath,
+            inFlight.submission.workspaceToken
+          ) === workspaceKey &&
+          inFlight.snapshotFingerprint === snapshotFingerprint
+        ) {
+          inFlight.waiters.push(waiter);
+          return;
+        }
+        queued = { submission, snapshotFingerprint, waiters: [waiter] };
+        runNext();
+      });
+    }
+  };
+}
+
 export function createDesktopSnapshotSyncBaseline(
   workspacePath: string,
   snapshot: unknown
