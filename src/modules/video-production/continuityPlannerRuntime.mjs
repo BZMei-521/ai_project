@@ -252,21 +252,53 @@ function normalizeShots(value) {
 }
 
 function normalizeBoundaryInputs(value) {
-  const grouped = new Map();
+  const groupedByPair = new Map();
+  const groupedByIdentity = new Map();
   for (const candidate of Array.isArray(value) ? value : []) {
     if (!candidate || typeof candidate !== "object") continue;
     const fromShotId = cleanText(candidate.fromShotId);
     const toShotId = cleanText(candidate.toShotId);
     if (!fromShotId || !toShotId) continue;
-    const key = boundaryKey(fromShotId, toShotId);
-    const existing = grouped.get(key) ?? [];
-    existing.push({ ...candidate, fromShotId, toShotId });
-    grouped.set(key, existing);
+    const pairKey = boundaryKey(fromShotId, toShotId);
+    const explicitId = cleanText(candidate.id);
+    const normalized = {
+      ...(explicitId ? { id: explicitId } : {}),
+      fromShotId,
+      toShotId,
+      kind: normalizeBoundaryKind(candidate.kind),
+      approvalStatus: normalizeApprovalStatus(candidate.approvalStatus),
+      ...(cleanText(candidate.sharedFramePath)
+        ? { sharedFramePath: cleanText(candidate.sharedFramePath) }
+        : {}),
+      ...(cleanText(candidate.sharedFrameSource)
+        ? { sharedFrameSource: cleanText(candidate.sharedFrameSource) }
+        : {})
+    };
+    const entry = { value: normalized, signature: stableSerialize(normalized), pairKey };
+    const pairEntries = groupedByPair.get(pairKey) ?? [];
+    pairEntries.push(entry);
+    groupedByPair.set(pairKey, pairEntries);
+    if (explicitId) {
+      const identityEntries = groupedByIdentity.get(explicitId) ?? [];
+      identityEntries.push(entry);
+      groupedByIdentity.set(explicitId, identityEntries);
+    }
   }
-  return new Map([...grouped.entries()].map(([key, duplicates]) => [
-    key,
-    duplicates.sort((left, right) => compareText(stableSerialize(left), stableSerialize(right)))[0]
-  ]));
+
+  for (const [identity, duplicates] of groupedByIdentity) {
+    if (sortedUnique(duplicates.map((item) => item.signature)).length > 1) {
+      throw new Error(`duplicate_boundary_conflict:${identity}`);
+    }
+  }
+
+  return new Map([...groupedByPair.entries()].map(([pairKey, duplicates]) => {
+    const signatures = sortedUnique(duplicates.map((item) => item.signature));
+    if (signatures.length > 1) {
+      const { fromShotId, toShotId } = duplicates[0].value;
+      throw new Error(`duplicate_boundary_conflict:${fromShotId}:${toShotId}`);
+    }
+    return [pairKey, duplicates[0].value];
+  }));
 }
 
 function normalizeShotState(shot) {

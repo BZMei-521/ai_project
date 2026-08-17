@@ -204,6 +204,64 @@ assert.throws(() => planVideoContinuity({
 }), /duplicate_shot_id_conflict:dup/,
 "conflicting duplicate shot definitions must fail before approval can be bypassed");
 
+const boundaryConflictShots = [
+  shot("boundary-a", 1, {
+    approvedTailFramePath: "frames/boundary-a-approved-tail.png",
+    tailFrameApprovalStatus: "approved"
+  }),
+  shot("boundary-b", 2)
+];
+const boundaryConflictCases = [
+  ["pending versus approved", [
+    boundary("boundary-a", "boundary-b", "continuous", { approvalStatus: "pending" }),
+    boundary("boundary-a", "boundary-b", "continuous", { approvalStatus: "approved" })
+  ]],
+  ["different kind", [
+    boundary("boundary-a", "boundary-b", "continuous", { approvalStatus: "approved" }),
+    boundary("boundary-a", "boundary-b", "hard_cut", { approvalStatus: "approved" })
+  ]],
+  ["different shared frame path", [
+    boundary("boundary-a", "boundary-b", "match_cut", {
+      approvalStatus: "approved", sharedFramePath: "frames/one.png", sharedFrameSource: "independent"
+    }),
+    boundary("boundary-a", "boundary-b", "match_cut", {
+      approvalStatus: "approved", sharedFramePath: "frames/two.png", sharedFrameSource: "independent"
+    })
+  ]],
+  ["different shared frame source", [
+    boundary("boundary-a", "boundary-b", "match_cut", {
+      approvalStatus: "approved", sharedFramePath: "frames/shared.png", sharedFrameSource: "independent"
+    }),
+    boundary("boundary-a", "boundary-b", "match_cut", {
+      approvalStatus: "approved", sharedFramePath: "frames/shared.png", sharedFrameSource: "derived_from_shot"
+    })
+  ]],
+  ["same explicit identity on different pairs", [
+    { ...boundary("boundary-a", "boundary-b", "hard_cut"), id: "manual-boundary-1" },
+    { ...boundary("boundary-b", "boundary-a", "hard_cut"), id: "manual-boundary-1" }
+  ]]
+];
+for (const [label, boundaries] of boundaryConflictCases) {
+  let unsafePlan;
+  assert.throws(() => {
+    unsafePlan = planVideoContinuity({ shots: boundaryConflictShots, boundaries });
+  }, /duplicate_boundary_conflict:/,
+  `${label} duplicate boundaries must fail before approval planning`);
+  assert.equal(unsafePlan, undefined,
+    `${label} conflict must not return a plan or mark the dependent shot ready`);
+}
+
+const identicalBoundary = boundary("boundary-a", "boundary-b", "continuous", {
+  approvalStatus: "approved"
+});
+const identicalBoundaryPlan = planVideoContinuity({
+  shots: [...boundaryConflictShots].reverse(),
+  boundaries: [{ ...identicalBoundary }, { ...identicalBoundary }]
+});
+assert.equal(identicalBoundaryPlan.boundaries.length, 1,
+  "identical duplicate boundary definitions must deduplicate idempotently");
+assert.equal(identicalBoundaryPlan.shotExecutions[1].status, "ready");
+
 const validArraySummaryPlan = planVideoContinuity({
   shots: [shot("json-array", 1, {
     sceneState: ["rain", { wind: 2, flags: [true, null] }]

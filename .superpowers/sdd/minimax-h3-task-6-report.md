@@ -25,6 +25,13 @@ The checker extracts and transpiles the real `inferVideoMode`, `inferStoryboardV
 
 Additional coverage proves stable empty input, delimiter-safe IDs, deterministic order, and a forward-only acyclic dependency graph even when reverse boundary input is supplied.
 
+### Re-review r2 closure
+
+- RED: duplicate `continuous` boundaries for the same pair, one pending and one approved, silently selected the approved definition and made the dependent ready.
+- GREEN: boundary normalization now rejects conflicting pair or explicit-identity definitions with `duplicate_boundary_conflict:<identity>` before a plan is returned.
+- The checker covers approval, kind, shared-frame path, shared-frame source, and same-explicit-ID/different-pair conflicts; every case asserts that no plan or ready dependent is returned.
+- Semantically identical duplicate boundaries remain idempotent, deterministic, and produce one boundary plan.
+
 ## Implemented contract
 
 - Ordered, equivalent scene/character/time shots form one deterministic `ContinuitySegment`.
