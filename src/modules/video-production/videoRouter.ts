@@ -4,5 +4,5 @@ import type { VideoRouteDecision, VideoRouteInput } from "./types";
 import { routeVideoWorkflow as runtimeRouteVideoWorkflow } from "./videoRouterRuntime.mjs";
 
 export const routeVideoWorkflow = runtimeRouteVideoWorkflow as (
-  input: VideoRouteInput
+  input?: Partial<VideoRouteInput>
 ) => VideoRouteDecision;

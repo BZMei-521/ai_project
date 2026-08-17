@@ -1,4 +1,5 @@
 export function routeVideoWorkflow(input) {
+  input = normalizeRouteInput(input);
   if (input.manualProfileId && input.manualProfileId !== "auto") {
     return availableOrBlocked(input.manualProfileId, "manual_override", input.availableProfileIds);
   }
@@ -18,6 +19,32 @@ export function routeVideoWorkflow(input) {
     return availableOrBlocked("minimax_h3_t2v", "unconstrained_establishing_shot", input.availableProfileIds);
   }
   return { status: "blocked", reason: "no_safe_video_profile" };
+}
+
+function normalizeRouteInput(input) {
+  const source = input && typeof input === "object" ? input : {};
+  return {
+    manualProfileId: source.manualProfileId || "auto",
+    qualityTier: source.qualityTier || "production",
+    accelerationMode: source.accelerationMode || "standard",
+    availableProfileIds: Array.isArray(source.availableProfileIds) ? source.availableProfileIds : [],
+    namedCharacterCount: countOrZero(source.namedCharacterCount),
+    identityReferenceCount: countOrZero(source.identityReferenceCount),
+    extraReferenceCount: countOrZero(source.extraReferenceCount),
+    hasSceneContinuity: source.hasSceneContinuity === true,
+    hasStoryboardFrame: source.hasStoryboardFrame === true,
+    hasFirstFrame: source.hasFirstFrame === true,
+    hasLastFrame: source.hasLastFrame === true,
+    hasApprovedBoundaryFrame: source.hasApprovedBoundaryFrame === true,
+    hasDialogue: source.hasDialogue === true,
+    boundaryKind: ["continuous", "match_cut", "hard_cut", "scene_change"].includes(source.boundaryKind)
+      ? source.boundaryKind
+      : "scene_change"
+  };
+}
+
+function countOrZero(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function availableOrBlocked(profileId, reason, availableProfileIds) {

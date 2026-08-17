@@ -2,20 +2,29 @@
 
 ## Scope
 
-Implemented only the Task 4 router runtime, typed facade, and deterministic matrix checker.
+Implemented the Task 4 router runtime, typed facade, and deterministic matrix checker. This remediation addresses every P1/P2 finding in the independent review.
 
 ## TDD evidence
 
-- **RED:** Created `scripts/check-video-workflow-router.mjs` before the runtime. Its first privileged execution failed with `ERR_MODULE_NOT_FOUND` for `videoRouterRuntime.mjs`, proving the matrix depended on the missing feature.
-- **GREEN:** Added the smallest rule-ordered implementation. The checker now reports `PASS video workflow router`.
+- Initial RED: the original checker was created before the original runtime and failed with `ERR_MODULE_NOT_FOUND`.
+- Initial GREEN: the minimal ordered router passed its matrix.
+- Remediation RED: before changing the runtime, the expanded checker reproduced P1. `routeVideoWorkflow(undefined)` failed with `TypeError: Cannot read properties of undefined (reading 'manualProfileId')`.
+- Remediation GREEN: runtime-boundary normalization now handles absent and partial JavaScript input; the expanded checker reports `PASS video workflow router`.
 
-## Routing guarantees verified
+## P1 remediation
 
-- Manual profile choice has priority; an unavailable manual profile blocks with the exact requested `profileId`.
-- Named characters without identity references block.
-- Strong reference constraints select R2V and block if R2V is unavailable; they never downgrade.
-- A continuous approved boundary selects FLF2V; a `hard_cut` does not use a boundary frame to select FLF2V.
-- Production input never selects a TE Speed workflow (the router only selects the four production MiniMax profiles).
+- Missing/non-object input becomes a safe normalized request: `availableProfileIds: []`, counts `0`, booleans `false`, `manualProfileId: "auto"`, and `boundaryKind: "scene_change"`.
+- Non-array availability data also becomes `[]`, so every `.includes` call receives an array.
+- The resulting route is deterministic and safely blocked when the selected profile is unavailable, retaining the relevant `profileId` and exact `profile_unavailable:<id>` reason.
+- The TypeScript facade continues to reuse Task 2 `VideoRouteInput` and `VideoRouteDecision` types, while accepting `Partial<VideoRouteInput> | undefined` to reflect the runtime boundary.
+
+## P2 coverage
+
+- All automatic workflows are checked in available and unavailable form: T2V, I2V, FLF2V, and R2V.
+- Priority conflicts cover manual override > identity block > strong references > endpoints > storyboard > establishing.
+- Hard-cut, continuous, and match-cut boundary cases are explicit.
+- Production routing with both `standard` and `te_speed_preview` acceleration retains the base profile and cannot return a TE profile.
+- Two controlled negative mutations dynamically load altered runtime source. Disabling the manual rule or the strong-reference rule produces a mismatch against the same priority cases, demonstrating that those assertions detect incorrect order; they are not reported as initial RED evidence.
 
 ## Verification
 
@@ -26,5 +35,5 @@ Implemented only the Task 4 router runtime, typed facade, and deterministic matr
 
 ## Commit and risk
 
-- Commit: `feat: route shots across MiniMax H3 workflows`, containing only the new router runtime, facade, checker, and this report.
-- `package.json` already had unrelated unstaged modifications. The minimal `test:video-workflow-router` script was added but will deliberately remain unstaged and out of this commit, preventing inclusion of others' work.
+- Remediation commit: `fix: harden MiniMax H3 workflow routing`, containing only the Task 4 runtime, facade, checker, and this report.
+- `package.json` has unrelated pre-existing unstaged changes. The existing minimal router test script remains deliberately unstaged and outside this remediation commit.
