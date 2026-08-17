@@ -35,8 +35,8 @@ contracts.
 
 ## Commit and risks
 
-- Commit status: pending final owned-file commit; SHA will be recorded after it
-  is created.
+- Implementation commit: `25201f9` (`feat: register MiniMax H3 video
+  capabilities`), containing only the five Task 2-owned files listed above.
 - `package.json` has the new `test:minimax-h3-profile-registry` command in the
   working tree, but it is intentionally excluded from the commit: its single
   line shares a diff hunk with unrelated user changes, so it cannot be
