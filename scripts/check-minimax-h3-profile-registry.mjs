@@ -93,6 +93,9 @@ const withoutTeSpeed = { ...verifiedInventory, nodes: [...verifiedInventory.node
 assert.deepEqual(preflightVideoAcceleration("te_speed_preview", "draft", withoutTeSpeed), {
   available: false, warnings: ["missing_node:TESpeedMiniMaxH3"]
 }, "TE Speed overlay must be unavailable when its node is absent");
+assert.deepEqual(preflightVideoAcceleration("standard", MINIMAX_H3_PROFILES[0].qualityTier, withoutTeSpeed), {
+  available: true, warnings: []
+}, "standard acceleration must not depend on the TE Speed overlay node");
 assert.equal(preflightVideoProfile(MINIMAX_H3_PROFILES[0], withoutTeSpeed).available, true,
   "base profile must remain available in standard mode");
 

@@ -43,3 +43,20 @@ contracts.
   isolated by a minimal index patch.
 - The check is fully offline/deterministic. It validates inventory input rather
   than requiring ComfyUI on port 8188.
+
+## Review amendment: TE Speed standard-mode regression coverage
+
+- Added a direct assertion using the same verified inventory without
+  `TESpeedMiniMaxH3`: `preflightVideoAcceleration("standard",
+  MINIMAX_H3_PROFILES[0].qualityTier, withoutTeSpeed)` must return exactly
+  `{ available: true, warnings: [] }`.
+- The existing direct assertions continue to prove that the draft TE Speed
+  request is unavailable with the exact `missing_node:TESpeedMiniMaxH3`
+  warning and that a base profile remains available.
+- TDD note: this is a coverage-only change over already-correct runtime
+  behavior. The new direct assertion passed on its first execution, so there
+  is no legitimate RED result without temporarily corrupting an implementation
+  the review explicitly found correct. No production implementation was
+  changed to manufacture a failure.
+- GREEN: `node scripts/check-minimax-h3-profile-registry.mjs` output
+  `PASS minimax h3 profile registry`.
