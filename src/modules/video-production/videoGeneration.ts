@@ -1,4 +1,13 @@
-import { generateShotAsset, type ComfySettings } from "../comfy-pipeline/comfyService";
+import {
+  generateShotAsset,
+  type ComfyExecutionProof,
+  type ComfyQueuedPromptAttestation,
+  type ComfySettings
+} from "../comfy-pipeline/comfyService";
+import minimaxH3Flf2vCanonical from "../comfy-pipeline/presets/minimax-h3-flf2v-v1.json";
+import minimaxH3I2vCanonical from "../comfy-pipeline/presets/minimax-h3-i2v-v1.json";
+import minimaxH3R2vCanonical from "../comfy-pipeline/presets/minimax-h3-r2v-v1.json";
+import minimaxH3T2vCanonical from "../comfy-pipeline/presets/minimax-h3-t2v-v1.json";
 import type { Asset, Shot } from "../storyboard-core/types";
 import type {
   VideoAccelerationMode,
@@ -42,8 +51,8 @@ export interface H3VideoGenerationPlan {
   profileWorkflowJson: string;
   tokenOverrides: Record<string, string>;
   selectedReferences: H3ReferenceImage[];
-  workflowDigest: string;
-  inputDigest: string;
+  plannedWorkflowDigest: string;
+  plannedInputDigest: string;
 }
 
 type ApiWorkflowNode = {
@@ -59,6 +68,13 @@ const REFERENCE_RANK: Record<H3ReferenceKind, number> = {
   character_body: 1,
   scene: 2,
   key_prop: 3
+};
+
+const CANONICAL_H3_WORKFLOWS: Record<VideoWorkflowProfileId, ApiWorkflow> = {
+  minimax_h3_t2v: minimaxH3T2vCanonical,
+  minimax_h3_i2v: minimaxH3I2vCanonical,
+  minimax_h3_flf2v: minimaxH3Flf2vCanonical,
+  minimax_h3_r2v: minimaxH3R2vCanonical
 };
 
 export function secondsToH3Length(seconds: number): number {
@@ -105,7 +121,7 @@ export async function prepareH3VideoGeneration(
   }
 
   const workflow = parseApiWorkflow(request.profileWorkflowJson);
-  assertWorkflowMatchesProfile(workflow, profileId);
+  assertCanonicalWorkflow(workflow, profileId);
   const selectedReferences = profileId === "minimax_h3_r2v"
     ? selectH3ReferenceImages(request.references ?? [])
     : [];
@@ -120,13 +136,13 @@ export async function prepareH3VideoGeneration(
   const tokenOverrides = buildH3TokenOverrides(request, profileId, selectedReferences);
   assertAllWorkflowTokensBound(workflow, tokenOverrides);
   const profileWorkflowJson = JSON.stringify(workflow);
-  const workflowDigest = await sha256Hex(stableJson(workflow));
-  const inputDigest = await sha256Hex(stableJson({
+  const plannedWorkflowDigest = await sha256Hex(stableJson(workflow));
+  const plannedInputDigest = await sha256Hex(stableJson({
     version: 1,
     profileId,
     qualityTier: request.qualityTier,
     accelerationMode: request.accelerationMode,
-    workflowDigest,
+    workflowDigest: plannedWorkflowDigest,
     shotId: request.shot.id,
     index: request.index,
     tokenOverrides,
@@ -138,8 +154,8 @@ export async function prepareH3VideoGeneration(
     profileWorkflowJson,
     tokenOverrides,
     selectedReferences,
-    workflowDigest,
-    inputDigest
+    plannedWorkflowDigest,
+    plannedInputDigest
   };
 }
 
@@ -152,6 +168,7 @@ export async function generateRoutedVideoShot(request: RoutedVideoShotRequest): 
   const plan = await prepareH3VideoGeneration(request);
   request.signal?.throwIfAborted();
   let promptId = "";
+  let queuedAttestation: ComfyQueuedPromptAttestation | undefined;
   const result = await generateShotAsset(
     request.settings,
     request.shot,
@@ -166,10 +183,30 @@ export async function generateRoutedVideoShot(request: RoutedVideoShotRequest): 
       signal: request.signal,
       onPromptQueued: (queuedPromptId) => {
         promptId = queuedPromptId;
-      }
+      },
+      onQueuedPromptAttested: (attestation) => {
+        queuedAttestation = {
+          ...attestation,
+          effectiveInputs: { ...attestation.effectiveInputs }
+        };
+      },
+      strictComfyExecution: true
     }
   );
-  if (!promptId) throw new Error("comfy_prompt_id_missing");
+  request.signal?.throwIfAborted();
+  const executionProof = requireSuccessfulExecutionProof(result.executionProof, queuedAttestation, promptId, result);
+  const workflowDigest = await sha256Hex(executionProof.canonicalWorkflowJson);
+  const inputDigest = await sha256Hex(stableJson({
+    version: 2,
+    profileId: plan.profileId,
+    qualityTier: request.qualityTier,
+    accelerationMode: request.accelerationMode,
+    workflowDigest,
+    shotId: request.shot.id,
+    index: request.index,
+    effectiveInputs: executionProof.effectiveInputs
+  }));
+  request.signal?.throwIfAborted();
   const generatedAt = request.generatedAt ?? new Date().toISOString();
   if (!Number.isFinite(Date.parse(generatedAt))) throw new Error("invalid_generated_at");
   return {
@@ -178,13 +215,52 @@ export async function generateRoutedVideoShot(request: RoutedVideoShotRequest): 
     videoGenerationReceipt: {
       profileId: plan.profileId,
       accelerationMode: request.accelerationMode,
-      workflowDigest: plan.workflowDigest,
-      inputDigest: plan.inputDigest,
-      promptId,
-      normalizedPath: normalizeOutputPath(result.localPath),
+      workflowDigest,
+      inputDigest,
+      promptId: executionProof.promptId,
+      normalizedPath: normalizeOutputPath(executionProof.outputIdentity.localPath),
       generatedAt
     }
   };
+}
+
+function requireSuccessfulExecutionProof(
+  proof: ComfyExecutionProof | undefined,
+  accepted: ComfyQueuedPromptAttestation | undefined,
+  promptId: string,
+  result: { previewUrl: string; localPath: string }
+): ComfyExecutionProof {
+  if (!proof || proof.status !== "succeeded" || proof.provenance !== "comfy") {
+    throw new Error("h3_execution_proof_missing");
+  }
+  if (!accepted || accepted.provenance !== "comfy") throw new Error("h3_queue_attestation_missing");
+  if (!promptId || proof.promptId !== promptId || accepted.promptId !== promptId) {
+    throw new Error("h3_prompt_attestation_mismatch");
+  }
+  if (!proof.canonicalWorkflowJson || proof.canonicalWorkflowJson !== accepted.canonicalWorkflowJson) {
+    throw new Error("h3_workflow_attestation_mismatch");
+  }
+  let parsedWorkflow: unknown;
+  try {
+    parsedWorkflow = JSON.parse(proof.canonicalWorkflowJson);
+  } catch {
+    throw new Error("h3_workflow_attestation_invalid");
+  }
+  if (stableJson(parsedWorkflow) !== proof.canonicalWorkflowJson) {
+    throw new Error("h3_workflow_attestation_not_canonical");
+  }
+  if (stableJson(proof.effectiveInputs) !== stableJson(accepted.effectiveInputs)) {
+    throw new Error("h3_input_attestation_mismatch");
+  }
+  if (
+    !proof.outputIdentity?.localPath ||
+    !proof.outputIdentity?.previewUrl ||
+    normalizeOutputPath(proof.outputIdentity.localPath) !== normalizeOutputPath(result.localPath) ||
+    proof.outputIdentity.previewUrl !== result.previewUrl
+  ) {
+    throw new Error("h3_output_attestation_mismatch");
+  }
+  return proof;
 }
 
 function requireSelectedProfile(decision: VideoRouteDecision): VideoWorkflowProfileId {
@@ -264,7 +340,10 @@ function parseApiWorkflow(workflowJson: string): ApiWorkflow {
   return parsed as ApiWorkflow;
 }
 
-function assertWorkflowMatchesProfile(workflow: ApiWorkflow, profileId: VideoWorkflowProfileId): void {
+function assertCanonicalWorkflow(workflow: ApiWorkflow, profileId: VideoWorkflowProfileId): void {
+  if (stableJson(workflow) !== stableJson(CANONICAL_H3_WORKFLOWS[profileId])) {
+    throw new Error("h3_noncanonical_workflow");
+  }
   const conditioningNodes = Object.values(workflow).filter((node) =>
     node.class_type === "MiniMaxH3ImageToVideo" || node.class_type === "MiniMaxH3ReferenceToVideo"
   );
@@ -360,7 +439,7 @@ function compareNodeIds(left: string, right: string): number {
 function assertAllWorkflowTokensBound(workflow: ApiWorkflow, tokenOverrides: Record<string, string>): void {
   const tokens = new Set<string>();
   const serialized = JSON.stringify(workflow);
-  for (const match of serialized.matchAll(/\{\{([A-Z0-9_]+)\}\}/g)) tokens.add(match[1]);
+  for (const match of serialized.matchAll(/\{\{([^{}]*)\}\}/g)) tokens.add(match[1]);
   for (const token of tokens) {
     if (!(token in tokenOverrides)) throw new Error(`h3_token_unbound:${token}`);
   }
