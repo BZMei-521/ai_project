@@ -141,12 +141,14 @@ export function planContinuityInvalidation(previousPlan = {}, nextPlan = {}) {
     ...(Array.isArray(nextPlan.shotExecutions) ? nextPlan.shotExecutions : [])
   ]);
   const stateQueue = [...changedStateShots];
+  const traversedStateShots = new Set();
   while (stateQueue.length > 0) {
     const shotId = stateQueue.shift();
-    if (!shotId || staleShotIds.has(shotId)) continue;
+    if (!shotId || traversedStateShots.has(shotId)) continue;
+    traversedStateShots.add(shotId);
     staleShotIds.add(shotId);
     for (const dependentShotId of dependents.get(shotTaskId(shotId)) ?? []) {
-      if (!staleShotIds.has(dependentShotId)) stateQueue.push(dependentShotId);
+      if (!traversedStateShots.has(dependentShotId)) stateQueue.push(dependentShotId);
     }
   }
 
@@ -205,17 +207,47 @@ function normalizeShots(value) {
     const candidate = candidates[index];
     const id = cleanText(candidate.id);
     if (!id) continue;
+    const sceneState = normalizeSummary(candidate.sceneState, "sceneState");
+    const characterState = normalizeSummary(candidate.characterState, "characterState");
+    const timeState = normalizeSummary(candidate.timeState, "timeState");
+    const statusSummary = normalizeSummary(candidate.statusSummary, "statusSummary");
     const normalized = {
       ...candidate,
       id,
-      order: Number.isFinite(candidate.order) ? candidate.order : index
+      order: Number.isFinite(candidate.order) ? candidate.order : index,
+      sceneState,
+      characterState,
+      timeState,
+      statusSummary
     };
     const existing = grouped.get(id) ?? [];
-    existing.push(normalized);
+    const definition = {
+      id,
+      ...(Number.isFinite(candidate.order) ? { order: candidate.order } : {}),
+      videoBoundaryKind: normalizeBoundaryKind(candidate.videoBoundaryKind),
+      characterAnchorPaths: normalizeTextArray(candidate.characterAnchorPaths),
+      sceneAnchorPath: cleanText(candidate.sceneAnchorPath),
+      colorAnchorPath: cleanText(candidate.colorAnchorPath),
+      sceneState,
+      characterState,
+      timeState,
+      statusSummary,
+      approvedTailFramePath: cleanText(candidate.approvedTailFramePath),
+      tailFrameApprovalStatus: normalizeApprovalStatus(candidate.tailFrameApprovalStatus)
+    };
+    existing.push({ shot: normalized, signature: stableSerialize(definition) });
     grouped.set(id, existing);
   }
   return [...grouped.values()]
-    .map((duplicates) => duplicates.sort((left, right) => compareText(stableSerialize(left), stableSerialize(right)))[0])
+    .map((duplicates) => {
+      const signatures = sortedUnique(duplicates.map((item) => item.signature));
+      if (signatures.length > 1) {
+        throw new Error(`duplicate_shot_id_conflict:${duplicates[0].shot.id}`);
+      }
+      return duplicates
+        .sort((left, right) => left.shot.order - right.shot.order || compareText(left.signature, right.signature))[0]
+        .shot;
+    })
     .sort((left, right) => left.order - right.order || compareText(left.id, right.id));
 }
 
@@ -242,10 +274,10 @@ function normalizeShotState(shot) {
     characterAnchorPaths: sortedUnique(normalizeTextArray(shot.characterAnchorPaths)),
     sceneAnchorPath: cleanText(shot.sceneAnchorPath),
     colorAnchorPath: cleanText(shot.colorAnchorPath),
-    sceneState: normalizeSummary(shot.sceneState),
-    characterState: normalizeSummary(shot.characterState),
-    timeState: normalizeSummary(shot.timeState),
-    statusSummary: normalizeSummary(shot.statusSummary),
+    sceneState: normalizeSummary(shot.sceneState, "sceneState"),
+    characterState: normalizeSummary(shot.characterState, "characterState"),
+    timeState: normalizeSummary(shot.timeState, "timeState"),
+    statusSummary: normalizeSummary(shot.statusSummary, "statusSummary"),
     approvedTailFramePath: cleanText(shot.approvedTailFramePath),
     tailFrameApprovalStatus: normalizeApprovalStatus(shot.tailFrameApprovalStatus)
   };
@@ -256,16 +288,60 @@ function continuityContext(shot) {
     characterAnchorPaths: sortedUnique(normalizeTextArray(shot.characterAnchorPaths)),
     sceneAnchorPath: cleanText(shot.sceneAnchorPath),
     colorAnchorPath: cleanText(shot.colorAnchorPath),
-    sceneState: normalizeSummary(shot.sceneState),
-    characterState: normalizeSummary(shot.characterState),
-    timeState: normalizeSummary(shot.timeState)
+    sceneState: normalizeSummary(shot.sceneState, "sceneState"),
+    characterState: normalizeSummary(shot.characterState, "characterState"),
+    timeState: normalizeSummary(shot.timeState, "timeState")
   });
 }
 
-function normalizeSummary(value) {
+function normalizeSummary(value, fieldName) {
   if (value === undefined || value === null) return "";
+  return normalizeJsonContinuityState(value, fieldName, new WeakSet());
+}
+
+function normalizeJsonContinuityState(value, fieldName, ancestors) {
+  if (value === null) return null;
   if (typeof value === "string") return value.trim();
-  return JSON.parse(stableSerialize(value));
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return value;
+    throwUnsupportedContinuityState(fieldName, "non_finite_number");
+  }
+  if (typeof value !== "object") {
+    throwUnsupportedContinuityState(fieldName, typeof value);
+  }
+  if (ancestors.has(value)) {
+    throwUnsupportedContinuityState(fieldName, "cycle");
+  }
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => {
+        if (item === undefined) throwUnsupportedContinuityState(fieldName, "undefined");
+        return normalizeJsonContinuityState(item, fieldName, ancestors);
+      });
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throwUnsupportedContinuityState(fieldName, "non_plain_object");
+    }
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      throwUnsupportedContinuityState(fieldName, "symbol_key");
+    }
+    const normalized = {};
+    for (const key of Object.keys(value).sort(compareText)) {
+      const item = value[key];
+      if (item === undefined) throwUnsupportedContinuityState(fieldName, "undefined");
+      normalized[key] = normalizeJsonContinuityState(item, fieldName, ancestors);
+    }
+    return normalized;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function throwUnsupportedContinuityState(fieldName, reason) {
+  throw new Error(`unsupported_continuity_state:${fieldName}:${reason}`);
 }
 
 function buildDependentShotIndex(executions) {
