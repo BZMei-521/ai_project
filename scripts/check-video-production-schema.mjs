@@ -8,7 +8,7 @@ const result = await build({
     contents: `
       export { useStoryboardStore } from "./src/modules/storyboard-core/store.ts";
       export { createSnapshotBackup, parseSnapshotBackup } from "./src/modules/persistence/backupSnapshot.ts";
-      export { createDesktopSnapshotSyncBaseline, shouldSaveDesktopSnapshot } from "./src/modules/persistence/desktopSnapshotSync.ts";
+      export * from "./src/modules/persistence/desktopSnapshotSync.ts";
     `,
     loader: "ts",
     resolveDir: repoRoot,
@@ -24,80 +24,102 @@ const bundle = result.outputFiles[0]?.text;
 assert.ok(bundle, "The bundled storyboard persistence path should be available.");
 
 const {
-  createDesktopSnapshotSyncBaseline,
+  beginDesktopSnapshotSyncTransition,
+  blockDesktopSnapshotSync,
+  createDesktopSnapshotSyncState,
   createSnapshotBackup,
+  markDesktopSnapshotSynced,
+  markDesktopSnapshotUnsynced,
   parseSnapshotBackup,
-  shouldSaveDesktopSnapshot,
+  restoreDesktopSnapshotSyncState,
+  shouldScheduleDesktopSnapshotSave,
   useStoryboardStore
 } = await import(
   `data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`
 );
 
-const loadedSnapshot = { project: { id: "project-a", name: "Legacy" }, shots: [{ id: "legacy-shot" }] };
-const loadedBaseline = createDesktopSnapshotSyncBaseline("project-a.sbproj", loadedSnapshot);
+const workspaceA = "project-a.sbproj";
+const workspaceB = "project-b.sbproj";
+const snapshotA = { project: { id: "project-a", name: "Original" }, shots: [{ id: "shot-a" }] };
+const editedSnapshotA = { ...snapshotA, project: { ...snapshotA.project, name: "Edited" } };
+const snapshotB = { project: { id: "project-b", name: "Target" }, shots: [{ id: "shot-b" }] };
+const editedSnapshotB = { ...snapshotB, project: { ...snapshotB.project, name: "Target edited" } };
+const syncedA = createDesktopSnapshotSyncState(workspaceA, snapshotA);
+
+const createNullTransition = beginDesktopSnapshotSyncTransition(syncedA);
+const createNullRecovered = restoreDesktopSnapshotSyncState(createNullTransition, syncedA);
+assert.equal(createNullRecovered.phase, "synced", "create null must restore the previous synchronized workspace");
+assert.equal(createNullRecovered.workspacePath, workspaceA, "create null must restore the real current workspace path");
 assert.equal(
-  shouldSaveDesktopSnapshot({
-    workspacePath: "project-a.sbproj",
-    syncReady: true,
-    snapshot: loadedSnapshot,
-    baseline: null
+  shouldScheduleDesktopSnapshotSave({
+    state: createNullRecovered,
+    workspacePath: workspaceA,
+    snapshot: editedSnapshotA,
+    scheduledRevision: syncedA.revision
   }),
   false,
-  "sync readiness without an established load baseline must not save"
+  "create null recovery must invalidate a timeout scheduled before the transition"
 );
 assert.equal(
-  shouldSaveDesktopSnapshot({
-    workspacePath: "project-a.sbproj",
-    syncReady: true,
-    snapshot: loadedSnapshot,
-    baseline: loadedBaseline
-  }),
+  shouldScheduleDesktopSnapshotSave({ state: createNullRecovered, workspacePath: workspaceA, snapshot: editedSnapshotA }),
+  true,
+  "a real edit after create null recovery must still autosave"
+);
+
+const createSaveThrowTransition = beginDesktopSnapshotSyncTransition(syncedA);
+const createSaveThrowRecovered = markDesktopSnapshotUnsynced(createSaveThrowTransition, workspaceB);
+assert.equal(createSaveThrowRecovered.phase, "unsynced", "a created workspace with failed explicit save must remain retryable");
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: createSaveThrowRecovered, workspacePath: workspaceB, snapshot: snapshotB }),
+  true,
+  "failed explicit create save must be eligible for automatic retry"
+);
+
+const switchTransition = beginDesktopSnapshotSyncTransition(syncedA);
+const switchLoadFailed = blockDesktopSnapshotSync(switchTransition, workspaceB);
+assert.equal(switchLoadFailed.phase, "blocked", "switch load failure must block writes to the changed backend target");
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: switchLoadFailed, workspacePath: workspaceB, snapshot: snapshotA }),
   false,
-  "initial hydrate must establish a synchronized baseline without saving"
+  "the previous workspace snapshot must never be written to a switch target that failed to load"
+);
+const switchRecovered = markDesktopSnapshotSynced(switchLoadFailed, workspaceB, snapshotB);
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: switchRecovered, workspacePath: workspaceB, snapshot: editedSnapshotB }),
+  true,
+  "a real edit after switch reload recovery must autosave safely"
+);
+
+const deleteTransition = beginDesktopSnapshotSyncTransition(syncedA);
+const deleteLoadFailed = blockDesktopSnapshotSync(deleteTransition, workspaceB);
+assert.equal(deleteLoadFailed.phase, "blocked", "delete replacement load failure must block cross-project writes");
+const deleteRecovered = markDesktopSnapshotSynced(deleteLoadFailed, workspaceB, snapshotB);
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: deleteRecovered, workspacePath: workspaceB, snapshot: editedSnapshotB }),
+  true,
+  "a real edit after delete replacement reload recovery must autosave safely"
+);
+
+const pendingRevision = syncedA.revision;
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: syncedA, workspacePath: workspaceA, snapshot: editedSnapshotA, scheduledRevision: pendingRevision }),
+  true,
+  "an edit should initially schedule autosave"
+);
+const manualSaveCompleted = markDesktopSnapshotSynced(syncedA, workspaceA, editedSnapshotA);
+assert.equal(
+  shouldScheduleDesktopSnapshotSave({ state: manualSaveCompleted, workspacePath: workspaceA, snapshot: editedSnapshotA, scheduledRevision: pendingRevision }),
+  false,
+  "manual save success must invalidate a pending autosave flush"
 );
 assert.equal(
-  shouldSaveDesktopSnapshot({
-    workspacePath: "project-a.sbproj",
-    syncReady: true,
-    snapshot: { ...loadedSnapshot, project: { ...loadedSnapshot.project, name: "Edited" } },
-    baseline: loadedBaseline
+  shouldScheduleDesktopSnapshotSave({
+    state: manualSaveCompleted,
+    workspacePath: workspaceA,
+    snapshot: { ...editedSnapshotA, shots: [...editedSnapshotA.shots, { id: "shot-a2" }] }
   }),
   true,
-  "a later business edit must be saved"
-);
-const switchedSnapshot = { project: { id: "project-b", name: "Switched" }, shots: [] };
-const switchedBaseline = createDesktopSnapshotSyncBaseline("project-b.sbproj", switchedSnapshot);
-assert.equal(
-  shouldSaveDesktopSnapshot({
-    workspacePath: "project-a.sbproj",
-    syncReady: true,
-    snapshot: loadedSnapshot,
-    baseline: switchedBaseline
-  }),
-  false,
-  "a pending flush from the previous workspace must not write after a switch"
-);
-assert.equal(
-  shouldSaveDesktopSnapshot({
-    workspacePath: "project-b.sbproj",
-    syncReady: true,
-    snapshot: switchedSnapshot,
-    baseline: switchedBaseline
-  }),
-  false,
-  "switching and hydrating a project must not immediately save it"
-);
-const rehydratedSnapshot = JSON.parse(JSON.stringify(switchedSnapshot));
-const rehydratedBaseline = createDesktopSnapshotSyncBaseline("project-b.sbproj", rehydratedSnapshot);
-assert.equal(
-  shouldSaveDesktopSnapshot({
-    workspacePath: "project-b.sbproj",
-    syncReady: true,
-    snapshot: rehydratedSnapshot,
-    baseline: rehydratedBaseline
-  }),
-  false,
-  "rehydrating equivalent persisted data must not schedule a write"
+  "a later edit after manual save must still autosave"
 );
 
 const defaults = {
@@ -220,4 +242,4 @@ try {
   useStoryboardStore.setState(initialState, true);
 }
 
-console.log("PASS video production schema: legacy migration, desktop sync policy, import, update, serialization, and reload");
+console.log("PASS video production schema: legacy migration, desktop sync state machine, import, update, serialization, and reload");
