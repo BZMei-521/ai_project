@@ -1,5 +1,6 @@
 import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
 import {
+  beginVideoAssemblyRun,
   concatNormalizedVideoSegments,
   cleanupVideoAssemblyAssets,
   extractVideoReviewFrames,
@@ -8,6 +9,7 @@ import {
   isTauriRuntime,
   normalizeVideoSegment,
   stageVideoSegment,
+  verifyVideoAssemblyReceipt,
   toDesktopMediaSource
 } from "../platform/desktopBridge";
 import STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
@@ -10135,18 +10137,17 @@ export async function concatShotVideos(request: ProductionVideoAssemblyRequest):
   const segments = request.segments.filter((segment) => segment.inputPath.trim().length > 0);
   if (segments.length === 0) return null;
   const credentials = [];
-  const stagedSegments = [];
-  const reviewFrames = [];
   let projectAssetsDir = "";
+  const runCapability = await beginVideoAssemblyRun();
   try {
     for (const segment of segments) {
-      const staged = await stageVideoSegment({ inputPath: segment.inputPath });
-      stagedSegments.push(staged);
+      const staged = await stageVideoSegment({ runCapability, inputPath: segment.inputPath });
       if (projectAssetsDir && staged.projectAssetsDir !== projectAssetsDir) {
         throw new Error("video_project_changed_during_assembly");
       }
       projectAssetsDir = staged.projectAssetsDir;
       const normalized = await normalizeVideoSegment({
+        runCapability,
         inputPath: staged.stagedPath,
         projectAssetsDir,
         segmentId: segment.segmentId,
@@ -10154,23 +10155,25 @@ export async function concatShotVideos(request: ProductionVideoAssemblyRequest):
         projectHeight: request.projectHeight,
         durationFrames: segment.durationFrames
       });
-      const review = await extractVideoReviewFrames({
+      await extractVideoReviewFrames({
+        runCapability,
         projectAssetsDir,
         credential: normalized.credential
       });
       credentials.push(normalized.credential);
-      reviewFrames.push(review);
     }
     const result = await concatNormalizedVideoSegments({
+      runCapability,
       projectAssetsDir,
       segments: credentials
     });
-    await cleanupVideoAssemblyAssets({ projectAssetsDir, stagedSegments, credentials, reviewFrames });
-    return result.outputPath;
+    const verifiedOutputPath = await verifyVideoAssemblyReceipt(result.assemblyReceipt);
+    await cleanupVideoAssemblyAssets({ runCapability });
+    return verifiedOutputPath;
   } catch (error) {
     if (projectAssetsDir) {
       try {
-        await cleanupVideoAssemblyAssets({ projectAssetsDir, stagedSegments, credentials, reviewFrames });
+        await cleanupVideoAssemblyAssets({ runCapability });
       } catch {
         // Preserve the production failure; backend GC can reclaim signed leftovers.
       }

@@ -108,7 +108,19 @@ export type StagedVideoSegment = {
 };
 
 export type StageVideoSegmentRequest = {
+  runCapability: AssemblyRunCapability;
   inputPath: string;
+};
+
+export type AssemblyRunCapability = {
+  schemaVersion: 1;
+  keyId: string;
+  runId: string;
+  canonicalProjectRoot: string;
+  canonicalAssetRoot: string;
+  issuedUnixMillis: number;
+  expiresUnixMillis: number;
+  mac: string;
 };
 
 export type VideoReviewFrames = {
@@ -117,28 +129,47 @@ export type VideoReviewFrames = {
   lastFramePath: string;
 };
 
-export type ConcatenatedVideo = { outputPath: string; probe: VideoProbe };
+export type ConcatenatedVideo = {
+  outputPath: string;
+  probe: VideoProbe;
+  assemblyReceipt: AssemblyReceipt;
+};
+
+export type AssemblyReceipt = {
+  schemaVersion: 1;
+  keyId: string;
+  transactionId: string;
+  runId: string;
+  canonicalProjectRoot: string;
+  outputPath: string;
+  sha256: string;
+  byteLength: number;
+  modifiedUnixMillis: number;
+  probe: VideoProbe;
+  orderedReceiptIds: string[];
+  mac: string;
+};
 export type ProbeVideoSegmentRequest = { inputPath: string; projectAssetsDir: string };
 export type NormalizeVideoSegmentRequest = ProbeVideoSegmentRequest & {
+  runCapability: AssemblyRunCapability;
   segmentId: string;
   projectWidth: number;
   projectHeight: number;
   durationFrames: number;
 };
 export type ExtractVideoReviewFramesRequest = {
+  runCapability: AssemblyRunCapability;
   projectAssetsDir: string;
   credential: NormalizationCredential;
 };
 export type ConcatNormalizedVideoSegmentsRequest = {
+  runCapability: AssemblyRunCapability;
   projectAssetsDir: string;
   segments: NormalizationCredential[];
 };
 
 export type CleanupVideoAssemblyAssetsRequest = {
-  projectAssetsDir: string;
-  stagedSegments: StagedVideoSegment[];
-  credentials: NormalizationCredential[];
-  reviewFrames: VideoReviewFrames[];
+  runCapability: AssemblyRunCapability;
 };
 
 export type VideoGcReport = { receiptsRemoved: number; assetsRemoved: number };
@@ -200,7 +231,43 @@ export function createProbeVideoSegmentRequest(request: ProbeVideoSegmentRequest
 }
 
 export function createStageVideoSegmentRequest(request: StageVideoSegmentRequest): StageVideoSegmentRequest {
-  return { inputPath: requireAbsoluteVideoPath(request.inputPath, "video_input_path_missing") };
+  return {
+    runCapability: validateAssemblyRunCapability(request.runCapability),
+    inputPath: requireAbsoluteVideoPath(request.inputPath, "video_input_path_missing")
+  };
+}
+
+function validateAssemblyRunCapability(capability: AssemblyRunCapability): AssemblyRunCapability {
+  if (
+    capability?.schemaVersion !== 1 ||
+    !/^[a-f0-9]{64}$/.test(capability.keyId ?? "") ||
+    !/^[a-f0-9]{64}$/.test(capability.runId ?? "") ||
+    !/^[a-f0-9]{64}$/.test(capability.mac ?? "") ||
+    !Number.isSafeInteger(capability.issuedUnixMillis) ||
+    !Number.isSafeInteger(capability.expiresUnixMillis) ||
+    capability.expiresUnixMillis <= capability.issuedUnixMillis
+  ) throw new Error("video_assembly_run_invalid");
+  requireAbsoluteVideoPath(capability.canonicalProjectRoot, "video_project_root_unavailable");
+  requireAbsoluteVideoPath(capability.canonicalAssetRoot, "video_assets_root_missing");
+  return capability;
+}
+
+function validateAssemblyReceipt(receipt: AssemblyReceipt): AssemblyReceipt {
+  if (
+    receipt?.schemaVersion !== 1 ||
+    !/^[a-f0-9]{64}$/.test(receipt.keyId ?? "") ||
+    !/^[a-f0-9]{64}$/.test(receipt.transactionId ?? "") ||
+    !/^[a-f0-9]{64}$/.test(receipt.runId ?? "") ||
+    !/^[a-f0-9]{64}$/.test(receipt.sha256 ?? "") ||
+    !/^[a-f0-9]{64}$/.test(receipt.mac ?? "") ||
+    !Number.isSafeInteger(receipt.byteLength) || receipt.byteLength <= 0 ||
+    !Number.isSafeInteger(receipt.modifiedUnixMillis) || receipt.modifiedUnixMillis <= 0 ||
+    !Array.isArray(receipt.orderedReceiptIds) || receipt.orderedReceiptIds.length === 0 ||
+    receipt.orderedReceiptIds.some((id) => !/^[a-f0-9]{64}$/.test(id))
+  ) throw new Error("video_assembly_receipt_invalid");
+  requireAbsoluteVideoPath(receipt.canonicalProjectRoot, "video_project_root_unavailable");
+  requireAbsoluteVideoPath(receipt.outputPath, "video_assembly_output_missing");
+  return receipt;
 }
 
 export function createNormalizeVideoSegmentRequest(request: NormalizeVideoSegmentRequest): NormalizeVideoSegmentRequest {
@@ -214,12 +281,13 @@ export function createNormalizeVideoSegmentRequest(request: NormalizeVideoSegmen
   }
   const durationFrames = requirePositiveSafeInteger(request.durationFrames, "video_duration_frames_invalid");
   if (durationFrames > 24 * 60 * 60) throw new Error("video_duration_frames_invalid");
-  return { ...base, segmentId, projectWidth, projectHeight, durationFrames };
+  return { ...base, runCapability: validateAssemblyRunCapability(request.runCapability), segmentId, projectWidth, projectHeight, durationFrames };
 }
 
 export function createExtractVideoReviewFramesRequest(request: ExtractVideoReviewFramesRequest): ExtractVideoReviewFramesRequest {
   return {
     projectAssetsDir: requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing"),
+    runCapability: validateAssemblyRunCapability(request.runCapability),
     credential: validateNormalizationCredential(request.credential)
   };
 }
@@ -232,7 +300,12 @@ export function createConcatNormalizedVideoSegmentsRequest(request: ConcatNormal
   if (segments.some((segment) => segment.projectWidth !== projectWidth || segment.projectHeight !== projectHeight)) {
     throw new Error("normalized_segment_dimensions_mismatch");
   }
-  return { projectAssetsDir, segments };
+  return { projectAssetsDir, runCapability: validateAssemblyRunCapability(request.runCapability), segments };
+}
+
+export async function beginVideoAssemblyRun(): Promise<AssemblyRunCapability> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<AssemblyRunCapability>("begin_video_assembly_run");
 }
 
 export async function probeVideoSegment(request: ProbeVideoSegmentRequest): Promise<VideoInspection> {
@@ -260,20 +333,17 @@ export async function concatNormalizedVideoSegments(request: ConcatNormalizedVid
   return invokeDesktopCommand<ConcatenatedVideo>("concat_normalized_video_segments", createConcatNormalizedVideoSegmentsRequest(request));
 }
 
+export async function verifyVideoAssemblyReceipt(receipt: AssemblyReceipt): Promise<string> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<string>("verify_video_assembly_receipt", {
+    receipt: validateAssemblyReceipt(receipt)
+  });
+}
+
 export async function cleanupVideoAssemblyAssets(request: CleanupVideoAssemblyAssetsRequest): Promise<void> {
   requireTauriVideoContinuityRuntime();
-  const projectAssetsDir = requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing");
-  const stagedSegments = request.stagedSegments.map((segment) => ({
-    stagedPath: requireAbsoluteVideoPath(segment.stagedPath, "video_input_path_missing"),
-    projectAssetsDir: requireAbsoluteVideoPath(segment.projectAssetsDir, "video_assets_root_missing"),
-    stagingReceiptId: /^[a-f0-9]{64}$/.test(segment.stagingReceiptId) ? segment.stagingReceiptId : (() => { throw new Error("video_cleanup_claim_invalid"); })()
-  }));
-  const credentials = request.credentials.map(validateNormalizationCredential);
   await invokeDesktopCommand("cleanup_video_assembly_assets", {
-    projectAssetsDir,
-    stagedSegments,
-    credentials,
-    reviewFrames: request.reviewFrames
+    runCapability: validateAssemblyRunCapability(request.runCapability)
   });
 }
 

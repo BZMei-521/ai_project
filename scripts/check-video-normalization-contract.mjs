@@ -18,6 +18,16 @@ const compiled = ts.transpileModule(source, {
 assert.deepEqual(compiled.diagnostics ?? [], [], "desktop bridge must transpile cleanly");
 
 const representative = {
+  begin_video_assembly_run: {
+    schemaVersion: 1,
+    keyId: "6".repeat(64),
+    runId: "d".repeat(64),
+    canonicalProjectRoot: "C:\\project\\demo.sbproj",
+    canonicalAssetRoot: "C:\\project\\demo.sbproj\\assets",
+    issuedUnixMillis: 1,
+    expiresUnixMillis: 60001,
+    mac: "e".repeat(64)
+  },
   stage_video_segment: {
     stagedPath: "C:\\project\\assets\\video-staging\\stage-a.mp4",
     projectAssetsDir: "C:\\project\\assets",
@@ -63,8 +73,23 @@ const representative = {
   },
   concat_normalized_video_segments: {
     outputPath: "C:\\project\\assets\\video-assembled\\assembled.mp4",
-    probe: null
+    probe: null,
+    assemblyReceipt: {
+      schemaVersion: 1,
+      keyId: "6".repeat(64),
+      transactionId: "9".repeat(64),
+      runId: "d".repeat(64),
+      canonicalProjectRoot: "C:\\project\\demo.sbproj",
+      outputPath: "C:\\project\\assets\\video-assembled\\assembled.mp4",
+      sha256: "8".repeat(64),
+      byteLength: 100,
+      modifiedUnixMillis: 2,
+      probe: null,
+      orderedReceiptIds: ["f".repeat(64)],
+      mac: "7".repeat(64)
+    }
   },
+  verify_video_assembly_receipt: "C:\\project\\assets\\video-assembled\\assembled.mp4",
   cleanup_video_assembly_assets: null,
   gc_video_continuity_assets: { receiptsRemoved: 2, assetsRemoved: 8 }
 };
@@ -112,9 +137,13 @@ function loadIsolatedConcatShotVideos(options = {}) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
     reportDiagnostics: true
   });
-  const state = { stage: [], normalize: [], review: [], concat: [], cleanup: [], legacy: [] };
+  const state = { begin: [], stage: [], normalize: [], review: [], concat: [], verify: [], cleanup: [], legacy: [] };
   const dependencies = {
     isTauriRuntime: () => true,
+    beginVideoAssemblyRun: async () => {
+      state.begin.push({});
+      return representative.begin_video_assembly_run;
+    },
     stageVideoSegment: async (request) => {
       state.stage.push(structuredClone(request));
       return {
@@ -138,7 +167,19 @@ function loadIsolatedConcatShotVideos(options = {}) {
     },
     concatNormalizedVideoSegments: async (request) => {
       state.concat.push(structuredClone(request));
-      return { outputPath: "C:\\project\\assets\\video-assembled\\final.mp4", probe: credential.probe };
+      return {
+        outputPath: "C:\\project\\assets\\video-assembled\\final.mp4",
+        probe: credential.probe,
+        assemblyReceipt: {
+          ...representative.concat_normalized_video_segments.assemblyReceipt,
+          outputPath: "C:\\project\\assets\\video-assembled\\final.mp4",
+          probe: credential.probe
+        }
+      };
+    },
+    verifyVideoAssemblyReceipt: async (receipt) => {
+      state.verify.push(structuredClone(receipt));
+      return receipt.outputPath;
     },
     cleanupVideoAssemblyAssets: async (request) => {
       state.cleanup.push(structuredClone(request));
@@ -200,6 +241,7 @@ const credential = {
 };
 
 assert.equal(typeof bridge.probeVideoSegment, "function");
+assert.equal(typeof bridge.beginVideoAssemblyRun, "function");
 assert.equal(typeof bridge.stageVideoSegment, "function");
 assert.equal(typeof bridge.normalizeVideoSegment, "function");
 assert.equal(typeof bridge.extractVideoReviewFrames, "function");
@@ -255,12 +297,23 @@ assert.deepEqual(calls.at(-1), {
   command: "probe_video_segment",
   args: { inputPath, projectAssetsDir }
 });
-assert.deepEqual(await bridge.stageVideoSegment({ inputPath: "C:\\ComfyUI\\output\\shot-1.mp4" }), representative.stage_video_segment);
+assert.equal(
+  await bridge.verifyVideoAssemblyReceipt(representative.concat_normalized_video_segments.assemblyReceipt),
+  representative.verify_video_assembly_receipt
+);
+assert.deepEqual(calls.at(-1), {
+  command: "verify_video_assembly_receipt",
+  args: { receipt: representative.concat_normalized_video_segments.assemblyReceipt }
+});
+assert.deepEqual(await bridge.beginVideoAssemblyRun(), representative.begin_video_assembly_run);
+assert.deepEqual(calls.at(-1), { command: "begin_video_assembly_run", args: undefined });
+assert.deepEqual(await bridge.stageVideoSegment({ runCapability: representative.begin_video_assembly_run, inputPath: "C:\\ComfyUI\\output\\shot-1.mp4" }), representative.stage_video_segment);
 assert.deepEqual(calls.at(-1), {
   command: "stage_video_segment",
-  args: { inputPath: "C:\\ComfyUI\\output\\shot-1.mp4" }
+  args: { runCapability: representative.begin_video_assembly_run, inputPath: "C:\\ComfyUI\\output\\shot-1.mp4" }
 });
 assert.deepEqual(await bridge.normalizeVideoSegment({
+  runCapability: representative.begin_video_assembly_run,
   inputPath,
   projectAssetsDir,
   segmentId: "shot-1",
@@ -271,6 +324,7 @@ assert.deepEqual(await bridge.normalizeVideoSegment({
 assert.deepEqual(calls.at(-1), {
   command: "normalize_video_segment",
   args: {
+    runCapability: representative.begin_video_assembly_run,
     inputPath,
     projectAssetsDir,
     segmentId: "shot-1",
@@ -279,15 +333,15 @@ assert.deepEqual(calls.at(-1), {
     durationFrames: 24
   }
 });
-assert.deepEqual(await bridge.extractVideoReviewFrames({ projectAssetsDir, credential }), representative.extract_video_review_frames);
+assert.deepEqual(await bridge.extractVideoReviewFrames({ runCapability: representative.begin_video_assembly_run, projectAssetsDir, credential }), representative.extract_video_review_frames);
 assert.deepEqual(calls.at(-1), {
   command: "extract_video_review_frames",
-  args: { projectAssetsDir, credential }
+  args: { runCapability: representative.begin_video_assembly_run, projectAssetsDir, credential }
 });
-assert.deepEqual(await bridge.concatNormalizedVideoSegments({ projectAssetsDir, segments: [credential] }), representative.concat_normalized_video_segments);
+assert.deepEqual(await bridge.concatNormalizedVideoSegments({ runCapability: representative.begin_video_assembly_run, projectAssetsDir, segments: [credential] }), representative.concat_normalized_video_segments);
 assert.deepEqual(calls.at(-1), {
   command: "concat_normalized_video_segments",
-  args: { projectAssetsDir, segments: [credential] }
+  args: { runCapability: representative.begin_video_assembly_run, projectAssetsDir, segments: [credential] }
 });
 const stagedSegment = {
   stagedPath: "C:\\project\\assets\\video-staging\\stage-" + "c".repeat(64) + ".media",
@@ -295,10 +349,10 @@ const stagedSegment = {
   stagingReceiptId: "c".repeat(64)
 };
 const reviewFrames = representative.extract_video_review_frames;
-await bridge.cleanupVideoAssemblyAssets({ projectAssetsDir, stagedSegments: [stagedSegment], credentials: [credential], reviewFrames: [reviewFrames] });
+await bridge.cleanupVideoAssemblyAssets({ runCapability: representative.begin_video_assembly_run });
 assert.deepEqual(calls.at(-1), {
   command: "cleanup_video_assembly_assets",
-  args: { projectAssetsDir, stagedSegments: [stagedSegment], credentials: [credential], reviewFrames: [reviewFrames] }
+  args: { runCapability: representative.begin_video_assembly_run }
 });
 assert.deepEqual(await bridge.gcVideoContinuityAssets(projectAssetsDir, 3600), representative.gc_video_continuity_assets);
 assert.deepEqual(calls.at(-1), { command: "gc_video_continuity_assets", args: { projectAssetsDir, ttlSeconds: 3600 } });
@@ -313,12 +367,16 @@ const productionResult = await production.concatShotVideos({
   ]
 });
 assert.equal(productionResult, "C:\\project\\assets\\video-assembled\\final.mp4");
+assert.equal(production.state.begin.length, 1, "each production assembly must pin one backend run capability");
+assert.ok(production.state.stage.every((request) => request.runCapability.runId === representative.begin_video_assembly_run.runId));
 assert.equal(production.state.stage.length, 2, "every external H3/Comfy source must be staged by the backend first");
 assert.ok(production.state.normalize.every((request, index) => request.inputPath === `C:\\project\\assets\\video-staging\\stage-${index + 1}.mp4`));
 assert.equal(production.state.legacy.length, 0, "new production assembly must never call concat_video_segments");
 assert.equal(production.state.normalize.length, 2, "every production segment must be normalized");
 assert.equal(production.state.review.length, 2, "every production segment must extract review frames from its credential");
 assert.equal(production.state.concat.length, 1);
+assert.equal(production.state.verify.length, 1, "production must backend-reverify the final assembly receipt before returning a path");
+assert.equal(production.state.verify[0].outputPath, "C:\\project\\assets\\video-assembled\\final.mp4");
 assert.deepEqual(
   production.state.concat[0].segments,
   production.state.review.map((call) => call.credential),
@@ -334,6 +392,7 @@ assert.equal(await production.concatShotVideos({
 }), "C:\\project\\assets\\video-assembled\\final.mp4");
 assert.equal(production.state.stage.length, 4, "repeated production click must start a fresh nonce-staged run");
 assert.equal(production.state.cleanup.length, 2, "successful runs must each clean only their own intermediates");
+assert.ok(production.state.cleanup.every((request) => Object.keys(request).join(",") === "runCapability"));
 
 const panel = loadPanelConcatHandler();
 assert.equal(await panel.onConcatVideos(), false);
@@ -354,8 +413,7 @@ await assert.rejects(
   /injected_second_segment_failure/
 );
 assert.equal(failedProduction.state.cleanup.length, 1, "second-segment failure must compensate this run exactly once");
-assert.equal(failedProduction.state.cleanup[0].stagedSegments.length, 2);
-assert.equal(failedProduction.state.cleanup[0].credentials.length, 1);
+assert.deepEqual(Object.keys(failedProduction.state.cleanup[0]), ["runCapability"]);
 
 function loadWindowsWebInvokeCommand() {
   const serverPath = path.join(repoRoot, "scripts/windows-web-server.mjs");
@@ -371,10 +429,12 @@ function loadWindowsWebInvokeCommand() {
 const windowsInvokeCommand = loadWindowsWebInvokeCommand();
 for (const command of [
   "probe_video_segment",
+  "begin_video_assembly_run",
   "stage_video_segment",
   "normalize_video_segment",
   "extract_video_review_frames",
   "concat_normalized_video_segments",
+  "verify_video_assembly_receipt",
   "cleanup_video_assembly_assets",
   "gc_video_continuity_assets"
 ]) {

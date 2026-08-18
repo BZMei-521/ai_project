@@ -67,3 +67,30 @@
 - `npm.cmd run build` — PASS (only the existing Vite chunk-size advisory).
 - `node scripts/check-minimax-h3-binding.mjs` and `node scripts/check-video-continuity-planner.mjs` — PASS.
 - Whole-worktree `git diff --check` reports only two pre-existing trailing-whitespace lines in the user's dirty `docs/storyboard-workflows-20260304.md`; Task 7 scoped diff-check is clean.
+
+## r4 durable-authority remediation
+
+- Staging now rejects the complete canonical Task 7 authority tree and all project-managed staging/normalized/review/assembled roots before creating an artifact. Canonical aliases, reparse points and multi-link source identities fail closed; the ordinary-user Windows junction fixture proves the external target remains empty.
+- `begin_video_assembly_run` issues a signed, expiring capability pinned to canonical project/assets. Immutable signed run-record versions are the server-side artifact ledger. Stage/normalize/review require the same capability and current project; cleanup accepts only the capability and enumerates the backend ledger, so callers cannot nominate another run's paths.
+- Concat now owns one signed immutable-version transaction journal for the entire ordered receipt set. Sorted `create_new` locks are acquired as a unit and roll back partially. The durable state machine is `leased -> prepared -> published -> committed`; prepublication errors abort the whole set, published recovery re-verifies the assembly receipt and idempotently commits, and post-commit lease/private-temp cleanup is best effort rather than changing success into an error.
+- Snapshots, concat manifests and FFmpeg prepared output live only under backend-private authority transaction directories. The sole public write is atomic no-clobber publication into the verified project assembly root. Project reparse guards, source-replacement detection and target-preoccupation tests leave no outside/public partial artifact.
+- The raw secret file was replaced by a versioned key ring. Windows key material is current-user DPAPI protected; Unix initialization uses owner-only `0600`. Initialization is create-new, fsynced and atomically published. Reparse/hardlink aliases and corrupt/partial latest versions fail closed. Every signed record binds `keyId`; rotation publishes an immutable new ring version, retires the old key and continues verifying old normalization receipts through their bound retired key.
+- Successful concat returns a signed assembly receipt binding key/project/run/transaction, canonical output identity, SHA-256, length, mtime, exact probe and ordered input receipts. The production orchestrator sends it back through `verify_video_assembly_receipt` before returning a preview path. Tamper and input-reordering tests fail before downstream use.
+- Tauri, typed bridge, production service, main registration, Windows-Web explicit denial and the executable checker were updated together. Windows Web denies begin/stage/normalize/review/concat/verify/cleanup/GC before unsafe work because it cannot host the private authority.
+
+### r4 RED/GREEN evidence
+
+1. Authority staging RED compiled against the absent policy function; GREEN rejects key ring/receipt/managed-root aliases with zero artifact.
+2. Run-capability RED lacked begin/verify/ledger/cleanup APIs; GREEN proves project pinning and that cleanup of run A retains run B.
+3. Final-receipt RED lacked the receipt field, signer and verifier; GREEN detects output tamper and ordered-input reordering, and the production checker requires one backend verification before returning.
+4. Transaction-journal RED lacked begin/recovery functions; GREEN proves an expired two-receipt prepublish transaction releases the complete set and removes only private state. Published-crash recovery then RED on retained private state and GREEN after best-effort committed cleanup.
+5. The key lifecycle test proves stable restart, no Windows plaintext key, hardlink rejection, active-key rotation, old signed receipt verification and corrupt-latest fail-closed behavior.
+6. Missing-FFmpeg retry, source replacement, preoccupied target, real junction containment, forged/replayed receipt, real malformed-media, exact decoded-tail frames and two-project GC remain GREEN under the journal design.
+
+### r4 fresh verification
+
+- `node scripts/check-video-normalization-contract.mjs` — PASS, including 26 real Rust media/security tests.
+- `cargo test video_continuity::tests -- --nocapture` — 26 passed, 0 failed (the privileged symlink fixture explicitly skips on Windows error 1314; the ordinary-user junction fixture executes and passes).
+- `cargo check` — PASS.
+- `npm.cmd run build` — PASS; only the existing Vite large-chunk advisory.
+- Task 5/6 regressions: `test:minimax-h3-binding`, `test:video-continuity-planner`, and `test:video-workflow-router` — PASS.
