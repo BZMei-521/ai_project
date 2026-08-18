@@ -109,6 +109,24 @@
 
 - Task 7 checker PASS; `cargo test` 37/37 PASS; `cargo check` PASS; `npm.cmd run build` PASS; Task 5 binding, Task 6 planner, and video-router regressions PASS.
 
+## r6 cleanup, path identity, legacy surface, and run serialization
+
+- A `publishing`/`published` transaction can release receipt leases only after both the public output and authority assembly record are proven absent. Either unlink failure returns `video_transaction_public_cleanup_pending`, retains the signed state and leases, and is retried by recovery/GC. A matching visible output still completes commit.
+- The shared guard rejects unresolved `..`/`.` components and Windows extended-device prefixes, ADS, trailing dots/spaces, and compares a canonical nearest ancestor plus validated suffix with platform-correct case semantics. Managed roots do not need to exist for containment to work.
+- Legacy concat, local-image video, trusted-reference read, and three-view split now guard every caller source; split also guards all derived sibling targets before directory creation, overwrite, or read. H3 managed paths remain accessible only through receipt/capability commands.
+- Run artifact mutation holds one run-wide cross-process lock across latest-version load, validation, sequence allocation, append, signing, and immutable publish. Lock contention waits with bounded stale recovery. Normalize removes its output/receipt after append failure; review removes all current review assets and its immutable review registration after any partial append failure.
+
+### r6 RED/GREEN evidence
+
+1. Publishing recovery first failed to compile without an injected-remover entry point. The GREEN test injects final-output and assembly-record delete failures separately and proves `publishing` plus lease retention, replay rejection, and successful later cleanup-before-abort.
+2. The absent-root guard fixture covered `assets/raw/../video-assembled`, deep nonexistent descendants, mixed Windows case, trailing dot and ADS while no managed directory existed. GREEN rejects every spelling and creates no root.
+3. The executable command-surface checker RED on unguarded `concat_video_segments`; GREEN requires guards in concat, local-image generation, trusted-reference read and three-view split.
+4. Eight simultaneous run appends produced one success and seven `video_assembly_run_write_failed` results before the logical lock. GREEN produces eight successes and eight unique signed ledger entries.
+
+### r6 fresh verification
+
+- Task 7 checker PASS; `cargo test` 39/39 PASS; `cargo check` PASS; `npm.cmd run build` PASS; Task 5 binding, Task 6 planner, and video-router regressions PASS.
+
 ### r4 fresh verification
 
 - `node scripts/check-video-normalization-contract.mjs` — PASS, including 26 real Rust media/security tests.

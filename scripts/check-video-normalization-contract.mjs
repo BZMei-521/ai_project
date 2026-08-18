@@ -124,6 +124,26 @@ for (const functionName of ["write_base64_file", "copy_file_to"]) {
   const guardCalls = match[0].match(/reject_authority_file_command_path/g) ?? [];
   assert.equal(guardCalls.length, functionName === "copy_file_to" ? 2 : 1, `${functionName} must guard every authority source/target`);
 }
+for (const functionName of [
+  "concat_video_segments",
+  "generate_local_video_from_images",
+  "read_trusted_character_reference",
+  "split_threeview_sheet"
+]) {
+  const handlerStart = rustMainSource.indexOf("tauri::generate_handler![");
+  const handlerEnd = rustMainSource.indexOf("])", handlerStart);
+  const registeredCommands = rustMainSource.slice(handlerStart, handlerEnd);
+  if (!registeredCommands.includes(functionName)) continue;
+  const start = rustMainSource.indexOf(`fn ${functionName}(`);
+  assert.notEqual(start, -1, `${functionName} must remain registered`);
+  const end = rustMainSource.indexOf("\n#[tauri::command]", start + 4);
+  const body = rustMainSource.slice(start, end === -1 ? undefined : end);
+  assert.match(
+    body,
+    /reject_authority_file_command_path/,
+    `${functionName} must reject Task 7 managed and authority inputs before media work`
+  );
+}
 
 function loadIsolatedConcatShotVideos(options = {}) {
   const servicePath = path.join(repoRoot, "src/modules/comfy-pipeline/comfyService.ts");

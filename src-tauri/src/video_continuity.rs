@@ -674,7 +674,7 @@ fn acquire_authority_write_lock(authority_root: &Path, scope: &str) -> Result<Au
     let digest = Sha256::digest(scope.as_bytes());
     let name: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
     let path = locks.join(format!("{name}.lock"));
-    for _ in 0..2 {
+    for _ in 0..500 {
         let owner = random_hex(32)?;
         match OpenOptions::new().create_new(true).write(true).open(&path) {
             Ok(mut file) => {
@@ -693,7 +693,8 @@ fn acquire_authority_write_lock(authority_root: &Path, scope: &str) -> Result<Au
                     let _ = fs::remove_file(&path);
                     continue;
                 }
-                return Err("normalization_authority_locked".to_string());
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
             }
             Err(_) => return Err("normalization_authority_lock_failed".to_string()),
         }
@@ -917,14 +918,47 @@ pub fn reject_authority_file_command_path_at_app_data(
         return Err("normalization_registry_unavailable".to_string());
     }
     let requested = absolute_path(raw_path, "file_path is empty")?;
+    #[cfg(windows)]
+    if raw_path.trim().starts_with(r"\\?\") || raw_path.trim().starts_with(r"\\.\") {
+        return Err("file_path_ambiguous".to_string());
+    }
+    for component in requested.components() {
+        match component {
+            std::path::Component::ParentDir | std::path::Component::CurDir => {
+                return Err("file_path_ambiguous".to_string());
+            }
+            std::path::Component::Normal(value) => {
+                let value = value.to_string_lossy();
+                #[cfg(windows)]
+                if value.ends_with('.')
+                    || value.ends_with(' ')
+                    || value.contains(':')
+                    || value.is_empty()
+                {
+                    return Err("file_path_ambiguous".to_string());
+                }
+            }
+            _ => {}
+        }
+    }
     let mut existing = requested.as_path();
+    let mut missing = Vec::new();
     while !existing.exists() {
+        missing.push(
+            existing.file_name()
+                .ok_or_else(|| "file_path_invalid".to_string())?
+                .to_os_string(),
+        );
         existing = existing
             .parent()
             .ok_or_else(|| "file_path_invalid".to_string())?;
     }
     let canonical_existing = fs::canonicalize(existing).map_err(|_| "file_path_invalid".to_string())?;
-    if canonical_existing == authority || canonical_existing.starts_with(&authority) {
+    let normalized_identity = missing.into_iter().rev().fold(
+        canonical_existing.clone(),
+        |path, component| path.join(component),
+    );
+    if platform_path_contains(&authority, &normalized_identity) {
         return Err("video_authority_path_forbidden".to_string());
     }
     let marker = app_data.join("current-project.txt");
@@ -937,15 +971,31 @@ pub fn reject_authority_file_command_path_at_app_data(
             "video-assembled",
         ] {
             let managed = asset_root.join(name);
-            if canonical_existing == managed || canonical_existing.starts_with(&managed) {
-                return Err("video_managed_path_forbidden".to_string());
-            }
-            if existing.starts_with(&managed) || requested.starts_with(&managed) {
+            if platform_path_contains(&managed, &normalized_identity) {
                 return Err("video_managed_path_forbidden".to_string());
             }
         }
     }
     Ok(())
+}
+
+fn platform_path_contains(root: &Path, candidate: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let normalize = |path: &Path| {
+            path.to_string_lossy()
+                .replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_lowercase()
+        };
+        let root = normalize(root);
+        let candidate = normalize(candidate);
+        candidate == root || candidate.starts_with(&(root + "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        candidate == root || candidate.starts_with(root)
+    }
 }
 
 fn issue_registry_receipt(
@@ -1368,6 +1418,31 @@ fn abort_transaction_journal(
     registry_root: &Path,
     journal: &mut TransactionJournal,
 ) -> Result<(), String> {
+    abort_transaction_journal_with_remover(registry_root, journal, &mut |path| fs::remove_file(path))
+}
+
+fn abort_transaction_journal_with_remover<F>(
+    registry_root: &Path,
+    journal: &mut TransactionJournal,
+    remover: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&Path) -> std::io::Result<()>,
+{
+    if journal.state == "publishing" || journal.state == "published" {
+        let receipt = authority_root_from_registry(registry_root)?
+            .join("assemblies")
+            .join(format!("{}.json", journal.transaction_id));
+        for public in [PathBuf::from(&journal.final_output_path), receipt] {
+            if public.exists() {
+                remover(&public)
+                    .map_err(|_| "video_transaction_public_cleanup_pending".to_string())?;
+            }
+            if public.exists() {
+                return Err("video_transaction_public_cleanup_pending".to_string());
+            }
+        }
+    }
     remove_authority_private_file(registry_root, &journal.private_temp_path)?;
     release_registry_leases(
         registry_root,
@@ -1384,6 +1459,25 @@ fn recover_transaction_journal(
     transaction_id: &str,
     now: u64,
 ) -> Result<(), String> {
+    recover_transaction_journal_with_remover(
+        registry_root,
+        project_root,
+        transaction_id,
+        now,
+        &mut |path| fs::remove_file(path),
+    )
+}
+
+fn recover_transaction_journal_with_remover<F>(
+    registry_root: &Path,
+    project_root: &Path,
+    transaction_id: &str,
+    now: u64,
+    remover: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&Path) -> std::io::Result<()>,
+{
     let (mut journal, _) = load_transaction_journal(registry_root, transaction_id)?;
     if journal.canonical_project_root != project_root.to_string_lossy() {
         return Err("video_transaction_project_mismatch".to_string());
@@ -1391,31 +1485,31 @@ fn recover_transaction_journal(
     match journal.state.as_str() {
         "committed" | "aborted" => Ok(()),
         "leased" | "prepared" if now > journal.expires_unix_millis => {
-            abort_transaction_journal(registry_root, &mut journal)
+            abort_transaction_journal_with_remover(registry_root, &mut journal, remover)
         }
         "publishing" => {
             let binding = journal.prepared_output.clone()
                 .ok_or_else(|| "video_transaction_journal_invalid".to_string())?;
             let output = PathBuf::from(&journal.final_output_path);
             let private = PathBuf::from(&journal.private_temp_path);
-            if output.exists() {
-                if !binding.matches(&output)? {
-                    let _ = fs::remove_file(&output);
-                    let _ = fs::remove_file(
-                        authority_root_from_registry(registry_root)?
-                            .join("assemblies")
-                            .join(format!("{transaction_id}.json")),
-                    );
-                    return abort_transaction_journal(registry_root, &mut journal);
-                }
-            } else if private.is_file() && binding.matches(&private)? {
-                publish_no_clobber(&private, &output)?;
-            } else {
-                return abort_transaction_journal(registry_root, &mut journal);
-            }
             let receipt_path = authority_root_from_registry(registry_root)?
                 .join("assemblies")
                 .join(format!("{transaction_id}.json"));
+            if output.exists() {
+                if !binding.matches(&output)? {
+                    return abort_transaction_journal_with_remover(
+                        registry_root,
+                        &mut journal,
+                        remover,
+                    );
+                }
+            } else if receipt_path.exists() {
+                return abort_transaction_journal_with_remover(registry_root, &mut journal, remover);
+            } else if private.is_file() && binding.matches(&private)? {
+                publish_no_clobber(&private, &output)?;
+            } else {
+                return abort_transaction_journal_with_remover(registry_root, &mut journal, remover);
+            }
             let receipt = if receipt_path.is_file() {
                 let receipt: AssemblyReceipt = serde_json::from_slice(
                     &fs::read(&receipt_path)
@@ -1443,12 +1537,20 @@ fn recover_transaction_journal(
                 "published",
                 Some(receipt),
             )?;
-            recover_transaction_journal(registry_root, project_root, transaction_id, now)
+            recover_transaction_journal_with_remover(
+                registry_root,
+                project_root,
+                transaction_id,
+                now,
+                remover,
+            )
         }
         "published" => {
             let receipt = journal.assembly_receipt.clone()
                 .ok_or_else(|| "video_transaction_journal_invalid".to_string())?;
-            verify_assembly_receipt_at_roots(project_root, registry_root, &receipt)?;
+            if verify_assembly_receipt_at_roots(project_root, registry_root, &receipt).is_err() {
+                return abort_transaction_journal_with_remover(registry_root, &mut journal, remover);
+            }
             commit_registry_receipts(
                 registry_root,
                 &journal.ordered_credentials,
@@ -1638,6 +1740,11 @@ fn append_run_artifact(
     kind: &str,
     path: &Path,
 ) -> Result<(), String> {
+    let authority = authority_root_from_registry(registry_root)?;
+    let _run_lock = acquire_authority_write_lock(
+        authority,
+        &format!("run-mutation:{}", capability.run_id),
+    ).map_err(|_| "video_assembly_run_write_failed".to_string())?;
     let (mut record, secret) = load_run_record(registry_root, capability)?;
     let (sha256, byte_length, _) = file_binding(path)?;
     record.sequence = record.sequence.saturating_add(1);
@@ -3410,7 +3517,7 @@ fn concat_at_roots_with_ffmpeg_binary_and_run(
     if result.is_err() {
         if let Some(journal) = journal.as_mut() {
             if journal.state != "committed" {
-                if journal.state == "publishing" {
+                if journal.state == "publishing" || journal.state == "published" {
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map(|value| value.as_millis() as u64)
@@ -3505,12 +3612,19 @@ pub fn normalize_video_segment(
         project_height,
         duration_frames,
     )?;
-    append_run_artifact(
+    if let Err(error) = append_run_artifact(
         &registry_root,
         &run_capability,
         "normalized",
         Path::new(&normalized.credential.normalized_path),
-    )?;
+    ) {
+        let _ = fs::remove_file(&normalized.credential.normalized_path);
+        let _ = fs::remove_file(registry_receipt_path(
+            &registry_root,
+            &normalized.credential.receipt_id,
+        )?);
+        return Err(error);
+    }
     Ok(normalized)
 }
 
@@ -3526,7 +3640,20 @@ pub fn extract_video_review_frames(
     verify_assembly_run(&project_root, &asset_root, &registry_root, &run_capability)?;
     let review = extract_review_frames_at_roots(&project_root, &asset_root, &registry_root, &credential)?;
     for path in [&review.first_frame_path, &review.middle_frame_path, &review.last_frame_path] {
-        append_run_artifact(&registry_root, &run_capability, "review", Path::new(path))?;
+        if let Err(error) = append_run_artifact(&registry_root, &run_capability, "review", Path::new(path)) {
+            for cleanup in [&review.first_frame_path, &review.middle_frame_path, &review.last_frame_path] {
+                let _ = fs::remove_file(cleanup);
+            }
+            if let Some(parent) = Path::new(&review.first_frame_path).parent() {
+                let _ = fs::remove_dir(parent);
+            }
+            let _ = fs::remove_file(
+                authority_root_from_registry(&registry_root)?
+                    .join("review-records")
+                    .join(format!("{}.json", credential.receipt_id)),
+            );
+            return Err(error);
+        }
     }
     Ok(review)
 }
@@ -4123,20 +4250,121 @@ mod tests {
             "video-assembled",
         ] {
             let managed = assets.join(root);
-            fs::create_dir_all(&managed).unwrap();
-            let existing = managed.join("existing.bin");
-            fs::write(&existing, b"untouched").unwrap();
-            for forbidden in [&existing, &managed.join("future/deep/output.bin")] {
-                assert_eq!(
-                    reject_authority_file_command_path_at_app_data(
-                        &app_data,
-                        forbidden.to_str().unwrap(),
-                    ).unwrap_err(),
-                    "video_managed_path_forbidden"
-                );
+            let via_parent = assets.join("raw").join("..").join(root).join("future.bin");
+            fs::create_dir_all(assets.join("raw")).unwrap();
+            for forbidden in [managed.join("future/deep/output.bin"), via_parent] {
+                assert!(reject_authority_file_command_path_at_app_data(
+                    &app_data,
+                    forbidden.to_str().unwrap(),
+                ).is_err());
             }
-            assert_eq!(fs::read(existing).unwrap(), b"untouched");
+            #[cfg(windows)]
+            for suffix in [
+                format!("{}\\future.bin", root.to_ascii_uppercase()),
+                format!("{root}\\trailing.\\future.bin"),
+                format!("{root}\\future.bin:stream"),
+            ] {
+                assert!(reject_authority_file_command_path_at_app_data(
+                    &app_data,
+                    assets.join(suffix).to_str().unwrap(),
+                ).is_err());
+            }
+            assert!(!managed.exists(), "guard must not create a managed root");
         }
+    }
+
+    #[test]
+    fn publishing_cleanup_failure_keeps_receipts_leased_until_every_public_artifact_is_absent() {
+        for fail_receipt in [false, true] {
+            let fixture = FixtureDir::new(if fail_receipt { "publishing-receipt-delete" } else { "publishing-output-delete" });
+            let input = fixture.assets().join("raw/input.mp4");
+            make_fixture(&input, 24, "160x120", "0.25", false);
+            let normalized = normalize_at_roots(
+                fixture.root(), fixture.assets().as_path(), fixture.registry().as_path(),
+                &input, "cleanup-lock", 160, 120, 6,
+            ).unwrap();
+            let transaction_id = if fail_receipt { "c".repeat(64) } else { "b".repeat(64) };
+            let run_id = "d".repeat(64);
+            let private = authority_root_from_registry(fixture.registry().as_path()).unwrap()
+                .join("private-transactions").join(&transaction_id).join("prepared.mp4");
+            fs::create_dir_all(private.parent().unwrap()).unwrap();
+            make_fixture(&private, 24, "160x120", "0.25", false);
+            let output = fixture.assets().join("video-assembled/tampered.mp4");
+            fs::create_dir_all(output.parent().unwrap()).unwrap();
+            let project = fs::canonicalize(fixture.root()).unwrap();
+            let credentials = vec![normalized.credential.clone()];
+            let mut journal = begin_transaction_lease(
+                fixture.registry().as_path(), &project, &run_id, &transaction_id,
+                &credentials, &private, &output, 1_000, 60_000,
+            ).unwrap();
+            prepare_transaction_journal(
+                fixture.registry().as_path(), &mut journal,
+                PreparedOutputBinding::from_path(&private).unwrap(),
+            ).unwrap();
+            transition_transaction_journal(
+                fixture.registry().as_path(), &mut journal, "prepared", "publishing", None,
+            ).unwrap();
+            fs::write(&output, b"tampered-public-output").unwrap();
+            let receipt_path = authority_root_from_registry(fixture.registry().as_path()).unwrap()
+                .join("assemblies").join(format!("{transaction_id}.json"));
+            fs::create_dir_all(receipt_path.parent().unwrap()).unwrap();
+            fs::write(&receipt_path, b"pending-receipt").unwrap();
+            let fail_path = if fail_receipt { receipt_path.clone() } else { output.clone() };
+            let mut remover = |path: &Path| {
+                if path == fail_path {
+                    Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "injected delete failure"))
+                } else {
+                    fs::remove_file(path)
+                }
+            };
+            assert_eq!(
+                recover_transaction_journal_with_remover(
+                    fixture.registry().as_path(), &project, &transaction_id, 1_001, &mut remover,
+                ).unwrap_err(),
+                "video_transaction_public_cleanup_pending"
+            );
+            assert_eq!(load_transaction_journal(fixture.registry().as_path(), &transaction_id).unwrap().0.state, "publishing");
+            assert!(registry_lease_path(fixture.registry().as_path(), &normalized.credential.receipt_id).unwrap().exists());
+            assert_eq!(
+                lease_registry_receipts(fixture.registry().as_path(), &credentials, &"e".repeat(64)).unwrap_err(),
+                "normalization_receipt_leased"
+            );
+            recover_transaction_journal(
+                fixture.registry().as_path(), &project, &transaction_id, 1_002,
+            ).unwrap();
+            assert!(!output.exists() && !receipt_path.exists());
+            assert_eq!(load_transaction_journal(fixture.registry().as_path(), &transaction_id).unwrap().0.state, "aborted");
+        }
+    }
+
+    #[test]
+    fn concurrent_run_appends_are_serialized_without_lost_artifacts() {
+        let fixture = FixtureDir::new("run-ledger-concurrent");
+        ensure_registry_root(fixture.registry().as_path()).unwrap();
+        let project = fs::canonicalize(fixture.root()).unwrap();
+        let assets = fs::canonicalize(fixture.assets()).unwrap();
+        let capability = begin_assembly_run_at_roots(
+            &project, &assets, fixture.registry().as_path(), 60_000,
+        ).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles = (0..8).map(|index| {
+            let registry = fixture.registry();
+            let assets = fixture.assets();
+            let capability = capability.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let path = assets.join("video-staging").join(format!("concurrent-{index}.media"));
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, format!("artifact-{index}")).unwrap();
+                barrier.wait();
+                append_run_artifact(&registry, &capability, "staged", &path)
+            })
+        }).collect::<Vec<_>>();
+        let results = handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>();
+        assert!(results.iter().all(Result::is_ok), "all logical appends must serialize: {results:?}");
+        let record = load_run_record(fixture.registry().as_path(), &capability).unwrap().0;
+        assert_eq!(record.artifacts.len(), 8);
+        assert_eq!(record.artifacts.iter().map(|item| &item.canonical_path).collect::<HashSet<_>>().len(), 8);
     }
 
     #[test]

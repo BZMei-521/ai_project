@@ -1548,6 +1548,9 @@ fn concat_video_segments(
     app: tauri::AppHandle,
     video_paths: Vec<String>,
 ) -> Result<ExportResult, String> {
+    for path in &video_paths {
+        video_continuity::reject_authority_file_command_path(&app, path)?;
+    }
     let paths: Vec<PathBuf> = video_paths
         .iter()
         .map(PathBuf::from)
@@ -1854,6 +1857,10 @@ fn generate_local_video_from_images(
     mode: Option<LocalVideoMode>,
     motion_preset: Option<String>,
 ) -> Result<ExportResult, String> {
+    video_continuity::reject_authority_file_command_path(&app, &primary_image_path)?;
+    if let Some(path) = secondary_image_path.as_deref() {
+        video_continuity::reject_authority_file_command_path(&app, path)?;
+    }
     let primary = PathBuf::from(primary_image_path.trim());
     if !primary.exists() || !primary.is_file() {
         return Err(format!(
@@ -2771,7 +2778,11 @@ fn delete_generated_file_families_at_app_data(
 }
 
 #[tauri::command]
-fn split_threeview_sheet(source_path: String) -> Result<ThreeViewSplitResult, String> {
+fn split_threeview_sheet(
+    app: tauri::AppHandle,
+    source_path: String,
+) -> Result<ThreeViewSplitResult, String> {
+    video_continuity::reject_authority_file_command_path(&app, &source_path)?;
     let source = PathBuf::from(source_path.trim());
     if !source.exists() || !source.is_file() {
         return Err(format!("Three-view sheet not found: {}", source.to_string_lossy()));
@@ -2814,6 +2825,12 @@ fn split_threeview_sheet(source_path: String) -> Result<ThreeViewSplitResult, St
     let back_path = parent.join(format!("{stem}_back.png"));
     let targets = [front_path.clone(), side_path.clone(), back_path.clone()];
 
+    for target in &targets {
+        video_continuity::reject_authority_file_command_path(
+            &app,
+            target.to_string_lossy().as_ref(),
+        )?;
+    }
     for (index, target) in targets.iter().enumerate() {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)
