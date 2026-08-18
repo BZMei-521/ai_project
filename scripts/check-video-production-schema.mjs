@@ -624,6 +624,7 @@ try {
 
   useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { generatedVideoPath: "C:/project/raw/replaced.mp4" });
   const replacedMediaShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(replacedMediaShot.generatedVideoPath, "C:/project/raw/replaced.mp4", "media replacement must retain the newly generated path for controller processing");
   assert.equal(replacedMediaShot.videoProductionEvidence, undefined, "media replacement must invalidate production evidence and decision");
   assert.equal(replacedMediaShot.videoQualityStatus, "pending", "media replacement must reset quality status");
 

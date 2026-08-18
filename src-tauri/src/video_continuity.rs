@@ -239,6 +239,27 @@ pub struct VideoReviewFrames {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct VideoReviewFrameIdentity {
+    pub role: String,
+    pub path: String,
+    pub sha256: String,
+    pub byte_length: u64,
+    pub modified_unix_millis: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedVideoReviewRecord {
+    pub schema_version: u32,
+    pub credential_receipt_id: String,
+    pub canonical_project_root: String,
+    pub frames: Vec<VideoReviewFrameIdentity>,
+    pub key_id: String,
+    pub mac: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ConcatenatedVideo {
     pub output_path: String,
     pub probe: VideoProbe,
@@ -1126,6 +1147,62 @@ fn register_review_paths(
         &serde_json::to_vec(&record).map_err(|_| "normalization_registry_invalid".to_string())?,
         "normalization_registry_write_failed",
     )
+}
+
+fn review_record_mac(record: &VerifiedVideoReviewRecord, secret: &[u8]) -> Result<String, String> {
+    let mut unsigned = record.clone();
+    unsigned.mac.clear();
+    Ok(hmac_sha256(
+        secret,
+        &serde_json::to_vec(&unsigned).map_err(|_| "video_review_record_invalid".to_string())?,
+    ))
+}
+
+fn verify_review_frames_at_roots(
+    project_root: &Path,
+    asset_root: &Path,
+    registry_root: &Path,
+    credential: &NormalizationCredential,
+    review: &VideoReviewFrames,
+) -> Result<VerifiedVideoReviewRecord, String> {
+    let (record, secret) = load_signed_registry_record(registry_root, project_root, asset_root, credential)?;
+    let supplied = [
+        ("first", review.first_frame_path.as_str()),
+        ("middle", review.middle_frame_path.as_str()),
+        ("last", review.last_frame_path.as_str()),
+    ];
+    if record.derived_paths.len() != supplied.len()
+        || supplied.iter().any(|(_, path)| !record.derived_paths.iter().any(|registered| registered == path))
+    {
+        return Err("video_review_record_mismatch".to_string());
+    }
+    let review_root = fs::canonicalize(asset_root.join("video-review"))
+        .map_err(|_| "video_review_record_invalid".to_string())?;
+    let mut frames = Vec::with_capacity(3);
+    for (role, raw_path) in supplied {
+        let canonical = fs::canonicalize(raw_path).map_err(|_| "video_review_frame_missing".to_string())?;
+        if !canonical.is_file() || !canonical.starts_with(&review_root) || path_is_reparse(&canonical)? {
+            return Err("video_review_frame_invalid".to_string());
+        }
+        let (sha256, byte_length, modified_unix_millis) = file_binding(&canonical)?;
+        frames.push(VideoReviewFrameIdentity {
+            role: role.to_string(),
+            path: canonical.to_string_lossy().to_string(),
+            sha256,
+            byte_length,
+            modified_unix_millis,
+        });
+    }
+    let mut verified = VerifiedVideoReviewRecord {
+        schema_version: NORMALIZED_SCHEMA_VERSION,
+        credential_receipt_id: credential.receipt_id.clone(),
+        canonical_project_root: project_root.to_string_lossy().to_string(),
+        frames,
+        key_id: record.key_id,
+        mac: String::new(),
+    };
+    verified.mac = review_record_mac(&verified, &secret)?;
+    Ok(verified)
 }
 
 fn lease_registry_receipts(
@@ -2870,6 +2947,29 @@ fn cleanup_assembly_run_at_roots(
     write_run_version(registry_root, &mut record, &secret)
 }
 
+fn retain_assembly_run_at_roots(
+    project_root: &Path,
+    asset_root: &Path,
+    registry_root: &Path,
+    capability: &AssemblyRunCapability,
+) -> Result<(), String> {
+    let (mut record, secret) = load_run_record(registry_root, capability)?;
+    if record.canonical_project_root != project_root.to_string_lossy()
+        || record.canonical_asset_root != asset_root.to_string_lossy()
+    {
+        return Err("video_assembly_run_project_mismatch".to_string());
+    }
+    if record.state == "retained" {
+        return Ok(());
+    }
+    if record.state != "active" {
+        return Err("video_assembly_run_inactive".to_string());
+    }
+    record.sequence = record.sequence.saturating_add(1);
+    record.state = "retained".to_string();
+    write_run_version(registry_root, &mut record, &secret)
+}
+
 fn remove_registered_file(path: &Path, allowed_root: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -3671,6 +3771,31 @@ pub fn verify_normalization_credential(
         probe: probe_path(&path)?,
         anomalies: detect_anomalies(&path)?,
     })
+}
+
+#[tauri::command]
+pub fn verify_video_review_frames(
+    app: tauri::AppHandle,
+    project_assets_dir: String,
+    credential: NormalizationCredential,
+    review_frames: VideoReviewFrames,
+) -> Result<VerifiedVideoReviewRecord, String> {
+    let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
+    let registry_root = resolve_registry_root(&app)?;
+    verify_review_frames_at_roots(&project_root, &asset_root, &registry_root, &credential, &review_frames)
+}
+
+#[tauri::command]
+pub fn retain_video_assembly_run(
+    app: tauri::AppHandle,
+    run_capability: AssemblyRunCapability,
+) -> Result<(), String> {
+    let registry_root = resolve_registry_root(&app)?;
+    let project_root = fs::canonicalize(&run_capability.canonical_project_root)
+        .map_err(|_| "video_project_root_unavailable".to_string())?;
+    let asset_root = fs::canonicalize(&run_capability.canonical_asset_root)
+        .map_err(|_| "video_assets_root_invalid".to_string())?;
+    retain_assembly_run_at_roots(&project_root, &asset_root, &registry_root, &run_capability)
 }
 
 #[tauri::command]

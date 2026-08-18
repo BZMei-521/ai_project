@@ -77,6 +77,12 @@ const CANONICAL_H3_WORKFLOWS: Record<VideoWorkflowProfileId, ApiWorkflow> = {
   minimax_h3_r2v: minimaxH3R2vCanonical
 };
 
+export function getCanonicalH3WorkflowJson(profileId: VideoWorkflowProfileId): string {
+  const workflow = CANONICAL_H3_WORKFLOWS[profileId];
+  if (!workflow) throw new Error("h3_profile_unknown");
+  return JSON.stringify(workflow);
+}
+
 export function secondsToH3Length(seconds: number): number {
   if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("invalid_video_duration");
   if (seconds > 15) throw new Error("h3_shot_too_long");

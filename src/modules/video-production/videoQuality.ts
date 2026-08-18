@@ -3,7 +3,8 @@ import type {
   AssemblyRunCapability,
   NormalizationCredential,
   VideoInspection,
-  VideoReviewFrames
+  VideoReviewFrames,
+  VerifiedVideoReviewRecord
 } from "../platform/desktopBridge";
 import type { VideoBoundaryPlan } from "./continuityPlanner";
 import type { VideoProfilePreflightReport, VideoRouteDecision, VideoWorkflowProfileId } from "./types";
@@ -23,9 +24,19 @@ export interface VideoArtifactBinding {
   durationFrames: number;
   decodedFrameCount: number;
   reviewFramesDigest: string;
+  reviewRecordMac: string;
   assemblyTransactionId?: string;
   assemblySha256?: string;
   assemblyOutputPath?: string;
+}
+
+export interface VideoOperationIdentity {
+  sequenceId: string;
+  shotId: string;
+  contractDigest: string;
+  sourceVideoPath: string;
+  boundaryIdentity: string;
+  operationToken: string;
 }
 
 export interface VideoQualityDecisionRecord {
@@ -55,6 +66,10 @@ export interface VideoProductionEvidence {
   shotId: string;
   status: VideoProductionEvidenceStatus;
   sourceVideoPath: string;
+  sequenceId?: string;
+  contractDigest?: string;
+  boundaryIdentity?: string;
+  operation?: VideoOperationIdentity;
   routeDecision: VideoRouteDecision;
   profilePreflight: VideoProfilePreflightReport;
   boundary?: VideoBoundaryPlan;
@@ -64,6 +79,7 @@ export interface VideoProductionEvidence {
   normalizationCredential?: NormalizationCredential;
   inspection?: VideoInspection;
   reviewFrames?: VideoReviewFrames;
+  reviewRecord?: VerifiedVideoReviewRecord;
   assemblyReceipt?: AssemblyReceipt;
   artifactBinding?: VideoArtifactBinding;
   qualityReport?: VideoQualityReport;
@@ -76,6 +92,7 @@ export interface VideoQualityEvaluationInput {
   normalizationCredential?: NormalizationCredential | Record<string, unknown>;
   inspection?: VideoInspection | Record<string, unknown>;
   reviewFrames?: VideoReviewFrames | VideoQualityReport["reviewFrames"] | Record<string, unknown>;
+  reviewRecord?: VerifiedVideoReviewRecord | Record<string, unknown>;
   assemblyReceipt?: AssemblyReceipt | Record<string, unknown>;
   boundaryFrame?: string;
   blackFrameCount?: number;

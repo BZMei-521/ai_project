@@ -13568,7 +13568,7 @@ export function ComfyPipelinePanel() {
           <small>连接 ComfyUI · 导入分镜 · 一键生成整片</small>
         </div>
       </header>
-      <VideoProductionPanel onGenerateShot={(shotId) => onGenerateSingle("video", shotId, true)} />
+      <VideoProductionPanel settings={settings} />
       <section className="comfy-stage">
         <div className="comfy-stage-head">
           <span className="comfy-stage-index">01</span>

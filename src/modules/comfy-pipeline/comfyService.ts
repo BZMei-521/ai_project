@@ -7745,6 +7745,10 @@ async function fetchObjectInfo(baseUrl: string): Promise<Record<string, unknown>
   return parsed as Record<string, unknown>;
 }
 
+export async function fetchComfyObjectInfo(baseUrl: string): Promise<Record<string, unknown>> {
+  return fetchObjectInfo(baseUrl);
+}
+
 function extractStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     if (value.every((item) => typeof item === "string")) {

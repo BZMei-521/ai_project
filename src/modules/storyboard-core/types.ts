@@ -61,6 +61,7 @@ export type Shot = {
     normalizedPath?: string;
     generatedAt: string;
   };
+  videoGenerationContractDigest?: string;
   videoProductionEvidence?: VideoProductionEvidence;
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];

@@ -20,6 +20,7 @@ export type ImportedShotScriptItem = {
   videoRouteReason?: string;
   videoQualityStatus?: Shot["videoQualityStatus"];
   videoGenerationReceipt?: Shot["videoGenerationReceipt"];
+  videoGenerationContractDigest?: string;
   videoProductionEvidence?: Shot["videoProductionEvidence"];
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
@@ -193,6 +194,7 @@ type StoryboardState = {
         | "videoRouteReason"
         | "videoQualityStatus"
         | "videoGenerationReceipt"
+        | "videoGenerationContractDigest"
         | "videoProductionEvidence"
         | "skyboxFace"
         | "skyboxFaces"
@@ -807,17 +809,27 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                const receiptChanged = patch.videoGenerationReceipt !== undefined && JSON.stringify(patch.videoGenerationReceipt) !== JSON.stringify(shot.videoGenerationReceipt);
                const mediaChanged = patch.generatedVideoPath !== undefined && patch.generatedVideoPath !== shot.generatedVideoPath;
                const generationContractChanged =
+                 (patch.title !== undefined && patch.title !== shot.title) ||
+                 (patch.storyPrompt !== undefined && patch.storyPrompt !== shot.storyPrompt) ||
+                 (patch.notes !== undefined && patch.notes !== shot.notes) ||
+                 (patch.dialogue !== undefined && patch.dialogue !== shot.dialogue) ||
+                 (patch.seed !== undefined && patch.seed !== shot.seed) ||
+                 (patch.characterRefs !== undefined && JSON.stringify(patch.characterRefs) !== JSON.stringify(shot.characterRefs)) ||
+                 (patch.sceneRefId !== undefined && patch.sceneRefId !== shot.sceneRefId) ||
+                 (patch.generatedImagePath !== undefined && patch.generatedImagePath !== shot.generatedImagePath) ||
                  (patch.videoPrompt !== undefined && patch.videoPrompt !== shot.videoPrompt) ||
                  (patch.videoMode !== undefined && patch.videoMode !== shot.videoMode) ||
                  (patch.videoStartFramePath !== undefined && patch.videoStartFramePath !== shot.videoStartFramePath) ||
                  (patch.videoEndFramePath !== undefined && patch.videoEndFramePath !== shot.videoEndFramePath) ||
                  (patch.videoQualityTier !== undefined && patch.videoQualityTier !== shot.videoQualityTier) ||
                  (patch.videoAccelerationMode !== undefined && patch.videoAccelerationMode !== shot.videoAccelerationMode) ||
+                 (patch.continuitySegmentId !== undefined && patch.continuitySegmentId !== shot.continuitySegmentId) ||
                  (patch.videoBoundaryKind !== undefined && patch.videoBoundaryKind !== shot.videoBoundaryKind) ||
                  (patch.approvedBoundaryFramePath !== undefined && patch.approvedBoundaryFramePath !== shot.approvedBoundaryFramePath);
                 const invalidatesProduction = profileChanged || receiptChanged || mediaChanged || generationContractChanged;
                 const carriesReplacementEvidence = patch.videoProductionEvidence !== undefined;
                 const clearsProduction = invalidatesProduction && !carriesReplacementEvidence;
+                const clearsGeneratedMedia = (profileChanged || generationContractChanged) && patch.generatedVideoPath === undefined;
               const next: Shot = {
               ...shot,
               title: patch.title ?? shot.title,
@@ -839,7 +851,18 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                 patch.approvedBoundaryFramePath ?? shot.approvedBoundaryFramePath,
               videoRouteReason: patch.videoRouteReason ?? shot.videoRouteReason,
               videoQualityStatus: patch.videoQualityStatus ?? shot.videoQualityStatus,
-              videoGenerationReceipt: clearsProduction ? undefined : patch.videoGenerationReceipt ?? shot.videoGenerationReceipt,
+              videoGenerationReceipt:
+                patch.videoGenerationReceipt !== undefined
+                  ? patch.videoGenerationReceipt
+                  : clearsGeneratedMedia
+                    ? undefined
+                    : shot.videoGenerationReceipt,
+              videoGenerationContractDigest:
+                patch.videoGenerationContractDigest !== undefined
+                  ? patch.videoGenerationContractDigest
+                  : clearsGeneratedMedia
+                    ? undefined
+                    : shot.videoGenerationContractDigest,
               videoProductionEvidence: patch.videoProductionEvidence !== undefined
                    ? normalizeVideoProductionEvidence(patch.videoProductionEvidence, shot.id)
                   : clearsProduction
@@ -858,7 +881,12 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
               sourceSceneName: patch.sourceSceneName ?? shot.sourceSceneName,
               sourceScenePrompt: patch.sourceScenePrompt ?? shot.sourceScenePrompt,
               generatedImagePath: patch.generatedImagePath ?? shot.generatedImagePath,
-              generatedVideoPath: clearsProduction ? undefined : patch.generatedVideoPath ?? shot.generatedVideoPath
+              generatedVideoPath:
+                patch.generatedVideoPath !== undefined
+                  ? patch.generatedVideoPath
+                  : clearsGeneratedMedia
+                    ? undefined
+                    : shot.generatedVideoPath
             };
               if (clearsProduction) next.videoQualityStatus = "pending";
               return next;
@@ -928,6 +956,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           videoRouteReason: item.videoRouteReason,
           videoQualityStatus: item.videoQualityStatus ?? "pending",
           videoGenerationReceipt: item.videoGenerationReceipt,
+          videoGenerationContractDigest: item.videoGenerationContractDigest,
           videoProductionEvidence: normalizeVideoProductionEvidence(item.videoProductionEvidence, shotId),
           skyboxFace: item.skyboxFace ?? "auto",
           skyboxFaces: (item.skyboxFaces ?? []).filter((face): face is SkyboxFace =>
@@ -1031,15 +1060,27 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
   updateProjectSettings: (settings) =>
     set((state) => {
       const now = new Date().toISOString();
+      const nextFps = settings.fps ? Math.max(1, Math.round(settings.fps)) : state.project.fps;
+      const nextWidth = settings.width ? Math.max(320, Math.round(settings.width)) : state.project.width;
+      const nextHeight = settings.height ? Math.max(240, Math.round(settings.height)) : state.project.height;
+      const normalizationChanged = nextFps !== state.project.fps || nextWidth !== state.project.width || nextHeight !== state.project.height;
       return {
         project: {
           ...state.project,
           name: settings.name?.trim() || state.project.name,
-          fps: settings.fps ? Math.max(1, Math.round(settings.fps)) : state.project.fps,
-          width: settings.width ? Math.max(320, Math.round(settings.width)) : state.project.width,
-          height: settings.height ? Math.max(240, Math.round(settings.height)) : state.project.height,
+          fps: nextFps,
+          width: nextWidth,
+          height: nextHeight,
           updatedAt: now
-        }
+        },
+        shots: normalizationChanged ? state.shots.map((shot) => ({
+          ...shot,
+          generatedVideoPath: undefined,
+          videoGenerationReceipt: undefined,
+          videoGenerationContractDigest: undefined,
+          videoProductionEvidence: undefined,
+          videoQualityStatus: "pending" as const
+        })) : state.shots
       };
     }),
 
@@ -1047,7 +1088,19 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => ({
       shots: state.shots.map((shot) =>
         shot.id === shotId
-          ? { ...shot, durationFrames: Math.max(1, durationFrames) }
+          ? (() => {
+              const nextDuration = Math.max(1, durationFrames);
+              if (nextDuration === shot.durationFrames) return shot;
+              return {
+                ...shot,
+                durationFrames: nextDuration,
+                generatedVideoPath: undefined,
+                videoGenerationReceipt: undefined,
+                videoGenerationContractDigest: undefined,
+                videoProductionEvidence: undefined,
+                videoQualityStatus: "pending" as const
+              };
+            })()
           : shot
       )
     })),

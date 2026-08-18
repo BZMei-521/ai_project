@@ -129,6 +129,21 @@ export type VideoReviewFrames = {
   lastFramePath: string;
 };
 
+export type VerifiedVideoReviewRecord = {
+  schemaVersion: 1;
+  credentialReceiptId: string;
+  canonicalProjectRoot: string;
+  frames: Array<{
+    role: "first" | "middle" | "last";
+    path: string;
+    sha256: string;
+    byteLength: number;
+    modifiedUnixMillis: number;
+  }>;
+  keyId: string;
+  mac: string;
+};
+
 export type ConcatenatedVideo = {
   outputPath: string;
   probe: VideoProbe;
@@ -341,6 +356,24 @@ export async function verifyNormalizationCredential(request: VerifyNormalization
     projectAssetsDir: requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing"),
     credential: validateNormalizationCredential(request.credential)
   });
+}
+
+export async function verifyVideoReviewFrames(request: VerifyNormalizationCredentialRequest & { reviewFrames: VideoReviewFrames }): Promise<VerifiedVideoReviewRecord> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<VerifiedVideoReviewRecord>("verify_video_review_frames", {
+    projectAssetsDir: requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing"),
+    credential: validateNormalizationCredential(request.credential),
+    reviewFrames: {
+      firstFramePath: requireAbsoluteVideoPath(request.reviewFrames.firstFramePath, "video_review_frame_missing"),
+      middleFramePath: requireAbsoluteVideoPath(request.reviewFrames.middleFramePath, "video_review_frame_missing"),
+      lastFramePath: requireAbsoluteVideoPath(request.reviewFrames.lastFramePath, "video_review_frame_missing")
+    }
+  });
+}
+
+export async function retainVideoAssemblyRun(runCapability: AssemblyRunCapability): Promise<void> {
+  requireTauriVideoContinuityRuntime();
+  await invokeDesktopCommand("retain_video_assembly_run", { runCapability });
 }
 
 export async function concatNormalizedVideoSegments(request: ConcatNormalizedVideoSegmentsRequest): Promise<ConcatenatedVideo> {

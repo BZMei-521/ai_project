@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ComfySettings } from "../comfy-pipeline/comfyService";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
 import { useStoryboardStore } from "../storyboard-core/store";
 import type { Asset, Shot } from "../storyboard-core/types";
@@ -6,6 +7,7 @@ import { planVideoContinuity, type VideoBoundaryPlan } from "./continuityPlanner
 import { createControllerInputFromShot, createVideoProductionController } from "./videoProductionController";
 import { MINIMAX_H3_PROFILES, preflightVideoProfile } from "./workflowProfiles";
 import { routeVideoWorkflow } from "./videoRouter";
+import { createRoutedVideoProductionGenerator } from "./videoRoutedGeneration";
 import type { VideoProfilePreflightReport, VideoRouteDecision, VideoWorkflowProfileId } from "./types";
 import {
   applyVideoQualityDecision,
@@ -16,6 +18,8 @@ import {
   type VideoProductionRow,
   type VideoQualityReport
 } from "./videoQuality";
+
+export const videoProductionStoreHarness = useStoryboardStore;
 
 const PROFILE_IDS = MINIMAX_H3_PROFILES.map((profile) => profile.id);
 const REJECTION_REASONS = [
@@ -69,7 +73,12 @@ export function VideoProductionPanelView(props: VideoProductionPanelViewProps) {
   );
 }
 
-export function VideoProductionPanel({ onGenerateShot }: { onGenerateShot?: (shotId: string) => Promise<boolean> }) {
+export interface VideoProductionPanelServices {
+  routedGenerator?: ReturnType<typeof createRoutedVideoProductionGenerator>;
+  controllerFactory?: typeof createVideoProductionController;
+}
+
+export function VideoProductionPanel({ settings, services }: { settings: ComfySettings; services?: VideoProductionPanelServices }) {
   const project = useStoryboardStore((state) => state.project);
   const shots = useStoryboardStore((state) => state.shots);
   const assets = useStoryboardStore((state) => state.assets);
@@ -77,27 +86,48 @@ export function VideoProductionPanel({ onGenerateShot }: { onGenerateShot?: (sho
   const updateShotFields = useStoryboardStore((state) => state.updateShotFields);
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const processing = useRef(new Set<string>());
+  const stagedOperations = useRef(new Map<string, { sequenceId: string; path: string; digest: string }>());
   const scopedShots = useMemo(() => shots.filter((shot) => shot.sequenceId === currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id)), [currentSequenceId, shots]);
   const contexts = useMemo(() => buildContexts(scopedShots, assets), [assets, scopedShots]);
-  const controller = useMemo(() => createVideoProductionController({
-    persistEvidence: (shotId, evidence) => updateShotFields(shotId, { videoProductionEvidence: evidence, videoQualityStatus: evidence.qualityReport?.status ?? (evidence.status === "processing" ? "checking" : "rejected") }),
-    generateShot: async (shotId) => {
-      const ok = onGenerateShot ? await onGenerateShot(shotId) : false;
-      const generatedVideoPath = useStoryboardStore.getState().shots.find((shot) => shot.id === shotId)?.generatedVideoPath;
-      return { ok, generatedVideoPath };
+  const routedGenerator = useMemo(() => services?.routedGenerator ?? createRoutedVideoProductionGenerator({
+    settings,
+    readSnapshot: (shotId) => {
+      const state = useStoryboardStore.getState();
+      const allShots = state.shots.filter((item) => item.sequenceId === state.currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id));
+      const shot = allShots.find((item) => item.id === shotId);
+      if (!shot) throw new Error("video_generation_shot_missing");
+      const boundary = buildContexts(allShots, state.assets).get(shotId)?.boundary;
+      return { sequenceId: state.currentSequenceId, shot, index: allShots.indexOf(shot), allShots, assets: state.assets, project: state.project, boundary };
     }
-  }), [onGenerateShot, updateShotFields]);
+  }), [services?.routedGenerator, settings]);
+  const controller = useMemo(() => (services?.controllerFactory ?? createVideoProductionController)({
+    persistEvidence: (shotId, evidence) => updateShotFields(shotId, { videoProductionEvidence: evidence, videoQualityStatus: evidence.qualityReport?.status ?? (evidence.status === "processing" ? "checking" : "rejected") }),
+    generateShot: async (shotId, rebuildOptions) => {
+      const generated = await routedGenerator.generate(shotId, { previousEvidence: rebuildOptions?.previousEvidence });
+      stagedOperations.current.set(shotId, { sequenceId: generated.request.shot.sequenceId, path: generated.generatedVideoPath, digest: generated.generationContractDigest });
+      if ((rebuildOptions?.request?.shotIds.length ?? 1) === 1) {
+        updateShotFields(shotId, { generatedVideoPath: generated.generatedVideoPath, videoGenerationReceipt: generated.videoGenerationReceipt, videoGenerationContractDigest: generated.generationContractDigest });
+      }
+      return generated;
+    },
+    isOperationCurrent: (operation: any) => operationMatchesCurrent(operation, stagedOperations.current),
+    persistEvidenceCAS: (operation: any, evidence) => persistEvidenceCAS(operation, evidence, stagedOperations.current),
+    persistBatchCAS: (items: any[]) => persistEvidenceBatchCAS(items, stagedOperations.current)
+  }), [routedGenerator, services?.controllerFactory, updateShotFields]);
   const rows = useMemo(() => buildRows(scopedShots, assets, contexts), [assets, contexts, scopedShots]);
 
   const processShot = async (shotId: string) => {
     if (processing.current.has(shotId)) return;
     const shot = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
-    const context = contexts.get(shotId);
-    if (!shot?.generatedVideoPath || !context) return;
+    if (!shot?.generatedVideoPath) return;
     processing.current.add(shotId);
-    try { await controller.processGeneratedShot(createControllerInputFromShot({ shot, project, ...context })); }
+    try {
+      const prepared = await routedGenerator.prepare(shotId);
+      stagedOperations.current.set(shotId, { sequenceId: shot.sequenceId, path: shot.generatedVideoPath, digest: prepared.generationContractDigest });
+      await controller.processGeneratedShot({ ...createControllerInputFromShot({ shot, project, routeDecision: prepared.routeDecision, profilePreflight: prepared.profilePreflight, boundary: prepared.request.boundary }), contractDigest: prepared.generationContractDigest });
+    }
     catch { /* failed evidence is persisted by the controller */ }
-    finally { processing.current.delete(shotId); }
+    finally { processing.current.delete(shotId); stagedOperations.current.delete(shotId); }
   };
 
   useEffect(() => {
@@ -120,27 +150,35 @@ export function VideoProductionPanel({ onGenerateShot }: { onGenerateShot?: (sho
     onApprove={(shotId) => void (async () => {
       const shot = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
       if (!shot?.videoProductionEvidence) return;
-      const fresh = await controller.verifyForDecision(shot.videoProductionEvidence);
+      const captured = shot.videoProductionEvidence;
+      const fresh = await controller.verifyForDecision(captured);
       const decided = applyVideoQualityDecision(fresh, { decision: "approve" });
-      updateShotFields(shotId, { videoProductionEvidence: { ...shot.videoProductionEvidence, qualityReport: decided, decision: decided.decision }, videoQualityStatus: decided.status });
-    })()}
+      persistDecisionCAS(shotId, captured, decided);
+    })().catch((error) => persistDecisionFailure(shotId, error))}
     onRejectAndRebuild={(shotId, reason) => void (async () => {
       const state = useStoryboardStore.getState();
       const shot = state.shots.find((item) => item.id === shotId);
       const row = rows.find((item) => item.shotId === shotId);
       if (!shot?.videoProductionEvidence || !row) return;
-      const fresh = await controller.verifyForDecision(shot.videoProductionEvidence);
+      const captured = shot.videoProductionEvidence;
+      const fresh = await controller.verifyForDecision(captured);
       const decided = applyVideoQualityDecision(fresh, { decision: "reject", reason });
-      updateShotFields(shotId, { videoProductionEvidence: { ...shot.videoProductionEvidence, qualityReport: decided, decision: decided.decision }, videoQualityStatus: "rejected" });
+      if (!persistDecisionCAS(shotId, captured, decided)) return;
       setReasons((previous) => { const next = { ...previous }; delete next[row.artifactKey]; return next; });
       const request = planVideoRebuildRequest({ shotId, orderedShotIds: scopedShots.map((item) => item.id), reason, boundary: row.boundary });
-      await controller.rebuild(request, async (targetId, generatedVideoPath) => {
+      await controller.rebuild(request, async (targetId, generatedVideoPath, _previousEvidence, generated) => {
         const latest = useStoryboardStore.getState().shots.find((item) => item.id === targetId);
-        const context = contexts.get(targetId);
-        if (!latest || !context) throw new Error("video_rebuild_context_missing");
-        return createControllerInputFromShot({ shot: { ...latest, generatedVideoPath }, project, ...context });
+        const details = generated as any;
+        if (!latest || !details?.routeDecision || !details?.profilePreflight) throw new Error("video_rebuild_context_missing");
+        return { ...createControllerInputFromShot({ shot: { ...latest, generatedVideoPath }, project: useStoryboardStore.getState().project, routeDecision: details.routeDecision, profilePreflight: details.profilePreflight, boundary: details.request?.boundary }), contractDigest: details.generationContractDigest };
       });
-    })()}
+      request.shotIds.forEach((id) => stagedOperations.current.delete(id));
+    })().catch((error) => {
+      stagedOperations.current.delete(shotId);
+      const failedRow = rows.find((item) => item.shotId === shotId);
+      const failedRequest = planVideoRebuildRequest({ shotId, orderedShotIds: scopedShots.map((item) => item.id), reason, boundary: failedRow?.boundary });
+      persistRebuildFailure(failedRequest.shotIds, error);
+    })}
   />;
 }
 
@@ -153,8 +191,8 @@ function buildContexts(shots: Shot[], assets: Asset[]) {
   }));
   const plan = planVideoContinuity({ shots: shots.map((shot) => ({ id: shot.id, order: shot.order, videoBoundaryKind: shot.videoBoundaryKind, approvedTailFramePath: shot.approvedBoundaryFramePath, tailFrameApprovalStatus: shot.approvedBoundaryFramePath ? "approved" : "pending" })), boundaries });
   return new Map(shots.map((shot) => {
-    const routeDecision = routeForShot(shot, assets);
-    const profilePreflight = preflightForRoute(shot, routeDecision);
+    const routeDecision = shot.videoProductionEvidence?.routeDecision ?? routeForShot(shot, assets);
+    const profilePreflight = shot.videoProductionEvidence?.profilePreflight ?? preflightForRoute(shot, routeDecision);
     const boundary = plan.boundaries.find((item) => item.fromShotId === shot.id);
     return [shot.id, { routeDecision, profilePreflight, boundary }] as const;
   }));
@@ -187,7 +225,7 @@ function buildRows(shots: Shot[], assets: Asset[], contexts: Map<string, { route
     const evidence = shot.videoProductionEvidence;
     let report: VideoQualityReport;
     if (evidence?.status === "ready" && evidence.normalizationCredential && evidence.inspection && evidence.reviewFrames) {
-      const fresh = createVideoQualityReport(shot.id, { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: evidence.inspection, reviewFrames: evidence.reviewFrames, assemblyReceipt: evidence.assemblyReceipt, boundaryFrame: context.boundary?.sharedFramePath });
+      const fresh = createVideoQualityReport(shot.id, { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: evidence.inspection, reviewFrames: evidence.reviewFrames, reviewRecord: evidence.reviewRecord, assemblyReceipt: evidence.assemblyReceipt, boundaryFrame: context.boundary?.sharedFramePath });
       report = resolvePersistedVideoDecision(fresh, evidence.decision);
     } else report = { shotId: shot.id, status: "rejected", structuralIssues: [evidence?.failureReason || "video_production_evidence_missing"], semanticReviewItems: ["character_identity", "scene_anchor", "costume_prop", "motion_boundary", "color_continuity"], reviewFrames: { first: "", middle: "", last: "" } };
     const characters = (shot.characterRefs ?? []).flatMap((id) => { const asset = assetById.get(id); return asset ? unique([asset.characterIdentityPack?.faceMasterPath, asset.characterIdentityPack?.bodyFrontPath, asset.characterFaceRefPath, asset.characterFrontPath, asset.filePath]).slice(0, 2) : []; });
@@ -198,6 +236,57 @@ function buildRows(shots: Shot[], assets: Asset[], contexts: Map<string, { route
 }
 
 function ReviewStrip({ label, paths }: { label: string; paths: Array<[string, string]> }) { return <div className="video-review-strip"><small>{label}</small><div className="video-review-strip__images">{paths.length ? paths.map(([name, path]) => <figure key={`${name}:${path}`}>{path ? <img alt={name} loading="lazy" src={toDesktopMediaSource(path)} /> : <div className="video-review-strip__missing">缺失</div>}<figcaption>{name}{path ? ` · ${path.replace(/\\/g, "/").split("/").pop()}` : ""}</figcaption></figure>) : <span className="video-review-strip__none">未提供</span>}</div></div>; }
+function operationMatchesCurrent(operation: any, staged: Map<string, { sequenceId: string; path: string; digest: string }>) {
+  const state = useStoryboardStore.getState();
+  const shot = state.shots.find((item) => item.id === operation?.shotId);
+  if (!shot || shot.sequenceId !== operation?.sequenceId || state.currentSequenceId !== operation.sequenceId) return false;
+  const active = staged.get(shot.id);
+  return active
+    ? active.sequenceId === operation.sequenceId && active.path === operation.sourceVideoPath && active.digest === operation.contractDigest
+    : shot.generatedVideoPath === operation.sourceVideoPath && shot.videoGenerationContractDigest === operation.contractDigest;
+}
+function persistEvidenceCAS(operation: any, evidence: VideoProductionEvidence, staged: Map<string, { sequenceId: string; path: string; digest: string }>) {
+  if (!operationMatchesCurrent(operation, staged)) return false;
+  let persisted = false;
+  useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => {
+    if (shot.id !== operation.shotId || shot.sequenceId !== operation.sequenceId) return shot;
+    persisted = true;
+    return { ...shot, generatedVideoPath: operation.sourceVideoPath, videoGenerationContractDigest: operation.contractDigest, videoProductionEvidence: evidence, videoQualityStatus: evidence.qualityReport?.status ?? (evidence.status === "processing" ? "checking" : "rejected") };
+  }) }));
+  return persisted;
+}
+function persistEvidenceBatchCAS(items: any[], staged: Map<string, { sequenceId: string; path: string; digest: string }>) {
+  if (!items.length || items.some((item) => !operationMatchesCurrent(item.operation, staged))) return false;
+  const byShot = new Map(items.map((item) => [item.operation.shotId, item]));
+  useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => {
+    const item: any = byShot.get(shot.id);
+    if (!item) return shot;
+    return { ...shot, generatedVideoPath: item.operation.sourceVideoPath, videoGenerationContractDigest: item.operation.contractDigest, videoGenerationReceipt: item.generated.videoGenerationReceipt, videoProductionEvidence: item.evidence, videoQualityStatus: item.evidence.qualityReport?.status ?? "needs_review" };
+  }) }));
+  return true;
+}
+function persistDecisionCAS(shotId: string, captured: VideoProductionEvidence, decided: VideoQualityReport) {
+  let persisted = false;
+  useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => {
+    if (state.currentSequenceId !== captured.sequenceId || shot.id !== shotId || shot.videoProductionEvidence?.operation?.operationToken !== captured.operation?.operationToken || shot.generatedVideoPath !== captured.sourceVideoPath || shot.videoGenerationContractDigest !== captured.contractDigest) return shot;
+    persisted = true;
+    return { ...shot, videoProductionEvidence: { ...captured, qualityReport: decided, decision: decided.decision }, videoQualityStatus: decided.status };
+  }) }));
+  return persisted;
+}
+function persistDecisionFailure(shotId: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => shot.id === shotId && shot.videoProductionEvidence ? { ...shot, videoProductionEvidence: { ...shot.videoProductionEvidence, status: "failed", failureReason: message }, videoQualityStatus: "rejected" } : shot) }));
+}
+function persistRebuildFailure(shotIds: string[], error: unknown) {
+  const targets = new Set(shotIds);
+  const message = error instanceof Error ? error.message : String(error);
+  useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => !targets.has(shot.id) ? shot : {
+    ...shot,
+    videoProductionEvidence: shot.videoProductionEvidence ? { ...shot.videoProductionEvidence, status: "failed", failureReason: message, decision: undefined } : shot.videoProductionEvidence,
+    videoQualityStatus: "rejected"
+  }) }));
+}
 function unique(values: Array<string | undefined>) { return [...new Set(values.map((item) => item?.trim()).filter((item): item is string => Boolean(item)))]; }
 function statusLabel(status: VideoQualityReport["status"]) { return status === "approved" ? "已批准" : status === "needs_review" ? "待人工审核" : "已拒绝"; }
 function compare(a: string, b: string) { return a < b ? -1 : a > b ? 1 : 0; }

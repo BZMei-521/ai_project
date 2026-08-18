@@ -1,49 +1,128 @@
 import { createVideoQualityReport, createVideoArtifactBinding, artifactBindingsEqual, evaluateVideoQuality } from "./videoQualityRuntime.mjs";
 
+export async function createVideoGenerationContractDigest(value = {}) {
+  const source = record(value);
+  const shot = record(source.shot);
+  const project = record(source.project);
+  const contract = {
+    schemaVersion: 1,
+    sequenceId: text(source.sequenceId),
+    shot: {
+      id: text(shot.id), title: text(shot.title), storyPrompt: text(shot.storyPrompt), videoPrompt: text(shot.videoPrompt),
+      notes: text(shot.notes), dialogue: text(shot.dialogue), seed: finite(shot.seed) ? shot.seed : 0,
+      characterRefs: stringArray(shot.characterRefs), sceneRefId: text(shot.sceneRefId), generatedImagePath: text(shot.generatedImagePath),
+      videoStartFramePath: text(shot.videoStartFramePath), videoEndFramePath: text(shot.videoEndFramePath),
+      durationFrames: finite(shot.durationFrames) ? shot.durationFrames : 0, continuitySegmentId: text(shot.continuitySegmentId),
+      videoBoundaryKind: text(shot.videoBoundaryKind)
+    },
+    project: { id: text(project.id), width: project.width, height: project.height, fps: project.fps },
+    routeDecision: clone(source.routeDecision), profilePreflight: clone(source.profilePreflight),
+    workflowDigest: text(source.workflowDigest), references: clone(Array.isArray(source.references) ? source.references : []),
+    boundary: source.boundary ? clone(source.boundary) : null
+  };
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(stable(contract)));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function createVideoOperationIdentity(input = {}) {
+  const source = record(input);
+  const operation = {
+    sequenceId: text(source.sequenceId), shotId: text(source.shotId), contractDigest: text(source.contractDigest),
+    sourceVideoPath: text(source.sourceVideoPath), boundaryIdentity: text(source.boundaryIdentity),
+    operationToken: text(source.operationToken) || randomToken()
+  };
+  if (!operation.sequenceId || !operation.shotId || !/^[a-f0-9]{64}$/.test(operation.contractDigest) || !operation.sourceVideoPath || !operation.operationToken) {
+    throw new Error("video_operation_identity_invalid");
+  }
+  return Object.freeze(operation);
+}
+
 export function createVideoProductionController(dependencies = {}) {
-  const required = ["beginRun", "stage", "probe", "normalize", "extractReviewFrames", "verifyCredential", "persistEvidence", "generateShot"];
+  const required = ["beginRun", "stage", "probe", "normalize", "extractReviewFrames", "verifyCredential", "verifyReviewRecord", "completeRun", "cleanupRun", "persistEvidence", "generateShot"];
   for (const name of required) if (typeof dependencies[name] !== "function") throw new Error(`video_controller_dependency_missing:${name}`);
 
-  async function processGeneratedShot(input) {
-    const pending = baseEvidence(input, "processing");
-    dependencies.persistEvidence(input.shotId, pending);
+  const assertCurrent = async (operation) => {
+    if (typeof dependencies.isOperationCurrent === "function" && !(await dependencies.isOperationCurrent(operation))) throw new Error("video_operation_stale");
+  };
+  const persist = async (operation, evidence) => {
+    await assertCurrent(operation);
+    if (typeof dependencies.persistEvidenceCAS === "function") {
+      if (!(await dependencies.persistEvidenceCAS(operation, evidence))) throw new Error("video_operation_stale");
+    } else dependencies.persistEvidence(evidence.shotId, evidence);
+  };
+
+  async function processGeneratedShot(input, options = {}) {
+    const operation = input.operation ?? createVideoOperationIdentity({
+      sequenceId: input.sequenceId ?? "legacy", shotId: input.shotId,
+      contractDigest: input.contractDigest ?? "0".repeat(64), sourceVideoPath: input.generatedVideoPath,
+      boundaryIdentity: boundaryIdentity(input.boundary)
+    });
+    const pending = baseEvidence(input, operation, "processing");
+    if (!options.deferPersist) await persist(operation, pending);
+    let runCapability;
+    let retained = false;
     try {
-      const runCapability = await dependencies.beginRun();
+      await assertCurrent(operation);
+      runCapability = await dependencies.beginRun();
+      await assertCurrent(operation);
       const staged = await dependencies.stage({ runCapability, inputPath: input.generatedVideoPath });
+      await assertCurrent(operation);
       await dependencies.probe({ inputPath: staged.stagedPath, projectAssetsDir: staged.projectAssetsDir });
+      await assertCurrent(operation);
       const normalized = await dependencies.normalize({
         runCapability, inputPath: staged.stagedPath, projectAssetsDir: staged.projectAssetsDir,
         segmentId: safeSegmentId(input.shotId), projectWidth: input.projectWidth,
         projectHeight: input.projectHeight, durationFrames: input.durationFrames
       });
+      await assertCurrent(operation);
       const reviewFrames = await dependencies.extractReviewFrames({ runCapability, projectAssetsDir: staged.projectAssetsDir, credential: normalized.credential });
+      await assertCurrent(operation);
       const verified = await dependencies.verifyCredential({ projectAssetsDir: staged.projectAssetsDir, credential: normalized.credential });
-      const qualityInput = { normalized: true, normalizationCredential: normalized.credential, inspection: verified, reviewFrames, boundaryFrame: input.boundary?.sharedFramePath };
+      await assertCurrent(operation);
+      const reviewRecord = await dependencies.verifyReviewRecord({ projectAssetsDir: staged.projectAssetsDir, credential: normalized.credential, reviewFrames });
+      await assertCurrent(operation);
+      const qualityInput = { normalized: true, normalizationCredential: normalized.credential, inspection: verified, reviewFrames, reviewRecord, boundaryFrame: input.boundary?.sharedFramePath };
       if (stable(normalized.probe) !== stable(verified.probe) || stable(normalized.anomalies) !== stable(verified.anomalies)) throw new Error("credential_verification_mismatch");
       const qualityReport = createVideoQualityReport(input.shotId, qualityInput);
       const evidence = {
-        ...baseEvidence(input, "ready"), projectAssetsDir: staged.projectAssetsDir, runCapability,
+        ...baseEvidence(input, operation, "ready"), projectAssetsDir: staged.projectAssetsDir, runCapability,
         stagingReceiptId: staged.stagingReceiptId, normalizationCredential: normalized.credential,
-        inspection: verified, reviewFrames, artifactBinding: createVideoArtifactBinding(qualityInput), qualityReport
+        inspection: verified, reviewFrames, reviewRecord, artifactBinding: createVideoArtifactBinding(qualityInput), qualityReport
       };
-      dependencies.persistEvidence(input.shotId, evidence);
+      await dependencies.completeRun({ runCapability, retainEvidence: true });
+      retained = true;
+      await assertCurrent(operation);
+      if (!options.deferPersist) await persist(operation, evidence);
       return evidence;
     } catch (error) {
-      const failed = { ...pending, status: "failed", failureReason: String(error instanceof Error ? error.message : error) };
-      dependencies.persistEvidence(input.shotId, failed);
+      if (!options.deferPersist && String(error instanceof Error ? error.message : error) !== "video_operation_stale") {
+        const failed = { ...pending, status: "failed", failureReason: String(error instanceof Error ? error.message : error) };
+        try { await persist(operation, failed); } catch { /* stale failures are intentionally discarded */ }
+      }
       throw error;
+    } finally {
+      if (runCapability && !retained) {
+        try { await dependencies.cleanupRun({ runCapability }); } catch { /* primary failure wins */ }
+      }
     }
   }
 
-  async function verifyForDecision(evidence) {
+  async function verifyForDecision(evidence, operation = evidence?.operation) {
     if (!evidence || evidence.status !== "ready") throw new Error("video_evidence_not_ready");
+    if (operation) await assertCurrent(operation);
     const verified = await dependencies.verifyCredential({ projectAssetsDir: evidence.projectAssetsDir, credential: evidence.normalizationCredential });
+    if (operation) await assertCurrent(operation);
+    const reviewRecord = await dependencies.verifyReviewRecord({ projectAssetsDir: evidence.projectAssetsDir, credential: evidence.normalizationCredential, reviewFrames: evidence.reviewFrames });
+    if (operation) await assertCurrent(operation);
+    if (stable(reviewRecord) !== stable(evidence.reviewRecord)) throw new Error("review_record_mismatch");
     if (evidence.assemblyReceipt) {
       if (typeof dependencies.verifyAssemblyReceipt !== "function") throw new Error("video_controller_dependency_missing:verifyAssemblyReceipt");
+      if (!evidence.assemblyReceipt.orderedReceiptIds?.includes(evidence.normalizationCredential.receiptId)) throw new Error("assembly_receipt_foreign_normalization");
       const verifiedOutputPath = await dependencies.verifyAssemblyReceipt(evidence.assemblyReceipt);
       if (verifiedOutputPath !== evidence.assemblyReceipt.outputPath) throw new Error("assembly_receipt_output_mismatch");
+      if (operation) await assertCurrent(operation);
     }
-    const input = { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: verified, reviewFrames: evidence.reviewFrames, boundaryFrame: evidence.boundary?.sharedFramePath, assemblyReceipt: evidence.assemblyReceipt };
+    const input = { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: verified, reviewFrames: evidence.reviewFrames, reviewRecord, boundaryFrame: evidence.boundary?.sharedFramePath, assemblyReceipt: evidence.assemblyReceipt };
     const evaluation = evaluateVideoQuality(input);
     if (evaluation.status === "rejected") throw new Error(`credential_structural_recheck_failed:${evaluation.structuralIssues.join(",")}`);
     const binding = createVideoArtifactBinding(input);
@@ -52,24 +131,43 @@ export function createVideoProductionController(dependencies = {}) {
   }
 
   async function rebuild(request, resolveInput) {
-    const results = [];
-    for (const shotId of request.shotIds) {
-      const generated = await dependencies.generateShot(shotId);
-      if (!generated?.ok || !generated.generatedVideoPath) throw new Error(`video_rebuild_failed:${shotId}`);
-      results.push(await processGeneratedShot(await resolveInput(shotId, generated.generatedVideoPath)));
+    const staged = [];
+    let previousEvidence;
+    try {
+      for (const shotId of request.shotIds) {
+        const generated = await dependencies.generateShot(shotId, { request, previousEvidence });
+        if (!generated?.ok || !generated.generatedVideoPath) throw new Error(`video_rebuild_failed:${shotId}`);
+        const input = await resolveInput(shotId, generated.generatedVideoPath, previousEvidence, generated);
+        previousEvidence = await processGeneratedShot(input, { deferPersist: request.shotIds.length > 1 });
+        staged.push({ input, evidence: previousEvidence, generated });
+      }
+      if (staged.length > 1) {
+        if (typeof dependencies.persistBatchCAS !== "function" || !(await dependencies.persistBatchCAS(staged.map(({ input, evidence, generated }) => ({ operation: input.operation, evidence, generated }))))) throw new Error("video_pair_atomic_commit_failed");
+      }
+      return staged.map((item) => item.evidence);
+    } catch (error) {
+      if (staged.length > 1 && typeof dependencies.markBatchFailed === "function") await dependencies.markBatchFailed(staged, error);
+      throw error;
     }
-    return results;
   }
   return { processGeneratedShot, verifyForDecision, rebuild };
 }
 
-function baseEvidence(input, status) {
+function baseEvidence(input, operation, status) {
   return {
     schemaVersion: 1, shotId: input.shotId, status, sourceVideoPath: input.generatedVideoPath,
+    sequenceId: operation.sequenceId, contractDigest: operation.contractDigest,
+    boundaryIdentity: operation.boundaryIdentity, operation: clone(operation),
     routeDecision: clone(input.routeDecision), profilePreflight: clone(input.profilePreflight),
     boundary: input.boundary ? clone(input.boundary) : undefined, decision: undefined
   };
 }
+function boundaryIdentity(boundary) { const item = record(boundary); return [text(item.id), text(item.fromShotId), text(item.toShotId), text(item.kind), text(item.sharedFramePath), text(item.approvalStatus)].join(":"); }
 function safeSegmentId(value) { const id = String(value ?? "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80); if (!id) throw new Error("video_segment_id_invalid"); return id; }
-function stable(value) { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`; }
-function clone(value) { return JSON.parse(JSON.stringify(value)); }
+function stable(value) { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`; }
+function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
+function record(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+function text(value) { return typeof value === "string" ? value.trim() : ""; }
+function finite(value) { return typeof value === "number" && Number.isFinite(value); }
+function stringArray(value) { return Array.isArray(value) ? value.map(text).filter(Boolean).sort() : []; }
+function randomToken() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`; }

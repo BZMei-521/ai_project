@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import TestRenderer, { act } from "react-test-renderer";
 
 import {
   applyVideoQualityDecision,
@@ -15,7 +16,13 @@ import {
   planVideoRebuildRequest,
   resolvePersistedVideoDecision
 } from "../src/modules/video-production/videoQualityRuntime.mjs";
-import { createVideoProductionController } from "../src/modules/video-production/videoProductionControllerRuntime.mjs";
+import {
+  createVideoGenerationContractDigest,
+  createVideoOperationIdentity,
+  createVideoProductionController
+} from "../src/modules/video-production/videoProductionControllerRuntime.mjs";
+import { inventoryFromComfyObjectInfo } from "../src/modules/video-production/videoInventoryRuntime.mjs";
+import { createRoutedVideoGenerationExecutor } from "../src/modules/video-production/videoRoutedGenerationRuntime.mjs";
 
 const hex = (character) => character.repeat(64);
 const probe = Object.freeze({
@@ -49,6 +56,17 @@ const reviewFrames = Object.freeze({
   middleFramePath: "C:/project/assets/video-review/a/middle.png",
   lastFramePath: "C:/project/assets/video-review/a/last.png"
 });
+const authenticatedReviewRecord = Object.freeze({
+  schemaVersion: 1,
+  credentialReceiptId: credential.receiptId,
+  frames: [
+    { role: "first", path: reviewFrames.firstFramePath, sha256: hex("a"), byteLength: 10, modifiedUnixMillis: 1787000000001 },
+    { role: "middle", path: reviewFrames.middleFramePath, sha256: hex("b"), byteLength: 11, modifiedUnixMillis: 1787000000002 },
+    { role: "last", path: reviewFrames.lastFramePath, sha256: hex("c"), byteLength: 12, modifiedUnixMillis: 1787000000003 }
+  ],
+  keyId: hex("d"),
+  mac: hex("e")
+});
 const assemblyReceipt = Object.freeze({
   schemaVersion: 1,
   keyId: hex("1"),
@@ -64,7 +82,97 @@ const assemblyReceipt = Object.freeze({
   mac: hex("7")
 });
 const inspection = Object.freeze({ probe, anomalies: { blackIntervals: [], freezeIntervals: [] } });
-const cleanInput = Object.freeze({ normalized: true, normalizationCredential: credential, inspection, reviewFrames });
+const cleanInput = Object.freeze({ normalized: true, normalizationCredential: credential, inspection, reviewFrames, reviewRecord: authenticatedReviewRecord });
+
+const generationContractSource = Object.freeze({
+  schemaVersion: 1,
+  sequenceId: "sequence-a",
+  shot: {
+    id: "s1", title: "opening", storyPrompt: "story", videoPrompt: "video", notes: "notes", dialogue: "dialogue",
+    seed: 42, characterRefs: ["char-a"], sceneRefId: "scene-a", generatedImagePath: "C:/frame.png",
+    videoStartFramePath: "C:/first.png", videoEndFramePath: "C:/last.png", durationFrames: 48,
+    continuitySegmentId: "segment-a", videoBoundaryKind: "continuous"
+  },
+  project: { id: "project-a", width: 1280, height: 720, fps: 24 },
+  routeDecision: { status: "selected", profileId: "minimax_h3_flf2v", reason: "manual_override" },
+  profilePreflight: { profileId: "minimax_h3_flf2v", available: true, missingNodes: [], missingModels: [], warnings: [] },
+  workflowDigest: hex("8"),
+  references: [{ kind: "character_face", path: "C:/face.png" }, { kind: "scene", path: "C:/scene.png" }],
+  boundary: { id: "b12", fromShotId: "s1", toShotId: "s2", kind: "continuous", requiresApproval: true, approvalStatus: "approved", sharedFramePath: "C:/boundary.png" }
+});
+const generationContractDigest = await createVideoGenerationContractDigest(generationContractSource);
+assert.match(generationContractDigest, /^[a-f0-9]{64}$/);
+for (const mutate of [
+  (value) => value.shot.title = "changed",
+  (value) => value.shot.storyPrompt = "changed",
+  (value) => value.shot.videoPrompt = "changed",
+  (value) => value.shot.notes = "changed",
+  (value) => value.shot.dialogue = "changed",
+  (value) => value.shot.seed = 43,
+  (value) => value.shot.characterRefs = ["char-b"],
+  (value) => value.shot.sceneRefId = "scene-b",
+  (value) => value.shot.generatedImagePath = "C:/other.png",
+  (value) => value.shot.durationFrames = 49,
+  (value) => value.shot.continuitySegmentId = "segment-b",
+  (value) => value.routeDecision.profileId = "minimax_h3_i2v",
+  (value) => value.workflowDigest = hex("9"),
+  (value) => value.project.width = 1920,
+  (value) => value.project.height = 1080,
+  (value) => value.project.fps = 30,
+  (value) => value.boundary.sharedFramePath = "C:/boundary-other.png"
+]) {
+  const changed = structuredClone(generationContractSource);
+  mutate(changed);
+  assert.notEqual(await createVideoGenerationContractDigest(changed), generationContractDigest, "consumed generation input must change contract digest");
+}
+assert.equal(await createVideoGenerationContractDigest({ ...generationContractSource, uiExpanded: true }), generationContractDigest, "unconsumed UI state must not change contract digest");
+
+const liveInventory = inventoryFromComfyObjectInfo({
+  MiniMaxH3ImageToVideo: {}, MiniMaxH3ReferenceToVideo: {}, LoadImage: {}, UNETLoader: { input: { required: { unet_name: [["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_ref2va_pruned_int8_convrot.safetensors"]] } } },
+  CLIPLoader: { input: { required: { clip_name: [["qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"]] } } },
+  VAELoader: { input: { required: { vae_name: [["minimax_h3_video_vae_fp16.safetensors", "minimax_h3_audio_vae_fp32.safetensors"]] } } },
+  RandomNoise: {}, KSamplerSelect: {}, BasicScheduler: {}, BasicGuider: {}, SamplerCustomAdvanced: {}, VAEDecode: {}, VAEDecodeAudio: {}, CreateVideo: {}, SaveVideo: {}
+});
+assert.equal(liveInventory.nodes.includes("MiniMaxH3ImageToVideo"), true);
+assert.deepEqual(liveInventory.models.diffusion_models, ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_ref2va_pruned_int8_convrot.safetensors"]);
+assert.deepEqual(liveInventory.models.text_encoders, ["qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"]);
+assert.deepEqual(liveInventory.models.vae, ["minimax_h3_audio_vae_fp32.safetensors", "minimax_h3_video_vae_fp16.safetensors"]);
+
+const routedRequests = [];
+const routedSnapshots = {
+  s1: { shot: { id: "s1", sequenceId: "sequence-a", order: 1, title: "first", dialogue: "", notes: "", tags: [], durationFrames: 48, videoPrompt: "first prompt", videoWorkflowProfileId: "minimax_h3_flf2v", videoQualityTier: "production", videoAccelerationMode: "standard", videoStartFramePath: "C:/story/first.png", videoEndFramePath: "C:/story/last.png", characterRefs: ["char-a"], sceneRefId: "scene-a" }, index: 0 },
+  s2: { shot: { id: "s2", sequenceId: "sequence-a", order: 2, title: "second", dialogue: "", notes: "", tags: [], durationFrames: 48, videoPrompt: "second prompt", videoWorkflowProfileId: "minimax_h3_i2v", videoQualityTier: "production", videoAccelerationMode: "standard", characterRefs: ["char-a"] }, index: 1 }
+};
+const routedExecutor = createRoutedVideoGenerationExecutor({
+  readSnapshot: async (shotId) => ({
+    ...structuredClone(routedSnapshots[shotId]), sequenceId: "sequence-a",
+    project: { id: "project-a", width: 1280, height: 720, fps: 24 },
+    allShots: Object.values(routedSnapshots).map((entry) => structuredClone(entry.shot)),
+    assets: [{ id: "char-a", kind: "character", filePath: "C:/refs/body.png", characterFaceRefPath: "C:/refs/face.png" }, { id: "scene-a", kind: "scene", filePath: "C:/refs/scene.png" }],
+    boundary: shotId === "s1" ? { id: "b12", fromShotId: "s1", toShotId: "s2", kind: "continuous", approvalStatus: "approved", sharedFramePath: "C:/boundary/approved.png" } : undefined
+  }),
+  inspectInventory: async () => liveInventory,
+  routeShot: (snapshot) => ({ status: "selected", profileId: snapshot.shot.videoWorkflowProfileId, reason: "manual_override" }),
+  preflightProfile: (route) => ({ profileId: route.profileId, available: true, missingNodes: [], missingModels: [], warnings: [] }),
+  workflowJsonForProfile: (profileId) => `workflow:${profileId}`,
+  contractDigest: async (source) => createVideoGenerationContractDigest(source),
+  generateRoutedVideoShot: async (request) => {
+    routedRequests.push(structuredClone(request));
+    return { ok: true, generatedVideoPath: `C:/generated/${request.shot.id}.mp4`, videoGenerationReceipt: { profileId: request.routeDecision.profileId } };
+  },
+  verifyFreshTail: async (evidence) => evidence.reviewFrames.lastFramePath
+});
+const firstGenerated = await routedExecutor.generate("s1");
+assert.equal(firstGenerated.generatedVideoPath, "C:/generated/s1.mp4");
+assert.equal(routedRequests[0].routeDecision.profileId, "minimax_h3_flf2v");
+assert.equal(routedRequests[0].profileWorkflowJson, "workflow:minimax_h3_flf2v");
+assert.equal(routedRequests[0].firstFramePath, "C:/story/first.png");
+assert.equal(routedRequests[0].lastFramePath, "C:/story/last.png");
+assert.deepEqual(routedRequests[0].references.map((item) => item.path), ["C:/refs/face.png", "C:/refs/body.png", "C:/refs/scene.png"]);
+await routedExecutor.generate("s2", { previousEvidence: { shotId: "s1", status: "ready", reviewFrames: { firstFramePath: "C:/review/first.png", middleFramePath: "C:/review/middle.png", lastFramePath: "C:/review/fresh-last.png" } } });
+assert.equal(routedRequests[1].routeDecision.profileId, "minimax_h3_i2v");
+assert.equal(routedRequests[1].firstFramePath, "C:/review/fresh-last.png", "dependent shot must bind the freshly backend-validated tail");
+assert.equal(routedRequests[1].boundaryDependency.fromShotId, "s1");
 
 assert.equal(evaluateVideoQuality(cleanInput).status, "needs_review");
 for (const invalid of [
@@ -111,7 +219,7 @@ const replacedReport = createVideoQualityReport("shot-a", {
   normalizationCredential: { ...credential, receiptId: hex("c"), sha256: hex("d") }
 });
 assert.equal(artifactBindingsEqual(binding, replacedReport.artifactBinding), false);
-assert.equal(resolvePersistedVideoDecision(replacedReport, approved.decision).status, "needs_review");
+assert.equal(resolvePersistedVideoDecision(replacedReport, approved.decision).status, "rejected");
 assert.equal(applyVideoQualityDecision({ ...report, status: "rejected", structuralIssues: ["tampered"] }, { decision: "approve" }).status, "rejected");
 
 const orderedShotIds = ["s1", "s2", "s3", "s4"];
@@ -146,7 +254,15 @@ const controller = createVideoProductionController({
   extractReviewFrames: async () => (calls.push("extract"), reviewFrames),
   verifyCredential: async () => (calls.push("verify"), inspection),
   verifyAssemblyReceipt: async () => (calls.push("verify-assembly"), assemblyReceipt.outputPath),
+  verifyReviewRecord: async () => (calls.push("verify-review"), { schemaVersion: 1, credentialReceiptId: credential.receiptId, frames: [
+    { role: "first", path: reviewFrames.firstFramePath, sha256: hex("a"), byteLength: 10, modifiedUnixMillis: 1787000000001 },
+    { role: "middle", path: reviewFrames.middleFramePath, sha256: hex("b"), byteLength: 11, modifiedUnixMillis: 1787000000002 },
+    { role: "last", path: reviewFrames.lastFramePath, sha256: hex("c"), byteLength: 12, modifiedUnixMillis: 1787000000003 }
+  ], keyId: hex("d"), mac: hex("e") }),
+  completeRun: async () => { calls.push("complete"); },
+  cleanupRun: async () => { calls.push("cleanup"); },
   persistEvidence: (shotId, evidence) => persisted.push([shotId, structuredClone(evidence)]),
+  persistBatchCAS: async (items) => (calls.push(`batch:${items.map((item) => item.evidence.shotId).join(",")}`), true),
   generateShot: async (shotId) => (calls.push(`generate:${shotId}`), { ok: true, generatedVideoPath: `C:/generated/${shotId}.mp4` })
 });
 const routeDecision = { status: "selected", profileId: "minimax_h3_flf2v", reason: "explicit_endpoints" };
@@ -156,7 +272,7 @@ const evidence = await controller.processGeneratedShot({
   shotId: "s1", generatedVideoPath: "C:/generated/s1.mp4", durationFrames: 48,
   projectWidth: 1280, projectHeight: 720, routeDecision, profilePreflight, boundary
 });
-assert.deepEqual(calls, ["begin", "stage", "probe", "normalize", "extract", "verify"]);
+assert.deepEqual(calls, ["begin", "stage", "probe", "normalize", "extract", "verify", "verify-review", "complete"]);
 assert.equal(evidence.status, "ready");
 assert.deepEqual(evidence.routeDecision, routeDecision);
 assert.deepEqual(evidence.profilePreflight, profilePreflight);
@@ -166,7 +282,7 @@ assert.equal(persisted.at(-1)[0], "s1");
 
 calls.length = 0;
 const verifiedReport = await controller.verifyForDecision(evidence);
-assert.deepEqual(calls, ["verify"]);
+assert.deepEqual(calls, ["verify", "verify-review"]);
 assert.equal(verifiedReport.status, "needs_review");
 calls.length = 0;
 const assemblyQualityInput = { ...cleanInput, assemblyReceipt };
@@ -177,10 +293,51 @@ const evidenceWithAssembly = {
   qualityReport: createVideoQualityReport("s1", assemblyQualityInput)
 };
 assert.equal((await controller.verifyForDecision(evidenceWithAssembly)).status, "needs_review");
-assert.deepEqual(calls, ["verify", "verify-assembly"]);
+assert.deepEqual(calls, ["verify", "verify-review", "verify-assembly"]);
 assert.equal(evidenceWithAssembly.artifactBinding.assemblyTransactionId, assemblyReceipt.transactionId);
 assert.equal(evidenceWithAssembly.artifactBinding.assemblySha256, assemblyReceipt.sha256);
 await assert.rejects(() => controller.verifyForDecision({ ...evidence, normalizationCredential: { ...credential, sha256: hex("e") } }), /artifact_binding_mismatch|credential_/);
+
+const operation = createVideoOperationIdentity({
+  sequenceId: "sequence-a", shotId: "s1", contractDigest: generationContractDigest,
+  sourceVideoPath: "C:/generated/s1.mp4", boundaryIdentity: "b12:s1:s2:C:/boundary.png",
+  operationToken: hex("f")
+});
+let operationLive = true;
+const stageDeferred = deferred();
+const stageEntered = deferred();
+const casWrites = [];
+const lifecycleCalls = [];
+const casController = createVideoProductionController({
+  beginRun: async () => runCapability,
+  stage: async () => { stageEntered.resolve(); return stageDeferred.promise; },
+  probe: async () => inspection,
+  normalize: async () => ({ credential, probe, anomalies: inspection.anomalies }),
+  extractReviewFrames: async () => reviewFrames,
+  verifyCredential: async () => inspection,
+  verifyReviewRecord: async () => ({ schemaVersion: 1, credentialReceiptId: credential.receiptId, frames: [
+    { role: "first", path: reviewFrames.firstFramePath, sha256: hex("a"), byteLength: 10, modifiedUnixMillis: 1787000000001 },
+    { role: "middle", path: reviewFrames.middleFramePath, sha256: hex("b"), byteLength: 11, modifiedUnixMillis: 1787000000002 },
+    { role: "last", path: reviewFrames.lastFramePath, sha256: hex("c"), byteLength: 12, modifiedUnixMillis: 1787000000003 }
+  ], keyId: hex("d"), mac: hex("e") }),
+  completeRun: async () => lifecycleCalls.push("complete"),
+  cleanupRun: async () => lifecycleCalls.push("cleanup"),
+  isOperationCurrent: () => operationLive,
+  persistEvidenceCAS: (_operation, nextEvidence) => (casWrites.push(structuredClone(nextEvidence)), true),
+  persistEvidence: () => { throw new Error("unguarded_persist_used"); },
+  generateShot: async () => ({ ok: false })
+});
+const staleProcess = casController.processGeneratedShot({
+  shotId: "s1", sequenceId: "sequence-a", operation, contractDigest: generationContractDigest,
+  generatedVideoPath: "C:/generated/s1.mp4", durationFrames: 48, projectWidth: 1280, projectHeight: 720,
+  routeDecision, profilePreflight, boundary
+});
+await stageEntered.promise;
+operationLive = false;
+stageDeferred.resolve({ stagedPath: "C:/project/assets/video-staging/stage.media", projectAssetsDir: "C:/project/assets", stagingReceiptId: hex("4") });
+await assert.rejects(staleProcess, /video_operation_stale/);
+assert.equal(casWrites.some((item) => item.status === "ready"), false, "stale async completion must not publish ready evidence");
+assert.deepEqual(lifecycleCalls, ["cleanup"], "stale run must be cleaned, never retained");
 
 calls.length = 0;
 await controller.rebuild({ kind: "adjacent_pair", shotIds: ["s2", "s3"], reason: "motion_boundary" }, async (shotId, generatedVideoPath) => ({
@@ -237,8 +394,98 @@ assert.deepEqual(interactions.map((item) => item[0]), ["reason", "reject", "over
 const markup = renderToStaticMarkup(React.createElement(panelModule.VideoProductionPanelView, { ...props, rejectionReasons: {} }));
 for (const expected of ["minimax_h3_flf2v", "explicit_endpoints", "first.png", "middle.png", "last.png", "face.png", "scene.png", "boundary.png", "btn-primary", "btn-danger"]) assert.match(markup, new RegExp(expected));
 
+const connectedStore = panelModule.videoProductionStoreHarness;
+const originalConnectedState = connectedStore.getState();
+const connectedOperation = createVideoOperationIdentity({ sequenceId: "sequence-connected", shotId: "connected-1", contractDigest: generationContractDigest, sourceVideoPath: "C:/generated/connected-1.mp4", boundaryIdentity: "connected-boundary", operationToken: hex("9") });
+const connectedInput = { ...cleanInput, boundaryFrame: "C:/boundary/connected.png" };
+const connectedReport = createVideoQualityReport("connected-1", connectedInput);
+const connectedEvidence = {
+  schemaVersion: 1, shotId: "connected-1", sequenceId: "sequence-connected", status: "ready", sourceVideoPath: connectedOperation.sourceVideoPath,
+  contractDigest: generationContractDigest, boundaryIdentity: connectedOperation.boundaryIdentity, operation: connectedOperation,
+  routeDecision, profilePreflight, projectAssetsDir: "C:/project/assets", runCapability,
+  normalizationCredential: credential, inspection, reviewFrames, reviewRecord: authenticatedReviewRecord,
+  artifactBinding: connectedReport.artifactBinding, qualityReport: connectedReport
+};
+const connectedShots = [{ id: "connected-1", sequenceId: "sequence-connected", order: 1, title: "connected first", durationFrames: 48, dialogue: "", notes: "", tags: [], videoPrompt: "first", videoWorkflowProfileId: "minimax_h3_flf2v", videoQualityTier: "production", videoAccelerationMode: "standard", videoBoundaryKind: "continuous", approvedBoundaryFramePath: "C:/boundary/connected.png", generatedImagePath: "C:/story/first.png", videoEndFramePath: "C:/story/end.png", generatedVideoPath: connectedOperation.sourceVideoPath, videoGenerationContractDigest: generationContractDigest, videoProductionEvidence: connectedEvidence, videoQualityStatus: "needs_review" }, { id: "connected-2", sequenceId: "sequence-connected", order: 2, title: "connected second", durationFrames: 48, dialogue: "", notes: "", tags: [], videoPrompt: "second", videoWorkflowProfileId: "minimax_h3_i2v", videoQualityTier: "production", videoAccelerationMode: "standard", videoBoundaryKind: "hard_cut", generatedImagePath: "C:/story/second.png", videoQualityStatus: "pending" }];
+const connectedCalls = [];
+const connectedGenerator = {
+  prepare: async (shotId) => ({ routeDecision, profilePreflight, generationContractDigest, request: { boundary: shotId === "connected-1" ? { id: "connected-1::connected-2", fromShotId: "connected-1", toShotId: "connected-2", kind: "continuous", approvalStatus: "approved", requiresApproval: true, sharedFramePath: "C:/boundary/connected.png" } : undefined } }),
+  generate: async (shotId, options) => {
+    const current = connectedStore.getState().shots.find((item) => item.id === shotId);
+    connectedCalls.push(["generate", shotId, current?.videoWorkflowProfileId, options?.previousEvidence?.reviewFrames?.lastFramePath]);
+    return { ok: true, generatedVideoPath: `C:/generated/${shotId}-rebuilt.mp4`, videoGenerationReceipt: { profileId: current?.videoWorkflowProfileId === "auto" ? "minimax_h3_i2v" : current?.videoWorkflowProfileId, accelerationMode: "standard", workflowDigest: hex("2"), inputDigest: hex("3"), promptId: `prompt-${shotId}`, generatedAt: "2026-08-18T00:00:00.000Z" }, generationContractDigest, routeDecision: { status: "selected", profileId: current?.videoWorkflowProfileId === "auto" ? "minimax_h3_i2v" : current?.videoWorkflowProfileId, reason: "manual_override" }, profilePreflight, request: { shot: current, boundary: undefined } };
+  }
+};
+const connectedControllerFactory = (options) => ({
+  processGeneratedShot: async (input) => { connectedCalls.push(["process", input.shotId]); options.persistEvidence(input.shotId, connectedEvidence); return connectedEvidence; },
+  verifyForDecision: async (evidence) => { connectedCalls.push(["verify", evidence.shotId]); return connectedReport; },
+  rebuild: async (request) => { let previousEvidence; for (const shotId of request.shotIds) { const generated = await options.generateShot(shotId, { request, previousEvidence }); connectedCalls.push(["rebuilt", shotId, generated.generatedVideoPath]); previousEvidence = connectedEvidence; } return []; }
+});
+const connectedSettings = { baseUrl: "http://127.0.0.1:8188", outputDir: "C:/out", comfyInputDir: "C:/in", comfyRootDir: "C:/comfy", imageWorkflowJson: "", videoWorkflowJson: "", tokenMapping: {} };
+connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: connectedShots, assets: [] });
+let connectedRenderer;
+await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: connectedGenerator, controllerFactory: connectedControllerFactory } })); });
+const connectedRoot = connectedRenderer.root;
+await act(async () => { connectedRoot.find((node) => node.type === "button" && node.props.className === "btn-primary" && node.props.disabled === false).props.onClick(); await Promise.resolve(); });
+assert.equal(connectedStore.getState().shots[0].videoQualityStatus, "approved", "connected approve must persist in the real Zustand store");
+await act(async () => { connectedRoot.find((node) => node.type === "select" && node.props.value === "minimax_h3_i2v").props.onChange({ target: { value: "minimax_h3_r2v" } }); });
+assert.equal(connectedStore.getState().shots[1].videoWorkflowProfileId, "minimax_h3_r2v", "manual override must persist through the connected component");
+connectedStore.setState((state) => ({ shots: state.shots.map((shot, index) => index === 0 ? { ...connectedShots[0], videoProductionEvidence: connectedEvidence } : shot) }));
+await act(async () => {
+  connectedRoot.findAll((node) => node.type === "select" && node.props.value === "")[0].props.onChange({ target: { value: "motion_boundary" } });
+});
+await act(async () => { connectedRoot.find((node) => node.type === "button" && node.props.className === "btn-danger" && node.props.disabled === false).props.onClick(); await Promise.resolve(); await Promise.resolve(); });
+assert.deepEqual(connectedCalls.filter((item) => item[0] === "generate").map((item) => item[1]), ["connected-1", "connected-2"], "connected boundary rejection must rebuild the exact adjacent pair");
+assert.equal(connectedCalls.find((item) => item[0] === "generate" && item[1] === "connected-2")[3], reviewFrames.lastFramePath, "connected pair must pass the fresh first member tail to the second");
+await act(async () => { connectedRenderer.unmount(); });
+connectedCalls.length = 0;
+connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: [{ ...connectedShots[0], videoProductionEvidence: undefined, videoQualityStatus: "pending" }], assets: [] });
+await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: connectedGenerator, controllerFactory: connectedControllerFactory } })); await Promise.resolve(); });
+assert.equal(connectedCalls.some((item) => item[0] === "process"), true, "initial generated path must run the connected processing effect");
+await act(async () => { connectedRenderer.unmount(); });
+
+for (const [label, mutate] of [
+  ["media", () => connectedStore.getState().updateShotFields("connected-1", { generatedVideoPath: "C:/generated/replaced.mp4" })],
+  ["profile", () => connectedStore.getState().updateShotFields("connected-1", { videoWorkflowProfileId: "minimax_h3_i2v" })],
+  ["boundary", () => connectedStore.getState().updateShotFields("connected-1", { approvedBoundaryFramePath: "C:/boundary/replaced.png" })],
+  ["sequence", () => connectedStore.setState({ currentSequenceId: "sequence-other" })]
+]) {
+  connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }, { id: "sequence-other", projectId: originalConnectedState.project.id, name: "other", order: 2 }], shots: [{ ...connectedShots[0], videoProductionEvidence: connectedEvidence }], assets: [] });
+  const verifyGate = deferred();
+  const deferredFactory = (options) => ({ processGeneratedShot: async () => connectedEvidence, verifyForDecision: async () => verifyGate.promise, rebuild: async () => [] });
+  await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: connectedGenerator, controllerFactory: deferredFactory } })); });
+  act(() => { connectedRenderer.root.find((node) => node.type === "button" && node.props.className === "btn-primary" && node.props.disabled === false).props.onClick(); });
+  mutate();
+  verifyGate.resolve(connectedReport);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  assert.notEqual(connectedStore.getState().shots[0].videoQualityStatus, "approved", `deferred ${label} replacement/switch must discard stale approval`);
+  await act(async () => { connectedRenderer.unmount(); });
+}
+
+const partialOldPaths = [connectedShots[0].generatedVideoPath, "C:/generated/connected-2-old.mp4"];
+const connectedSecondEvidence = { ...connectedEvidence, shotId: "connected-2", sourceVideoPath: partialOldPaths[1], operation: { ...connectedOperation, shotId: "connected-2", sourceVideoPath: partialOldPaths[1], operationToken: hex("8") }, qualityReport: { ...connectedReport, shotId: "connected-2" } };
+connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: [{ ...connectedShots[0], videoProductionEvidence: connectedEvidence }, { ...connectedShots[1], generatedVideoPath: partialOldPaths[1], videoGenerationContractDigest: generationContractDigest, videoProductionEvidence: connectedSecondEvidence, videoQualityStatus: "approved" }], assets: [] });
+let partialRetryCount = 0;
+const partialFactory = (options) => ({
+  processGeneratedShot: async (input) => { partialRetryCount += 1; options.persistEvidence(input.shotId, connectedEvidence); return connectedEvidence; },
+  verifyForDecision: async () => connectedReport,
+  rebuild: async (request) => { await options.generateShot(request.shotIds[0], { request }); throw new Error("second_generation_failed"); }
+});
+await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: connectedGenerator, controllerFactory: partialFactory } })); });
+await act(async () => { connectedRenderer.root.findAll((node) => node.type === "select" && node.props.value === "")[0].props.onChange({ target: { value: "motion_boundary" } }); });
+await act(async () => { connectedRenderer.root.find((node) => node.type === "button" && node.props.className === "btn-danger" && node.props.disabled === false).props.onClick(); await Promise.resolve(); await Promise.resolve(); });
+assert.deepEqual(connectedStore.getState().shots.map((shot) => shot.generatedVideoPath), partialOldPaths, "partial pair failure must not publish either generated member");
+assert.deepEqual(connectedStore.getState().shots.map((shot) => shot.videoQualityStatus), ["rejected", "rejected"], "partial pair failure must mark the whole boundary pair failed/stale");
+act(() => { connectedRenderer.root.findAll((node) => node.type === "button" && node.props.className === "btn-ghost")[0].props.onClick(); });
+await Promise.resolve();
+await Promise.resolve();
+assert.equal(partialRetryCount, 1, "retry UI must invoke connected evidence processing after a retryable pair failure");
+await act(async () => { connectedRenderer.unmount(); });
+connectedStore.setState(originalConnectedState);
+
 const comfyPanelSource = await readFile("src/modules/comfy-pipeline/ComfyPipelinePanel.tsx", "utf8");
-assert.match(comfyPanelSource, /<VideoProductionPanel[^>]*onGenerateShot=/);
+assert.match(comfyPanelSource, /<VideoProductionPanel[^>]*settings=\{settings\}/);
+assert.doesNotMatch(comfyPanelSource, /<VideoProductionPanel[^>]*onGenerateShot=/);
 assert.equal((comfyPanelSource.match(/VideoProductionPanel/g) ?? []).length, 3);
 const css = await readFile("src/styles/global.css", "utf8");
 for (const selector of ["video-quality-card", "video-quality-actions", "video-review-strip", "video-quality-grid"]) {
@@ -247,6 +494,13 @@ for (const selector of ["video-quality-card", "video-quality-actions", "video-re
 }
 await unlink(componentBundlePath);
 console.log("PASS video quality gate: fail-closed receipts, bound decisions, controller, interactions, and rebuild scope");
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
 
 function findElement(node, predicate) {
   if (!node || typeof node !== "object") return null;

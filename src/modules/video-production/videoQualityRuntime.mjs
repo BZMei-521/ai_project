@@ -10,7 +10,8 @@ export function evaluateVideoQuality(input = {}) {
   if (source.normalized !== true) issues.push("segment_not_normalized");
   const credential = validateCredential(source.normalizationCredential, issues);
   const inspection = validateInspection(source.inspection, issues);
-  validateReviewFrames(source.reviewFrames, issues);
+  const frames = validateReviewFrames(source.reviewFrames, issues);
+  validateReviewRecord(source.reviewRecord, credential, frames, issues);
   validateMetric(source, "blackFrameCount", issues);
   validateMetric(source, "freezeDurationSeconds", issues);
   validateMetric(source, "timestampErrors", issues);
@@ -32,9 +33,10 @@ export function createVideoArtifactBinding(input = {}) {
   const credential = validateCredential(source.normalizationCredential, issues);
   const inspection = validateInspection(source.inspection, issues);
   const frames = validateReviewFrames(source.reviewFrames, issues);
+  const reviewRecord = validateReviewRecord(source.reviewRecord, credential, frames, issues);
   const assembly = source.assemblyReceipt === undefined ? null : validateAssemblyReceipt(source.assemblyReceipt, issues);
   if (credential && inspection && stable(credential.probe) !== stable(inspection.probe)) issues.push("credential_inspection_mismatch");
-  if (issues.length || !credential || !inspection || !frames) throw new Error(`artifact_binding_invalid:${sortedUnique(issues).join(",")}`);
+  if (issues.length || !credential || !inspection || !frames || !reviewRecord) throw new Error(`artifact_binding_invalid:${sortedUnique(issues).join(",")}`);
   return {
     schemaVersion: 1,
     receiptId: credential.receiptId,
@@ -46,7 +48,8 @@ export function createVideoArtifactBinding(input = {}) {
     height: credential.projectHeight,
     durationFrames: credential.durationFrames,
     decodedFrameCount: credential.probe.decodedFrameCount,
-    reviewFramesDigest: digest64(stable(frames)),
+    reviewFramesDigest: digest64(stable(reviewRecord)),
+    reviewRecordMac: reviewRecord.mac,
     ...(assembly ? {
       assemblyTransactionId: assembly.transactionId,
       assemblySha256: assembly.sha256,
@@ -170,6 +173,18 @@ function validateReviewFrames(value, issues) {
   return frames;
 }
 
+function validateReviewRecord(value, credential, frames, issues) {
+  const item = record(value);
+  const expectedRoles = ["first", "middle", "last"];
+  const records = Array.isArray(item.frames) ? item.frames : [];
+  const valid = item.schemaVersion === 1 && credential && item.credentialReceiptId === credential.receiptId && HEX64.test(text(item.keyId)) && HEX64.test(text(item.mac)) && records.length === 3 && records.every((entry, index) => {
+    const frame = record(entry);
+    return frame.role === expectedRoles[index] && absolute(frame.path) && frame.path === frames?.[expectedRoles[index]] && HEX64.test(text(frame.sha256)) && positiveInt(frame.byteLength) && positiveInt(frame.modifiedUnixMillis);
+  });
+  if (!valid) { issues.push("review_record_invalid"); return null; }
+  return item;
+}
+
 function validateAssemblyReceipt(value, issues) {
   const item = record(value);
   if (!item || item.schemaVersion !== 1 || !HEX64.test(text(item.keyId)) || !HEX64.test(text(item.transactionId)) || !HEX64.test(text(item.runId)) || !absolute(item.canonicalProjectRoot) || !absolute(item.outputPath) || !HEX64.test(text(item.sha256)) || !positiveInt(item.byteLength) || !positiveInt(item.modifiedUnixMillis) || !validateProbe(item.probe, issues, "assembly_probe_invalid") || !Array.isArray(item.orderedReceiptIds) || !item.orderedReceiptIds.length || item.orderedReceiptIds.some((id) => !HEX64.test(text(id))) || !HEX64.test(text(item.mac))) {
@@ -184,7 +199,7 @@ function validateMetric(source, key, issues) {
 }
 function validateInterval(value) { const item = record(value); return item && finiteNonnegative(item.startSeconds) && finiteNonnegative(item.endSeconds) && finiteNonnegative(item.durationSeconds) && item.endSeconds >= item.startSeconds && Math.abs((item.endSeconds - item.startSeconds) - item.durationSeconds) < 0.01; }
 function normalizeReport(value) { const item = record(value); return { shotId: text(item.shotId), status: ["rejected", "needs_review", "approved"].includes(item.status) ? item.status : "rejected", structuralIssues: sortedUnique(Array.isArray(item.structuralIssues) ? item.structuralIssues.map(text).filter(Boolean) : ["report_invalid"]), semanticReviewItems: [...SEMANTIC_REVIEW_ITEMS], reviewFrames: { first: text(item.reviewFrames?.first), middle: text(item.reviewFrames?.middle), last: text(item.reviewFrames?.last) }, ...(validBinding(item.artifactBinding) ? { artifactBinding: clone(item.artifactBinding) } : {}), ...(text(item.boundaryFrame) ? { boundaryFrame: text(item.boundaryFrame) } : {}) }; }
-function validBinding(value) { const item = record(value); const hasAssembly = item.assemblyTransactionId !== undefined || item.assemblySha256 !== undefined || item.assemblyOutputPath !== undefined; return item?.schemaVersion === 1 && HEX64.test(text(item.receiptId)) && absolute(item.normalizedPath) && HEX64.test(text(item.sha256)) && positiveInt(item.byteLength) && positiveInt(item.modifiedUnixMillis) && positiveInt(item.width) && positiveInt(item.height) && positiveInt(item.durationFrames) && item.decodedFrameCount === item.durationFrames && HEX64.test(text(item.reviewFramesDigest)) && (!hasAssembly || (HEX64.test(text(item.assemblyTransactionId)) && HEX64.test(text(item.assemblySha256)) && absolute(item.assemblyOutputPath))); }
+function validBinding(value) { const item = record(value); const hasAssembly = item.assemblyTransactionId !== undefined || item.assemblySha256 !== undefined || item.assemblyOutputPath !== undefined; return item?.schemaVersion === 1 && HEX64.test(text(item.receiptId)) && absolute(item.normalizedPath) && HEX64.test(text(item.sha256)) && positiveInt(item.byteLength) && positiveInt(item.modifiedUnixMillis) && positiveInt(item.width) && positiveInt(item.height) && positiveInt(item.durationFrames) && item.decodedFrameCount === item.durationFrames && HEX64.test(text(item.reviewFramesDigest)) && HEX64.test(text(item.reviewRecordMac)) && (!hasAssembly || (HEX64.test(text(item.assemblyTransactionId)) && HEX64.test(text(item.assemblySha256)) && absolute(item.assemblyOutputPath))); }
 function validDecision(value) { const item = record(value); return (item.decision === "approved" || (item.decision === "rejected" && text(item.reason))) && Number.isFinite(Date.parse(text(item.reviewedAt))) && validBinding(item.artifactBinding); }
 function digest64(value) { const seeds = [1469598103934665603n, 1099511628211n, 7809847782465536322n, 9650029242287828579n]; return seeds.map((seed) => { let hash = seed; for (const ch of value) hash = BigInt.asUintN(64, (hash ^ BigInt(ch.codePointAt(0))) * 1099511628211n); return hash.toString(16).padStart(16, "0"); }).join(""); }
 function timestamp(value) { const raw = text(value) || new Date().toISOString(); if (!Number.isFinite(Date.parse(raw))) throw new Error("review_timestamp_invalid"); return new Date(raw).toISOString(); }
