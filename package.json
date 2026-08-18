@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test:video-normalization": "node scripts/check-video-normalization-contract.mjs",
+    "test:video-quality-gate": "node scripts/check-video-quality-gate.mjs",
     "test:threeview-guards": "node scripts/check-threeview-stability-guards.mjs",
     "test:character-style": "node scripts/check-character-style-contract.mjs",
     "test:character-style-migration": "node scripts/check-character-style-migration.mjs",

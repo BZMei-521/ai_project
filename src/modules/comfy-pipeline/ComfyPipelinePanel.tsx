@@ -50,6 +50,7 @@ import {
   safeStorageGetItem,
   safeStorageSetItem
 } from "../platform/safeStorage";
+import { VideoProductionPanel } from "../video-production/VideoProductionPanel";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
@@ -13554,6 +13555,7 @@ export function ComfyPipelinePanel() {
           <small>连接 ComfyUI · 导入分镜 · 一键生成整片</small>
         </div>
       </header>
+      <VideoProductionPanel />
       <section className="comfy-stage">
         <div className="comfy-stage-head">
           <span className="comfy-stage-index">01</span>
