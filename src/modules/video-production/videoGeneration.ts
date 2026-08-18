@@ -44,6 +44,11 @@ export interface RoutedVideoShotRequest {
   generatedAt?: string;
   onProgress?: (progress: number, message: string) => void;
   signal?: AbortSignal;
+  generationContractDigest?: string;
+  operationToken?: string;
+  boundaryDependency?: Record<string, unknown>;
+  incomingBoundary?: unknown;
+  outgoingBoundary?: unknown;
 }
 
 export interface H3VideoGenerationPlan {
@@ -225,6 +230,8 @@ export async function generateRoutedVideoShot(request: RoutedVideoShotRequest): 
       inputDigest,
       promptId: executionProof.promptId,
       normalizedPath: normalizeOutputPath(executionProof.outputIdentity.localPath),
+      ...(request.generationContractDigest ? { contractDigest: request.generationContractDigest } : {}),
+      ...(request.operationToken ? { operationToken: request.operationToken } : {}),
       generatedAt
     }
   };

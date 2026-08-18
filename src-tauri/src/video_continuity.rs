@@ -1172,7 +1172,7 @@ fn verify_review_frames_at_roots(
         ("last", review.last_frame_path.as_str()),
     ];
     if record.derived_paths.len() != supplied.len()
-        || supplied.iter().any(|(_, path)| !record.derived_paths.iter().any(|registered| registered == path))
+        || supplied.iter().enumerate().any(|(index, (_, path))| record.derived_paths.get(index).is_none_or(|registered| registered != path))
     {
         return Err("video_review_record_mismatch".to_string());
     }
@@ -2970,6 +2970,27 @@ fn retain_assembly_run_at_roots(
     write_run_version(registry_root, &mut record, &secret)
 }
 
+fn discard_retained_assembly_run_at_roots(
+    project_root: &Path,
+    asset_root: &Path,
+    registry_root: &Path,
+    capability: &AssemblyRunCapability,
+) -> Result<(), String> {
+    let (record, _) = load_run_record(registry_root, capability)?;
+    if record.canonical_project_root != project_root.to_string_lossy()
+        || record.canonical_asset_root != asset_root.to_string_lossy()
+    {
+        return Err("video_assembly_run_project_mismatch".to_string());
+    }
+    if record.state == "cleaned" {
+        return Ok(());
+    }
+    if record.state != "retained" {
+        return Err("video_assembly_run_not_retained".to_string());
+    }
+    cleanup_assembly_run_at_roots(project_root, asset_root, registry_root, capability)
+}
+
 fn remove_registered_file(path: &Path, allowed_root: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -3799,6 +3820,19 @@ pub fn retain_video_assembly_run(
 }
 
 #[tauri::command]
+pub fn discard_retained_video_assembly_run(
+    app: tauri::AppHandle,
+    run_capability: AssemblyRunCapability,
+) -> Result<(), String> {
+    let registry_root = resolve_registry_root(&app)?;
+    let project_root = fs::canonicalize(&run_capability.canonical_project_root)
+        .map_err(|_| "video_project_root_unavailable".to_string())?;
+    let asset_root = fs::canonicalize(&run_capability.canonical_asset_root)
+        .map_err(|_| "video_assets_root_invalid".to_string())?;
+    discard_retained_assembly_run_at_roots(&project_root, &asset_root, &registry_root, &run_capability)
+}
+
+#[tauri::command]
 pub fn concat_normalized_video_segments(
     app: tauri::AppHandle,
     run_capability: AssemblyRunCapability,
@@ -4505,6 +4539,28 @@ mod tests {
         let record = load_run_record(fixture.registry().as_path(), &capability).unwrap().0;
         assert_eq!(record.artifacts.len(), 8);
         assert_eq!(record.artifacts.iter().map(|item| &item.canonical_path).collect::<HashSet<_>>().len(), 8);
+    }
+
+    #[test]
+    fn retained_unpublished_run_can_be_authoritatively_discarded() {
+        let fixture = FixtureDir::new("run-ledger-retained-discard");
+        ensure_registry_root(fixture.registry().as_path()).unwrap();
+        let project = fs::canonicalize(fixture.root()).unwrap();
+        let assets = fs::canonicalize(fixture.assets()).unwrap();
+        let active = begin_assembly_run_at_roots(&project, &assets, fixture.registry().as_path(), 60_000).unwrap();
+        assert_eq!(
+            discard_retained_assembly_run_at_roots(&project, &assets, fixture.registry().as_path(), &active).unwrap_err(),
+            "video_assembly_run_not_retained"
+        );
+        let artifact = fixture.assets().join("video-staging/retained.media");
+        fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+        fs::write(&artifact, b"retained-unpublished").unwrap();
+        append_run_artifact(fixture.registry().as_path(), &active, "staged", &artifact).unwrap();
+        retain_assembly_run_at_roots(&project, &assets, fixture.registry().as_path(), &active).unwrap();
+        discard_retained_assembly_run_at_roots(&project, &assets, fixture.registry().as_path(), &active).unwrap();
+        assert!(!artifact.exists());
+        assert_eq!(load_run_record(fixture.registry().as_path(), &active).unwrap().0.state, "cleaned");
+        discard_retained_assembly_run_at_roots(&project, &assets, fixture.registry().as_path(), &active).unwrap();
     }
 
     #[test]
@@ -5347,6 +5403,21 @@ mod tests {
         assert!(Path::new(&frames.first_frame_path).is_file());
         assert!(Path::new(&frames.middle_frame_path).is_file());
         assert!(Path::new(&frames.last_frame_path).is_file());
+        let swapped = VideoReviewFrames {
+            first_frame_path: frames.last_frame_path.clone(),
+            middle_frame_path: frames.middle_frame_path.clone(),
+            last_frame_path: frames.first_frame_path.clone(),
+        };
+        assert_eq!(
+            verify_review_frames_at_roots(
+                &fs::canonicalize(fixture.root()).unwrap(),
+                &fs::canonicalize(fixture.assets()).unwrap(),
+                fixture.registry().as_path(),
+                &first_result.credential,
+                &swapped,
+            ).unwrap_err(),
+            "video_review_record_mismatch"
+        );
 
         let credentials = [
             first_result.credential.clone(),

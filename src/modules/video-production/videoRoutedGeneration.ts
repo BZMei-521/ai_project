@@ -20,7 +20,8 @@ export interface RoutedVideoSnapshot {
   allShots: Shot[];
   assets: Asset[];
   project: Project;
-  boundary?: VideoBoundaryPlan;
+  incomingBoundary?: VideoBoundaryPlan;
+  outgoingBoundary?: VideoBoundaryPlan;
 }
 
 export function createRoutedVideoProductionGenerator(input: {

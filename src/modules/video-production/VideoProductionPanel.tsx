@@ -8,6 +8,8 @@ import { createControllerInputFromShot, createVideoProductionController } from "
 import { MINIMAX_H3_PROFILES, preflightVideoProfile } from "./workflowProfiles";
 import { routeVideoWorkflow } from "./videoRouter";
 import { createRoutedVideoProductionGenerator } from "./videoRoutedGeneration";
+import { registerVideoProductionGateway } from "./videoProductionEntry";
+export { generateQualityGatedVideoBatch, generateQualityGatedVideoShot, registerVideoProductionGateway } from "./videoProductionEntry";
 import type { VideoProfilePreflightReport, VideoRouteDecision, VideoWorkflowProfileId } from "./types";
 import {
   applyVideoQualityDecision,
@@ -86,7 +88,9 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
   const updateShotFields = useStoryboardStore((state) => state.updateShotFields);
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const processing = useRef(new Set<string>());
-  const stagedOperations = useRef(new Map<string, { sequenceId: string; path: string; digest: string }>());
+  const stagedOperations = useRef(new Map<string, StagedOperation>());
+  const rebuildGuards = useRef(new Map<string, VideoProductionEvidence["operation"]>());
+  const lastComfyBaseUrl = useRef(settings.baseUrl);
   const scopedShots = useMemo(() => shots.filter((shot) => shot.sequenceId === currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id)), [currentSequenceId, shots]);
   const contexts = useMemo(() => buildContexts(scopedShots, assets), [assets, scopedShots]);
   const routedGenerator = useMemo(() => services?.routedGenerator ?? createRoutedVideoProductionGenerator({
@@ -96,15 +100,15 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
       const allShots = state.shots.filter((item) => item.sequenceId === state.currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id));
       const shot = allShots.find((item) => item.id === shotId);
       if (!shot) throw new Error("video_generation_shot_missing");
-      const boundary = buildContexts(allShots, state.assets).get(shotId)?.boundary;
-      return { sequenceId: state.currentSequenceId, shot, index: allShots.indexOf(shot), allShots, assets: state.assets, project: state.project, boundary };
+      const context = buildContexts(allShots, state.assets).get(shotId);
+      return { sequenceId: state.currentSequenceId, shot, index: allShots.indexOf(shot), allShots, assets: state.assets, project: state.project, incomingBoundary: context?.incomingBoundary, outgoingBoundary: context?.outgoingBoundary };
     }
   }), [services?.routedGenerator, settings]);
   const controller = useMemo(() => (services?.controllerFactory ?? createVideoProductionController)({
     persistEvidence: (shotId, evidence) => updateShotFields(shotId, { videoProductionEvidence: evidence, videoQualityStatus: evidence.qualityReport?.status ?? (evidence.status === "processing" ? "checking" : "rejected") }),
     generateShot: async (shotId, rebuildOptions) => {
       const generated = await routedGenerator.generate(shotId, { previousEvidence: rebuildOptions?.previousEvidence });
-      stagedOperations.current.set(shotId, { sequenceId: generated.request.shot.sequenceId, path: generated.generatedVideoPath, digest: generated.generationContractDigest });
+      stagedOperations.current.set(shotId, { sequenceId: generated.request.shot.sequenceId, path: generated.generatedVideoPath, digest: generated.generationContractDigest, token: generated.request.operationToken });
       if ((rebuildOptions?.request?.shotIds.length ?? 1) === 1) {
         updateShotFields(shotId, { generatedVideoPath: generated.generatedVideoPath, videoGenerationReceipt: generated.videoGenerationReceipt, videoGenerationContractDigest: generated.generationContractDigest });
       }
@@ -116,17 +120,53 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
   }), [routedGenerator, services?.controllerFactory, updateShotFields]);
   const rows = useMemo(() => buildRows(scopedShots, assets, contexts), [assets, contexts, scopedShots]);
 
+  const executeGeneration = async (shotIds: string[], reason: string) => {
+    const request = { kind: shotIds.length > 1 ? "batch" as const : "shot" as const, shotIds, reason };
+    const before = useStoryboardStore.getState().shots;
+    shotIds.forEach((id) => rebuildGuards.current.set(id, before.find((shot) => shot.id === id)?.videoProductionEvidence?.operation));
+    try {
+      await controller.rebuild(request, async (targetId, generatedVideoPath, _previousEvidence, generated) => {
+        const latest = useStoryboardStore.getState().shots.find((item) => item.id === targetId);
+        const details = generated as any;
+        if (!latest || !details?.routeDecision || !details?.profilePreflight || !details?.videoGenerationReceipt) throw new Error("video_rebuild_context_missing");
+        const operation = { sequenceId: latest.sequenceId, shotId: targetId, contractDigest: details.generationContractDigest, sourceVideoPath: generatedVideoPath, boundaryIdentity: boundaryIdentity(details.request?.outgoingBoundary), operationToken: details.request?.operationToken };
+        return { ...createControllerInputFromShot({ shot: { ...latest, generatedVideoPath, videoGenerationReceipt: details.videoGenerationReceipt }, project: useStoryboardStore.getState().project, routeDecision: details.routeDecision, profilePreflight: details.profilePreflight, boundary: details.request?.outgoingBoundary, operation, generationReceipt: details.videoGenerationReceipt }), contractDigest: details.generationContractDigest };
+      });
+      return true;
+    } catch (error) {
+      persistRebuildFailureCAS(shotIds, stagedOperations.current, rebuildGuards.current, error);
+      return false;
+    } finally {
+      shotIds.forEach((id) => { stagedOperations.current.delete(id); rebuildGuards.current.delete(id); });
+    }
+  };
+
+  useEffect(() => registerVideoProductionGateway({
+    generateShot: (shotId) => executeGeneration([shotId], "manual_generation"),
+    generateBatch: (shotIds) => executeGeneration(shotIds, "bulk_generation")
+  }), [controller, currentSequenceId]);
+
   const processShot = async (shotId: string) => {
     if (processing.current.has(shotId)) return;
     const shot = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
     if (!shot?.generatedVideoPath) return;
     processing.current.add(shotId);
+    const preparationOperation: StagedOperation = {
+      sequenceId: shot.sequenceId, path: shot.generatedVideoPath,
+      digest: shot.videoGenerationContractDigest ?? "0".repeat(64),
+      token: shot.videoGenerationReceipt?.operationToken ?? globalThis.crypto.randomUUID()
+    };
+    stagedOperations.current.set(shotId, preparationOperation);
     try {
-      const prepared = await routedGenerator.prepare(shotId);
-      stagedOperations.current.set(shotId, { sequenceId: shot.sequenceId, path: shot.generatedVideoPath, digest: prepared.generationContractDigest });
-      await controller.processGeneratedShot({ ...createControllerInputFromShot({ shot, project, routeDecision: prepared.routeDecision, profilePreflight: prepared.profilePreflight, boundary: prepared.request.boundary }), contractDigest: prepared.generationContractDigest });
+      const prepared = await routedGenerator.prepare(shotId, { operationToken: preparationOperation.token });
+      routedGenerator.verifyReceipt(shot.videoGenerationReceipt, prepared, shot.generatedVideoPath);
+      stagedOperations.current.set(shotId, { sequenceId: shot.sequenceId, path: shot.generatedVideoPath, digest: prepared.generationContractDigest, token: prepared.request.operationToken });
+      await controller.processGeneratedShot({ ...createControllerInputFromShot({ shot, project, routeDecision: prepared.routeDecision, profilePreflight: prepared.profilePreflight, boundary: prepared.request.outgoingBoundary }), contractDigest: prepared.generationContractDigest, generationReceipt: shot.videoGenerationReceipt, operation: { sequenceId: shot.sequenceId, shotId, contractDigest: prepared.generationContractDigest, sourceVideoPath: shot.generatedVideoPath, boundaryIdentity: boundaryIdentity(prepared.request.outgoingBoundary), operationToken: prepared.request.operationToken } });
     }
-    catch { /* failed evidence is persisted by the controller */ }
+    catch (error) {
+      const latest = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
+      if (latest?.videoProductionEvidence?.status !== "failed") persistPreparationFailureCAS(shot, contexts.get(shotId), preparationOperation, stagedOperations.current, error);
+    }
     finally { processing.current.delete(shotId); stagedOperations.current.delete(shotId); }
   };
 
@@ -136,6 +176,14 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
       if (shot.generatedVideoPath?.trim() && (!evidence || evidence.sourceVideoPath !== shot.generatedVideoPath || evidence.status === "pending")) void processShot(shot.id);
     }
   }, [scopedShots, contexts]);
+
+  useEffect(() => {
+    const urlChanged = lastComfyBaseUrl.current !== settings.baseUrl;
+    lastComfyBaseUrl.current = settings.baseUrl;
+    for (const shot of useStoryboardStore.getState().shots) {
+      if (shot.sequenceId === useStoryboardStore.getState().currentSequenceId && shot.generatedVideoPath?.trim() && (urlChanged || shot.videoProductionEvidence?.status === "failed")) void processShot(shot.id);
+    }
+  }, [settings.baseUrl]);
 
   useEffect(() => {
     const active = new Set(rows.map((row) => row.artifactKey));
@@ -166,18 +214,20 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
       if (!persistDecisionCAS(shotId, captured, decided)) return;
       setReasons((previous) => { const next = { ...previous }; delete next[row.artifactKey]; return next; });
       const request = planVideoRebuildRequest({ shotId, orderedShotIds: scopedShots.map((item) => item.id), reason, boundary: row.boundary });
+      request.shotIds.forEach((id) => rebuildGuards.current.set(id, useStoryboardStore.getState().shots.find((item) => item.id === id)?.videoProductionEvidence?.operation));
       await controller.rebuild(request, async (targetId, generatedVideoPath, _previousEvidence, generated) => {
         const latest = useStoryboardStore.getState().shots.find((item) => item.id === targetId);
         const details = generated as any;
         if (!latest || !details?.routeDecision || !details?.profilePreflight) throw new Error("video_rebuild_context_missing");
-        return { ...createControllerInputFromShot({ shot: { ...latest, generatedVideoPath }, project: useStoryboardStore.getState().project, routeDecision: details.routeDecision, profilePreflight: details.profilePreflight, boundary: details.request?.boundary }), contractDigest: details.generationContractDigest };
+        const operation = { sequenceId: latest.sequenceId, shotId: targetId, contractDigest: details.generationContractDigest, sourceVideoPath: generatedVideoPath, boundaryIdentity: boundaryIdentity(details.request?.outgoingBoundary), operationToken: details.request?.operationToken };
+        return { ...createControllerInputFromShot({ shot: { ...latest, generatedVideoPath, videoGenerationReceipt: details.videoGenerationReceipt }, project: useStoryboardStore.getState().project, routeDecision: details.routeDecision, profilePreflight: details.profilePreflight, boundary: details.request?.outgoingBoundary, operation, generationReceipt: details.videoGenerationReceipt }), contractDigest: details.generationContractDigest };
       });
-      request.shotIds.forEach((id) => stagedOperations.current.delete(id));
+      request.shotIds.forEach((id) => { stagedOperations.current.delete(id); rebuildGuards.current.delete(id); });
     })().catch((error) => {
-      stagedOperations.current.delete(shotId);
       const failedRow = rows.find((item) => item.shotId === shotId);
       const failedRequest = planVideoRebuildRequest({ shotId, orderedShotIds: scopedShots.map((item) => item.id), reason, boundary: failedRow?.boundary });
-      persistRebuildFailure(failedRequest.shotIds, error);
+      persistRebuildFailureCAS(failedRequest.shotIds, stagedOperations.current, rebuildGuards.current, error);
+      failedRequest.shotIds.forEach((id) => { stagedOperations.current.delete(id); rebuildGuards.current.delete(id); });
     })}
   />;
 }
@@ -193,8 +243,9 @@ function buildContexts(shots: Shot[], assets: Asset[]) {
   return new Map(shots.map((shot) => {
     const routeDecision = shot.videoProductionEvidence?.routeDecision ?? routeForShot(shot, assets);
     const profilePreflight = shot.videoProductionEvidence?.profilePreflight ?? preflightForRoute(shot, routeDecision);
-    const boundary = plan.boundaries.find((item) => item.fromShotId === shot.id);
-    return [shot.id, { routeDecision, profilePreflight, boundary }] as const;
+    const incomingBoundary = plan.boundaries.find((item) => item.toShotId === shot.id);
+    const outgoingBoundary = plan.boundaries.find((item) => item.fromShotId === shot.id);
+    return [shot.id, { routeDecision, profilePreflight, incomingBoundary, outgoingBoundary, boundary: outgoingBoundary }] as const;
   }));
 }
 
@@ -236,16 +287,17 @@ function buildRows(shots: Shot[], assets: Asset[], contexts: Map<string, { route
 }
 
 function ReviewStrip({ label, paths }: { label: string; paths: Array<[string, string]> }) { return <div className="video-review-strip"><small>{label}</small><div className="video-review-strip__images">{paths.length ? paths.map(([name, path]) => <figure key={`${name}:${path}`}>{path ? <img alt={name} loading="lazy" src={toDesktopMediaSource(path)} /> : <div className="video-review-strip__missing">缺失</div>}<figcaption>{name}{path ? ` · ${path.replace(/\\/g, "/").split("/").pop()}` : ""}</figcaption></figure>) : <span className="video-review-strip__none">未提供</span>}</div></div>; }
-function operationMatchesCurrent(operation: any, staged: Map<string, { sequenceId: string; path: string; digest: string }>) {
+type StagedOperation = { sequenceId: string; path: string; digest: string; token: string };
+function operationMatchesCurrent(operation: any, staged: Map<string, StagedOperation>) {
   const state = useStoryboardStore.getState();
   const shot = state.shots.find((item) => item.id === operation?.shotId);
   if (!shot || shot.sequenceId !== operation?.sequenceId || state.currentSequenceId !== operation.sequenceId) return false;
   const active = staged.get(shot.id);
   return active
-    ? active.sequenceId === operation.sequenceId && active.path === operation.sourceVideoPath && active.digest === operation.contractDigest
-    : shot.generatedVideoPath === operation.sourceVideoPath && shot.videoGenerationContractDigest === operation.contractDigest;
+    ? active.sequenceId === operation.sequenceId && active.path === operation.sourceVideoPath && active.digest === operation.contractDigest && active.token === operation.operationToken
+    : shot.generatedVideoPath === operation.sourceVideoPath && shot.videoGenerationContractDigest === operation.contractDigest && shot.videoGenerationReceipt?.operationToken === operation.operationToken;
 }
-function persistEvidenceCAS(operation: any, evidence: VideoProductionEvidence, staged: Map<string, { sequenceId: string; path: string; digest: string }>) {
+function persistEvidenceCAS(operation: any, evidence: VideoProductionEvidence, staged: Map<string, StagedOperation>) {
   if (!operationMatchesCurrent(operation, staged)) return false;
   let persisted = false;
   useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => {
@@ -255,7 +307,7 @@ function persistEvidenceCAS(operation: any, evidence: VideoProductionEvidence, s
   }) }));
   return persisted;
 }
-function persistEvidenceBatchCAS(items: any[], staged: Map<string, { sequenceId: string; path: string; digest: string }>) {
+function persistEvidenceBatchCAS(items: any[], staged: Map<string, StagedOperation>) {
   if (!items.length || items.some((item) => !operationMatchesCurrent(item.operation, staged))) return false;
   const byShot = new Map(items.map((item) => [item.operation.shotId, item]));
   useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => {
@@ -278,15 +330,40 @@ function persistDecisionFailure(shotId: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => shot.id === shotId && shot.videoProductionEvidence ? { ...shot, videoProductionEvidence: { ...shot.videoProductionEvidence, status: "failed", failureReason: message }, videoQualityStatus: "rejected" } : shot) }));
 }
-function persistRebuildFailure(shotIds: string[], error: unknown) {
-  const targets = new Set(shotIds);
+function persistRebuildFailureCAS(shotIds: string[], staged: Map<string, StagedOperation>, fallback: Map<string, VideoProductionEvidence["operation"]>, error: unknown) {
+  const stagedTargets = new Map(shotIds.map((id) => [id, staged.get(id)]));
+  const stagedAllCurrent = [...stagedTargets.entries()].every(([shotId, operation]) => operation && operationMatchesCurrent({ shotId, sequenceId: operation.sequenceId, sourceVideoPath: operation.path, contractDigest: operation.digest, operationToken: operation.token }, staged));
+  const targets = stagedAllCurrent
+    ? new Map([...stagedTargets.entries()].map(([id, operation]) => [id, operation!]))
+    : new Map(shotIds.map((id) => [id, fallback.get(id)]));
+  if ([...targets.entries()].some(([shotId, operation]) => !operation || !operationMatchesPersisted(shotId, operation as NonNullable<VideoProductionEvidence["operation"]>))) return false;
   const message = error instanceof Error ? error.message : String(error);
   useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => !targets.has(shot.id) ? shot : {
     ...shot,
     videoProductionEvidence: shot.videoProductionEvidence ? { ...shot.videoProductionEvidence, status: "failed", failureReason: message, decision: undefined } : shot.videoProductionEvidence,
     videoQualityStatus: "rejected"
   }) }));
+  return true;
+}
+function operationMatchesPersisted(shotId: string, operation: NonNullable<VideoProductionEvidence["operation"]>) {
+  const state = useStoryboardStore.getState();
+  const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === operation.sequenceId);
+  return Boolean(shot && state.currentSequenceId === operation.sequenceId && shot.generatedVideoPath === operation.sourceVideoPath && shot.videoGenerationContractDigest === operation.contractDigest && shot.videoProductionEvidence?.operation?.operationToken === operation.operationToken);
+}
+function persistPreparationFailureCAS(shot: Shot, context: (ReturnType<typeof buildContexts> extends Map<string, infer V> ? V : never) | undefined, operation: StagedOperation, staged: Map<string, StagedOperation>, error: unknown) {
+  if (!operationMatchesCurrent({ shotId: shot.id, sequenceId: operation.sequenceId, sourceVideoPath: operation.path, contractDigest: operation.digest, operationToken: operation.token }, staged) || !context) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  useStoryboardStore.setState((state) => ({ shots: state.shots.map((item) => item.id !== shot.id || item.sequenceId !== shot.sequenceId ? item : {
+    ...item, videoProductionEvidence: {
+      schemaVersion: 1, shotId: shot.id, sequenceId: shot.sequenceId, status: "failed", sourceVideoPath: operation.path,
+      contractDigest: operation.digest, boundaryIdentity: boundaryIdentity(context.outgoingBoundary),
+      operation: { sequenceId: shot.sequenceId, shotId: shot.id, contractDigest: operation.digest, sourceVideoPath: operation.path, boundaryIdentity: boundaryIdentity(context.outgoingBoundary), operationToken: operation.token },
+      routeDecision: context.routeDecision, profilePreflight: context.profilePreflight, boundary: context.outgoingBoundary, failureReason: message
+    }, videoQualityStatus: "rejected"
+  }) }));
+  return true;
 }
 function unique(values: Array<string | undefined>) { return [...new Set(values.map((item) => item?.trim()).filter((item): item is string => Boolean(item)))]; }
 function statusLabel(status: VideoQualityReport["status"]) { return status === "approved" ? "已批准" : status === "needs_review" ? "待人工审核" : "已拒绝"; }
 function compare(a: string, b: string) { return a < b ? -1 : a > b ? 1 : 0; }
+function boundaryIdentity(boundary?: VideoBoundaryPlan) { return boundary ? [boundary.id, boundary.fromShotId, boundary.toShotId, boundary.kind, boundary.sharedFramePath ?? "", boundary.approvalStatus].join(":") : ""; }

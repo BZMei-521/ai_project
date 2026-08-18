@@ -51,6 +51,7 @@ import {
   safeStorageSetItem
 } from "../platform/safeStorage";
 import { VideoProductionPanel } from "../video-production/VideoProductionPanel";
+import { generateQualityGatedVideoBatch, generateQualityGatedVideoShot } from "../video-production/videoProductionEntry";
 
 const FISHER_WORKFLOW_JSON = JSON.stringify(FISHER_WORKFLOW_OBJECT);
 const STORYBOARD_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_WORKFLOW_OBJECT);
@@ -12456,6 +12457,14 @@ export function ComfyPipelinePanel() {
     const latestScopedShots = getScopedShotsSnapshot();
     const shot = latestScopedShots.find((item) => item.id === shotId);
     if (!shot) return false;
+    if ((kind as string) === "video") {
+      try {
+        return await generateQualityGatedVideoShot(shotId);
+      } catch (error) {
+        appendLog(`H3 routed video generation failed: ${String(error)}`, "error");
+        return false;
+      }
+    }
     if (kind === "video" && shot.generatedVideoPath?.trim() && !looksLikeVideoPath(shot.generatedVideoPath)) {
       updateShotFields(shot.id, { generatedVideoPath: "" });
       appendLog(`检测到历史遗留的非视频路径，已清空并重新生成：${shot.title}`, "error");
@@ -13078,6 +13087,16 @@ export function ComfyPipelinePanel() {
         return false;
       }
       const shotsForRun = getScopedShotsSnapshot();
+      const qualityGatedShotIds = shotsForRun
+        .filter((shot) => !retryFailedOnly || videoStatusByShot[shot.id] === "failed")
+        .filter((shot) => !(skipExisting && !retryFailedOnly && hasUsableGeneratedAsset("video", shot)))
+        .map((shot) => shot.id);
+      try {
+        return await generateQualityGatedVideoBatch(qualityGatedShotIds);
+      } catch (error) {
+        appendLog(`H3 routed batch generation failed: ${String(error)}`, "error");
+        return false;
+      }
       let runtimeSettings = settings;
       if (workflowsAreCoupled(runtimeSettings.imageWorkflowJson ?? "", runtimeSettings.videoWorkflowJson ?? "")) {
         runtimeSettings = {

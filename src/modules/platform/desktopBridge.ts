@@ -376,6 +376,11 @@ export async function retainVideoAssemblyRun(runCapability: AssemblyRunCapabilit
   await invokeDesktopCommand("retain_video_assembly_run", { runCapability });
 }
 
+export async function discardRetainedVideoAssemblyRun(runCapability: AssemblyRunCapability): Promise<void> {
+  requireTauriVideoContinuityRuntime();
+  await invokeDesktopCommand("discard_retained_video_assembly_run", { runCapability });
+}
+
 export async function concatNormalizedVideoSegments(request: ConcatNormalizedVideoSegmentsRequest): Promise<ConcatenatedVideo> {
   requireTauriVideoContinuityRuntime();
   return invokeDesktopCommand<ConcatenatedVideo>("concat_normalized_video_segments", createConcatNormalizedVideoSegmentsRequest(request));

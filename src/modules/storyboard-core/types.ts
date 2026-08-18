@@ -59,6 +59,8 @@ export type Shot = {
     inputDigest: string;
     promptId: string;
     normalizedPath?: string;
+    contractDigest?: string;
+    operationToken?: string;
     generatedAt: string;
   };
   videoGenerationContractDigest?: string;

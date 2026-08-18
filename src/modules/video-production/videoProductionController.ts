@@ -6,6 +6,7 @@ import {
   probeVideoSegment,
   stageVideoSegment,
   retainVideoAssemblyRun,
+  discardRetainedVideoAssemblyRun,
   verifyNormalizationCredential,
   verifyVideoReviewFrames,
   verifyVideoAssemblyReceipt
@@ -13,7 +14,7 @@ import {
 import type { Project, Shot } from "../storyboard-core/types";
 import type { VideoBoundaryPlan } from "./continuityPlanner";
 import type { VideoProfilePreflightReport, VideoRouteDecision } from "./types";
-import type { VideoProductionEvidence, VideoQualityReport, VideoRebuildRequest } from "./videoQuality";
+import type { VideoOperationIdentity, VideoProductionEvidence, VideoQualityReport, VideoRebuildRequest } from "./videoQuality";
 
 export interface VideoProductionControllerInput {
   sequenceId?: string;
@@ -24,8 +25,11 @@ export interface VideoProductionControllerInput {
   projectWidth: number;
   projectHeight: number;
   routeDecision: VideoRouteDecision;
+  accelerationMode: NonNullable<Shot["videoAccelerationMode"]>;
   profilePreflight: VideoProfilePreflightReport;
   boundary?: VideoBoundaryPlan;
+  operation?: VideoOperationIdentity;
+  generationReceipt?: Shot["videoGenerationReceipt"];
 }
 
 export interface GeneratedVideoResult { ok: boolean; generatedVideoPath?: string; [key: string]: unknown; }
@@ -56,6 +60,7 @@ export function createVideoProductionController(options: {
     verifyReviewRecord: verifyVideoReviewFrames,
     verifyAssemblyReceipt: verifyVideoAssemblyReceipt,
     completeRun: ({ runCapability }: { runCapability: Parameters<typeof retainVideoAssemblyRun>[0] }) => retainVideoAssemblyRun(runCapability),
+    releaseRun: ({ runCapability }: { runCapability: Parameters<typeof discardRetainedVideoAssemblyRun>[0] }) => discardRetainedVideoAssemblyRun(runCapability),
     cleanupRun: cleanupVideoAssemblyAssets,
     persistEvidence: options.persistEvidence,
     generateShot: options.generateShot,
@@ -71,6 +76,8 @@ export function createControllerInputFromShot(input: {
   routeDecision: VideoRouteDecision;
   profilePreflight: VideoProfilePreflightReport;
   boundary?: VideoBoundaryPlan;
+  operation?: VideoOperationIdentity;
+  generationReceipt?: Shot["videoGenerationReceipt"];
 }): VideoProductionControllerInput {
   const generatedVideoPath = input.shot.generatedVideoPath?.trim() ?? "";
   if (!generatedVideoPath) throw new Error("generated_video_path_missing");
@@ -82,7 +89,10 @@ export function createControllerInputFromShot(input: {
     projectWidth: input.project.width,
     projectHeight: input.project.height,
     routeDecision: input.routeDecision,
+    accelerationMode: input.shot.videoAccelerationMode ?? "standard",
     profilePreflight: input.profilePreflight,
-    boundary: input.boundary
+    boundary: input.boundary,
+    operation: input.operation,
+    generationReceipt: input.generationReceipt ?? input.shot.videoGenerationReceipt
   };
 }

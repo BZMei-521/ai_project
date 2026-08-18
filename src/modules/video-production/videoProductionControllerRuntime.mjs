@@ -2,6 +2,28 @@ import { createVideoQualityReport, createVideoArtifactBinding, artifactBindingsE
 
 export async function createVideoGenerationContractDigest(value = {}) {
   const source = record(value);
+  const effective = record(source.effectiveRequest);
+  if (Object.keys(effective).length > 0) {
+    const contract = {
+      schemaVersion: 2,
+      sequenceId: text(effective.sequenceId),
+      shotId: text(effective.shotId),
+      profileId: text(effective.profileId),
+      accelerationMode: text(effective.accelerationMode),
+      qualityTier: text(effective.qualityTier),
+      prompt: text(effective.prompt),
+      seed: finite(effective.seed) ? effective.seed : 0,
+      workflowDigest: text(effective.workflowDigest),
+      references: clone(Array.isArray(effective.references) ? effective.references : []),
+      firstFramePath: text(effective.firstFramePath),
+      lastFramePath: text(effective.lastFramePath),
+      boundaryDependency: effective.boundaryDependency ? clone(effective.boundaryDependency) : null,
+      width: effective.width,
+      height: effective.height,
+      durationSeconds: effective.durationSeconds
+    };
+    return sha256(stable(contract));
+  }
   const shot = record(source.shot);
   const project = record(source.project);
   const contract = {
@@ -13,15 +35,16 @@ export async function createVideoGenerationContractDigest(value = {}) {
       characterRefs: stringArray(shot.characterRefs), sceneRefId: text(shot.sceneRefId), generatedImagePath: text(shot.generatedImagePath),
       videoStartFramePath: text(shot.videoStartFramePath), videoEndFramePath: text(shot.videoEndFramePath),
       durationFrames: finite(shot.durationFrames) ? shot.durationFrames : 0, continuitySegmentId: text(shot.continuitySegmentId),
-      videoBoundaryKind: text(shot.videoBoundaryKind)
+      videoBoundaryKind: text(shot.videoBoundaryKind), videoAccelerationMode: text(shot.videoAccelerationMode),
+      videoQualityTier: text(shot.videoQualityTier)
     },
     project: { id: text(project.id), width: project.width, height: project.height, fps: project.fps },
     routeDecision: clone(source.routeDecision), profilePreflight: clone(source.profilePreflight),
     workflowDigest: text(source.workflowDigest), references: clone(Array.isArray(source.references) ? source.references : []),
-    boundary: source.boundary ? clone(source.boundary) : null
+    boundary: source.boundary ? clone(source.boundary) : null,
+    boundaryDependency: source.boundaryDependency ? clone(source.boundaryDependency) : null
   };
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(stable(contract)));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return sha256(stable(contract));
 }
 
 export function createVideoOperationIdentity(input = {}) {
@@ -57,10 +80,13 @@ export function createVideoProductionController(dependencies = {}) {
       contractDigest: input.contractDigest ?? "0".repeat(64), sourceVideoPath: input.generatedVideoPath,
       boundaryIdentity: boundaryIdentity(input.boundary)
     });
+    assertGenerationReceipt(input.generationReceipt, input, operation);
     const pending = baseEvidence(input, operation, "processing");
     if (!options.deferPersist) await persist(operation, pending);
     let runCapability;
     let retained = false;
+    let published = false;
+    let handedOff = false;
     try {
       await assertCurrent(operation);
       runCapability = await dependencies.beginRun();
@@ -89,10 +115,15 @@ export function createVideoProductionController(dependencies = {}) {
         stagingReceiptId: staged.stagingReceiptId, normalizationCredential: normalized.credential,
         inspection: verified, reviewFrames, reviewRecord, artifactBinding: createVideoArtifactBinding(qualityInput), qualityReport
       };
-      await dependencies.completeRun({ runCapability, retainEvidence: true });
-      retained = true;
-      await assertCurrent(operation);
-      if (!options.deferPersist) await persist(operation, evidence);
+      if (options.deferPersist) {
+        handedOff = true;
+      } else {
+        await dependencies.completeRun({ runCapability, retainEvidence: true });
+        retained = true;
+        await assertCurrent(operation);
+        await persist(operation, evidence);
+        published = true;
+      }
       return evidence;
     } catch (error) {
       if (!options.deferPersist && String(error instanceof Error ? error.message : error) !== "video_operation_stale") {
@@ -101,8 +132,11 @@ export function createVideoProductionController(dependencies = {}) {
       }
       throw error;
     } finally {
-      if (runCapability && !retained) {
-        try { await dependencies.cleanupRun({ runCapability }); } catch { /* primary failure wins */ }
+      if (runCapability && !published && !handedOff) {
+        try {
+          if (retained && typeof dependencies.releaseRun === "function") await dependencies.releaseRun({ runCapability });
+          else await dependencies.cleanupRun({ runCapability });
+        } catch { /* primary failure wins */ }
       }
     }
   }
@@ -132,6 +166,8 @@ export function createVideoProductionController(dependencies = {}) {
 
   async function rebuild(request, resolveInput) {
     const staged = [];
+    const retained = [];
+    let published = false;
     let previousEvidence;
     try {
       for (const shotId of request.shotIds) {
@@ -142,12 +178,28 @@ export function createVideoProductionController(dependencies = {}) {
         staged.push({ input, evidence: previousEvidence, generated });
       }
       if (staged.length > 1) {
+        for (const item of staged) {
+          await assertCurrent(item.input.operation);
+          await dependencies.completeRun({ runCapability: item.evidence.runCapability, retainEvidence: true });
+          retained.push(item);
+          await assertCurrent(item.input.operation);
+        }
         if (typeof dependencies.persistBatchCAS !== "function" || !(await dependencies.persistBatchCAS(staged.map(({ input, evidence, generated }) => ({ operation: input.operation, evidence, generated }))))) throw new Error("video_pair_atomic_commit_failed");
+        published = true;
       }
       return staged.map((item) => item.evidence);
     } catch (error) {
       if (staged.length > 1 && typeof dependencies.markBatchFailed === "function") await dependencies.markBatchFailed(staged, error);
       throw error;
+    } finally {
+      if (!published && staged.length > 1) {
+        for (const item of staged) {
+          try {
+            if (retained.includes(item) && typeof dependencies.releaseRun === "function") await dependencies.releaseRun({ runCapability: item.evidence.runCapability });
+            else await dependencies.cleanupRun({ runCapability: item.evidence.runCapability });
+          } catch { /* primary failure wins */ }
+        }
+      }
     }
   }
   return { processGeneratedShot, verifyForDecision, rebuild };
@@ -159,8 +211,16 @@ function baseEvidence(input, operation, status) {
     sequenceId: operation.sequenceId, contractDigest: operation.contractDigest,
     boundaryIdentity: operation.boundaryIdentity, operation: clone(operation),
     routeDecision: clone(input.routeDecision), profilePreflight: clone(input.profilePreflight),
-    boundary: input.boundary ? clone(input.boundary) : undefined, decision: undefined
+    boundary: input.boundary ? clone(input.boundary) : undefined,
+    generationReceipt: clone(input.generationReceipt), decision: undefined
   };
+}
+function assertGenerationReceipt(receipt, input, operation) {
+  const item = record(receipt);
+  if (item.profileId !== input.routeDecision?.profileId || item.accelerationMode !== input.accelerationMode) throw new Error("video_generation_receipt_route_mismatch");
+  if (!/^[a-f0-9]{64}$/.test(text(item.workflowDigest)) || !/^[a-f0-9]{64}$/.test(text(item.inputDigest)) || !text(item.promptId) || !finite(Date.parse(item.generatedAt))) throw new Error("video_generation_receipt_invalid");
+  if (normalizePath(item.normalizedPath) !== normalizePath(input.generatedVideoPath)) throw new Error("video_generation_receipt_output_mismatch");
+  if (item.contractDigest !== operation.contractDigest || item.operationToken !== operation.operationToken) throw new Error("video_generation_receipt_contract_mismatch");
 }
 function boundaryIdentity(boundary) { const item = record(boundary); return [text(item.id), text(item.fromShotId), text(item.toShotId), text(item.kind), text(item.sharedFramePath), text(item.approvalStatus)].join(":"); }
 function safeSegmentId(value) { const id = String(value ?? "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80); if (!id) throw new Error("video_segment_id_invalid"); return id; }
@@ -168,6 +228,8 @@ function stable(value) { if (value === null || typeof value !== "object") return
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function record(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
 function text(value) { return typeof value === "string" ? value.trim() : ""; }
+function normalizePath(value) { return text(value).replace(/\\/g, "/").toLowerCase(); }
 function finite(value) { return typeof value === "number" && Number.isFinite(value); }
 function stringArray(value) { return Array.isArray(value) ? value.map(text).filter(Boolean).sort() : []; }
 function randomToken() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`; }
+async function sha256(value) { const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""); }

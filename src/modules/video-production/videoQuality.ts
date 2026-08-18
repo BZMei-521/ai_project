@@ -84,7 +84,20 @@ export interface VideoProductionEvidence {
   artifactBinding?: VideoArtifactBinding;
   qualityReport?: VideoQualityReport;
   decision?: VideoQualityDecisionRecord;
+  generationReceipt?: ShotGenerationReceipt;
   failureReason?: string;
+}
+
+export interface ShotGenerationReceipt {
+  profileId: VideoWorkflowProfileId;
+  accelerationMode: string;
+  workflowDigest: string;
+  inputDigest: string;
+  promptId: string;
+  normalizedPath?: string;
+  contractDigest?: string;
+  operationToken?: string;
+  generatedAt: string;
 }
 
 export interface VideoQualityEvaluationInput {
@@ -120,7 +133,7 @@ export interface VideoProductionRow {
   failureReason?: string;
 }
 
-export interface VideoRebuildRequest { kind: "shot" | "adjacent_pair"; shotIds: string[]; reason: string; }
+export interface VideoRebuildRequest { kind: "shot" | "adjacent_pair" | "batch"; shotIds: string[]; reason: string; }
 
 // @ts-ignore JavaScript runtime intentionally has no declaration file.
 import { applyVideoQualityDecision as runtimeApply, artifactBindingsEqual as runtimeBindingsEqual, createVideoArtifactBinding as runtimeCreateBinding, createVideoQualityReport as runtimeCreateReport, evaluateVideoQuality as runtimeEvaluate, planVideoRebuildRequest as runtimePlanRebuild, resolvePersistedVideoDecision as runtimeResolveDecision } from "./videoQualityRuntime.mjs";
