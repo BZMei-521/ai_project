@@ -1,3 +1,11 @@
+import type {
+  VideoAccelerationMode,
+  VideoBoundaryKind,
+  VideoQualityTier,
+  VideoWorkflowProfileId
+} from "../video-production/types";
+import type { VideoProductionEvidence } from "../video-production/videoQuality";
+
 export type Project = {
   id: string;
   name: string;
@@ -36,6 +44,24 @@ export type Shot = {
   videoMode?: "auto" | "single_frame" | "first_last_frame";
   videoStartFramePath?: string;
   videoEndFramePath?: string;
+  videoWorkflowProfileId?: VideoWorkflowProfileId | "auto";
+  videoQualityTier?: VideoQualityTier;
+  videoAccelerationMode?: VideoAccelerationMode;
+  continuitySegmentId?: string;
+  videoBoundaryKind?: VideoBoundaryKind;
+  approvedBoundaryFramePath?: string;
+  videoRouteReason?: string;
+  videoQualityStatus?: "pending" | "checking" | "needs_review" | "approved" | "rejected";
+  videoGenerationReceipt?: {
+    profileId: VideoWorkflowProfileId;
+    accelerationMode: VideoAccelerationMode;
+    workflowDigest: string;
+    inputDigest: string;
+    promptId: string;
+    normalizedPath?: string;
+    generatedAt: string;
+  };
+  videoProductionEvidence?: VideoProductionEvidence;
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
   skyboxFaceWeights?: Partial<Record<SkyboxFace, number>>;

@@ -2913,6 +2913,7 @@ fn main() {
             video_continuity::probe_video_segment,
             video_continuity::normalize_video_segment,
             video_continuity::extract_video_review_frames,
+            video_continuity::verify_normalization_credential,
             video_continuity::concat_normalized_video_segments,
             video_continuity::verify_video_assembly_receipt,
             video_continuity::cleanup_video_assembly_assets,

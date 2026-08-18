@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
 
 const repoRoot = process.cwd();
+const comfyPanelSource = await readFile("src/modules/comfy-pipeline/ComfyPipelinePanel.tsx", "utf8");
+assert.match(comfyPanelSource, /videoProductionEvidence\?: Shot\["videoProductionEvidence"\]/);
+assert.match(comfyPanelSource, /videoProductionEvidence:\s*item\.videoProductionEvidence/);
+assert.match(comfyPanelSource, /item\.video_production_evidence\s*&&/);
 const result = await build({
   stdin: {
     contents: `
@@ -489,6 +494,26 @@ const receipt = {
   normalizedPath: "outputs/normalized-1.mp4",
   generatedAt: "2026-08-17T00:00:00.000Z"
 };
+const productionEvidence = Object.freeze({
+  schemaVersion: 1,
+  shotId: "script_video_plan",
+  status: "ready",
+  sourceVideoPath: "C:/project/raw/shot.mp4",
+  routeDecision: Object.freeze({ status: "selected", profileId: "minimax_h3_flf2v", reason: "explicit_endpoints" }),
+  profilePreflight: Object.freeze({ profileId: "minimax_h3_flf2v", available: true, missingNodes: [], missingModels: [], warnings: [] }),
+  boundary: Object.freeze({ id: "boundary-1", fromShotId: "script_video_plan", toShotId: "next", kind: "hard_cut", requiresApproval: false, approvalStatus: "pending" }),
+  projectAssetsDir: "C:/project/assets",
+  normalizationCredential: Object.freeze({
+    schemaVersion: 1, receiptId: "a".repeat(64), normalizedPath: "C:/project/assets/video-normalized/shot.mp4",
+    sha256: "b".repeat(64), byteLength: 123, modifiedUnixMillis: 1787000000000,
+    projectWidth: 1280, projectHeight: 720, durationFrames: 48,
+    probe: Object.freeze({ width: 1280, height: 720, fpsNum: 24, fpsDen: 1, durationSeconds: 2, videoCodec: "h264", pixelFormat: "yuv420p", audioSampleRate: 48000, audioChannels: 2, hasMonotonicTimestamps: true, hasConstantFrameTimestamps: true, decodedFrameCount: 48 })
+  }),
+  inspection: Object.freeze({ probe: Object.freeze({ width: 1280, height: 720, fpsNum: 24, fpsDen: 1, durationSeconds: 2, videoCodec: "h264", pixelFormat: "yuv420p", audioSampleRate: 48000, audioChannels: 2, hasMonotonicTimestamps: true, hasConstantFrameTimestamps: true, decodedFrameCount: 48 }), anomalies: Object.freeze({ blackIntervals: [], freezeIntervals: [] }) }),
+  reviewFrames: Object.freeze({ firstFramePath: "C:/project/assets/video-review/first.png", middleFramePath: "C:/project/assets/video-review/middle.png", lastFramePath: "C:/project/assets/video-review/last.png" }),
+  artifactBinding: Object.freeze({ schemaVersion: 1, receiptId: "a".repeat(64), normalizedPath: "C:/project/assets/video-normalized/shot.mp4", sha256: "b".repeat(64), byteLength: 123, modifiedUnixMillis: 1787000000000, width: 1280, height: 720, durationFrames: 48, decodedFrameCount: 48, reviewFramesDigest: "c".repeat(64) }),
+  decision: Object.freeze({ decision: "approved", reviewedAt: "2026-08-18T01:00:00.000Z", artifactBinding: Object.freeze({ schemaVersion: 1, receiptId: "a".repeat(64), normalizedPath: "C:/project/assets/video-normalized/shot.mp4", sha256: "b".repeat(64), byteLength: 123, modifiedUnixMillis: 1787000000000, width: 1280, height: 720, durationFrames: 48, decodedFrameCount: 48, reviewFramesDigest: "c".repeat(64) }) })
+});
 
 const initialState = useStoryboardStore.getState();
 const legacyShot = Object.freeze({
@@ -528,6 +553,7 @@ try {
     videoRouteReason: "Manual FLF2V override",
     videoQualityStatus: "checking",
     videoGenerationReceipt: Object.freeze({ ...receipt })
+    ,videoProductionEvidence: productionEvidence
   });
   const scriptSourceBeforeImport = JSON.stringify(importedScriptItem);
   useStoryboardStore.getState().replaceShotsForCurrentSequence([importedScriptItem]);
@@ -543,6 +569,7 @@ try {
     "videoRouteReason",
     "videoQualityStatus",
     "videoGenerationReceipt"
+    ,"videoProductionEvidence"
   ]) {
     assert.deepEqual(importedScriptShot[field], importedScriptItem[field], `shot-script import should preserve ${field}`);
   }
@@ -559,7 +586,7 @@ try {
     generatedAt: "2026-08-17T01:00:00.000Z"
   };
   const updatePatch = Object.freeze({
-    videoWorkflowProfileId: "minimax_h3_i2v",
+    videoWorkflowProfileId: "minimax_h3_flf2v",
     videoQualityTier: "production",
     videoAccelerationMode: "standard",
     continuitySegmentId: "segment-updated",
@@ -567,7 +594,7 @@ try {
     approvedBoundaryFramePath: "frames/updated-boundary.png",
     videoRouteReason: "Updated manual route",
     videoQualityStatus: "approved",
-    videoGenerationReceipt: Object.freeze(updatedReceipt)
+    videoProductionEvidence: Object.freeze({ ...productionEvidence, sourceVideoPath: "C:/project/raw/updated.mp4" })
   });
   const updatePatchBefore = JSON.stringify(updatePatch);
   useStoryboardStore.getState().updateShotFields(importedScriptItem.id, updatePatch);
@@ -589,6 +616,23 @@ try {
   for (const [field, expected] of Object.entries(updatePatch)) {
     assert.deepEqual(restoredShot[field], expected, `serialized project reload should restore ${field}`);
   }
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { approvedBoundaryFramePath: "C:/project/boundary/replaced.png" });
+  const replacedBoundaryShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(replacedBoundaryShot.videoProductionEvidence, undefined, "boundary identity replacement must invalidate production evidence");
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { videoProductionEvidence: productionEvidence });
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { generatedVideoPath: "C:/project/raw/replaced.mp4" });
+  const replacedMediaShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(replacedMediaShot.videoProductionEvidence, undefined, "media replacement must invalidate production evidence and decision");
+  assert.equal(replacedMediaShot.videoQualityStatus, "pending", "media replacement must reset quality status");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { videoProductionEvidence: productionEvidence });
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { videoWorkflowProfileId: "minimax_h3_r2v" });
+  const reroutedShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(reroutedShot.videoProductionEvidence, undefined, "profile override must invalidate production evidence");
+  assert.equal(reroutedShot.videoGenerationReceipt, undefined, "profile override must invalidate generation receipt");
+  assert.equal(reroutedShot.generatedVideoPath, undefined, "profile override must invalidate generated media");
 } finally {
   useStoryboardStore.setState(initialState, true);
 }

@@ -157,11 +157,18 @@ export type NormalizeVideoSegmentRequest = ProbeVideoSegmentRequest & {
   projectHeight: number;
   durationFrames: number;
 };
+
 export type ExtractVideoReviewFramesRequest = {
   runCapability: AssemblyRunCapability;
   projectAssetsDir: string;
   credential: NormalizationCredential;
 };
+
+export type VerifyNormalizationCredentialRequest = {
+  projectAssetsDir: string;
+  credential: NormalizationCredential;
+};
+
 export type ConcatNormalizedVideoSegmentsRequest = {
   runCapability: AssemblyRunCapability;
   projectAssetsDir: string;
@@ -326,6 +333,14 @@ export async function normalizeVideoSegment(request: NormalizeVideoSegmentReques
 export async function extractVideoReviewFrames(request: ExtractVideoReviewFramesRequest): Promise<VideoReviewFrames> {
   requireTauriVideoContinuityRuntime();
   return invokeDesktopCommand<VideoReviewFrames>("extract_video_review_frames", createExtractVideoReviewFramesRequest(request));
+}
+
+export async function verifyNormalizationCredential(request: VerifyNormalizationCredentialRequest): Promise<VideoInspection> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<VideoInspection>("verify_normalization_credential", {
+    projectAssetsDir: requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing"),
+    credential: validateNormalizationCredential(request.credential)
+  });
 }
 
 export async function concatNormalizedVideoSegments(request: ConcatNormalizedVideoSegmentsRequest): Promise<ConcatenatedVideo> {

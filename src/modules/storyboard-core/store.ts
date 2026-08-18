@@ -11,6 +11,16 @@ export type ImportedShotScriptItem = {
   videoMode?: "auto" | "single_frame" | "first_last_frame";
   videoStartFramePath?: string;
   videoEndFramePath?: string;
+  videoWorkflowProfileId?: Shot["videoWorkflowProfileId"];
+  videoQualityTier?: Shot["videoQualityTier"];
+  videoAccelerationMode?: Shot["videoAccelerationMode"];
+  continuitySegmentId?: string;
+  videoBoundaryKind?: Shot["videoBoundaryKind"];
+  approvedBoundaryFramePath?: string;
+  videoRouteReason?: string;
+  videoQualityStatus?: Shot["videoQualityStatus"];
+  videoGenerationReceipt?: Shot["videoGenerationReceipt"];
+  videoProductionEvidence?: Shot["videoProductionEvidence"];
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
   skyboxFaceWeights?: Partial<Record<SkyboxFace, number>>;
@@ -59,6 +69,21 @@ type CanvasHistoryState = {
   past: Stroke[][];
   future: Stroke[][];
 };
+
+const withVideoProductionDefaults = (shot: Shot): Shot => ({
+  ...shot,
+  videoWorkflowProfileId: shot.videoWorkflowProfileId ?? "auto",
+  videoQualityTier: shot.videoQualityTier ?? "production",
+  videoAccelerationMode: shot.videoAccelerationMode ?? "standard",
+  videoBoundaryKind: shot.videoBoundaryKind ?? "hard_cut",
+  videoQualityStatus: shot.videoQualityStatus ?? "pending",
+  videoProductionEvidence: normalizeVideoProductionEvidence(shot.videoProductionEvidence, shot.id)
+});
+
+function normalizeVideoProductionEvidence(value: Shot["videoProductionEvidence"], shotId: string): Shot["videoProductionEvidence"] {
+  if (!value || value.schemaVersion !== 1 || value.shotId !== shotId || !["pending", "processing", "ready", "failed"].includes(value.status)) return undefined;
+  return JSON.parse(JSON.stringify(value)) as Shot["videoProductionEvidence"];
+}
 
 export type ExportSettings = {
   width: number;
@@ -159,6 +184,16 @@ type StoryboardState = {
         | "videoMode"
         | "videoStartFramePath"
         | "videoEndFramePath"
+        | "videoWorkflowProfileId"
+        | "videoQualityTier"
+        | "videoAccelerationMode"
+        | "continuitySegmentId"
+        | "videoBoundaryKind"
+        | "approvedBoundaryFramePath"
+        | "videoRouteReason"
+        | "videoQualityStatus"
+        | "videoGenerationReceipt"
+        | "videoProductionEvidence"
         | "skyboxFace"
         | "skyboxFaces"
         | "skyboxFaceWeights"
@@ -767,7 +802,23 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => ({
       shots: state.shots.map((shot) =>
         shot.id === shotId
-          ? {
+          ? (() => {
+               const profileChanged = patch.videoWorkflowProfileId !== undefined && patch.videoWorkflowProfileId !== shot.videoWorkflowProfileId;
+               const receiptChanged = patch.videoGenerationReceipt !== undefined && JSON.stringify(patch.videoGenerationReceipt) !== JSON.stringify(shot.videoGenerationReceipt);
+               const mediaChanged = patch.generatedVideoPath !== undefined && patch.generatedVideoPath !== shot.generatedVideoPath;
+               const generationContractChanged =
+                 (patch.videoPrompt !== undefined && patch.videoPrompt !== shot.videoPrompt) ||
+                 (patch.videoMode !== undefined && patch.videoMode !== shot.videoMode) ||
+                 (patch.videoStartFramePath !== undefined && patch.videoStartFramePath !== shot.videoStartFramePath) ||
+                 (patch.videoEndFramePath !== undefined && patch.videoEndFramePath !== shot.videoEndFramePath) ||
+                 (patch.videoQualityTier !== undefined && patch.videoQualityTier !== shot.videoQualityTier) ||
+                 (patch.videoAccelerationMode !== undefined && patch.videoAccelerationMode !== shot.videoAccelerationMode) ||
+                 (patch.videoBoundaryKind !== undefined && patch.videoBoundaryKind !== shot.videoBoundaryKind) ||
+                 (patch.approvedBoundaryFramePath !== undefined && patch.approvedBoundaryFramePath !== shot.approvedBoundaryFramePath);
+                const invalidatesProduction = profileChanged || receiptChanged || mediaChanged || generationContractChanged;
+                const carriesReplacementEvidence = patch.videoProductionEvidence !== undefined;
+                const clearsProduction = invalidatesProduction && !carriesReplacementEvidence;
+              const next: Shot = {
               ...shot,
               title: patch.title ?? shot.title,
               dialogue: patch.dialogue ?? shot.dialogue,
@@ -779,6 +830,21 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
               videoMode: patch.videoMode ?? shot.videoMode,
               videoStartFramePath: patch.videoStartFramePath ?? shot.videoStartFramePath,
               videoEndFramePath: patch.videoEndFramePath ?? shot.videoEndFramePath,
+              videoWorkflowProfileId: patch.videoWorkflowProfileId ?? shot.videoWorkflowProfileId,
+              videoQualityTier: patch.videoQualityTier ?? shot.videoQualityTier,
+              videoAccelerationMode: patch.videoAccelerationMode ?? shot.videoAccelerationMode,
+              continuitySegmentId: patch.continuitySegmentId ?? shot.continuitySegmentId,
+              videoBoundaryKind: patch.videoBoundaryKind ?? shot.videoBoundaryKind,
+              approvedBoundaryFramePath:
+                patch.approvedBoundaryFramePath ?? shot.approvedBoundaryFramePath,
+              videoRouteReason: patch.videoRouteReason ?? shot.videoRouteReason,
+              videoQualityStatus: patch.videoQualityStatus ?? shot.videoQualityStatus,
+              videoGenerationReceipt: clearsProduction ? undefined : patch.videoGenerationReceipt ?? shot.videoGenerationReceipt,
+              videoProductionEvidence: patch.videoProductionEvidence !== undefined
+                   ? normalizeVideoProductionEvidence(patch.videoProductionEvidence, shot.id)
+                  : clearsProduction
+                    ? undefined
+                    : shot.videoProductionEvidence,
               skyboxFace: patch.skyboxFace ?? shot.skyboxFace,
               skyboxFaces: patch.skyboxFaces ?? shot.skyboxFaces,
               skyboxFaceWeights: patch.skyboxFaceWeights ?? shot.skyboxFaceWeights,
@@ -792,8 +858,11 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
               sourceSceneName: patch.sourceSceneName ?? shot.sourceSceneName,
               sourceScenePrompt: patch.sourceScenePrompt ?? shot.sourceScenePrompt,
               generatedImagePath: patch.generatedImagePath ?? shot.generatedImagePath,
-              generatedVideoPath: patch.generatedVideoPath ?? shot.generatedVideoPath
-            }
+              generatedVideoPath: clearsProduction ? undefined : patch.generatedVideoPath ?? shot.generatedVideoPath
+            };
+              if (clearsProduction) next.videoQualityStatus = "pending";
+              return next;
+            })()
           : shot
       )
     })),
@@ -850,6 +919,16 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           videoMode: item.videoMode ?? "auto",
           videoStartFramePath: item.videoStartFramePath?.trim() ?? "",
           videoEndFramePath: item.videoEndFramePath?.trim() ?? "",
+          videoWorkflowProfileId: item.videoWorkflowProfileId ?? "auto",
+          videoQualityTier: item.videoQualityTier ?? "production",
+          videoAccelerationMode: item.videoAccelerationMode ?? "standard",
+          continuitySegmentId: item.continuitySegmentId,
+          videoBoundaryKind: item.videoBoundaryKind ?? "hard_cut",
+          approvedBoundaryFramePath: item.approvedBoundaryFramePath,
+          videoRouteReason: item.videoRouteReason,
+          videoQualityStatus: item.videoQualityStatus ?? "pending",
+          videoGenerationReceipt: item.videoGenerationReceipt,
+          videoProductionEvidence: normalizeVideoProductionEvidence(item.videoProductionEvidence, shotId),
           skyboxFace: item.skyboxFace ?? "auto",
           skyboxFaces: (item.skyboxFaces ?? []).filter((face): face is SkyboxFace =>
             face === "front" ||
@@ -1463,7 +1542,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         project: snapshot.project ?? state.project,
         sequences: nextSequences,
         currentSequenceId: safeCurrentSequenceId,
-        shots: snapshot.shots ?? state.shots,
+        shots: snapshot.shots ? snapshot.shots.map(withVideoProductionDefaults) : state.shots,
         selectedShotId: snapshot.selectedShotId ?? state.selectedShotId,
         audioTracks: snapshot.audioTracks ?? state.audioTracks,
         assets: snapshot.assets ?? state.assets,

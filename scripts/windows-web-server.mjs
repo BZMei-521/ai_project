@@ -609,6 +609,7 @@ async function invokeCommand(cmd, args) {
     case "stage_video_segment":
     case "normalize_video_segment":
     case "extract_video_review_frames":
+    case "verify_normalization_credential":
     case "concat_normalized_video_segments":
     case "verify_video_assembly_receipt":
     case "cleanup_video_assembly_assets":

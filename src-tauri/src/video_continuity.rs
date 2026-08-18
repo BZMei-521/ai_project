@@ -3659,6 +3659,21 @@ pub fn extract_video_review_frames(
 }
 
 #[tauri::command]
+pub fn verify_normalization_credential(
+    app: tauri::AppHandle,
+    project_assets_dir: String,
+    credential: NormalizationCredential,
+) -> Result<VideoInspection, String> {
+    let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
+    let registry_root = resolve_registry_root(&app)?;
+    let path = verify_credential(&project_root, &asset_root, &registry_root, &credential)?;
+    Ok(VideoInspection {
+        probe: probe_path(&path)?,
+        anomalies: detect_anomalies(&path)?,
+    })
+}
+
+#[tauri::command]
 pub fn concat_normalized_video_segments(
     app: tauri::AppHandle,
     run_capability: AssemblyRunCapability,

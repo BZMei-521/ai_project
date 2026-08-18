@@ -3537,6 +3537,7 @@ type NormalizedImportedShot = {
   scenePrompt: string;
   generatedImagePath?: string;
   generatedVideoPath?: string;
+  videoProductionEvidence?: Shot["videoProductionEvidence"];
 };
 
 function normalizeImportedShotReuseText(value: string | undefined) {
@@ -3736,7 +3737,12 @@ function preserveGeneratedMediaForImportedShots(
     return {
       ...item,
       generatedImagePath: item.generatedImagePath?.trim() || preservedGeneratedImagePath,
-      generatedVideoPath: item.generatedVideoPath?.trim() || preservedGeneratedVideoPath
+      generatedVideoPath: item.generatedVideoPath?.trim() || preservedGeneratedVideoPath,
+      videoProductionEvidence:
+        item.videoProductionEvidence ??
+        ((item.generatedVideoPath?.trim() || preservedGeneratedVideoPath) === preservedGeneratedVideoPath
+          ? matchedShot.videoProductionEvidence
+          : undefined)
     };
   });
 
@@ -4005,6 +4011,12 @@ function normalizeImportedShots(parsed: { shots?: Array<Record<string, unknown>>
           ? (item.characterRefs as string[])
           : [],
       sceneRefId: String(item.scene_ref_id ?? item.sceneRefId ?? ""),
+      videoProductionEvidence:
+        item.video_production_evidence && typeof item.video_production_evidence === "object"
+          ? (item.video_production_evidence as Shot["videoProductionEvidence"])
+          : item.videoProductionEvidence && typeof item.videoProductionEvidence === "object"
+            ? (item.videoProductionEvidence as Shot["videoProductionEvidence"])
+            : undefined,
       dialogue,
       notes,
       tags,
@@ -11664,7 +11676,8 @@ export function ComfyPipelinePanel() {
         notes: item.notes,
         tags: item.tags,
         generatedImagePath: item.generatedImagePath,
-        generatedVideoPath: item.generatedVideoPath
+        generatedVideoPath: item.generatedVideoPath,
+        videoProductionEvidence: item.videoProductionEvidence
       }))
     );
     return preservedMedia.items;
@@ -13555,7 +13568,7 @@ export function ComfyPipelinePanel() {
           <small>连接 ComfyUI · 导入分镜 · 一键生成整片</small>
         </div>
       </header>
-      <VideoProductionPanel />
+      <VideoProductionPanel onGenerateShot={(shotId) => onGenerateSingle("video", shotId, true)} />
       <section className="comfy-stage">
         <div className="comfy-stage-head">
           <span className="comfy-stage-index">01</span>
