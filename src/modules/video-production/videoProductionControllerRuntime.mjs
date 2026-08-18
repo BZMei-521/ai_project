@@ -52,7 +52,7 @@ export function createVideoOperationIdentity(input = {}) {
   const operation = {
     sequenceId: text(source.sequenceId), shotId: text(source.shotId), contractDigest: text(source.contractDigest),
     sourceVideoPath: text(source.sourceVideoPath), boundaryIdentity: text(source.boundaryIdentity),
-    operationToken: text(source.operationToken) || randomToken()
+    operationToken: text(source.operationToken) || randomToken(), settingsIdentity: text(source.settingsIdentity)
   };
   if (!operation.sequenceId || !operation.shotId || !/^[a-f0-9]{64}$/.test(operation.contractDigest) || !operation.sourceVideoPath || !operation.operationToken) {
     throw new Error("video_operation_identity_invalid");
@@ -192,7 +192,7 @@ export function createVideoProductionController(dependencies = {}) {
       if (staged.length > 1 && typeof dependencies.markBatchFailed === "function") await dependencies.markBatchFailed(staged, error);
       throw error;
     } finally {
-      if (!published && staged.length > 1) {
+      if (!published && staged.length > 0) {
         for (const item of staged) {
           try {
             if (retained.includes(item) && typeof dependencies.releaseRun === "function") await dependencies.releaseRun({ runCapability: item.evidence.runCapability });

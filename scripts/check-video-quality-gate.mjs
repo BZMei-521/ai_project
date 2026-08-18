@@ -420,6 +420,42 @@ await controller.rebuild({ kind: "adjacent_pair", shotIds: ["s2", "s3"], reason:
 });
 assert.deepEqual(calls.filter((item) => item.startsWith("generate:")), ["generate:s2", "generate:s3"]);
 
+for (const failAt of ["generation", "resolve", "stage", "normalize", "verify"]) {
+  let generatedCount = 0;
+  let begunCount = 0;
+  const cleanedRuns = [];
+  const retainedRuns = [];
+  const lifecycleController = createVideoProductionController({
+    beginRun: async () => ({ ...runCapability, runId: (begunCount++ === 0 ? "6" : "7").repeat(64) }),
+    stage: async ({ runCapability }) => {
+      if (failAt === "stage" && begunCount === 2) throw new Error("second_stage_failed");
+      return { stagedPath: `C:/project/assets/video-staging/${runCapability.runId}.media`, projectAssetsDir: "C:/project/assets", stagingReceiptId: hex("4") };
+    },
+    probe: async () => inspection,
+    normalize: async () => { if (failAt === "normalize" && begunCount === 2) throw new Error("second_normalize_failed"); return { credential, probe, anomalies: inspection.anomalies }; },
+    extractReviewFrames: async () => reviewFrames,
+    verifyCredential: async () => { if (failAt === "verify" && begunCount === 2) throw new Error("second_verify_failed"); return inspection; },
+    verifyReviewRecord: async () => authenticatedReviewRecord,
+    completeRun: async ({ runCapability }) => retainedRuns.push(runCapability.runId),
+    cleanupRun: async ({ runCapability }) => cleanedRuns.push(runCapability.runId),
+    releaseRun: async ({ runCapability }) => cleanedRuns.push(`released:${runCapability.runId}`),
+    persistEvidence: () => { throw new Error("pair_must_not_publish_individually"); },
+    persistBatchCAS: async () => { throw new Error("failed_pair_must_not_publish"); },
+    generateShot: async (shotId) => {
+      generatedCount += 1;
+      if (failAt === "generation" && generatedCount === 2) throw new Error("second_generation_failed");
+      return { ok: true, generatedVideoPath: `C:/generated/${shotId}-${failAt}.mp4` };
+    }
+  });
+  await assert.rejects(() => lifecycleController.rebuild({ kind: "adjacent_pair", shotIds: ["pair-a", "pair-b"], reason: "motion_boundary" }, async (shotId, generatedVideoPath) => {
+    if (failAt === "resolve" && shotId === "pair-b") throw new Error("second_resolve_failed");
+    const pairOperation = createVideoOperationIdentity({ sequenceId: "sequence-a", shotId, contractDigest: generationContractDigest, sourceVideoPath: generatedVideoPath, boundaryIdentity: "pair", operationToken: `${failAt}:${shotId}` });
+    return { shotId, sequenceId: "sequence-a", operation: pairOperation, contractDigest: generationContractDigest, generatedVideoPath, durationFrames: 48, projectWidth: 1280, projectHeight: 720, routeDecision, accelerationMode: "standard", profilePreflight, generationReceipt: generationReceiptFor(generatedVideoPath, pairOperation), boundary };
+  }), /second_/);
+  assert.equal(cleanedRuns.filter((runId) => runId === hex("6")).length, 1, `${failAt}: first handed-off run must be cleaned exactly once`);
+  assert.deepEqual(retainedRuns, [], `${failAt}: failed pair must not retain or publish a run`);
+}
+
 const componentBundlePath = join(process.cwd(), ".superpowers", "sdd", `.tmp-video-production-panel-${process.pid}-${Date.now()}.mjs`);
 await build({
   entryPoints: ["src/modules/video-production/VideoProductionPanel.tsx"], outfile: componentBundlePath,
@@ -546,6 +582,33 @@ for (const [label, mutate] of [
   await act(async () => { connectedRenderer.unmount(); });
 }
 
+for (const decisionKind of ["approve", "reject"]) for (const replacementKind of ["media", "profile", "boundary", "sequence"]) {
+  const rejectGate = deferred();
+  connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }, { id: "sequence-other", projectId: originalConnectedState.project.id, name: "other", order: 2 }], shots: [{ ...connectedShots[0], videoProductionEvidence: connectedEvidence }], assets: [] });
+  const rejectingFactory = () => ({ processGeneratedShot: async () => connectedEvidence, verifyForDecision: async () => rejectGate.promise, rebuild: async () => [] });
+  await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: connectedGenerator, controllerFactory: rejectingFactory } })); });
+  if (decisionKind === "reject") await act(async () => { connectedRenderer.root.findAll((node) => node.type === "select" && node.props.value === "")[0].props.onChange({ target: { value: "motion_boundary" } }); });
+  act(() => { connectedRenderer.root.find((node) => node.type === "button" && node.props.className === (decisionKind === "approve" ? "btn-primary" : "btn-danger") && node.props.disabled === false).props.onClick(); });
+  if (replacementKind === "sequence") connectedStore.setState({ currentSequenceId: "sequence-other" });
+  else connectedStore.setState((state) => ({ shots: state.shots.map((shot) => {
+    if (shot.id !== "connected-1") return shot;
+    const replacementPath = replacementKind === "media" ? "C:/generated/replacement.mp4" : shot.generatedVideoPath;
+    const replacementEvidence = { ...shot.videoProductionEvidence, sourceVideoPath: replacementPath, contractDigest: hex("6"), operation: { ...shot.videoProductionEvidence.operation, sourceVideoPath: replacementPath, contractDigest: hex("6"), operationToken: hex("5") } };
+    return { ...shot, generatedVideoPath: replacementPath, videoGenerationContractDigest: hex("6"), videoWorkflowProfileId: replacementKind === "profile" ? "minimax_h3_i2v" : shot.videoWorkflowProfileId, approvedBoundaryFramePath: replacementKind === "boundary" ? "C:/boundary/replacement.png" : shot.approvedBoundaryFramePath, videoProductionEvidence: replacementEvidence };
+  }) }));
+  const replacementSnapshot = { currentSequenceId: connectedStore.getState().currentSequenceId, shots: structuredClone(connectedStore.getState().shots) };
+  rejectGate.reject(new Error("backend_review_rejected"));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual({ currentSequenceId: connectedStore.getState().currentSequenceId, shots: connectedStore.getState().shots }, replacementSnapshot, `deferred ${decisionKind} verification failure after ${replacementKind} replacement must be a CAS no-op`);
+  await act(async () => { connectedRenderer.unmount(); });
+}
+
+const duplicateOtherEvidence = { ...connectedEvidence, sequenceId: "sequence-other", operation: { ...connectedOperation, sequenceId: "sequence-other", operationToken: hex("4") } };
+connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-other", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }, { id: "sequence-other", projectId: originalConnectedState.project.id, name: "other", order: 2 }], shots: [{ ...connectedShots[0], videoProductionEvidence: connectedEvidence }, { ...connectedShots[0], sequenceId: "sequence-other", videoProductionEvidence: duplicateOtherEvidence }], assets: [] });
+const duplicateSnapshot = { currentSequenceId: connectedStore.getState().currentSequenceId, shots: structuredClone(connectedStore.getState().shots) };
+assert.equal(panelModule.persistDecisionFailureCAS(connectedEvidence, new Error("backend_review_rejected")), false);
+assert.deepEqual({ currentSequenceId: connectedStore.getState().currentSequenceId, shots: connectedStore.getState().shots }, duplicateSnapshot, "duplicate shot IDs in another sequence must not receive stale decision failure");
+
 const partialOldPaths = [connectedShots[0].generatedVideoPath, "C:/generated/connected-2-old.mp4"];
 const connectedSecondEvidence = { ...connectedEvidence, shotId: "connected-2", sourceVideoPath: partialOldPaths[1], operation: { ...connectedOperation, shotId: "connected-2", sourceVideoPath: partialOldPaths[1], operationToken: hex("8") }, qualityReport: { ...connectedReport, shotId: "connected-2" } };
 connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: [{ ...connectedShots[0], videoProductionEvidence: connectedEvidence }, { ...connectedShots[1], generatedVideoPath: partialOldPaths[1], videoGenerationContractDigest: generationContractDigest, videoProductionEvidence: connectedSecondEvidence, videoQualityStatus: "approved" }], assets: [] });
@@ -568,12 +631,28 @@ await act(async () => { connectedRenderer.unmount(); });
 let settingsRecoveryCount = 0;
 const failedForRecovery = { ...connectedEvidence, status: "failed", failureReason: "video_inventory_http_failed" };
 connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: [{ ...connectedShots[0], videoProductionEvidence: failedForRecovery, videoQualityStatus: "rejected" }], assets: [] });
-const recoveryFactory = (options) => ({ processGeneratedShot: async (input) => { settingsRecoveryCount += 1; options.persistEvidence(input.shotId, connectedEvidence); return connectedEvidence; }, verifyForDecision: async () => connectedReport, rebuild: async () => [] });
+const recoveryFactory = (options) => ({ processGeneratedShot: async (input) => { settingsRecoveryCount += 1; const freshEvidence = { ...connectedEvidence, operation: input.operation }; options.persistEvidence(input.shotId, freshEvidence); return freshEvidence; }, verifyForDecision: async () => connectedReport, rebuild: async () => [] });
 await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: connectedGenerator, controllerFactory: recoveryFactory } })); await Promise.resolve(); });
 const firstRecoveryCount = settingsRecoveryCount;
 await act(async () => { connectedRenderer.update(React.createElement(panelModule.VideoProductionPanel, { settings: { ...connectedSettings, baseUrl: "http://127.0.0.1:8288" }, services: { routedGenerator: connectedGenerator, controllerFactory: recoveryFactory } })); await Promise.resolve(); });
 assert.equal(firstRecoveryCount >= 1, true, "retryable inventory failure must process on mount");
 assert.equal(settingsRecoveryCount > firstRecoveryCount, true, "Comfy URL change must retry failed live preflight/evidence processing");
+await act(async () => { connectedRenderer.unmount(); });
+
+const oldInventoryGate = deferred();
+let oldInventoryCount = 0;
+let newInventoryCount = 0;
+const oldUrlGenerator = { ...connectedGenerator, prepare: async () => { oldInventoryCount += 1; return oldInventoryGate.promise; } };
+const newUrlGenerator = { ...connectedGenerator, prepare: async (shotId, options) => { newInventoryCount += 1; return connectedGenerator.prepare(shotId, options); } };
+connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: [{ ...connectedShots[0], videoProductionEvidence: failedForRecovery, videoQualityStatus: "rejected" }], assets: [] });
+await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: oldUrlGenerator, controllerFactory: recoveryFactory } })); await Promise.resolve(); });
+assert.equal(oldInventoryCount, 1);
+await act(async () => { connectedRenderer.update(React.createElement(panelModule.VideoProductionPanel, { settings: { ...connectedSettings, baseUrl: "http://127.0.0.1:8388" }, services: { routedGenerator: newUrlGenerator, controllerFactory: recoveryFactory } })); await Promise.resolve(); });
+assert.equal(newInventoryCount, 1, "new base URL inventory must start while old inventory is still pending");
+const freshUrlSnapshot = structuredClone(connectedStore.getState().shots);
+oldInventoryGate.reject(new Error("old_inventory_http_failed"));
+await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+assert.deepEqual(connectedStore.getState().shots, freshUrlSnapshot, "superseded old URL failure must not overwrite fresh evidence");
 await act(async () => { connectedRenderer.unmount(); });
 connectedStore.setState(originalConnectedState);
 

@@ -1,12 +1,18 @@
-# MiniMax H3 Task 8 r4 remediation report
+# MiniMax H3 Task 8 r5 remediation report
 
 ## Scope
 
-- Baseline: `104bfeaf1ac10740448cd471d2d01a94ad4f566e`.
-- Closed the two Critical and six Important findings in the latest Task 8 review without starting Task 9.
+- Baseline: `ea4253b9e34f64fcf90fc72fb50bb5dd621725d7`.
+- Closed the two Critical and one Important findings in the r4 independent review without starting Task 9.
 - Preserved unrelated dirty work and staged only Task 8 files/hunks.
 
 ## RED to GREEN
+
+1. A real adjacent-pair lifecycle test first showed zero cleanup calls for the first handed-off run when member two failed generation. The batch finally path now cleans every handed-off member whenever publication did not complete, including the one-staged-member case. Generation, input resolution, stage, normalize, and credential verification failure points each prove exactly one first-run cleanup and zero retain/publication.
+2. Approval/rejection backend verification errors no longer call a shot-ID-only failure writer. Both capture immutable evidence and use sequence, shot, operation token, source path, contract digest, and artifact binding CAS. Eight connected cases cover approval/rejection rejection after media, profile, boundary, and sequence replacement; duplicate IDs across sequences are isolated.
+3. A deferred old Comfy inventory request initially suppressed the automatic request for a new base URL. Processing is now keyed by sequence, shot, base URL, contract, and operation token; the settings identity is part of staged operation CAS. The new URL starts once while the old request remains pending, and the superseded old failure cannot publish or delete the new attempt.
+
+## Prior r4 closures retained
 
 1. Effective request mutations initially did not change the contract digest. The digest now hashes the complete consumed Task 5 request, including profile, acceleration, quality, prompt/seed, workflow, references, endpoints, incoming dependency receipt/frame, dimensions and duration.
 2. Retain followed by stale/CAS failure initially leaked a retained unpublished run. The controller now uses retain-then-CAS publication and an authorized backend discard command for every unpublished retained run; single and batch failures clean all run capabilities.
@@ -27,7 +33,7 @@
 - `npm.cmd run test:minimax-h3-binding` — PASS.
 - `npm.cmd run test:video-continuity-planner` — PASS.
 - `npm.cmd run test:video-normalization` — PASS.
-- `cargo test video_continuity::tests -- --nocapture` — PASS, 36 passed.
+- `cargo test retained_unpublished_run_can_be_authoritatively_discarded -- --nocapture` — PASS, 1 passed.
 - Concurrent 8-artifact run-ledger test — PASS once, then five consecutive repeats PASS.
 - `npm.cmd run build` — PASS; only the existing chunk-size advisory remains.
 

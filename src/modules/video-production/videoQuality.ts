@@ -37,6 +37,7 @@ export interface VideoOperationIdentity {
   sourceVideoPath: string;
   boundaryIdentity: string;
   operationToken: string;
+  settingsIdentity?: string;
 }
 
 export interface VideoQualityDecisionRecord {
