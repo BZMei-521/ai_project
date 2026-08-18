@@ -29,15 +29,17 @@ const representative = {
       pixelFormat: "yuv420p",
       audioSampleRate: 48000,
       audioChannels: 2,
-      hasMonotonicTimestamps: true
+      hasMonotonicTimestamps: true,
+      hasConstantFrameTimestamps: true,
+      decodedFrameCount: 24
     },
     anomalies: { blackIntervals: [], freezeIntervals: [] }
   },
   normalize_video_segment: {
     credential: {
       schemaVersion: 1,
+      receiptId: "f".repeat(64),
       normalizedPath: "C:\\project\\assets\\video-normalized\\shot-1.mp4",
-      receiptPath: "C:\\project\\assets\\video-normalized\\shot-1.normalized.json",
       sha256: "a".repeat(64),
       byteLength: 100,
       modifiedUnixMillis: 1,
@@ -82,12 +84,53 @@ new Function("require", "module", "exports", compiled.outputText)(
 );
 const bridge = module.exports;
 
+function loadIsolatedConcatShotVideos() {
+  const servicePath = path.join(repoRoot, "src/modules/comfy-pipeline/comfyService.ts");
+  const serviceSource = fs.readFileSync(servicePath, "utf8");
+  const sourceFile = ts.createSourceFile(servicePath, serviceSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const declaration = sourceFile.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === "concatShotVideos"
+  );
+  assert.ok(declaration, "real production concatShotVideos function must exist");
+  const transpiled = ts.transpileModule(declaration.getText(sourceFile), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+    reportDiagnostics: true
+  });
+  const state = { normalize: [], review: [], concat: [], legacy: [] };
+  const dependencies = {
+    isTauriRuntime: () => true,
+    normalizeVideoSegment: async (request) => {
+      state.normalize.push(structuredClone(request));
+      return {
+        credential: { ...credential, normalizedPath: `C:\\project\\assets\\video-normalized\\${request.segmentId}.mp4` },
+        probe: credential.probe,
+        anomalies: { blackIntervals: [], freezeIntervals: [] }
+      };
+    },
+    extractVideoReviewFrames: async (request) => {
+      state.review.push(structuredClone(request));
+      return { firstFramePath: "first.png", middleFramePath: "middle.png", lastFramePath: "last.png" };
+    },
+    concatNormalizedVideoSegments: async (request) => {
+      state.concat.push(structuredClone(request));
+      return { outputPath: "C:\\project\\assets\\video-assembled\\final.mp4", probe: credential.probe };
+    },
+    invokeDesktop: async (command, args) => {
+      state.legacy.push({ command, args });
+      return { outputPath: "legacy.mp4" };
+    }
+  };
+  const names = Object.keys(dependencies);
+  const factory = new Function(...names, `${transpiled.outputText.replace(/\bexport\s+/g, "")}\nreturn concatShotVideos;`);
+  return { concatShotVideos: factory(...Object.values(dependencies)), state };
+}
+
 const projectAssetsDir = "C:\\project\\assets";
 const inputPath = "C:\\project\\assets\\raw\\shot-1.mp4";
 const credential = {
   schemaVersion: 1,
+  receiptId: "a".repeat(64),
   normalizedPath: "C:\\project\\assets\\video-normalized\\shot-1.mp4",
-  receiptPath: "C:\\project\\assets\\video-normalized\\shot-1.normalized.json",
   sha256: "a".repeat(64),
   byteLength: 100,
   modifiedUnixMillis: 1,
@@ -120,7 +163,7 @@ assert.throws(
 assert.throws(
   () => bridge.createConcatNormalizedVideoSegmentsRequest({
     projectAssetsDir,
-    segments: [{ ...credential, receiptPath: "" }]
+    segments: [{ ...credential, receiptId: "" }]
   }),
   /normalization_credential_missing/
 );
@@ -136,8 +179,8 @@ assert.throws(
     projectAssetsDir,
     segments: [credential, {
       ...credential,
+      receiptId: "b".repeat(64),
       normalizedPath: "C:\\project\\assets\\video-normalized\\shot-2.mp4",
-      receiptPath: "C:\\project\\assets\\video-normalized\\shot-2.normalized.json",
       projectWidth: 1920,
       probe: { ...credential.probe, width: 1920 }
     }]
@@ -179,6 +222,72 @@ assert.deepEqual(calls.at(-1), {
   command: "concat_normalized_video_segments",
   args: { projectAssetsDir, segments: [credential] }
 });
+
+const production = loadIsolatedConcatShotVideos();
+const productionResult = await production.concatShotVideos({
+  projectAssetsDir,
+  projectWidth: 1280,
+  projectHeight: 720,
+  segments: [
+    { inputPath, segmentId: "shot-1", durationFrames: 24 },
+    { inputPath: "C:\\project\\assets\\raw\\shot-2.mp4", segmentId: "shot-2", durationFrames: 48 }
+  ]
+});
+assert.equal(productionResult, "C:\\project\\assets\\video-assembled\\final.mp4");
+assert.equal(production.state.legacy.length, 0, "new production assembly must never call concat_video_segments");
+assert.equal(production.state.normalize.length, 2, "every production segment must be normalized");
+assert.equal(production.state.review.length, 2, "every production segment must extract review frames from its credential");
+assert.equal(production.state.concat.length, 1);
+assert.deepEqual(
+  production.state.concat[0].segments,
+  production.state.review.map((call) => call.credential),
+  "concat and review must receive the exact backend-issued credentials"
+);
+
+function loadWindowsWebInvokeCommand() {
+  const serverPath = path.join(repoRoot, "scripts/windows-web-server.mjs");
+  const serverSource = fs.readFileSync(serverPath, "utf8");
+  const sourceFile = ts.createSourceFile(serverPath, serverSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const declaration = sourceFile.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === "invokeCommand"
+  );
+  assert.ok(declaration, "Windows Web must expose its real invokeCommand dispatcher to the contract");
+  return new Function(`${declaration.getText(sourceFile)}\nreturn invokeCommand;`)();
+}
+
+const windowsInvokeCommand = loadWindowsWebInvokeCommand();
+for (const command of [
+  "probe_video_segment",
+  "normalize_video_segment",
+  "extract_video_review_frames",
+  "concat_normalized_video_segments"
+]) {
+  await assert.rejects(
+    () => windowsInvokeCommand(command, {}),
+    /video_normalization_requires_tauri_runtime/,
+    `Windows Web invokeCommand must explicitly and safely block ${command}`
+  );
+}
+
+const webModule = { exports: {} };
+globalThis.window = {
+  __STORYBOARD_WEB_BRIDGE__: true,
+  location: { hostname: "127.0.0.1", port: "3210" }
+};
+new Function("require", "module", "exports", compiled.outputText)(
+  (specifier) => {
+    if (specifier !== "@tauri-apps/api/core") throw new Error(`unexpected require: ${specifier}`);
+    return { convertFileSrc: (value) => value, isTauri: () => false, invoke: async () => assert.fail("Tauri invoke unavailable") };
+  },
+  webModule,
+  webModule.exports
+);
+await assert.rejects(
+  () => webModule.exports.probeVideoSegment({ inputPath, projectAssetsDir }),
+  /video_normalization_requires_tauri_runtime/,
+  "Windows Web frontend wrapper must block before fetch/dispatch"
+);
+delete globalThis.window;
 
 const rust = spawnSync("cargo", [
   "test",

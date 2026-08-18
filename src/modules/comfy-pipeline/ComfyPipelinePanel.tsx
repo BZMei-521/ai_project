@@ -13332,7 +13332,8 @@ export function ComfyPipelinePanel() {
 
   const onConcatVideos = async (): Promise<boolean> => {
     try {
-      const allPaths = getScopedShotsSnapshot()
+      const scopedShots = getScopedShotsSnapshot();
+      const allPaths = scopedShots
         .map((shot) => shot.generatedVideoPath?.trim() ?? "")
         .filter((path) => path.length > 0);
       const paths = allPaths.filter((path) => looksLikeVideoPath(path));
@@ -13348,7 +13349,20 @@ export function ComfyPipelinePanel() {
       }
       setPipelineState("拼接整片视频中...");
       appendLog(`开始拼接整片视频，共 ${paths.length} 段`);
-      const output = await concatShotVideos(paths);
+      const pathSet = new Set(paths);
+      const projectAssetsDir = `${settings.outputDir.trim().replace(/[\\/]+$/, "")}/.storyboard-cache`;
+      const output = await concatShotVideos({
+        projectAssetsDir,
+        projectWidth: project.width,
+        projectHeight: project.height,
+        segments: scopedShots
+          .filter((shot) => pathSet.has(shot.generatedVideoPath?.trim() ?? ""))
+          .map((shot) => ({
+            inputPath: shot.generatedVideoPath?.trim() ?? "",
+            segmentId: shot.id,
+            durationFrames: shot.durationFrames
+          }))
+      });
       if (!output) {
         pushToast("拼接失败：未返回输出路径", "error");
         appendLog("视频拼接失败：未返回输出路径", "error");

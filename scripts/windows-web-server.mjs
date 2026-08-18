@@ -604,6 +604,11 @@ async function invokeCommand(cmd, args) {
       return exportAnimaticFromFrames(args);
     case "concat_video_segments":
       return concatVideoSegments(args?.videoPaths);
+    case "probe_video_segment":
+    case "normalize_video_segment":
+    case "extract_video_review_frames":
+    case "concat_normalized_video_segments":
+      throw new Error("video_normalization_requires_tauri_runtime");
     case "mux_video_with_audio_tracks":
       return muxVideoWithAudioTracks(args);
     case "mix_audio_tracks":

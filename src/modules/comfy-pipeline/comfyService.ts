@@ -1,5 +1,13 @@
 import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
-import { invokeDesktopCommand, isDesktopRuntime, toDesktopMediaSource } from "../platform/desktopBridge";
+import {
+  concatNormalizedVideoSegments,
+  extractVideoReviewFrames,
+  invokeDesktopCommand,
+  isDesktopRuntime,
+  isTauriRuntime,
+  normalizeVideoSegment,
+  toDesktopMediaSource
+} from "../platform/desktopBridge";
 import STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
 
 function normalizeEntityKey(value: string): string {
@@ -10114,10 +10122,37 @@ export async function generateShotAssetOutputs(
   }
 }
 
-export async function concatShotVideos(paths: string[]): Promise<string | null> {
-  const valid = paths.map((item) => item.trim()).filter((item) => item.length > 0);
-  if (valid.length === 0) return null;
-  const result = await invokeDesktop<ConcatResult>("concat_video_segments", { videoPaths: valid });
+export type ProductionVideoAssemblyRequest = {
+  projectAssetsDir: string;
+  projectWidth: number;
+  projectHeight: number;
+  segments: Array<{ inputPath: string; segmentId: string; durationFrames: number }>;
+};
+
+export async function concatShotVideos(request: ProductionVideoAssemblyRequest): Promise<string | null> {
+  if (!isTauriRuntime()) throw new Error("video_normalization_requires_tauri_runtime");
+  const segments = request.segments.filter((segment) => segment.inputPath.trim().length > 0);
+  if (segments.length === 0) return null;
+  const credentials = [];
+  for (const segment of segments) {
+    const normalized = await normalizeVideoSegment({
+      inputPath: segment.inputPath,
+      projectAssetsDir: request.projectAssetsDir,
+      segmentId: segment.segmentId,
+      projectWidth: request.projectWidth,
+      projectHeight: request.projectHeight,
+      durationFrames: segment.durationFrames
+    });
+    await extractVideoReviewFrames({
+      projectAssetsDir: request.projectAssetsDir,
+      credential: normalized.credential
+    });
+    credentials.push(normalized.credential);
+  }
+  const result = await concatNormalizedVideoSegments({
+    projectAssetsDir: request.projectAssetsDir,
+    segments: credentials
+  });
   return result.outputPath;
 }
 

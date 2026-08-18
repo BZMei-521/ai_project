@@ -60,6 +60,178 @@ export async function invokeDesktopCommand<T>(cmd: string, args?: Record<string,
   return payload as T;
 }
 
+export type VideoProbe = {
+  width: number;
+  height: number;
+  fpsNum: number;
+  fpsDen: number;
+  durationSeconds: number;
+  videoCodec: string;
+  pixelFormat: string;
+  audioSampleRate: number | null;
+  audioChannels: number | null;
+  hasMonotonicTimestamps: boolean;
+  hasConstantFrameTimestamps: boolean;
+  decodedFrameCount: number;
+};
+
+export type VideoAnomalyReport = {
+  blackIntervals: Array<{ startSeconds: number; endSeconds: number; durationSeconds: number }>;
+  freezeIntervals: Array<{ startSeconds: number; endSeconds: number; durationSeconds: number }>;
+};
+
+export type VideoInspection = { probe: VideoProbe; anomalies: VideoAnomalyReport };
+
+export type NormalizationCredential = {
+  schemaVersion: 1;
+  receiptId: string;
+  normalizedPath: string;
+  sha256: string;
+  byteLength: number;
+  modifiedUnixMillis: number;
+  projectWidth: number;
+  projectHeight: number;
+  durationFrames: number;
+  probe: VideoProbe;
+};
+
+export type NormalizedVideoSegment = {
+  credential: NormalizationCredential;
+  probe: VideoProbe;
+  anomalies: VideoAnomalyReport;
+};
+
+export type VideoReviewFrames = {
+  firstFramePath: string;
+  middleFramePath: string;
+  lastFramePath: string;
+};
+
+export type ConcatenatedVideo = { outputPath: string; probe: VideoProbe };
+export type ProbeVideoSegmentRequest = { inputPath: string; projectAssetsDir: string };
+export type NormalizeVideoSegmentRequest = ProbeVideoSegmentRequest & {
+  segmentId: string;
+  projectWidth: number;
+  projectHeight: number;
+  durationFrames: number;
+};
+export type ExtractVideoReviewFramesRequest = {
+  projectAssetsDir: string;
+  credential: NormalizationCredential;
+};
+export type ConcatNormalizedVideoSegmentsRequest = {
+  projectAssetsDir: string;
+  segments: NormalizationCredential[];
+};
+
+function requireAbsoluteVideoPath(value: string, missingCode: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(missingCode);
+  if (!(trimmed.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(trimmed) || /^\\\\[^\\]+\\[^\\]+/.test(trimmed))) {
+    throw new Error("video_path_must_be_absolute");
+  }
+  return trimmed;
+}
+
+function requirePositiveSafeInteger(value: number, code: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(code);
+  return value;
+}
+
+function requireTauriVideoContinuityRuntime(): void {
+  if (!isTauriRuntime()) throw new Error("video_normalization_requires_tauri_runtime");
+}
+
+function validateNormalizationCredential(credential: NormalizationCredential): NormalizationCredential {
+  if (
+    credential.schemaVersion !== 1 ||
+    !/^[a-f0-9]{64}$/.test(credential.receiptId ?? "") ||
+    !credential.normalizedPath?.trim() ||
+    !/^[a-f0-9]{64}$/.test(credential.sha256 ?? "") ||
+    !Number.isSafeInteger(credential.byteLength) || credential.byteLength <= 0 ||
+    !Number.isSafeInteger(credential.modifiedUnixMillis) || credential.modifiedUnixMillis <= 0
+  ) throw new Error("normalization_credential_missing");
+  requireAbsoluteVideoPath(credential.normalizedPath, "normalization_credential_missing");
+  requirePositiveSafeInteger(credential.projectWidth, "normalized_segment_dimensions_invalid");
+  requirePositiveSafeInteger(credential.projectHeight, "normalized_segment_dimensions_invalid");
+  requirePositiveSafeInteger(credential.durationFrames, "video_duration_frames_invalid");
+  if (credential.probe?.fpsNum !== 24 || credential.probe?.fpsDen !== 1) {
+    throw new Error("normalized_segment_fps_invalid");
+  }
+  if (credential.probe.width !== credential.projectWidth || credential.probe.height !== credential.projectHeight) {
+    throw new Error("normalized_segment_dimensions_mismatch");
+  }
+  if (
+    credential.probe.videoCodec !== "h264" ||
+    credential.probe.pixelFormat !== "yuv420p" ||
+    credential.probe.audioSampleRate !== 48000 ||
+    credential.probe.audioChannels !== 2 ||
+    credential.probe.hasMonotonicTimestamps !== true ||
+    credential.probe.hasConstantFrameTimestamps !== true ||
+    credential.probe.decodedFrameCount !== credential.durationFrames
+  ) throw new Error("normalized_segment_stream_contract_invalid");
+  return credential;
+}
+
+export function createProbeVideoSegmentRequest(request: ProbeVideoSegmentRequest): ProbeVideoSegmentRequest {
+  return {
+    inputPath: requireAbsoluteVideoPath(request.inputPath, "video_input_path_missing"),
+    projectAssetsDir: requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing")
+  };
+}
+
+export function createNormalizeVideoSegmentRequest(request: NormalizeVideoSegmentRequest): NormalizeVideoSegmentRequest {
+  const base = createProbeVideoSegmentRequest(request);
+  const segmentId = request.segmentId.trim();
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(segmentId)) throw new Error("video_segment_id_invalid");
+  const projectWidth = requirePositiveSafeInteger(request.projectWidth, "video_project_dimensions_invalid");
+  const projectHeight = requirePositiveSafeInteger(request.projectHeight, "video_project_dimensions_invalid");
+  if (projectWidth > 8192 || projectHeight > 8192 || projectWidth % 2 || projectHeight % 2) {
+    throw new Error("video_project_dimensions_invalid");
+  }
+  const durationFrames = requirePositiveSafeInteger(request.durationFrames, "video_duration_frames_invalid");
+  if (durationFrames > 24 * 60 * 60) throw new Error("video_duration_frames_invalid");
+  return { ...base, segmentId, projectWidth, projectHeight, durationFrames };
+}
+
+export function createExtractVideoReviewFramesRequest(request: ExtractVideoReviewFramesRequest): ExtractVideoReviewFramesRequest {
+  return {
+    projectAssetsDir: requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing"),
+    credential: validateNormalizationCredential(request.credential)
+  };
+}
+
+export function createConcatNormalizedVideoSegmentsRequest(request: ConcatNormalizedVideoSegmentsRequest): ConcatNormalizedVideoSegmentsRequest {
+  const projectAssetsDir = requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing");
+  if (!Array.isArray(request.segments) || request.segments.length === 0) throw new Error("normalized_segments_missing");
+  const segments = request.segments.map(validateNormalizationCredential);
+  const { projectWidth, projectHeight } = segments[0];
+  if (segments.some((segment) => segment.projectWidth !== projectWidth || segment.projectHeight !== projectHeight)) {
+    throw new Error("normalized_segment_dimensions_mismatch");
+  }
+  return { projectAssetsDir, segments };
+}
+
+export async function probeVideoSegment(request: ProbeVideoSegmentRequest): Promise<VideoInspection> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<VideoInspection>("probe_video_segment", createProbeVideoSegmentRequest(request));
+}
+
+export async function normalizeVideoSegment(request: NormalizeVideoSegmentRequest): Promise<NormalizedVideoSegment> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<NormalizedVideoSegment>("normalize_video_segment", createNormalizeVideoSegmentRequest(request));
+}
+
+export async function extractVideoReviewFrames(request: ExtractVideoReviewFramesRequest): Promise<VideoReviewFrames> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<VideoReviewFrames>("extract_video_review_frames", createExtractVideoReviewFramesRequest(request));
+}
+
+export async function concatNormalizedVideoSegments(request: ConcatNormalizedVideoSegmentsRequest): Promise<ConcatenatedVideo> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<ConcatenatedVideo>("concat_normalized_video_segments", createConcatNormalizedVideoSegmentsRequest(request));
+}
+
 export function toDesktopMediaSource(raw: string | undefined): string {
   const value = raw?.trim() ?? "";
   if (!value) return "";

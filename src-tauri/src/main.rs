@@ -11,6 +11,8 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
+mod video_continuity;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ProjectPayload {
@@ -2835,6 +2837,10 @@ fn main() {
             export_animatic,
             export_animatic_from_frames,
             concat_video_segments,
+            video_continuity::probe_video_segment,
+            video_continuity::normalize_video_segment,
+            video_continuity::extract_video_review_frames,
+            video_continuity::concat_normalized_video_segments,
             mux_video_with_audio_tracks,
             mix_audio_tracks,
             generate_local_video_from_images,
