@@ -87,6 +87,28 @@
 5. The key lifecycle test proves stable restart, no Windows plaintext key, hardlink rejection, active-key rotation, old signed receipt verification and corrupt-latest fail-closed behavior.
 6. Missing-FFmpeg retry, source replacement, preoccupied target, real junction containment, forged/replayed receipt, real malformed-media, exact decoded-tail frames and two-project GC remain GREEN under the journal design.
 
+## r5 authority, publication, and downstream-consumer remediation
+
+- Generic write/copy/delete paths share the canonical Task 7 guard, covering private authority plus staging/normalized/review/assembled roots, aliases, and nonexistent descendants. Family-delete validates every candidate before mutation.
+- The signed journal is now `leased -> prepared -> publishing -> published -> committed`. A signed prepared binding precedes durable `publishing`, which precedes the no-clobber hard link. Recovery republishes a missing final, accepts only a matching visible final, and removes tampering before abort. Temp-unlink failure is deferred cleanup, not failure.
+- Run TTL is enforced during verification; expiry is durably signed. GC reclaims expired-run ledger artifacts by canonical project. First-stage production failure still invokes capability-only cleanup.
+- Production returns `{ outputPath, assemblyReceipt }`; the real Panel carries that receipt to mux, and Rust re-verifies the stored receipt, file binding, and probe at consumption time. Receipt-less legacy mux cannot read Task 7 managed roots.
+- GC resolves each record's own active/retired `keyId`, scopes records by canonical project/assets, and reports corrupt/unknown records in `issues` without blocking other projects.
+- Transaction/run/assembly/normalization/review/keyring records publish through a private create-new temp, flush/fsync, immutable rename, and per-target cross-process lock with CSPRNG ownership plus bounded stale recovery. Review registration no longer overwrites authority state with `fs::write`.
+
+### r5 RED/GREEN evidence
+
+1. Managed roots and family-delete were accepted before the shared guard; GREEN leaves keyring, receipt, and assembly bytes unchanged.
+2. Publishing recovery lacked a signed prepared binding; GREEN recovers missing/visible output deterministically and keeps receipts non-reusable after visibility.
+3. Expired-run GC initially left the signed artifact present; GREEN removes exactly it and records `cleaned`.
+4. The executable production test initially got a bare string (`outputPath === undefined`); GREEN proves Panel-to-mux receipt propagation.
+5. Retired-key GC initially failed with `normalization_receipt_signature_invalid`; GREEN cleans the valid old-key record and reports an unknown-key record without global failure.
+6. Eight concurrent authority writers produce exactly one complete immutable winner and zero partial temp files.
+
+### r5 fresh verification
+
+- Task 7 checker PASS; `cargo test` 37/37 PASS; `cargo check` PASS; `npm.cmd run build` PASS; Task 5 binding, Task 6 planner, and video-router regressions PASS.
+
 ### r4 fresh verification
 
 - `node scripts/check-video-normalization-contract.mjs` — PASS, including 26 real Rust media/security tests.

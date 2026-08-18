@@ -13367,7 +13367,7 @@ export function ComfyPipelinePanel() {
         setPipelineState("视频拼接失败：未返回输出路径");
         return false;
       }
-      let finalOutput = output;
+      let finalOutput = output.outputPath;
       const usableAudioTracks = useStoryboardStore
         .getState()
         .audioTracks.filter((track) => looksLikeAudioPath(track.filePath));
@@ -13375,7 +13375,8 @@ export function ComfyPipelinePanel() {
         appendLog(`开始融合整片音频，共 ${usableAudioTracks.length} 条音轨`);
         const { muxVideoWithAudioTracks } = await loadExportService();
         const muxed = await muxVideoWithAudioTracks({
-          videoPath: output,
+          videoPath: output.outputPath,
+          videoAssemblyReceipt: output.assemblyReceipt,
           fps: project.fps,
           audioTracks: usableAudioTracks
         });

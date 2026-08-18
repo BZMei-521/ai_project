@@ -172,7 +172,7 @@ export type CleanupVideoAssemblyAssetsRequest = {
   runCapability: AssemblyRunCapability;
 };
 
-export type VideoGcReport = { receiptsRemoved: number; assetsRemoved: number };
+export type VideoGcReport = { receiptsRemoved: number; assetsRemoved: number; issues: string[] };
 
 function requireAbsoluteVideoPath(value: string, missingCode: string): string {
   const trimmed = value.trim();

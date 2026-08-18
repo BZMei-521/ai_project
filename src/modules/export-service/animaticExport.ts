@@ -1,4 +1,4 @@
-import { invokeDesktopCommand, isDesktopRuntime } from "../platform/desktopBridge";
+import { invokeDesktopCommand, isDesktopRuntime, type AssemblyReceipt } from "../platform/desktopBridge";
 import { renderShotsToFrames } from "./frameRenderer";
 import type { AudioTrack, Shot, ShotLayer } from "../storyboard-core/types";
 import type { Stroke } from "../storyboard-core/store";
@@ -26,6 +26,7 @@ type OpenPathResult = {
 
 type MuxVideoRequest = {
   videoPath: string;
+  videoAssemblyReceipt?: AssemblyReceipt;
   fps: number;
   audioTracks: AudioTrack[];
 };
@@ -95,6 +96,7 @@ export async function muxVideoWithAudioTracks(
   if (!isDesktopRuntime()) return null;
   const result = await invokeDesktopCommand<ExportResult>("mux_video_with_audio_tracks", {
     videoPath: request.videoPath,
+    videoAssemblyReceipt: request.videoAssemblyReceipt,
     fps: request.fps,
     audioTracks: request.audioTracks
   });

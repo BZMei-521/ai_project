@@ -9,6 +9,7 @@ import {
   isTauriRuntime,
   normalizeVideoSegment,
   stageVideoSegment,
+  type ConcatenatedVideo,
   verifyVideoAssemblyReceipt,
   toDesktopMediaSource
 } from "../platform/desktopBridge";
@@ -10132,7 +10133,7 @@ export type ProductionVideoAssemblyRequest = {
   segments: Array<{ inputPath: string; segmentId: string; durationFrames: number }>;
 };
 
-export async function concatShotVideos(request: ProductionVideoAssemblyRequest): Promise<string | null> {
+export async function concatShotVideos(request: ProductionVideoAssemblyRequest): Promise<ConcatenatedVideo | null> {
   if (!isTauriRuntime()) throw new Error("video_normalization_requires_tauri_runtime");
   const segments = request.segments.filter((segment) => segment.inputPath.trim().length > 0);
   if (segments.length === 0) return null;
@@ -10169,14 +10170,12 @@ export async function concatShotVideos(request: ProductionVideoAssemblyRequest):
     });
     const verifiedOutputPath = await verifyVideoAssemblyReceipt(result.assemblyReceipt);
     await cleanupVideoAssemblyAssets({ runCapability });
-    return verifiedOutputPath;
+    return { ...result, outputPath: verifiedOutputPath };
   } catch (error) {
-    if (projectAssetsDir) {
-      try {
-        await cleanupVideoAssemblyAssets({ runCapability });
-      } catch {
-        // Preserve the production failure; backend GC can reclaim signed leftovers.
-      }
+    try {
+      await cleanupVideoAssemblyAssets({ runCapability });
+    } catch {
+      // Preserve the production failure; backend GC can reclaim signed leftovers.
     }
     throw error;
   }

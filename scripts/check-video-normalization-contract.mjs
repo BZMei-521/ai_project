@@ -91,7 +91,7 @@ const representative = {
   },
   verify_video_assembly_receipt: "C:\\project\\assets\\video-assembled\\assembled.mp4",
   cleanup_video_assembly_assets: null,
-  gc_video_continuity_assets: { receiptsRemoved: 2, assetsRemoved: 8 }
+  gc_video_continuity_assets: { receiptsRemoved: 2, assetsRemoved: 8, issues: [] }
 };
 
 const calls = [];
@@ -146,6 +146,7 @@ function loadIsolatedConcatShotVideos(options = {}) {
     },
     stageVideoSegment: async (request) => {
       state.stage.push(structuredClone(request));
+      if (state.stage.length === options.failStageAt) throw new Error("injected_first_stage_failure");
       return {
         stagedPath: `C:\\project\\assets\\video-staging\\stage-${state.stage.length}.mp4`,
         projectAssetsDir,
@@ -194,7 +195,7 @@ function loadIsolatedConcatShotVideos(options = {}) {
   return { concatShotVideos: factory(...Object.values(dependencies)), state };
 }
 
-function loadPanelConcatHandler() {
+function loadPanelConcatHandler(options = {}) {
   const panelPath = path.join(repoRoot, "src/modules/comfy-pipeline/ComfyPipelinePanel.tsx");
   const panelSource = fs.readFileSync(panelPath, "utf8");
   const sourceFile = ts.createSourceFile(panelPath, panelSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -210,6 +211,7 @@ function loadPanelConcatHandler() {
     reportDiagnostics: true
   });
   const captured = [];
+  const muxed = [];
   const dependencies = {
     getScopedShotsSnapshot: () => [{ id: "shot-1", generatedVideoPath: "C:\\ComfyUI\\output\\shot-1.mp4", durationFrames: 24 }],
     looksLikeVideoPath: () => true,
@@ -218,11 +220,23 @@ function loadPanelConcatHandler() {
     pushToast: () => {},
     settings: { outputDir: "C:\\ComfyUI\\output" },
     project: { width: 1280, height: 720, fps: 24 },
-    concatShotVideos: async (request) => { captured.push(structuredClone(request)); return null; }
+    concatShotVideos: async (request) => {
+      captured.push(structuredClone(request));
+      return options.output ?? null;
+    },
+    useStoryboardStore: { getState: () => ({ audioTracks: options.audioTracks ?? [] }) },
+    looksLikeAudioPath: () => true,
+    loadExportService: async () => ({
+      muxVideoWithAudioTracks: async (request) => {
+        muxed.push(structuredClone(request));
+        return request.videoPath;
+      }
+    }),
+    setPreviewVideoPath: () => {}
   };
   const names = Object.keys(dependencies);
   const factory = new Function(...names, `${transpiled.outputText}\nreturn onConcatVideos;`);
-  return { onConcatVideos: factory(...Object.values(dependencies)), captured };
+  return { onConcatVideos: factory(...Object.values(dependencies)), captured, muxed };
 }
 
 const projectAssetsDir = "C:\\project\\assets";
@@ -366,7 +380,8 @@ const productionResult = await production.concatShotVideos({
     { inputPath: "C:\\project\\assets\\raw\\shot-2.mp4", segmentId: "shot-2", durationFrames: 48 }
   ]
 });
-assert.equal(productionResult, "C:\\project\\assets\\video-assembled\\final.mp4");
+assert.equal(productionResult.outputPath, "C:\\project\\assets\\video-assembled\\final.mp4");
+assert.deepEqual(productionResult.assemblyReceipt, production.state.verify[0]);
 assert.equal(production.state.begin.length, 1, "each production assembly must pin one backend run capability");
 assert.ok(production.state.stage.every((request) => request.runCapability.runId === representative.begin_video_assembly_run.runId));
 assert.equal(production.state.stage.length, 2, "every external H3/Comfy source must be staged by the backend first");
@@ -382,14 +397,14 @@ assert.deepEqual(
   production.state.review.map((call) => call.credential),
   "concat and review must receive the exact backend-issued credentials"
 );
-assert.equal(await production.concatShotVideos({
+assert.equal((await production.concatShotVideos({
   projectWidth: 1280,
   projectHeight: 720,
   segments: [
     { inputPath, segmentId: "shot-1", durationFrames: 24 },
     { inputPath: "C:\\project\\assets\\raw\\shot-2.mp4", segmentId: "shot-2", durationFrames: 48 }
   ]
-}), "C:\\project\\assets\\video-assembled\\final.mp4");
+})).outputPath, "C:\\project\\assets\\video-assembled\\final.mp4");
 assert.equal(production.state.stage.length, 4, "repeated production click must start a fresh nonce-staged run");
 assert.equal(production.state.cleanup.length, 2, "successful runs must each clean only their own intermediates");
 assert.ok(production.state.cleanup.every((request) => Object.keys(request).join(",") === "runCapability"));
@@ -399,6 +414,18 @@ assert.equal(await panel.onConcatVideos(), false);
 assert.equal(panel.captured.length, 1, "the real Panel concat handler must call the production orchestrator");
 assert.equal("projectAssetsDir" in panel.captured[0], false, "Panel must not manufacture a project asset root from Comfy output");
 assert.equal(JSON.stringify(panel.captured[0]).includes(".storyboard-cache"), false);
+
+const downstream = loadPanelConcatHandler({
+  output: representative.concat_normalized_video_segments,
+  audioTracks: [{ id: "voice", filePath: "C:\\project\\voice.wav", startFrame: 0, gain: 1 }]
+});
+assert.equal(await downstream.onConcatVideos(), true);
+assert.equal(downstream.muxed.length, 1, "production mux must execute through the real Panel handler");
+assert.deepEqual(
+  downstream.muxed[0].videoAssemblyReceipt,
+  representative.concat_normalized_video_segments.assemblyReceipt,
+  "production mux must carry the backend assembly receipt instead of trusting a bare managed path"
+);
 
 const failedProduction = loadIsolatedConcatShotVideos({ failNormalizeAt: 2 });
 await assert.rejects(
@@ -414,6 +441,21 @@ await assert.rejects(
 );
 assert.equal(failedProduction.state.cleanup.length, 1, "second-segment failure must compensate this run exactly once");
 assert.deepEqual(Object.keys(failedProduction.state.cleanup[0]), ["runCapability"]);
+
+const firstStageFailure = loadIsolatedConcatShotVideos({ failStageAt: 1 });
+await assert.rejects(
+  () => firstStageFailure.concatShotVideos({
+    projectWidth: 1280,
+    projectHeight: 720,
+    segments: [{ inputPath, segmentId: "shot-1", durationFrames: 24 }]
+  }),
+  /injected_first_stage_failure/
+);
+assert.equal(
+  firstStageFailure.state.cleanup.length,
+  1,
+  "a run capability must be aborted even when the first stage fails before returning project assets"
+);
 
 function loadWindowsWebInvokeCommand() {
   const serverPath = path.join(repoRoot, "scripts/windows-web-server.mjs");

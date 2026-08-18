@@ -1628,10 +1628,25 @@ fn concat_video_segments(
 fn mux_video_with_audio_tracks(
     app: tauri::AppHandle,
     video_path: String,
+    video_assembly_receipt: Option<video_continuity::AssemblyReceipt>,
     fps: i64,
     audio_tracks: Vec<AudioTrackPayload>,
 ) -> Result<ExportResult, String> {
-    let input_video_path = PathBuf::from(video_path.trim());
+    let input_video_path = match video_assembly_receipt.as_ref() {
+        Some(receipt) => {
+            let verified = video_continuity::verify_assembly_receipt_for_app(&app, receipt)?;
+            if verified != fs::canonicalize(video_path.trim())
+                .map_err(|_| "video_assembly_output_binding_mismatch".to_string())?
+            {
+                return Err("video_assembly_output_binding_mismatch".to_string());
+            }
+            verified
+        }
+        None => {
+            video_continuity::reject_authority_file_command_path(&app, &video_path)?;
+            PathBuf::from(video_path.trim())
+        }
+    };
     if !input_video_path.exists() || !input_video_path.is_file() {
         return Err(format!(
             "Source video not found: {}",
@@ -2582,6 +2597,19 @@ fn copy_file_to(
 
 #[tauri::command]
 fn delete_generated_file_families(
+    app: tauri::AppHandle,
+    source_paths: Vec<String>,
+    exclude_paths: Option<Vec<String>>,
+) -> Result<DeleteGeneratedFileFamiliesResult, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    delete_generated_file_families_at_app_data(&app_data, source_paths, exclude_paths)
+}
+
+fn delete_generated_file_families_at_app_data(
+    app_data: &Path,
     source_paths: Vec<String>,
     exclude_paths: Option<Vec<String>>,
 ) -> Result<DeleteGeneratedFileFamiliesResult, String> {
@@ -2669,8 +2697,11 @@ fn delete_generated_file_families(
         normalized
     }
 
-    let excludes: HashSet<PathBuf> = exclude_paths
-        .unwrap_or_default()
+    let exclude_values = exclude_paths.unwrap_or_default();
+    for raw in source_paths.iter().chain(exclude_values.iter()) {
+        video_continuity::reject_authority_file_command_path_at_app_data(app_data, raw)?;
+    }
+    let excludes: HashSet<PathBuf> = exclude_values
         .into_iter()
         .map(|value| PathBuf::from(value.trim()))
         .filter(|path| !path.as_os_str().is_empty())
@@ -2700,6 +2731,10 @@ fn delete_generated_file_families(
 
     let mut deleted_paths = Vec::new();
     for (directory, prefixes) in grouped_prefixes {
+        video_continuity::reject_authority_file_command_path_at_app_data(
+            app_data,
+            directory.to_string_lossy().as_ref(),
+        )?;
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -2718,8 +2753,16 @@ fn delete_generated_file_families(
             {
                 continue;
             }
-            fs::remove_file(&candidate_path)
-                .map_err(|err| format!("Failed to delete generated file {}: {err}", candidate_path.to_string_lossy()))?;
+            video_continuity::reject_authority_file_command_path_at_app_data(
+                app_data,
+                candidate_path.to_string_lossy().as_ref(),
+            )?;
+            fs::remove_file(&candidate_path).map_err(|err| {
+                format!(
+                    "Failed to delete generated file {}: {err}",
+                    candidate_path.to_string_lossy()
+                )
+            })?;
             deleted_paths.push(candidate_path.to_string_lossy().to_string());
         }
     }
