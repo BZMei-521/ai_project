@@ -1,4 +1,11 @@
-# MiniMax H3 Task 8 r5 remediation report
+# MiniMax H3 Task 8 r6 remediation report
+
+## r6 final concurrency closure
+
+- RED: the connected component held an old `8188` inventory request, switched to `8388`, completed and published the fresh attempt, then resolved the old request successfully. The old request incorrectly entered the controller after the fresh transient slot had been removed (`[8388, 8188]`).
+- GREEN: each sequence/shot now owns an independent monotonic processing epoch keyed to the canonical full Comfy settings identity and operation token. A new settings or generation-contract attempt becomes current before preparation; currentness is checked around every asynchronous boundary and before staged/controller/state work. The transient staged map is no longer the authority for attempt freshness.
+- The connected regression proves the new URL fully publishes first, a successful old prepare never enters the controller, the fresh evidence remains byte-for-byte unchanged, and neither URL creates a processing loop.
+- Fresh r6 verification: `node scripts/check-video-quality-gate.mjs` PASS; `npm.cmd run test:video-production-schema` PASS; `npm.cmd run build` PASS (only the existing large-chunk advisory).
 
 ## Scope
 

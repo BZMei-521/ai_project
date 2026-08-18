@@ -89,8 +89,10 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const processing = useRef(new Set<string>());
   const stagedOperations = useRef(new Map<string, StagedOperation>());
+  const attemptEpochs = useRef(new Map<string, ProcessingAttempt>());
   const rebuildGuards = useRef(new Map<string, VideoProductionEvidence["operation"]>());
-  const lastComfyBaseUrl = useRef(settings.baseUrl);
+  const settingsIdentity = videoProcessingSettingsIdentity(settings);
+  const lastComfySettingsIdentity = useRef(settingsIdentity);
   const scopedShots = useMemo(() => shots.filter((shot) => shot.sequenceId === currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id)), [currentSequenceId, shots]);
   const contexts = useMemo(() => buildContexts(scopedShots, assets), [assets, scopedShots]);
   const routedGenerator = useMemo(() => services?.routedGenerator ?? createRoutedVideoProductionGenerator({
@@ -149,7 +151,8 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
   const processShot = async (shotId: string) => {
     const shot = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
     if (!shot?.generatedVideoPath) return;
-    const processingKey = `${shot.sequenceId}:${shotId}:${settings.baseUrl}:${shot.videoGenerationContractDigest ?? "unprepared"}:${shot.videoGenerationReceipt?.operationToken ?? "legacy"}`;
+    const attemptKey = `${shot.sequenceId}:${shotId}`;
+    const processingKey = `${attemptKey}:${settingsIdentity}:${shot.videoGenerationContractDigest ?? "unprepared"}:${shot.videoGenerationReceipt?.operationToken ?? "legacy"}`;
     if (processing.current.has(processingKey)) return;
     processing.current.add(processingKey);
     const preparationOperation: StagedOperation = {
@@ -157,14 +160,30 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
       digest: shot.videoGenerationContractDigest ?? "0".repeat(64),
       token: shot.videoGenerationReceipt?.operationToken ?? globalThis.crypto.randomUUID(), settingsIdentity: settings.baseUrl
     };
+    const attempt: ProcessingAttempt = {
+      epoch: (attemptEpochs.current.get(attemptKey)?.epoch ?? 0) + 1,
+      operationToken: preparationOperation.token,
+      settingsIdentity
+    };
+    attemptEpochs.current.set(attemptKey, attempt);
+    const attemptIsCurrent = () => {
+      const current = attemptEpochs.current.get(attemptKey);
+      return current?.epoch === attempt.epoch && current.operationToken === attempt.operationToken && current.settingsIdentity === attempt.settingsIdentity;
+    };
     stagedOperations.current.set(shotId, preparationOperation);
     try {
+      if (!attemptIsCurrent()) return;
       const prepared = await routedGenerator.prepare(shotId, { operationToken: preparationOperation.token });
+      if (!attemptIsCurrent()) return;
       routedGenerator.verifyReceipt(shot.videoGenerationReceipt, prepared, shot.generatedVideoPath);
+      if (!attemptIsCurrent()) return;
       stagedOperations.current.set(shotId, { sequenceId: shot.sequenceId, path: shot.generatedVideoPath, digest: prepared.generationContractDigest, token: prepared.request.operationToken, settingsIdentity: settings.baseUrl });
+      if (!attemptIsCurrent()) return;
       await controller.processGeneratedShot({ ...createControllerInputFromShot({ shot, project, routeDecision: prepared.routeDecision, profilePreflight: prepared.profilePreflight, boundary: prepared.request.outgoingBoundary }), contractDigest: prepared.generationContractDigest, generationReceipt: shot.videoGenerationReceipt, operation: { sequenceId: shot.sequenceId, shotId, contractDigest: prepared.generationContractDigest, sourceVideoPath: shot.generatedVideoPath, boundaryIdentity: boundaryIdentity(prepared.request.outgoingBoundary), operationToken: prepared.request.operationToken, settingsIdentity: settings.baseUrl } });
+      if (!attemptIsCurrent()) return;
     }
     catch (error) {
+      if (!attemptIsCurrent()) return;
       const latest = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
       if (latest?.videoProductionEvidence?.status !== "failed") persistPreparationFailureCAS(shot, contexts.get(shotId), preparationOperation, stagedOperations.current, error);
     }
@@ -178,17 +197,17 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
   useEffect(() => {
     for (const shot of scopedShots) {
       const evidence = shot.videoProductionEvidence;
-      if (shot.generatedVideoPath?.trim() && (!evidence || evidence.sourceVideoPath !== shot.generatedVideoPath || evidence.status === "pending")) void processShot(shot.id);
+      if (shot.generatedVideoPath?.trim() && (!evidence || evidence.sourceVideoPath !== shot.generatedVideoPath || evidence.contractDigest !== shot.videoGenerationContractDigest || evidence.status === "pending")) void processShot(shot.id);
     }
   }, [scopedShots, contexts]);
 
   useEffect(() => {
-    const urlChanged = lastComfyBaseUrl.current !== settings.baseUrl;
-    lastComfyBaseUrl.current = settings.baseUrl;
+    const settingsChanged = lastComfySettingsIdentity.current !== settingsIdentity;
+    lastComfySettingsIdentity.current = settingsIdentity;
     for (const shot of useStoryboardStore.getState().shots) {
-      if (shot.sequenceId === useStoryboardStore.getState().currentSequenceId && shot.generatedVideoPath?.trim() && (urlChanged || shot.videoProductionEvidence?.status === "failed")) void processShot(shot.id);
+      if (shot.sequenceId === useStoryboardStore.getState().currentSequenceId && shot.generatedVideoPath?.trim() && (settingsChanged || shot.videoProductionEvidence?.status === "failed")) void processShot(shot.id);
     }
-  }, [settings.baseUrl]);
+  }, [settingsIdentity]);
 
   useEffect(() => {
     const active = new Set(rows.map((row) => row.artifactKey));
@@ -297,6 +316,19 @@ function buildRows(shots: Shot[], assets: Asset[], contexts: Map<string, { route
 
 function ReviewStrip({ label, paths }: { label: string; paths: Array<[string, string]> }) { return <div className="video-review-strip"><small>{label}</small><div className="video-review-strip__images">{paths.length ? paths.map(([name, path]) => <figure key={`${name}:${path}`}>{path ? <img alt={name} loading="lazy" src={toDesktopMediaSource(path)} /> : <div className="video-review-strip__missing">缺失</div>}<figcaption>{name}{path ? ` · ${path.replace(/\\/g, "/").split("/").pop()}` : ""}</figcaption></figure>) : <span className="video-review-strip__none">未提供</span>}</div></div>; }
 type StagedOperation = { sequenceId: string; path: string; digest: string; token: string; settingsIdentity?: string };
+type ProcessingAttempt = { epoch: number; operationToken: string; settingsIdentity: string };
+
+function videoProcessingSettingsIdentity(settings: ComfySettings) {
+  return JSON.stringify(stableSettingsValue(settings));
+}
+
+function stableSettingsValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableSettingsValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => compare(left, right)).map(([key, child]) => [key, stableSettingsValue(child)]));
+  }
+  return value;
+}
 function operationMatchesCurrent(operation: any, staged: Map<string, StagedOperation>) {
   const state = useStoryboardStore.getState();
   const shot = state.shots.find((item) => item.id === operation?.shotId);

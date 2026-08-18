@@ -642,17 +642,32 @@ await act(async () => { connectedRenderer.unmount(); });
 const oldInventoryGate = deferred();
 let oldInventoryCount = 0;
 let newInventoryCount = 0;
+const urlProcessEntries = [];
+const urlRaceFactory = (options) => ({
+  processGeneratedShot: async (input) => {
+    urlProcessEntries.push(input.operation.settingsIdentity);
+    const freshEvidence = { ...connectedEvidence, sourceVideoPath: input.generatedVideoPath, contractDigest: input.contractDigest, operation: input.operation };
+    options.persistEvidence(input.shotId, freshEvidence);
+    return freshEvidence;
+  },
+  verifyForDecision: async () => connectedReport,
+  rebuild: async () => []
+});
 const oldUrlGenerator = { ...connectedGenerator, prepare: async () => { oldInventoryCount += 1; return oldInventoryGate.promise; } };
 const newUrlGenerator = { ...connectedGenerator, prepare: async (shotId, options) => { newInventoryCount += 1; return connectedGenerator.prepare(shotId, options); } };
 connectedStore.setState({ ...originalConnectedState, currentSequenceId: "sequence-connected", sequences: [{ id: "sequence-connected", projectId: originalConnectedState.project.id, name: "connected", order: 1 }], shots: [{ ...connectedShots[0], videoProductionEvidence: failedForRecovery, videoQualityStatus: "rejected" }], assets: [] });
-await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: oldUrlGenerator, controllerFactory: recoveryFactory } })); await Promise.resolve(); });
+await act(async () => { connectedRenderer = TestRenderer.create(React.createElement(panelModule.VideoProductionPanel, { settings: connectedSettings, services: { routedGenerator: oldUrlGenerator, controllerFactory: urlRaceFactory } })); await Promise.resolve(); });
 assert.equal(oldInventoryCount, 1);
-await act(async () => { connectedRenderer.update(React.createElement(panelModule.VideoProductionPanel, { settings: { ...connectedSettings, baseUrl: "http://127.0.0.1:8388" }, services: { routedGenerator: newUrlGenerator, controllerFactory: recoveryFactory } })); await Promise.resolve(); });
+await act(async () => { connectedRenderer.update(React.createElement(panelModule.VideoProductionPanel, { settings: { ...connectedSettings, baseUrl: "http://127.0.0.1:8388" }, services: { routedGenerator: newUrlGenerator, controllerFactory: urlRaceFactory } })); await Promise.resolve(); await Promise.resolve(); });
 assert.equal(newInventoryCount, 1, "new base URL inventory must start while old inventory is still pending");
+assert.deepEqual(urlProcessEntries, ["http://127.0.0.1:8388"], "fresh URL must finish processing before the superseded inventory resolves");
 const freshUrlSnapshot = structuredClone(connectedStore.getState().shots);
-oldInventoryGate.reject(new Error("old_inventory_http_failed"));
-await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-assert.deepEqual(connectedStore.getState().shots, freshUrlSnapshot, "superseded old URL failure must not overwrite fresh evidence");
+oldInventoryGate.resolve(await connectedGenerator.prepare("connected-1", { operationToken: hex("1") }));
+await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+assert.deepEqual(urlProcessEntries, ["http://127.0.0.1:8388"], "superseded old URL success must never enter the controller");
+assert.deepEqual(connectedStore.getState().shots, freshUrlSnapshot, "superseded old URL success must not overwrite fresh evidence or transient state");
+assert.equal(oldInventoryCount, 1, "superseded success must not create an inventory loop");
+assert.equal(newInventoryCount, 1, "fresh success must not create an inventory loop");
 await act(async () => { connectedRenderer.unmount(); });
 connectedStore.setState(originalConnectedState);
 
