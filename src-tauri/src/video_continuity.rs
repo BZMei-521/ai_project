@@ -13,6 +13,8 @@ const NORMALIZED_FPS_NUM: u32 = 24;
 const NORMALIZED_FPS_DEN: u32 = 1;
 const MAX_VIDEO_DIMENSION: u32 = 8192;
 const MAX_SEGMENT_FRAMES: u32 = 24 * 60 * 60;
+const AUTHORITY_DIRECTORY: &str = "video-normalization-authority";
+const AUTHORITY_SECRET_BYTES: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +86,22 @@ struct NormalizationRegistryRecord {
     issuance_nonce: String,
     canonical_project_root: String,
     canonical_asset_root: String,
+    issued_unix_millis: u64,
+    state: String,
     credential: NormalizationCredential,
+    #[serde(default)]
+    derived_paths: Vec<String>,
+    mac: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReceiptStateMarker {
+    schema_version: u32,
+    receipt_id: String,
+    transaction_id: String,
+    state: String,
+    mac: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,6 +110,14 @@ pub struct NormalizedVideoSegment {
     pub credential: NormalizationCredential,
     pub probe: VideoProbe,
     pub anomalies: VideoAnomalyReport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedVideoSegment {
+    pub staged_path: String,
+    pub project_assets_dir: String,
+    pub staging_receipt_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -108,6 +133,13 @@ pub struct VideoReviewFrames {
 pub struct ConcatenatedVideo {
     pub output_path: String,
     pub probe: VideoProbe,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoGcReport {
+    pub receipts_removed: u32,
+    pub assets_removed: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,22 +280,223 @@ fn registry_consumed_path(registry_root: &Path, receipt_id: &str) -> Result<Path
     Ok(registry_root.join(format!("{receipt_id}.consumed")))
 }
 
+fn registry_lease_path(registry_root: &Path, receipt_id: &str) -> Result<PathBuf, String> {
+    if !valid_receipt_id(receipt_id) {
+        return Err("normalization_receipt_invalid".to_string());
+    }
+    Ok(registry_root.join(format!("{receipt_id}.lease")))
+}
+
+fn authority_root_from_registry(registry_root: &Path) -> Result<&Path, String> {
+    registry_root
+        .parent()
+        .ok_or_else(|| "normalization_registry_unavailable".to_string())
+}
+
+fn authority_secret(authority_root: &Path) -> Result<Vec<u8>, String> {
+    let secret_path = authority_root.join("authority.secret");
+    match OpenOptions::new().create_new(true).write(true).open(&secret_path) {
+        Ok(mut file) => {
+            let mut secret = vec![0_u8; AUTHORITY_SECRET_BYTES];
+            fill_os_random(&mut secret)?;
+            file.write_all(&secret)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| "normalization_authority_unavailable".to_string())?;
+            Ok(secret)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let secret = fs::read(&secret_path)
+                .map_err(|_| "normalization_authority_unavailable".to_string())?;
+            if secret.len() != AUTHORITY_SECRET_BYTES {
+                return Err("normalization_authority_unavailable".to_string());
+            }
+            Ok(secret)
+        }
+        Err(_) => Err("normalization_authority_unavailable".to_string()),
+    }
+}
+
+fn hmac_sha256(key: &[u8], message: &[u8]) -> String {
+    const BLOCK: usize = 64;
+    let mut normalized = [0_u8; BLOCK];
+    if key.len() > BLOCK {
+        normalized[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        normalized[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_pad = [0x36_u8; BLOCK];
+    let mut outer_pad = [0x5c_u8; BLOCK];
+    for index in 0..BLOCK {
+        inner_pad[index] ^= normalized[index];
+        outer_pad[index] ^= normalized[index];
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(message);
+    let inner_hash = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_hash);
+    outer.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn constant_time_hex_equal(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.as_bytes()
+        .iter()
+        .zip(right.as_bytes())
+        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+fn record_mac(record: &NormalizationRegistryRecord, secret: &[u8]) -> Result<String, String> {
+    let mut unsigned = record.clone();
+    unsigned.mac.clear();
+    let bytes = serde_json::to_vec(&unsigned)
+        .map_err(|_| "normalization_registry_invalid".to_string())?;
+    Ok(hmac_sha256(secret, &bytes))
+}
+
+fn marker_mac(marker: &ReceiptStateMarker, secret: &[u8]) -> Result<String, String> {
+    let mut unsigned = marker.clone();
+    unsigned.mac.clear();
+    let bytes = serde_json::to_vec(&unsigned)
+        .map_err(|_| "normalization_registry_invalid".to_string())?;
+    Ok(hmac_sha256(secret, &bytes))
+}
+
+fn read_state_marker(path: &Path, secret: &[u8]) -> Result<ReceiptStateMarker, String> {
+    let marker: ReceiptStateMarker = serde_json::from_slice(
+        &fs::read(path).map_err(|_| "normalization_registry_invalid".to_string())?,
+    )
+    .map_err(|_| "normalization_registry_invalid".to_string())?;
+    let expected = marker_mac(&marker, secret)?;
+    if marker.schema_version != NORMALIZED_SCHEMA_VERSION
+        || !valid_receipt_id(&marker.receipt_id)
+        || !constant_time_hex_equal(&marker.mac, &expected)
+    {
+        return Err("normalization_receipt_signature_invalid".to_string());
+    }
+    Ok(marker)
+}
+
+fn write_state_marker(
+    path: &Path,
+    receipt_id: &str,
+    transaction_id: &str,
+    state: &str,
+    secret: &[u8],
+) -> Result<(), String> {
+    if transaction_id.is_empty() || transaction_id.len() > 128 {
+        return Err("normalization_transaction_invalid".to_string());
+    }
+    let mut marker = ReceiptStateMarker {
+        schema_version: NORMALIZED_SCHEMA_VERSION,
+        receipt_id: receipt_id.to_string(),
+        transaction_id: transaction_id.to_string(),
+        state: state.to_string(),
+        mac: String::new(),
+    };
+    marker.mac = marker_mac(&marker, secret)?;
+    let bytes = serde_json::to_vec(&marker)
+        .map_err(|_| "normalization_registry_invalid".to_string())?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                "normalization_receipt_leased".to_string()
+            } else {
+                "normalization_consumption_failed".to_string()
+            }
+        })?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "normalization_consumption_failed".to_string())
+}
+
 fn ensure_registry_root(path: &Path) -> Result<PathBuf, String> {
+    let authority = path
+        .parent()
+        .ok_or_else(|| "normalization_registry_unavailable".to_string())?;
+    fs::create_dir_all(authority).map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let canonical_authority = fs::canonicalize(authority)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
     fs::create_dir_all(path).map_err(|_| "normalization_registry_unavailable".to_string())?;
     let canonical = fs::canonicalize(path)
         .map_err(|_| "normalization_registry_unavailable".to_string())?;
-    if !canonical.is_dir() {
+    if !canonical.is_dir() || canonical == canonical_authority || !canonical.starts_with(&canonical_authority) {
         return Err("normalization_registry_unavailable".to_string());
     }
+    authority_secret(&canonical_authority)?;
     Ok(canonical)
 }
 
-fn resolve_registry_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_authority_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|_| "normalization_registry_unavailable".to_string())?;
-    ensure_registry_root(&app_data.join("video-normalization-registry").join("receipts"))
+    fs::create_dir_all(&app_data).map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let canonical_app_data = fs::canonicalize(&app_data)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let authority = app_data.join(AUTHORITY_DIRECTORY);
+    fs::create_dir_all(&authority).map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let canonical_authority = fs::canonicalize(authority)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    if canonical_authority == canonical_app_data || !canonical_authority.starts_with(&canonical_app_data) {
+        return Err("normalization_registry_unavailable".to_string());
+    }
+    authority_secret(&canonical_authority)?;
+    Ok(canonical_authority)
+}
+
+fn resolve_registry_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let authority = resolve_authority_root(app)?;
+    ensure_registry_root(&authority.join("receipts"))
+}
+
+pub fn reject_authority_file_command_path(
+    app: &tauri::AppHandle,
+    raw_path: &str,
+) -> Result<(), String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    reject_authority_file_command_path_at_app_data(&app_data, raw_path)
+}
+
+fn reject_authority_file_command_path_at_app_data(
+    app_data: &Path,
+    raw_path: &str,
+) -> Result<(), String> {
+    fs::create_dir_all(app_data).map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let canonical_app_data = fs::canonicalize(app_data)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let authority_path = app_data.join(AUTHORITY_DIRECTORY);
+    fs::create_dir_all(&authority_path)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    let authority = fs::canonicalize(authority_path)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?;
+    if authority == canonical_app_data || !authority.starts_with(&canonical_app_data) {
+        return Err("normalization_registry_unavailable".to_string());
+    }
+    let requested = absolute_path(raw_path, "file_path is empty")?;
+    let mut existing = requested.as_path();
+    while !existing.exists() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| "file_path_invalid".to_string())?;
+    }
+    let canonical_existing = fs::canonicalize(existing).map_err(|_| "file_path_invalid".to_string())?;
+    if canonical_existing == authority || canonical_existing.starts_with(&authority) {
+        return Err("video_authority_path_forbidden".to_string());
+    }
+    Ok(())
 }
 
 fn issue_registry_receipt(
@@ -277,14 +510,23 @@ fn issue_registry_receipt(
         let issuance_nonce = random_hex(32)?;
         let path = registry_receipt_path(registry_root, &receipt_id)?;
         credential.receipt_id = receipt_id.clone();
-        let record = NormalizationRegistryRecord {
+        let mut record = NormalizationRegistryRecord {
             schema_version: NORMALIZED_SCHEMA_VERSION,
             receipt_id,
             issuance_nonce,
             canonical_project_root: project_root.to_string_lossy().to_string(),
             canonical_asset_root: asset_root.to_string_lossy().to_string(),
+            issued_unix_millis: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| "video_clock_invalid".to_string())?
+                .as_millis() as u64,
+            state: "available".to_string(),
             credential: credential.clone(),
+            derived_paths: Vec::new(),
+            mac: String::new(),
         };
+        let secret = authority_secret(authority_root_from_registry(registry_root)?)?;
+        record.mac = record_mac(&record, &secret)?;
         let serialized = serde_json::to_vec(&record)
             .map_err(|_| "normalization_registry_invalid".to_string())?;
         match OpenOptions::new().create_new(true).write(true).open(path) {
@@ -307,61 +549,164 @@ fn load_registry_record(
     asset_root: &Path,
     supplied: &NormalizationCredential,
 ) -> Result<NormalizationRegistryRecord, String> {
-    let path = registry_receipt_path(registry_root, &supplied.receipt_id)?;
-    let bytes = fs::read(path).map_err(|_| "normalization_receipt_not_issued".to_string())?;
-    let record: NormalizationRegistryRecord = serde_json::from_slice(&bytes)
-        .map_err(|_| "normalization_registry_invalid".to_string())?;
-    if record.schema_version != NORMALIZED_SCHEMA_VERSION
-        || record.receipt_id != supplied.receipt_id
-        || !valid_receipt_id(&record.issuance_nonce)
-        || record.canonical_project_root != project_root.to_string_lossy()
-        || record.canonical_asset_root != asset_root.to_string_lossy()
-        || &record.credential != supplied
-    {
-        return Err("normalization_credential_mismatch".to_string());
-    }
-    if registry_consumed_path(registry_root, &supplied.receipt_id)?.exists() {
+    let (record, secret) = load_signed_registry_record(
+        registry_root,
+        project_root,
+        asset_root,
+        supplied,
+    )?;
+    let consumed_path = registry_consumed_path(registry_root, &supplied.receipt_id)?;
+    if consumed_path.exists() {
+        let marker = read_state_marker(&consumed_path, &secret)?;
+        if marker.receipt_id != supplied.receipt_id || marker.state != "consumed" {
+            return Err("normalization_receipt_signature_invalid".to_string());
+        }
         return Err("normalization_receipt_consumed".to_string());
     }
     Ok(record)
 }
 
-fn consume_registry_receipts(
+fn load_signed_registry_record(
+    registry_root: &Path,
+    project_root: &Path,
+    asset_root: &Path,
+    supplied: &NormalizationCredential,
+) -> Result<(NormalizationRegistryRecord, Vec<u8>), String> {
+    let path = registry_receipt_path(registry_root, &supplied.receipt_id)?;
+    let bytes = fs::read(path).map_err(|_| "normalization_receipt_not_issued".to_string())?;
+    let record: NormalizationRegistryRecord = serde_json::from_slice(&bytes)
+        .map_err(|_| "normalization_registry_invalid".to_string())?;
+    let secret = authority_secret(authority_root_from_registry(registry_root)?)?;
+    let expected_mac = record_mac(&record, &secret)?;
+    if !constant_time_hex_equal(&record.mac, &expected_mac) {
+        return Err("normalization_receipt_signature_invalid".to_string());
+    }
+    if record.schema_version != NORMALIZED_SCHEMA_VERSION
+        || record.receipt_id != supplied.receipt_id
+        || !valid_receipt_id(&record.issuance_nonce)
+        || record.canonical_project_root != project_root.to_string_lossy()
+        || record.canonical_asset_root != asset_root.to_string_lossy()
+        || record.state != "available"
+        || &record.credential != supplied
+    {
+        return Err("normalization_credential_mismatch".to_string());
+    }
+    Ok((record, secret))
+}
+
+fn register_review_paths(
+    registry_root: &Path,
+    project_root: &Path,
+    asset_root: &Path,
+    credential: &NormalizationCredential,
+    paths: &[&Path],
+) -> Result<(), String> {
+    let (mut record, secret) = load_signed_registry_record(
+        registry_root,
+        project_root,
+        asset_root,
+        credential,
+    )?;
+    record.derived_paths = paths
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    record.mac.clear();
+    record.mac = record_mac(&record, &secret)?;
+    fs::write(
+        registry_receipt_path(registry_root, &credential.receipt_id)?,
+        serde_json::to_vec(&record).map_err(|_| "normalization_registry_invalid".to_string())?,
+    )
+    .map_err(|_| "normalization_registry_write_failed".to_string())
+}
+
+fn lease_registry_receipts(
     registry_root: &Path,
     credentials: &[NormalizationCredential],
+    transaction_id: &str,
 ) -> Result<(), String> {
-    let marker_nonce = random_hex(32)?;
+    let secret = authority_secret(authority_root_from_registry(registry_root)?)?;
     let mut created = Vec::new();
     for credential in credentials {
-        let path = registry_consumed_path(registry_root, &credential.receipt_id)?;
-        match OpenOptions::new().create_new(true).write(true).open(&path) {
-            Ok(mut file) => {
-                if file
-                    .write_all(marker_nonce.as_bytes())
-                    .and_then(|_| file.sync_all())
-                    .is_err()
-                {
-                    let _ = fs::remove_file(&path);
-                    for prior in created {
-                        let _ = fs::remove_file(prior);
-                    }
-                    return Err("normalization_consumption_failed".to_string());
-                }
-                created.push(path);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                for prior in created {
-                    let _ = fs::remove_file(prior);
-                }
+        let consumed = registry_consumed_path(registry_root, &credential.receipt_id)?;
+        if consumed.exists() {
+            let marker = read_state_marker(&consumed, &secret)?;
+            if marker.state == "consumed" && marker.receipt_id == credential.receipt_id {
+                for prior in created { let _ = fs::remove_file(prior); }
                 return Err("normalization_receipt_consumed".to_string());
             }
-            Err(_) => {
-                for prior in created {
-                    let _ = fs::remove_file(prior);
-                }
-                return Err("normalization_consumption_failed".to_string());
-            }
+            return Err("normalization_receipt_signature_invalid".to_string());
         }
+        let path = registry_lease_path(registry_root, &credential.receipt_id)?;
+        if let Err(error) = write_state_marker(
+            &path,
+            &credential.receipt_id,
+            transaction_id,
+            "leased",
+            &secret,
+        ) {
+            for prior in created { let _ = fs::remove_file(prior); }
+            return Err(error);
+        }
+        created.push(path);
+    }
+    Ok(())
+}
+
+fn release_registry_leases(
+    registry_root: &Path,
+    credentials: &[NormalizationCredential],
+    transaction_id: &str,
+) -> Result<(), String> {
+    let secret = authority_secret(authority_root_from_registry(registry_root)?)?;
+    for credential in credentials {
+        let path = registry_lease_path(registry_root, &credential.receipt_id)?;
+        if !path.exists() { continue; }
+        let marker = read_state_marker(&path, &secret)?;
+        if marker.receipt_id != credential.receipt_id
+            || marker.transaction_id != transaction_id
+            || marker.state != "leased"
+        {
+            return Err("normalization_receipt_lease_mismatch".to_string());
+        }
+        fs::remove_file(path).map_err(|_| "normalization_consumption_failed".to_string())?;
+    }
+    Ok(())
+}
+
+fn commit_registry_receipts(
+    registry_root: &Path,
+    credentials: &[NormalizationCredential],
+    transaction_id: &str,
+) -> Result<(), String> {
+    let secret = authority_secret(authority_root_from_registry(registry_root)?)?;
+    let mut consumed_created = Vec::new();
+    for credential in credentials {
+        let lease = registry_lease_path(registry_root, &credential.receipt_id)?;
+        let marker = read_state_marker(&lease, &secret)?;
+        if marker.receipt_id != credential.receipt_id
+            || marker.transaction_id != transaction_id
+            || marker.state != "leased"
+        {
+            for prior in consumed_created { let _ = fs::remove_file(prior); }
+            return Err("normalization_receipt_lease_mismatch".to_string());
+        }
+        let consumed = registry_consumed_path(registry_root, &credential.receipt_id)?;
+        if let Err(error) = write_state_marker(
+            &consumed,
+            &credential.receipt_id,
+            transaction_id,
+            "consumed",
+            &secret,
+        ) {
+            for prior in consumed_created { let _ = fs::remove_file(prior); }
+            return Err(error);
+        }
+        consumed_created.push(consumed);
+    }
+    for credential in credentials {
+        fs::remove_file(registry_lease_path(registry_root, &credential.receipt_id)?)
+            .map_err(|_| "normalization_consumption_failed".to_string())?;
     }
     Ok(())
 }
@@ -401,6 +746,97 @@ fn canonical_existing_file(
         return Err("video_path_outside_project".to_string());
     }
     Ok(canonical)
+}
+
+fn canonical_external_file(raw: &str) -> Result<PathBuf, String> {
+    let path = absolute_path(raw, "video_input_path_missing")?;
+    let canonical = fs::canonicalize(path).map_err(|_| "video_input_not_found".to_string())?;
+    if !canonical.is_file() {
+        return Err("video_input_not_found".to_string());
+    }
+    Ok(canonical)
+}
+
+fn path_is_reparse(path: &Path) -> Result<bool, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| "video_output_path_invalid".to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Ok(true);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        return Ok(metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0);
+    }
+    #[cfg(not(windows))]
+    Ok(false)
+}
+
+fn ensure_no_reparse_ancestors(asset_root: &Path, candidate: &Path) -> Result<(), String> {
+    if !candidate.starts_with(asset_root) {
+        return Err("video_output_outside_assets".to_string());
+    }
+    let canonical_asset_root = fs::canonicalize(asset_root)
+        .map_err(|_| "video_assets_root_invalid".to_string())?;
+    let mut cursor = candidate;
+    loop {
+        if path_is_reparse(cursor)? {
+            return Err("video_output_reparse_forbidden".to_string());
+        }
+        let canonical_cursor = fs::canonicalize(cursor)
+            .map_err(|_| "video_output_path_invalid".to_string())?;
+        if canonical_cursor == canonical_asset_root {
+            return Ok(());
+        }
+        if !canonical_cursor.starts_with(&canonical_asset_root) {
+            return Err("video_output_outside_assets".to_string());
+        }
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| "video_output_outside_assets".to_string())?;
+    }
+}
+
+fn secure_copy_create_new(source: &Path, target: &Path, asset_root: &Path) -> Result<(), String> {
+    let canonical_asset_root = fs::canonicalize(asset_root)
+        .map_err(|_| "video_assets_root_invalid".to_string())?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "video_output_path_invalid".to_string())?;
+    ensure_no_reparse_ancestors(asset_root, parent)?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|_| "video_output_path_invalid".to_string())?;
+    if !canonical_parent.starts_with(&canonical_asset_root) {
+        return Err("video_output_outside_assets".to_string());
+    }
+    let mut input = fs::File::open(source).map_err(|_| "video_snapshot_copy_failed".to_string())?;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(target)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                "video_output_already_exists".to_string()
+            } else {
+                "video_snapshot_copy_failed".to_string()
+            }
+        })?;
+    if let Err(error) = std::io::copy(&mut input, &mut output).and_then(|_| output.sync_all()) {
+        let _ = fs::remove_file(target);
+        let _ = error;
+        return Err("video_snapshot_copy_failed".to_string());
+    }
+    if path_is_reparse(target)? {
+        let _ = fs::remove_file(target);
+        return Err("video_output_reparse_forbidden".to_string());
+    }
+    let canonical_target = fs::canonicalize(target)
+        .map_err(|_| "video_snapshot_copy_failed".to_string())?;
+    if !canonical_target.starts_with(&canonical_asset_root) || !canonical_target.is_file() {
+        let _ = fs::remove_file(target);
+        return Err("video_output_outside_assets".to_string());
+    }
+    Ok(())
 }
 
 fn validate_publish_target(path: &Path, asset_root: &Path) -> Result<(), String> {
@@ -457,6 +893,39 @@ fn resolve_roots(
     }
     let asset_root = canonical_dir(project_assets_dir, "video_assets_root_invalid")?;
     if asset_root == project_root || !asset_root.starts_with(&project_root) {
+        return Err("video_assets_root_outside_project".to_string());
+    }
+    Ok((project_root, asset_root))
+}
+
+fn resolve_current_project_assets(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "video_project_root_unavailable".to_string())?;
+    resolve_current_project_assets_at_app_data(&app_data)
+}
+
+fn resolve_current_project_assets_at_app_data(
+    app_data: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let marker = app_data.join("current-project.txt");
+    let selected = fs::read_to_string(marker)
+        .map_err(|_| "video_project_root_unavailable".to_string())?;
+    let project_root = fs::canonicalize(absolute_path(
+        selected.trim(),
+        "video_project_root_unavailable",
+    )?)
+    .map_err(|_| "video_project_root_unavailable".to_string())?;
+    if !project_root.is_dir()
+        || project_root.extension().and_then(|value| value.to_str()) != Some("sbproj")
+    {
+        return Err("video_project_root_unavailable".to_string());
+    }
+    let assets = project_root.join("assets");
+    fs::create_dir_all(&assets).map_err(|_| "video_assets_root_invalid".to_string())?;
+    let asset_root = fs::canonicalize(assets).map_err(|_| "video_assets_root_invalid".to_string())?;
+    if asset_root == project_root || !asset_root.starts_with(&project_root) || path_is_reparse(&asset_root)? {
         return Err("video_assets_root_outside_project".to_string());
     }
     Ok((project_root, asset_root))
@@ -804,7 +1273,7 @@ fn normalize_at_roots(
         "video-normalized",
         "video_output_directory_failed",
     )?;
-    let output_path = output_dir.join(format!("{segment_id}.mp4"));
+    let output_path = output_dir.join(format!("{segment_id}-{}.mp4", random_hex(16)?));
     validate_publish_target(&output_path, &asset_root)?;
     if input == output_path {
         return Err("video_source_equals_output".to_string());
@@ -1012,13 +1481,194 @@ where
         return Err("video_snapshot_collision".to_string());
     }
     before_copy(source)?;
-    fs::copy(source, target).map_err(|_| "video_snapshot_copy_failed".to_string())?;
+    let asset_root = target
+        .ancestors()
+        .find(|candidate| candidate.file_name().and_then(|value| value.to_str()) == Some("assets"))
+        .ok_or_else(|| "video_output_outside_assets".to_string())?;
+    secure_copy_create_new(source, target, asset_root)?;
     let (sha256, _, _) = file_binding(target)?;
     if sha256 != expected_sha {
         let _ = fs::remove_file(target);
         return Err("normalized_file_changed_during_snapshot".to_string());
     }
     Ok(())
+}
+
+fn stage_at_roots(
+    project_root: &Path,
+    asset_root: &Path,
+    input_path: &Path,
+) -> Result<StagedVideoSegment, String> {
+    let project_root = fs::canonicalize(project_root)
+        .map_err(|_| "video_project_root_unavailable".to_string())?;
+    let asset_root = fs::canonicalize(asset_root)
+        .map_err(|_| "video_assets_root_invalid".to_string())?;
+    if asset_root == project_root || !asset_root.starts_with(&project_root) {
+        return Err("video_assets_root_outside_project".to_string());
+    }
+    let source = canonical_external_file(input_path.to_string_lossy().as_ref())?;
+    let stage_root = ensure_derived_dir(
+        &asset_root,
+        "video-staging",
+        "video_staging_directory_failed",
+    )?;
+    let staging_receipt_id = random_hex(32)?;
+    let target = stage_root.join(format!("stage-{staging_receipt_id}.media"));
+    if source == target {
+        return Err("video_source_equals_output".to_string());
+    }
+    secure_copy_create_new(&source, &target, &asset_root)?;
+    Ok(StagedVideoSegment {
+        staged_path: fs::canonicalize(&target)
+            .map_err(|_| "video_snapshot_copy_failed".to_string())?
+            .to_string_lossy()
+            .to_string(),
+        project_assets_dir: asset_root.to_string_lossy().to_string(),
+        staging_receipt_id,
+    })
+}
+
+fn remove_registered_file(path: &Path, allowed_root: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let canonical = fs::canonicalize(path).map_err(|_| "video_cleanup_path_invalid".to_string())?;
+    if !canonical.is_file() || !canonical.starts_with(allowed_root) || path_is_reparse(&canonical)? {
+        return Err("video_cleanup_path_invalid".to_string());
+    }
+    fs::remove_file(canonical).map_err(|_| "video_cleanup_failed".to_string())
+}
+
+fn cleanup_at_roots(
+    project_root: &Path,
+    asset_root: &Path,
+    registry_root: &Path,
+    staged_segments: &[StagedVideoSegment],
+    credentials: &[NormalizationCredential],
+    review_frames: &[VideoReviewFrames],
+) -> Result<(), String> {
+    let project_root = fs::canonicalize(project_root)
+        .map_err(|_| "video_project_root_unavailable".to_string())?;
+    let asset_root = fs::canonicalize(asset_root)
+        .map_err(|_| "video_assets_root_invalid".to_string())?;
+    let staging_root = asset_root.join("video-staging");
+    let normalized_root = asset_root.join("video-normalized");
+    let review_root = asset_root.join("video-review");
+    let mut registered_review_paths = HashSet::new();
+    for staged in staged_segments {
+        if staged.project_assets_dir != asset_root.to_string_lossy()
+            || !valid_receipt_id(&staged.staging_receipt_id)
+        {
+            return Err("video_cleanup_claim_invalid".to_string());
+        }
+        let path = PathBuf::from(&staged.staged_path);
+        if path.file_name().and_then(|value| value.to_str())
+            != Some(format!("stage-{}.media", staged.staging_receipt_id).as_str())
+        {
+            return Err("video_cleanup_claim_invalid".to_string());
+        }
+        remove_registered_file(&path, &staging_root)?;
+    }
+    for credential in credentials {
+        let (record, _) = load_signed_registry_record(
+            registry_root,
+            &project_root,
+            &asset_root,
+            credential,
+        )?;
+        registered_review_paths.extend(record.derived_paths.iter().cloned());
+        remove_registered_file(Path::new(&record.credential.normalized_path), &normalized_root)?;
+        let consumed = registry_consumed_path(registry_root, &credential.receipt_id)?;
+        if !consumed.exists() {
+            fs::remove_file(registry_receipt_path(registry_root, &credential.receipt_id)?)
+                .map_err(|_| "video_cleanup_failed".to_string())?;
+        }
+    }
+    for review in review_frames {
+        for raw in [&review.first_frame_path, &review.middle_frame_path, &review.last_frame_path] {
+            if !registered_review_paths.contains(raw) {
+                return Err("video_cleanup_claim_invalid".to_string());
+            }
+            remove_registered_file(Path::new(raw), &review_root)?;
+        }
+        if let Some(parent) = Path::new(&review.first_frame_path).parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+    Ok(())
+}
+
+fn gc_at_roots(
+    project_root: &Path,
+    asset_root: &Path,
+    registry_root: &Path,
+    now_unix_millis: u64,
+    ttl_millis: u64,
+) -> Result<VideoGcReport, String> {
+    let secret = authority_secret(authority_root_from_registry(registry_root)?)?;
+    let canonical_project = project_root.to_string_lossy().to_string();
+    let canonical_assets = asset_root.to_string_lossy().to_string();
+    let normalized_root = asset_root.join("video-normalized");
+    let review_root = asset_root.join("video-review");
+    let mut report = VideoGcReport { receipts_removed: 0, assets_removed: 0 };
+    for entry in fs::read_dir(registry_root)
+        .map_err(|_| "normalization_registry_unavailable".to_string())?
+    {
+        let path = entry
+            .map_err(|_| "normalization_registry_unavailable".to_string())?
+            .path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let record: NormalizationRegistryRecord = serde_json::from_slice(
+            &fs::read(&path).map_err(|_| "normalization_registry_invalid".to_string())?,
+        )
+        .map_err(|_| "normalization_registry_invalid".to_string())?;
+        let expected = record_mac(&record, &secret)?;
+        if !constant_time_hex_equal(&record.mac, &expected) {
+            return Err("normalization_receipt_signature_invalid".to_string());
+        }
+        if record.canonical_project_root != canonical_project
+            || record.canonical_asset_root != canonical_assets
+        {
+            continue;
+        }
+        if now_unix_millis.saturating_sub(record.issued_unix_millis) < ttl_millis {
+            continue;
+        }
+        let lease = registry_lease_path(registry_root, &record.receipt_id)?;
+        if lease.exists() {
+            let marker = read_state_marker(&lease, &secret)?;
+            if marker.state == "leased" {
+                continue;
+            }
+            return Err("normalization_receipt_signature_invalid".to_string());
+        }
+        let normalized = Path::new(&record.credential.normalized_path);
+        if normalized.exists() {
+            remove_registered_file(normalized, &normalized_root)?;
+            report.assets_removed += 1;
+        }
+        for raw in &record.derived_paths {
+            let derived = Path::new(raw);
+            if derived.exists() {
+                remove_registered_file(derived, &review_root)?;
+                report.assets_removed += 1;
+                if let Some(parent) = derived.parent() { let _ = fs::remove_dir(parent); }
+            }
+        }
+        let consumed = registry_consumed_path(registry_root, &record.receipt_id)?;
+        if consumed.exists() {
+            let marker = read_state_marker(&consumed, &secret)?;
+            if marker.state != "consumed" || marker.receipt_id != record.receipt_id {
+                return Err("normalization_receipt_signature_invalid".to_string());
+            }
+            fs::remove_file(consumed).map_err(|_| "video_cleanup_failed".to_string())?;
+        }
+        fs::remove_file(path).map_err(|_| "video_cleanup_failed".to_string())?;
+        report.receipts_removed += 1;
+    }
+    Ok(report)
 }
 
 fn review_frame_filter(frame_index: u32) -> String {
@@ -1074,6 +1724,16 @@ fn extract_review_frames_at_roots(
         let _ = fs::remove_dir_all(&output_dir);
         return Err(error);
     }
+    if let Err(error) = register_review_paths(
+        &registry_root,
+        &project_root,
+        &asset_root,
+        credential,
+        &[&first, &middle, &last],
+    ) {
+        let _ = fs::remove_dir_all(&output_dir);
+        return Err(error);
+    }
     Ok(VideoReviewFrames {
         first_frame_path: first.to_string_lossy().to_string(),
         middle_frame_path: middle.to_string_lossy().to_string(),
@@ -1100,6 +1760,22 @@ fn concat_at_roots(
     registry_root: &Path,
     segments: &[NormalizationCredential],
 ) -> Result<ConcatenatedVideo, String> {
+    concat_at_roots_with_ffmpeg_binary(
+        project_root,
+        asset_root,
+        registry_root,
+        segments,
+        "ffmpeg",
+    )
+}
+
+fn concat_at_roots_with_ffmpeg_binary(
+    project_root: &Path,
+    asset_root: &Path,
+    registry_root: &Path,
+    segments: &[NormalizationCredential],
+    ffmpeg_binary: &str,
+) -> Result<ConcatenatedVideo, String> {
     validate_concat_contract(segments)?;
     let project_root =
         fs::canonicalize(project_root).map_err(|_| "video_project_root_unavailable".to_string())?;
@@ -1112,8 +1788,10 @@ fn concat_at_roots(
         "video_concat_directory_failed",
     )?;
     let suffix = unique_suffix()?;
+    let transaction_id = random_hex(32)?;
     let stage_dir = assembled_root.join(format!(".concat-stage-{suffix}"));
     fs::create_dir(&stage_dir).map_err(|_| "video_concat_stage_failed".to_string())?;
+    let mut lease_active = false;
     let result = (|| -> Result<ConcatenatedVideo, String> {
         let mut list = String::new();
         let mut reference_probe: Option<VideoProbe> = None;
@@ -1142,7 +1820,8 @@ fn concat_at_roots(
         }
         let list_path = stage_dir.join("segments.ffconcat");
         fs::write(&list_path, list).map_err(|_| "video_concat_list_failed".to_string())?;
-        consume_registry_receipts(&registry_root, segments)?;
+        lease_registry_receipts(&registry_root, segments, &transaction_id)?;
+        lease_active = true;
         let output_path = assembled_root.join(format!("assembled-{suffix}.mp4"));
         let temp_path = assembled_root.join(format!(".assembled-{suffix}.tmp.mp4"));
         validate_publish_target(&output_path, &asset_root)?;
@@ -1159,7 +1838,7 @@ fn concat_at_roots(
             "fps=24,scale={}:{},setsar=1,format=yuv420p",
             first.project_width, first.project_height
         );
-        let status = Command::new("ffmpeg")
+        let status = Command::new(ffmpeg_binary)
             .current_dir(&stage_dir)
             .args([
                 "-v",
@@ -1209,6 +1888,11 @@ fn concat_at_roots(
             total_frames,
         )?;
         publish_no_clobber(&temp_path, &output_path)?;
+        if let Err(error) = commit_registry_receipts(&registry_root, segments, &transaction_id) {
+            let _ = fs::remove_file(&output_path);
+            return Err(error);
+        }
+        lease_active = false;
         Ok(ConcatenatedVideo {
             output_path: fs::canonicalize(output_path)
                 .map_err(|_| "video_atomic_publish_failed".to_string())?
@@ -1217,8 +1901,20 @@ fn concat_at_roots(
             probe,
         })
     })();
+    if lease_active {
+        let _ = release_registry_leases(&registry_root, segments, &transaction_id);
+    }
     let _ = fs::remove_dir_all(stage_dir);
     result
+}
+
+#[tauri::command]
+pub fn stage_video_segment(
+    app: tauri::AppHandle,
+    input_path: String,
+) -> Result<StagedVideoSegment, String> {
+    let (project_root, asset_root) = resolve_current_project_assets(&app)?;
+    stage_at_roots(&project_root, &asset_root, Path::new(&input_path))
 }
 
 #[tauri::command]
@@ -1280,6 +1976,50 @@ pub fn concat_normalized_video_segments(
     let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
     let registry_root = resolve_registry_root(&app)?;
     concat_at_roots(&project_root, &asset_root, &registry_root, &segments)
+}
+
+#[tauri::command]
+pub fn cleanup_video_assembly_assets(
+    app: tauri::AppHandle,
+    project_assets_dir: String,
+    staged_segments: Vec<StagedVideoSegment>,
+    credentials: Vec<NormalizationCredential>,
+    review_frames: Vec<VideoReviewFrames>,
+) -> Result<(), String> {
+    let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
+    let registry_root = resolve_registry_root(&app)?;
+    cleanup_at_roots(
+        &project_root,
+        &asset_root,
+        &registry_root,
+        &staged_segments,
+        &credentials,
+        &review_frames,
+    )
+}
+
+#[tauri::command]
+pub fn gc_video_continuity_assets(
+    app: tauri::AppHandle,
+    project_assets_dir: String,
+    ttl_seconds: u64,
+) -> Result<VideoGcReport, String> {
+    if ttl_seconds == 0 || ttl_seconds > 365 * 24 * 60 * 60 {
+        return Err("video_gc_ttl_invalid".to_string());
+    }
+    let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
+    let registry_root = resolve_registry_root(&app)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "video_clock_invalid".to_string())?
+        .as_millis() as u64;
+    gc_at_roots(
+        &project_root,
+        &asset_root,
+        &registry_root,
+        now,
+        ttl_seconds.saturating_mul(1000),
+    )
 }
 
 #[cfg(test)]
@@ -1451,6 +2191,57 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    fn assert_real_media_rejected_before_lease(
+        fixture: &FixtureDir,
+        media: &Path,
+        label: &str,
+    ) {
+        let probe = probe_path(media).unwrap();
+        let (sha256, byte_length, modified_unix_millis) = file_binding(media).unwrap();
+        let project_root = fs::canonicalize(fixture.root()).unwrap();
+        let asset_root = fs::canonicalize(fixture.assets()).unwrap();
+        let registry_root = ensure_registry_root(fixture.registry().as_path()).unwrap();
+        let credential = issue_registry_receipt(
+            &registry_root,
+            &project_root,
+            &asset_root,
+            NormalizationCredential {
+                schema_version: NORMALIZED_SCHEMA_VERSION,
+                receipt_id: String::new(),
+                normalized_path: fs::canonicalize(media).unwrap().to_string_lossy().to_string(),
+                sha256,
+                byte_length,
+                modified_unix_millis,
+                project_width: probe.width,
+                project_height: probe.height,
+                duration_frames: probe.decoded_frame_count,
+                probe,
+            },
+        )
+        .unwrap();
+        let error = concat_at_roots(
+            &project_root,
+            &asset_root,
+            &registry_root,
+            std::slice::from_ref(&credential),
+        )
+        .unwrap_err();
+        assert!(
+            error.starts_with("normalized_"),
+            "{label} must fail the normalized media contract, got {error}"
+        );
+        assert!(!registry_lease_path(&registry_root, &credential.receipt_id).unwrap().exists());
+        assert!(!registry_consumed_path(&registry_root, &credential.receipt_id).unwrap().exists());
+        let visible = fixture.assets().join("video-assembled");
+        assert!(
+            !visible.exists()
+                || fs::read_dir(visible)
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .all(|entry| entry.path().extension().and_then(|value| value.to_str()) != Some("mp4"))
+        );
     }
 
     #[test]
@@ -1658,6 +2449,329 @@ mod tests {
             verify_credential(&project_root, &asset_root, &registry_root, &forged).unwrap_err(),
             "normalization_receipt_not_issued"
         );
+    }
+
+    #[test]
+    fn issued_registry_record_tampering_is_rejected_by_backend_mac() {
+        let fixture = FixtureDir::new("registry-mac");
+        let input = fixture.assets().join("raw/input.mp4");
+        make_fixture(&input, 24, "160x120", "0.25", false);
+        let normalized = normalize_at_roots(
+            fixture.root(),
+            fixture.assets().as_path(),
+            fixture.registry().as_path(),
+            &input,
+            "mac",
+            160,
+            120,
+            6,
+        )
+        .unwrap();
+        let receipt_path = registry_receipt_path(
+            fixture.registry().as_path(),
+            &normalized.credential.receipt_id,
+        )
+        .unwrap();
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        record["issuanceNonce"] = serde_json::Value::String("f".repeat(64));
+        fs::write(&receipt_path, serde_json::to_vec(&record).unwrap()).unwrap();
+        let error = verify_credential(
+            &fs::canonicalize(fixture.root()).unwrap(),
+            &fs::canonicalize(fixture.assets()).unwrap(),
+            &fs::canonicalize(fixture.registry()).unwrap(),
+            &normalized.credential,
+        )
+        .unwrap_err();
+        assert_eq!(error, "normalization_receipt_signature_invalid");
+    }
+
+    #[test]
+    fn generic_file_command_guard_rejects_authority_sources_and_targets() {
+        let fixture = FixtureDir::new("authority-command-guard");
+        let app_data = fixture.root().join("app-data");
+        let receipts = app_data.join(AUTHORITY_DIRECTORY).join("receipts");
+        ensure_registry_root(&receipts).unwrap();
+        let protected = receipts.join(format!("{}.json", "a".repeat(64)));
+        fs::write(&protected, b"signed-record").unwrap();
+        let ordinary = app_data.join("ordinary/output.bin");
+        fs::create_dir_all(ordinary.parent().unwrap()).unwrap();
+
+        assert_eq!(
+            reject_authority_file_command_path_at_app_data(&app_data, protected.to_str().unwrap())
+                .unwrap_err(),
+            "video_authority_path_forbidden"
+        );
+        reject_authority_file_command_path_at_app_data(&app_data, ordinary.to_str().unwrap())
+            .unwrap();
+    }
+
+    #[test]
+    fn current_project_marker_stages_external_comfy_media_into_real_sbproj_assets() {
+        let fixture = FixtureDir::new("project-marker-stage");
+        let app_data = fixture.root().join("workspace");
+        let project = app_data.join("demo.sbproj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(app_data.join("current-project.txt"), project.to_string_lossy().as_bytes()).unwrap();
+        let comfy_output = fixture.root().join("ComfyUI/output");
+        fs::create_dir_all(&comfy_output).unwrap();
+        let source = comfy_output.join("h3.mp4");
+        fs::write(&source, b"resolved-h3-output").unwrap();
+
+        let (project_root, asset_root) = resolve_current_project_assets_at_app_data(&app_data).unwrap();
+        let staged = stage_at_roots(&project_root, &asset_root, &source).unwrap();
+        let staged_path = fs::canonicalize(&staged.staged_path).unwrap();
+        assert_eq!(project_root, fs::canonicalize(&project).unwrap());
+        assert_eq!(asset_root, fs::canonicalize(project.join("assets")).unwrap());
+        assert!(staged_path.starts_with(&asset_root));
+        assert_eq!(fs::read(staged_path).unwrap(), b"resolved-h3-output");
+        assert!(!staged.project_assets_dir.contains("ComfyUI"));
+    }
+
+    #[test]
+    fn receipt_leases_are_exclusive_releasable_and_only_commit_after_success() {
+        let fixture = FixtureDir::new("receipt-lease");
+        let input = fixture.assets().join("raw/input.mp4");
+        make_fixture(&input, 24, "160x120", "0.25", false);
+        let normalized = normalize_at_roots(
+            fixture.root(),
+            fixture.assets().as_path(),
+            fixture.registry().as_path(),
+            &input,
+            "lease",
+            160,
+            120,
+            6,
+        )
+        .unwrap();
+        let credentials = vec![normalized.credential.clone()];
+        lease_registry_receipts(fixture.registry().as_path(), &credentials, "txn-a").unwrap();
+        assert_eq!(
+            lease_registry_receipts(fixture.registry().as_path(), &credentials, "txn-b")
+                .unwrap_err(),
+            "normalization_receipt_leased"
+        );
+        release_registry_leases(fixture.registry().as_path(), &credentials, "txn-a").unwrap();
+        lease_registry_receipts(fixture.registry().as_path(), &credentials, "txn-c").unwrap();
+        commit_registry_receipts(fixture.registry().as_path(), &credentials, "txn-c").unwrap();
+        assert_eq!(
+            verify_credential(
+                &fs::canonicalize(fixture.root()).unwrap(),
+                &fs::canonicalize(fixture.assets()).unwrap(),
+                &fs::canonicalize(fixture.registry()).unwrap(),
+                &normalized.credential,
+            )
+            .unwrap_err(),
+            "normalization_receipt_consumed"
+        );
+    }
+
+    #[test]
+    fn concat_ffmpeg_failure_releases_lease_and_retry_succeeds() {
+        let fixture = FixtureDir::new("concat-retry");
+        let input = fixture.assets().join("raw/input.mp4");
+        make_fixture(&input, 24, "160x120", "0.25", false);
+        let normalized = normalize_at_roots(
+            fixture.root(),
+            fixture.assets().as_path(),
+            fixture.registry().as_path(),
+            &input,
+            "retry",
+            160,
+            120,
+            6,
+        )
+        .unwrap();
+        let credentials = vec![normalized.credential.clone()];
+        assert_eq!(
+            concat_at_roots_with_ffmpeg_binary(
+                fixture.root(),
+                fixture.assets().as_path(),
+                fixture.registry().as_path(),
+                &credentials,
+                "definitely-missing-task7-ffmpeg",
+            )
+            .unwrap_err(),
+            "ffmpeg_concat_start_failed"
+        );
+        assert!(!registry_lease_path(fixture.registry().as_path(), &credentials[0].receipt_id)
+            .unwrap()
+            .exists());
+        let assembled = concat_at_roots(
+            fixture.root(),
+            fixture.assets().as_path(),
+            fixture.registry().as_path(),
+            &credentials,
+        )
+        .unwrap();
+        assert!(Path::new(&assembled.output_path).is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ordinary_user_junction_is_rejected_before_any_external_write() {
+        let fixture = FixtureDir::new("junction");
+        let outside = fixture.root().join("outside-target");
+        fs::create_dir(&outside).unwrap();
+        let junction = fixture.assets().join("video-staging");
+        let status = Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .status()
+            .unwrap();
+        assert!(status.success(), "ordinary-user junction fixture must be available");
+        assert_eq!(
+            ensure_no_reparse_ancestors(fixture.assets().as_path(), &junction).unwrap_err(),
+            "video_output_reparse_forbidden"
+        );
+        let source = fixture.assets().join("raw/source.bin");
+        fs::write(&source, b"must-not-escape").unwrap();
+        assert_eq!(
+            secure_copy_create_new(&source, &junction.join("escaped.bin"), fixture.assets().as_path())
+                .unwrap_err(),
+            "video_output_reparse_forbidden"
+        );
+        assert!(fs::read_dir(&outside).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn real_media_contract_negatives_fail_before_lease_or_publish() {
+        let fixture = FixtureDir::new("real-negatives");
+        let cases = [
+            ("ntsc", "testsrc2=s=160x120:r=24000/1001:d=1", "libx264", "aac", "48000", "2"),
+            ("codec", "testsrc2=s=160x120:r=24:d=1", "mpeg4", "aac", "48000", "2"),
+            ("audio", "testsrc2=s=160x120:r=24:d=1", "libx264", "aac", "44100", "1"),
+        ];
+        for (label, video_source, video_codec, audio_codec, sample_rate, channels) in cases {
+            let media = fixture.assets().join("raw").join(format!("{label}.mp4"));
+            let status = Command::new("ffmpeg")
+                .args(["-v", "error", "-f", "lavfi", "-i", video_source])
+                .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1"])
+                .args(["-map", "0:v:0", "-map", "1:a:0", "-c:v", video_codec])
+                .args(["-c:a", audio_codec, "-ar", sample_rate, "-ac", channels, "-n"])
+                .arg(&media)
+                .status()
+                .unwrap();
+            assert!(status.success(), "failed to generate {label} fixture");
+            assert_real_media_rejected_before_lease(&fixture, &media, label);
+        }
+
+        let mixed = fixture.assets().join("raw/mixed.mp4");
+        let status = Command::new("ffmpeg")
+            .args(["-v", "error", "-f", "lavfi", "-i", "color=red:s=160x120:r=24:d=1"])
+            .args(["-f", "lavfi", "-i", "color=blue:s=160x120:r=24:d=1"])
+            .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"])
+            .args(["-map", "0:v:0", "-map", "1:v:0", "-map", "2:a:0", "-t", "1"])
+            .args(["-c:v", "libx264", "-c:a", "aac", "-n"])
+            .arg(&mixed)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(probe_path(&mixed).unwrap_err(), "ffprobe_stream_layout_invalid");
+        assert!(!fixture.assets().join("video-assembled").exists());
+
+        for (label, filter) in [
+            (
+                "vfr",
+                "setpts=if(lt(N\\,12)\\,N/(24*TB)\\,(12/(24*TB)+(N-12)/(12*TB)))",
+            ),
+            ("duplicate-ts", "setpts=floor(N/2)/(24*TB)"),
+            ("reverse-ts", "setpts=(24-N)/(24*TB)"),
+        ] {
+            let media = fixture.assets().join("raw").join(format!("{label}.mkv"));
+            let status = Command::new("ffmpeg")
+                .args(["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=24:d=1"])
+                .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"])
+                .args(["-vf", filter, "-fps_mode", "passthrough", "-map", "0:v:0", "-map", "1:a:0"])
+                .args(["-c:v", "libx264", "-bf", "0", "-c:a", "aac", "-t", "1", "-n"])
+                .arg(&media)
+                .status()
+                .unwrap();
+            assert!(status.success(), "failed to generate {label}");
+            let probe = match probe_path(&media) {
+                Ok(probe) => probe,
+                Err(error) if label == "reverse-ts" => {
+                    assert_eq!(error, "ffprobe_frame_count_invalid");
+                    assert!(!fixture.assets().join("video-assembled").exists());
+                    continue;
+                }
+                Err(error) => panic!("{label}: {error}"),
+            };
+            assert!(
+                !probe.has_constant_frame_timestamps || !probe.has_monotonic_timestamps,
+                "{label} must expose non-CFR or non-monotonic packet timestamps"
+            );
+            assert_real_media_rejected_before_lease(&fixture, &media, label);
+        }
+
+        let missing_timestamps = fixture.assets().join("raw/missing-timestamps.h264");
+        let status = Command::new("ffmpeg")
+            .args(["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=24:d=0.5"])
+            .args(["-c:v", "libx264", "-bf", "0", "-an", "-f", "h264", "-n"])
+            .arg(&missing_timestamps)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(probe_path(&missing_timestamps).is_err(), "raw stream without observable timestamps/duration must fail closed");
+    }
+
+    #[test]
+    fn gc_is_scoped_by_signed_project_claims_and_never_deletes_published_history() {
+        let fixture = FixtureDir::new("gc");
+        let project_one = fixture.root().join("one.sbproj");
+        let project_two = fixture.root().join("two.sbproj");
+        for project in [&project_one, &project_two] {
+            fs::create_dir_all(project.join("assets/raw")).unwrap();
+        }
+        let registry = fixture.root().join("authority/receipts");
+        let input_one = project_one.join("assets/raw/one.mp4");
+        let input_two = project_two.join("assets/raw/two.mp4");
+        make_fixture(&input_one, 24, "160x120", "0.25", false);
+        make_fixture(&input_two, 24, "160x120", "0.25", false);
+        let one = normalize_at_roots(
+            &project_one,
+            &project_one.join("assets"),
+            &registry,
+            &input_one,
+            "one",
+            160,
+            120,
+            6,
+        )
+        .unwrap();
+        let two = normalize_at_roots(
+            &project_two,
+            &project_two.join("assets"),
+            &registry,
+            &input_two,
+            "two",
+            160,
+            120,
+            6,
+        )
+        .unwrap();
+        let assembled = concat_at_roots(
+            &project_one,
+            &project_one.join("assets"),
+            &registry,
+            std::slice::from_ref(&one.credential),
+        )
+        .unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        let report = gc_at_roots(
+            &fs::canonicalize(&project_one).unwrap(),
+            &fs::canonicalize(project_one.join("assets")).unwrap(),
+            &ensure_registry_root(&registry).unwrap(),
+            now.saturating_add(10_000),
+            1,
+        )
+        .unwrap();
+        assert_eq!(report.receipts_removed, 1);
+        assert!(!Path::new(&one.credential.normalized_path).exists());
+        assert!(Path::new(&assembled.output_path).is_file(), "GC must retain published assembly history");
+        assert!(Path::new(&two.credential.normalized_path).is_file(), "other project assets must remain");
+        assert!(registry_receipt_path(&registry, &two.credential.receipt_id).unwrap().is_file());
     }
 
     #[test]

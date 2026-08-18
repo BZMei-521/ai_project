@@ -101,6 +101,16 @@ export type NormalizedVideoSegment = {
   anomalies: VideoAnomalyReport;
 };
 
+export type StagedVideoSegment = {
+  stagedPath: string;
+  projectAssetsDir: string;
+  stagingReceiptId: string;
+};
+
+export type StageVideoSegmentRequest = {
+  inputPath: string;
+};
+
 export type VideoReviewFrames = {
   firstFramePath: string;
   middleFramePath: string;
@@ -123,6 +133,15 @@ export type ConcatNormalizedVideoSegmentsRequest = {
   projectAssetsDir: string;
   segments: NormalizationCredential[];
 };
+
+export type CleanupVideoAssemblyAssetsRequest = {
+  projectAssetsDir: string;
+  stagedSegments: StagedVideoSegment[];
+  credentials: NormalizationCredential[];
+  reviewFrames: VideoReviewFrames[];
+};
+
+export type VideoGcReport = { receiptsRemoved: number; assetsRemoved: number };
 
 function requireAbsoluteVideoPath(value: string, missingCode: string): string {
   const trimmed = value.trim();
@@ -180,6 +199,10 @@ export function createProbeVideoSegmentRequest(request: ProbeVideoSegmentRequest
   };
 }
 
+export function createStageVideoSegmentRequest(request: StageVideoSegmentRequest): StageVideoSegmentRequest {
+  return { inputPath: requireAbsoluteVideoPath(request.inputPath, "video_input_path_missing") };
+}
+
 export function createNormalizeVideoSegmentRequest(request: NormalizeVideoSegmentRequest): NormalizeVideoSegmentRequest {
   const base = createProbeVideoSegmentRequest(request);
   const segmentId = request.segmentId.trim();
@@ -217,6 +240,11 @@ export async function probeVideoSegment(request: ProbeVideoSegmentRequest): Prom
   return invokeDesktopCommand<VideoInspection>("probe_video_segment", createProbeVideoSegmentRequest(request));
 }
 
+export async function stageVideoSegment(request: StageVideoSegmentRequest): Promise<StagedVideoSegment> {
+  requireTauriVideoContinuityRuntime();
+  return invokeDesktopCommand<StagedVideoSegment>("stage_video_segment", createStageVideoSegmentRequest(request));
+}
+
 export async function normalizeVideoSegment(request: NormalizeVideoSegmentRequest): Promise<NormalizedVideoSegment> {
   requireTauriVideoContinuityRuntime();
   return invokeDesktopCommand<NormalizedVideoSegment>("normalize_video_segment", createNormalizeVideoSegmentRequest(request));
@@ -230,6 +258,34 @@ export async function extractVideoReviewFrames(request: ExtractVideoReviewFrames
 export async function concatNormalizedVideoSegments(request: ConcatNormalizedVideoSegmentsRequest): Promise<ConcatenatedVideo> {
   requireTauriVideoContinuityRuntime();
   return invokeDesktopCommand<ConcatenatedVideo>("concat_normalized_video_segments", createConcatNormalizedVideoSegmentsRequest(request));
+}
+
+export async function cleanupVideoAssemblyAssets(request: CleanupVideoAssemblyAssetsRequest): Promise<void> {
+  requireTauriVideoContinuityRuntime();
+  const projectAssetsDir = requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing");
+  const stagedSegments = request.stagedSegments.map((segment) => ({
+    stagedPath: requireAbsoluteVideoPath(segment.stagedPath, "video_input_path_missing"),
+    projectAssetsDir: requireAbsoluteVideoPath(segment.projectAssetsDir, "video_assets_root_missing"),
+    stagingReceiptId: /^[a-f0-9]{64}$/.test(segment.stagingReceiptId) ? segment.stagingReceiptId : (() => { throw new Error("video_cleanup_claim_invalid"); })()
+  }));
+  const credentials = request.credentials.map(validateNormalizationCredential);
+  await invokeDesktopCommand("cleanup_video_assembly_assets", {
+    projectAssetsDir,
+    stagedSegments,
+    credentials,
+    reviewFrames: request.reviewFrames
+  });
+}
+
+export async function gcVideoContinuityAssets(projectAssetsDir: string, ttlSeconds: number): Promise<VideoGcReport> {
+  requireTauriVideoContinuityRuntime();
+  if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds <= 0 || ttlSeconds > 365 * 24 * 60 * 60) {
+    throw new Error("video_gc_ttl_invalid");
+  }
+  return invokeDesktopCommand<VideoGcReport>("gc_video_continuity_assets", {
+    projectAssetsDir: requireAbsoluteVideoPath(projectAssetsDir, "video_assets_root_missing"),
+    ttlSeconds
+  });
 }
 
 export function toDesktopMediaSource(raw: string | undefined): string {

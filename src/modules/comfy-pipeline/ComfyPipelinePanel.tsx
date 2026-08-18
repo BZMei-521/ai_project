@@ -13350,9 +13350,7 @@ export function ComfyPipelinePanel() {
       setPipelineState("拼接整片视频中...");
       appendLog(`开始拼接整片视频，共 ${paths.length} 段`);
       const pathSet = new Set(paths);
-      const projectAssetsDir = `${settings.outputDir.trim().replace(/[\\/]+$/, "")}/.storyboard-cache`;
       const output = await concatShotVideos({
-        projectAssetsDir,
         projectWidth: project.width,
         projectHeight: project.height,
         segments: scopedShots

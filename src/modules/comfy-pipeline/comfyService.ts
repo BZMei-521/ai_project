@@ -1,11 +1,13 @@
 import type { Asset, AudioTrack, Shot, SkyboxFace } from "../storyboard-core/types";
 import {
   concatNormalizedVideoSegments,
+  cleanupVideoAssemblyAssets,
   extractVideoReviewFrames,
   invokeDesktopCommand,
   isDesktopRuntime,
   isTauriRuntime,
   normalizeVideoSegment,
+  stageVideoSegment,
   toDesktopMediaSource
 } from "../platform/desktopBridge";
 import STORYBOARD_IMAGE_FISHER_LIGHT_WORKFLOW_OBJECT from "./presets/storyboard-image-fisher-light-v1.json";
@@ -10123,7 +10125,6 @@ export async function generateShotAssetOutputs(
 }
 
 export type ProductionVideoAssemblyRequest = {
-  projectAssetsDir: string;
   projectWidth: number;
   projectHeight: number;
   segments: Array<{ inputPath: string; segmentId: string; durationFrames: number }>;
@@ -10134,26 +10135,48 @@ export async function concatShotVideos(request: ProductionVideoAssemblyRequest):
   const segments = request.segments.filter((segment) => segment.inputPath.trim().length > 0);
   if (segments.length === 0) return null;
   const credentials = [];
-  for (const segment of segments) {
-    const normalized = await normalizeVideoSegment({
-      inputPath: segment.inputPath,
-      projectAssetsDir: request.projectAssetsDir,
-      segmentId: segment.segmentId,
-      projectWidth: request.projectWidth,
-      projectHeight: request.projectHeight,
-      durationFrames: segment.durationFrames
+  const stagedSegments = [];
+  const reviewFrames = [];
+  let projectAssetsDir = "";
+  try {
+    for (const segment of segments) {
+      const staged = await stageVideoSegment({ inputPath: segment.inputPath });
+      stagedSegments.push(staged);
+      if (projectAssetsDir && staged.projectAssetsDir !== projectAssetsDir) {
+        throw new Error("video_project_changed_during_assembly");
+      }
+      projectAssetsDir = staged.projectAssetsDir;
+      const normalized = await normalizeVideoSegment({
+        inputPath: staged.stagedPath,
+        projectAssetsDir,
+        segmentId: segment.segmentId,
+        projectWidth: request.projectWidth,
+        projectHeight: request.projectHeight,
+        durationFrames: segment.durationFrames
+      });
+      const review = await extractVideoReviewFrames({
+        projectAssetsDir,
+        credential: normalized.credential
+      });
+      credentials.push(normalized.credential);
+      reviewFrames.push(review);
+    }
+    const result = await concatNormalizedVideoSegments({
+      projectAssetsDir,
+      segments: credentials
     });
-    await extractVideoReviewFrames({
-      projectAssetsDir: request.projectAssetsDir,
-      credential: normalized.credential
-    });
-    credentials.push(normalized.credential);
+    await cleanupVideoAssemblyAssets({ projectAssetsDir, stagedSegments, credentials, reviewFrames });
+    return result.outputPath;
+  } catch (error) {
+    if (projectAssetsDir) {
+      try {
+        await cleanupVideoAssemblyAssets({ projectAssetsDir, stagedSegments, credentials, reviewFrames });
+      } catch {
+        // Preserve the production failure; backend GC can reclaim signed leftovers.
+      }
+    }
+    throw error;
   }
-  const result = await concatNormalizedVideoSegments({
-    projectAssetsDir: request.projectAssetsDir,
-    segments: credentials
-  });
-  return result.outputPath;
 }
 
 function makeSkyboxPrompt(description: string, face: SkyboxFace, eventPrompt?: string): string {

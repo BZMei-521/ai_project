@@ -41,3 +41,29 @@
 - Real fixture coverage includes a 24 fps H.264/AAC exact-frame probe, 30→24 fps/scale/audio normalization, silent-input AAC synthesis, black and EOF-freeze reports, 1/5/4-frame golden review extraction, and exact-frame two-segment concat.
 - Security negatives cover forged, duplicate and replayed receipts; source replacement between validation and snapshot; target preoccupation/no-clobber; VFR/bad timestamps; codec/audio mismatch; and Windows Web dispatch. Windows symlink creation was unavailable without `SeCreateSymbolicLinkPrivilege`, so that fixture reports an explicit SKIP; the canonical containment implementation remains exercised on supported hosts.
 - Detached clean-tree validation of the exact 11-file Task 7 diff passed `node scripts/check-video-normalization-contract.mjs` and `cargo check --manifest-path src-tauri/Cargo.toml` after supplying the baseline-required untracked icon and an empty `dist` validation fixture. A full clean-tree `npm.cmd run build` and the Task 5/6 checkers remain blocked by pre-existing cross-task shared changes absent from `HEAD` (`Character*`/Comfy proof types, `sequentialCharacterPassRuntime`, `applyGlobalStyleToTokens`, and `resolveVideoFrameSources`); the same build and Task 5/6 regressions pass in the integrated main workspace. No unrelated fixes were pulled into the Task 7 commit to mask that baseline condition.
+
+## r3 remediation
+
+- The Panel no longer derives an asset root from ComfyUI `outputDir`. The real handler sends only resolved shot sources and project dimensions; the backend reads the current-project marker, requires a canonical `.sbproj`, creates its canonical `assets` root, and copies each external H3/Comfy source with a backend nonce into `video-staging` before normalization.
+- The authority is now rooted under canonical app-data `video-normalization-authority`. A 256-bit OS-random secret is persisted with `create_new`; complete canonical claims, schema/state, issue time, nonce, credential, and derived review paths are HMAC-SHA256 authenticated and compared in constant time. Generic base64 write and copy commands reject authority targets, and copy rejects authority sources too.
+- Concat uses signed, exclusive `available -> leased(transaction)` markers. Concurrent leases fail closed; every snapshot/probe/FFmpeg/publication error releases the lease; signed `consumed` state is committed only after publication, and a failed commit removes the new output. Normalize and assembly names contain backend nonces, so failure and repeated successful clicks do not collide with earlier assets.
+- The production orchestrator tracks only the current run's staged results, credentials, and review frames. It calls the containment-checked backend cleanup on both success and failure; cleanup uses signed receipt claims for normalized/review deletion and never touches `video-assembled` history.
+- Windows writes now reject reparse points across the complete parent chain and use `create_new` file handles plus final canonical identity checks. The test creates a real ordinary-user junction with `mklink /J`, proves rejection before copying, and proves the outside directory remains empty.
+- Real FFmpeg negatives cover 24000/1001, VFR, duplicate and reverse timestamps, a raw stream with unobservable timestamps/duration, non-H.264, AAC 44.1 kHz mono, and multiple video streams. Parsed cases are signed into the real registry and reach concat preflight; all fail before lease/consume/FFmpeg/publish.
+- A callable TTL GC scans authenticated records by exact canonical project and asset claims, skips active leases, removes only record-indexed normalized/review assets and receipt state, and retains published assemblies. The two-project fixture proves it cannot cross project boundaries or remove historical final output.
+
+### r3 RED/GREEN evidence
+
+1. The executable bridge/production/Panel contract first failed because `stageVideoSegment` was `undefined`; after staging and Panel rewiring it executes the real Panel handler and proves no `.storyboard-cache`/`projectAssetsDir` fabrication.
+2. A real issued record with a changed nonce was accepted before MAC protection; it now returns `normalization_receipt_signature_invalid`. The generic authority guard first failed to compile because no app-data guard existed, then passed for protected source/target and ordinary paths.
+3. Lease tests first failed to compile for missing lease/release/commit APIs. They now prove exclusivity, rollback, commit, and successful retry after an injected missing FFmpeg binary. The production second-segment fixture first observed zero cleanup calls and now observes exactly one run-scoped compensation.
+4. The junction test first failed to compile without ancestor reparse validation; it now uses a real junction and leaves no external write. The real-media contract helper and project-marker resolver likewise began as missing-function REDs before their fixtures passed.
+5. The scoped GC test first failed to compile without `gc_at_roots`; it now removes one expired signed project receipt while retaining the other project and the published assembly.
+
+### r3 verification
+
+- `node scripts/check-video-normalization-contract.mjs` — PASS, including 23 Rust Task 7 tests.
+- `cargo check --manifest-path src-tauri/Cargo.toml` — PASS.
+- `npm.cmd run build` — PASS (only the existing Vite chunk-size advisory).
+- `node scripts/check-minimax-h3-binding.mjs` and `node scripts/check-video-continuity-planner.mjs` — PASS.
+- Whole-worktree `git diff --check` reports only two pre-existing trailing-whitespace lines in the user's dirty `docs/storyboard-workflows-20260304.md`; Task 7 scoped diff-check is clean.

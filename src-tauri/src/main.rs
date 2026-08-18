@@ -2531,7 +2531,12 @@ fn comfy_get_object_info(base_url: String) -> Result<serde_json::Value, String> 
 }
 
 #[tauri::command]
-fn write_base64_file(file_path: String, base64_data: String) -> Result<FileWriteResult, String> {
+fn write_base64_file(
+    app: tauri::AppHandle,
+    file_path: String,
+    base64_data: String,
+) -> Result<FileWriteResult, String> {
+    video_continuity::reject_authority_file_command_path(&app, &file_path)?;
     let path = PathBuf::from(file_path.trim());
     if path.as_os_str().is_empty() {
         return Err("file_path is empty".to_string());
@@ -2550,7 +2555,13 @@ fn write_base64_file(file_path: String, base64_data: String) -> Result<FileWrite
 }
 
 #[tauri::command]
-fn copy_file_to(source_path: String, target_path: String) -> Result<FileWriteResult, String> {
+fn copy_file_to(
+    app: tauri::AppHandle,
+    source_path: String,
+    target_path: String,
+) -> Result<FileWriteResult, String> {
+    video_continuity::reject_authority_file_command_path(&app, &source_path)?;
+    video_continuity::reject_authority_file_command_path(&app, &target_path)?;
     let source = PathBuf::from(source_path.trim());
     if !source.exists() || !source.is_file() {
         return Err(format!("Source file not found: {}", source.to_string_lossy()));
@@ -2837,10 +2848,13 @@ fn main() {
             export_animatic,
             export_animatic_from_frames,
             concat_video_segments,
+            video_continuity::stage_video_segment,
             video_continuity::probe_video_segment,
             video_continuity::normalize_video_segment,
             video_continuity::extract_video_review_frames,
             video_continuity::concat_normalized_video_segments,
+            video_continuity::cleanup_video_assembly_assets,
+            video_continuity::gc_video_continuity_assets,
             mux_video_with_audio_tracks,
             mix_audio_tracks,
             generate_local_video_from_images,
