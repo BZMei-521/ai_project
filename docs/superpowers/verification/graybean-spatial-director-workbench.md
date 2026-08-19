@@ -77,14 +77,19 @@ Character, storyboard, H3, video schema/router/normalization/continuity/quality,
 
 ## Visual and desktop QA
 
-Status: **BLOCKED / NOT RUN**.
+Status: **WEB SMOKE PASS / TAURI PENDING**.
 
-The requested 1280px and 390px Playwright/desktop run was not executed. No Vite/Tauri session or browser automation evidence was produced, so six-stage navigation, nonblank center canvas pixels, inspector layout, first-viewport diagnostic suppression, overflow/overlap, and focus-ring checks are not claimed. These checks must be rerun with the web runtime and browser/desktop harness available.
+Playwright opened `http://127.0.0.1:5173/` with the Vite server and captured:
+
+- `output/playwright/graybean-workbench.png`: six-stage navigation, compact header/status bar, inspector, and closed advanced-tools disclosure are visible.
+- `output/playwright/graybean-preview.png`: the spatial preview canvas renders nonblank grid, lights, and camera scene content after switching to 预演.
+
+The browser console only reported the missing optional `/favicon.ico` resource. A 390px mobile viewport and native Tauri open/save/reopen run remain pending.
 
 ## Known failures and shared worktree
 
-- `check-spatial-stage-moge.mjs` fails in its existing multi-entry esbuild invocation; this report does not alter the checker or product code.
+- `check-spatial-stage-moge.mjs` now passes after the build-gate compatibility fix.
 - `package.json` has no `test:video-transition-graph` alias; the acceptance runner calls the existing checker directly and it passes.
-- `npm.cmd run build` stops at the existing `replaceAll` TypeScript target/lib error in `mogeWorkflow.ts`.
+- `npm.cmd run build` passes; Vite still emits existing large-chunk advisory warnings.
 - The repository had extensive unrelated dirty and untracked changes before Task8. No reset, checkout, clean, bulk staging, or product-code edits were performed.
 - `package.json` was already heavily modified by concurrent work, so the new acceptance script entry remains an unstaged shared-worktree hunk rather than being mixed into an unrelated package commit.
