@@ -31,6 +31,8 @@ export type MigratedProjectSaveResult<TSavedPath> = {
   savedPath: TSavedPath;
 };
 
+const migrationBackupClaims = new Map<string, Promise<string>>();
+
 export async function saveMigratedProjectSnapshot<TSavedPath>(
   input: unknown,
   backupDestination: string,
@@ -38,14 +40,50 @@ export async function saveMigratedProjectSnapshot<TSavedPath>(
   backup: (snapshot: unknown, destination: string) => Promise<string> = createMigrationBackup
 ): Promise<MigratedProjectSaveResult<TSavedPath>> {
   const migration = migrateStoryboardSnapshot(input);
-  const backupPath = migration.migrated
-    ? await backup(input, backupDestination)
-    : null;
-  const savedPath = await save(migration.snapshot);
+  const backupRequired = migration.snapshot.migrationBackupPending;
+  let backupPath: string | null = null;
+  let claimKey: string | null = null;
+  let claim: Promise<string> | null = null;
+  let ownsClaim = false;
+  if (backupRequired) {
+    const projectId = String((migration.snapshot.project as Record<string, unknown>).id ?? "");
+    claimKey = `${backupDestination}:${projectId}`;
+    claim = migrationBackupClaims.get(claimKey) ?? null;
+    if (!claim) {
+      const source = migration.snapshot.migrationBackupSource ?? input;
+      claim = backup(source, backupDestination);
+      migrationBackupClaims.set(claimKey, claim);
+      ownsClaim = true;
+    }
+    try {
+      backupPath = await claim;
+    } catch (error) {
+      if (ownsClaim && claimKey && migrationBackupClaims.get(claimKey) === claim) migrationBackupClaims.delete(claimKey);
+      throw error;
+    }
+  }
+  const snapshot = backupRequired
+    ? (() => {
+        const { migrationBackupSource: _source, ...persisted } = migration.snapshot;
+        return { ...persisted, migrationBackupPending: false };
+      })()
+    : migration.snapshot;
+  try {
+    const savedPath = await save(snapshot);
+    if (ownsClaim && claimKey && claim && migrationBackupClaims.get(claimKey) === claim) {
+      migrationBackupClaims.delete(claimKey);
+    }
 
-  return {
-    ...migration,
-    backupPath,
-    savedPath
-  };
+    return {
+      ...migration,
+      snapshot,
+      backupPath,
+      savedPath
+    };
+  } catch (error) {
+    if (ownsClaim && claimKey && claim && migrationBackupClaims.get(claimKey) === claim) {
+      migrationBackupClaims.delete(claimKey);
+    }
+    throw error;
+  }
 }

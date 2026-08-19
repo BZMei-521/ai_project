@@ -1,5 +1,8 @@
-import type { StoryboardSnapshot } from "../storyboard-core/store";
+import { useStoryboardStore, type StoryboardSnapshot } from "../storyboard-core/store";
 import { invokeDesktopCommand, isDesktopRuntime as hasDesktopRuntime } from "../platform/desktopBridge";
+import { createMigrationBackup, type DesktopCommandInvoker } from "./backupSnapshot";
+import { saveMigratedProjectSnapshot } from "./projectFile";
+import { migrateStoryboardSnapshot } from "../../services/persistence/workbenchMigration";
 
 type SaveResult = {
   projectPath: string;
@@ -15,20 +18,53 @@ export function isDesktopRuntime(): boolean {
   return hasDesktopRuntime();
 }
 
+const CURRENT_PROJECT_BACKUP_DESTINATION = "current-project";
+
+export async function saveSnapshotThroughDesktopBridge(
+  snapshot: unknown,
+  invokeCommand: DesktopCommandInvoker = invokeDesktopCommand,
+  onMigrationSaved?: () => void
+): Promise<string> {
+  const result = await saveMigratedProjectSnapshot(
+    snapshot,
+    CURRENT_PROJECT_BACKUP_DESTINATION,
+    async (migratedSnapshot) => {
+      const saved = await invokeCommand("save_current_project", { snapshot: migratedSnapshot });
+      if (!saved || typeof saved !== "object" || !("projectPath" in saved)) {
+        throw new Error("Desktop project save did not return a project path");
+      }
+      return String((saved as { projectPath: unknown }).projectPath);
+    },
+    (legacySnapshot, destination) => createMigrationBackup(legacySnapshot, destination, invokeCommand)
+  );
+  if (result.backupPath) onMigrationSaved?.();
+  return result.savedPath;
+}
+
+export async function loadSnapshotThroughDesktopBridge(
+  invokeCommand: DesktopCommandInvoker = invokeDesktopCommand
+): Promise<StoryboardSnapshot | null> {
+  const result = await invokeCommand("load_current_project");
+  if (result === null) return null;
+  return migrateStoryboardSnapshot(result).snapshot as unknown as StoryboardSnapshot;
+}
+
 export async function saveSnapshotToDesktop(
   snapshot: StoryboardSnapshot
 ): Promise<string | null> {
   if (!hasDesktopRuntime()) return null;
 
-  const result = await invokeDesktopCommand<SaveResult>("save_current_project", { snapshot });
-  return result.projectPath;
+  return saveSnapshotThroughDesktopBridge(
+    snapshot,
+    invokeDesktopCommand,
+    () => useStoryboardStore.getState().completeWorkbenchMigration()
+  );
 }
 
 export async function loadSnapshotFromDesktop(): Promise<StoryboardSnapshot | null> {
   if (!hasDesktopRuntime()) return null;
 
-  const result = await invokeDesktopCommand<StoryboardSnapshot | null>("load_current_project");
-  return result;
+  return loadSnapshotThroughDesktopBridge();
 }
 
 export async function listWorkspaceProjects(): Promise<WorkspaceProjectEntry[]> {

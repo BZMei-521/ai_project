@@ -4,11 +4,18 @@ use base64::Engine as _;
 use image::GenericImageView;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 mod video_continuity;
@@ -115,9 +122,48 @@ struct CanvasHistoryPayload {
     future: Vec<Vec<StrokePayload>>,
 }
 
+fn default_workbench_schema_version() -> i64 {
+    1
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct StoredWorkbenchSnapshot {
+    #[serde(default = "default_workbench_schema_version")]
+    schema_version: i64,
+    #[serde(default)]
+    migration_backup_pending: bool,
+    #[serde(default)]
+    director_plan: serde_json::Value,
+    #[serde(default)]
+    spatial_scenes: Vec<serde_json::Value>,
+    #[serde(default)]
+    spatial_objects: Vec<serde_json::Value>,
+    #[serde(default)]
+    pose_keyframes: Vec<serde_json::Value>,
+    #[serde(default)]
+    camera_plans: Vec<serde_json::Value>,
+    #[serde(default)]
+    extra_snapshot_fields: HashMap<String, serde_json::Value>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct StoryboardSnapshotPayload {
+    #[serde(default = "default_workbench_schema_version")]
+    schema_version: i64,
+    #[serde(default)]
+    migration_backup_pending: bool,
+    #[serde(default)]
+    director_plan: serde_json::Value,
+    #[serde(default)]
+    spatial_scenes: Vec<serde_json::Value>,
+    #[serde(default)]
+    spatial_objects: Vec<serde_json::Value>,
+    #[serde(default)]
+    pose_keyframes: Vec<serde_json::Value>,
+    #[serde(default)]
+    camera_plans: Vec<serde_json::Value>,
     project: ProjectPayload,
     sequences: Vec<SequencePayload>,
     shots: Vec<ShotPayload>,
@@ -130,12 +176,38 @@ struct StoryboardSnapshotPayload {
     export_settings: ExportSettingsPayload,
     shot_strokes: HashMap<String, Vec<StrokePayload>>,
     shot_history: HashMap<String, CanvasHistoryPayload>,
+    #[serde(flatten)]
+    extra_snapshot_fields: HashMap<String, serde_json::Value>,
+}
+
+fn serialize_workbench_snapshot(snapshot: &StoryboardSnapshotPayload) -> Result<String, String> {
+    serde_json::to_string(&StoredWorkbenchSnapshot {
+        schema_version: snapshot.schema_version,
+        migration_backup_pending: snapshot.migration_backup_pending,
+        director_plan: snapshot.director_plan.clone(),
+        spatial_scenes: snapshot.spatial_scenes.clone(),
+        spatial_objects: snapshot.spatial_objects.clone(),
+        pose_keyframes: snapshot.pose_keyframes.clone(),
+        camera_plans: snapshot.camera_plans.clone(),
+        extra_snapshot_fields: snapshot.extra_snapshot_fields.clone(),
+    })
+    .map_err(|err| format!("Unable to serialize workbench snapshot: {err}"))
+}
+
+fn deserialize_workbench_snapshot(raw: &str) -> Result<StoredWorkbenchSnapshot, String> {
+    serde_json::from_str(raw).map_err(|err| format!("Unable to decode workbench snapshot: {err}"))
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveResult {
     project_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MigrationBackupResult {
+    backup_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +238,14 @@ struct FileWriteResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct TrustedCharacterReferenceResult {
+    base64_data: String,
+    byte_length: usize,
+    image_format: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ThreeViewSplitResult {
     front_path: String,
     side_path: String,
@@ -181,6 +261,14 @@ struct DeleteGeneratedFileFamiliesResult {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ComfyPingResult {
+    ok: bool,
+    status_code: Option<u16>,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComfyMaintenanceResult {
     ok: bool,
     status_code: Option<u16>,
     message: String,
@@ -564,7 +652,8 @@ fn initialize_db(connection: &Connection) -> Result<(), String> {
                 canvas_tool_json TEXT NOT NULL,
                 export_settings_json TEXT NOT NULL,
                 shot_strokes_json TEXT NOT NULL,
-                shot_history_json TEXT NOT NULL
+                shot_history_json TEXT NOT NULL,
+                workbench_snapshot_json TEXT NOT NULL DEFAULT '{}'
             );
             "#,
         )
@@ -612,6 +701,69 @@ fn ensure_snapshot_meta_export_settings_column(connection: &Connection) -> Resul
     Ok(())
 }
 
+fn ensure_snapshot_meta_workbench_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(snapshot_meta)")
+        .map_err(|err| format!("Failed to inspect snapshot_meta schema: {err}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("Failed to read snapshot_meta schema rows: {err}"))?;
+    let mut has_workbench_snapshot = false;
+    for column_name in rows {
+        if column_name.map_err(|err| format!("Failed to decode schema row: {err}"))?
+            == "workbench_snapshot_json"
+        {
+            has_workbench_snapshot = true;
+        }
+    }
+    if !has_workbench_snapshot {
+        connection
+            .execute(
+                "ALTER TABLE snapshot_meta ADD COLUMN workbench_snapshot_json TEXT NOT NULL DEFAULT '{}'",
+                [],
+            )
+            .map_err(|err| format!("Failed to add workbench_snapshot_json column: {err}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn create_migration_backup(
+    app: tauri::AppHandle,
+    snapshot: serde_json::Value,
+    destination: String,
+) -> Result<MigrationBackupResult, String> {
+    if destination != "current-project" {
+        return Err("Migration backup destination must be the current project".to_string());
+    }
+    let project_dir = resolve_current_project_dir(&app)?;
+    let backup_dir = project_dir.join("migration-backups");
+    fs::create_dir_all(&backup_dir)
+        .map_err(|err| format!("Unable to create migration backup directory: {err}"))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("Unable to create migration backup timestamp: {err}"))?
+        .as_millis();
+    let backup_path = backup_dir.join(format!("migration-backup-{timestamp}.json"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup_path)
+        .map_err(|err| format!("Unable to create migration backup: {err}"))?;
+    let payload = serde_json::json!({
+        "schemaVersion": 1,
+        "exportedAtUnixMillis": timestamp,
+        "snapshot": snapshot
+    });
+    serde_json::to_writer_pretty(&mut file, &payload)
+        .map_err(|err| format!("Unable to serialize migration backup: {err}"))?;
+    file.write_all(b"\n")
+        .map_err(|err| format!("Unable to finalize migration backup: {err}"))?;
+    Ok(MigrationBackupResult {
+        backup_path: backup_path.to_string_lossy().to_string(),
+    })
+}
+
 fn ensure_assets_voice_profile_column(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(assets)")
@@ -622,7 +774,8 @@ fn ensure_assets_voice_profile_column(connection: &Connection) -> Result<(), Str
 
     let mut has_voice_profile = false;
     for column_name in rows {
-        let name = column_name.map_err(|err| format!("Failed to decode assets schema row: {err}"))?;
+        let name =
+            column_name.map_err(|err| format!("Failed to decode assets schema row: {err}"))?;
         if name == "voice_profile" {
             has_voice_profile = true;
         }
@@ -651,7 +804,8 @@ fn ensure_audio_track_metadata_columns(connection: &Connection) -> Result<(), St
     let mut has_kind = false;
     let mut has_label = false;
     for column_name in rows {
-        let name = column_name.map_err(|err| format!("Failed to decode audio_tracks schema row: {err}"))?;
+        let name = column_name
+            .map_err(|err| format!("Failed to decode audio_tracks schema row: {err}"))?;
         if name == "kind" {
             has_kind = true;
         }
@@ -714,6 +868,7 @@ fn save_current_project(
         Connection::open(database_path).map_err(|err| format!("Unable to open database: {err}"))?;
     initialize_db(&connection)?;
     ensure_snapshot_meta_export_settings_column(&connection)?;
+    ensure_snapshot_meta_workbench_column(&connection)?;
     ensure_assets_voice_profile_column(&connection)?;
     ensure_audio_track_metadata_columns(&connection)?;
 
@@ -865,24 +1020,27 @@ fn save_current_project(
         .map_err(|err| format!("Unable to serialize shot strokes: {err}"))?;
     let shot_history_json = serde_json::to_string(&snapshot.shot_history)
         .map_err(|err| format!("Unable to serialize shot history: {err}"))?;
+    let workbench_snapshot_json = serialize_workbench_snapshot(&snapshot)?;
 
     transaction
         .execute(
-            "INSERT INTO snapshot_meta (id, selected_shot_id, active_layer_by_shot_json, canvas_tool_json, export_settings_json, shot_strokes_json, shot_history_json) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO snapshot_meta (id, selected_shot_id, active_layer_by_shot_json, canvas_tool_json, export_settings_json, shot_strokes_json, shot_history_json, workbench_snapshot_json) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                selected_shot_id=excluded.selected_shot_id,
                active_layer_by_shot_json=excluded.active_layer_by_shot_json,
                canvas_tool_json=excluded.canvas_tool_json,
                export_settings_json=excluded.export_settings_json,
                shot_strokes_json=excluded.shot_strokes_json,
-               shot_history_json=excluded.shot_history_json",
+               shot_history_json=excluded.shot_history_json,
+               workbench_snapshot_json=excluded.workbench_snapshot_json",
             params![
                 &snapshot.selected_shot_id,
                 active_layer_by_shot_json,
                 canvas_tool_json,
                 export_settings_json,
                 shot_strokes_json,
-                shot_history_json
+                shot_history_json,
+                workbench_snapshot_json
             ],
         )
         .map_err(|err| format!("Unable to write snapshot meta: {err}"))?;
@@ -913,6 +1071,7 @@ fn load_current_project(
         Connection::open(database_path).map_err(|err| format!("Unable to open database: {err}"))?;
     initialize_db(&connection)?;
     ensure_snapshot_meta_export_settings_column(&connection)?;
+    ensure_snapshot_meta_workbench_column(&connection)?;
     ensure_assets_voice_profile_column(&connection)?;
     ensure_audio_track_metadata_columns(&connection)?;
 
@@ -1092,7 +1251,7 @@ fn load_current_project(
 
     let meta = connection
         .query_row(
-            "SELECT selected_shot_id, active_layer_by_shot_json, canvas_tool_json, export_settings_json, shot_strokes_json, shot_history_json FROM snapshot_meta WHERE id = 1",
+            "SELECT selected_shot_id, active_layer_by_shot_json, canvas_tool_json, export_settings_json, shot_strokes_json, shot_history_json, workbench_snapshot_json FROM snapshot_meta WHERE id = 1",
             [],
             |row| {
                 Ok((
@@ -1102,6 +1261,7 @@ fn load_current_project(
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
@@ -1115,6 +1275,7 @@ fn load_current_project(
         export_settings_json,
         shot_strokes_json,
         shot_history_json,
+        workbench_snapshot_json,
     )) = meta
     else {
         return Ok(None);
@@ -1133,8 +1294,16 @@ fn load_current_project(
     let shot_history: HashMap<String, CanvasHistoryPayload> =
         serde_json::from_str(&shot_history_json)
             .map_err(|err| format!("Unable to decode shot history: {err}"))?;
+    let workbench_snapshot = deserialize_workbench_snapshot(&workbench_snapshot_json)?;
 
     Ok(Some(StoryboardSnapshotPayload {
+        schema_version: workbench_snapshot.schema_version,
+        migration_backup_pending: workbench_snapshot.migration_backup_pending,
+        director_plan: workbench_snapshot.director_plan,
+        spatial_scenes: workbench_snapshot.spatial_scenes,
+        spatial_objects: workbench_snapshot.spatial_objects,
+        pose_keyframes: workbench_snapshot.pose_keyframes,
+        camera_plans: workbench_snapshot.camera_plans,
         project,
         sequences,
         shots,
@@ -1147,6 +1316,7 @@ fn load_current_project(
         export_settings,
         shot_strokes,
         shot_history,
+        extra_snapshot_fields: workbench_snapshot.extra_snapshot_fields,
     }))
 }
 
@@ -1605,7 +1775,10 @@ fn concat_video_segments(
                     output_path: None,
                 },
             );
-            return Err(format!("Video concat failed with status code {:?}", status.code()));
+            return Err(format!(
+                "Video concat failed with status code {:?}",
+                status.code()
+            ));
         }
 
         let output = output_path.to_string_lossy().to_string();
@@ -1620,7 +1793,9 @@ fn concat_video_segments(
             },
         );
 
-        Ok(ExportResult { output_path: output })
+        Ok(ExportResult {
+            output_path: output,
+        })
     })();
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -1752,7 +1927,9 @@ fn mux_video_with_audio_tracks(
         },
     );
 
-    Ok(ExportResult { output_path: output })
+    Ok(ExportResult {
+        output_path: output,
+    })
 }
 
 #[tauri::command]
@@ -1771,7 +1948,11 @@ fn mix_audio_tracks(
         if !audio_path.exists() || !audio_path.is_file() {
             continue;
         }
-        valid_audio.push((track.file_path.clone(), track.start_frame.max(0), track.gain.max(0.0)));
+        valid_audio.push((
+            track.file_path.clone(),
+            track.start_frame.max(0),
+            track.gain.max(0.0),
+        ));
     }
 
     if valid_audio.is_empty() {
@@ -1842,7 +2023,9 @@ fn mix_audio_tracks(
         },
     );
 
-    Ok(ExportResult { output_path: output })
+    Ok(ExportResult {
+        output_path: output,
+    })
 }
 
 #[tauri::command]
@@ -1979,7 +2162,10 @@ fn generate_local_video_from_images(
                         timestamp: now_timestamp().unwrap_or(0),
                         kind: "local-video".to_string(),
                         status: "failed".to_string(),
-                        message: format!("Local single-frame video failed with status {:?}", status.code()),
+                        message: format!(
+                            "Local single-frame video failed with status {:?}",
+                            status.code()
+                        ),
                         output_path: None,
                     },
                 );
@@ -2057,7 +2243,10 @@ fn generate_local_video_from_images(
                         timestamp: now_timestamp().unwrap_or(0),
                         kind: "local-video".to_string(),
                         status: "failed".to_string(),
-                        message: format!("Local first-last video failed with status {:?}", status.code()),
+                        message: format!(
+                            "Local first-last video failed with status {:?}",
+                            status.code()
+                        ),
                         output_path: None,
                     },
                 );
@@ -2104,40 +2293,40 @@ fn comfy_http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client, Str
         .no_proxy()
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .map_err(|err| format!("创建 Comfy 客户端失败: {err}"))
+        .map_err(|err| format!("鍒涘缓 Comfy 瀹㈡埛绔け璐? {err}"))
 }
 
 #[tauri::command]
 fn comfy_ping(base_url: String) -> Result<ComfyPingResult, String> {
     let base = normalize_base_url(&base_url);
     let client = comfy_http_client(6)?;
-    let checks = ["/system_stats", "/queue"];
+    let checks = ["/queue", "/object_info"];
     for path in checks {
         let url = format!("{base}{path}");
         let response = client.get(&url).send();
         if let Ok(resp) = response {
             let status = resp.status();
-            if status.is_success() {
+            if status.is_success() || status.as_u16() == 401 || status.as_u16() == 403 {
                 return Ok(ComfyPingResult {
                     ok: true,
                     status_code: Some(status.as_u16()),
-                    message: format!("ComfyUI 可用: {url}"),
+                    message: format!("ComfyUI available: {url} [tauri_queue_first_v2]"),
                 });
             }
         }
     }
-    let url = format!("{base}/system_stats");
+    let url = format!("{base}/queue");
     let response = client.get(&url).send();
     match response {
         Ok(resp) => Ok(ComfyPingResult {
             ok: false,
             status_code: Some(resp.status().as_u16()),
-            message: format!("ComfyUI 返回 HTTP {}", resp.status().as_u16()),
+            message: format!("ComfyUI 杩斿洖 HTTP {}", resp.status().as_u16()),
         }),
         Err(err) => Ok(ComfyPingResult {
             ok: false,
             status_code: None,
-            message: format!("连接失败: {err}"),
+            message: format!("杩炴帴澶辫触: {err}"),
         }),
     }
 }
@@ -2158,22 +2347,22 @@ fn comfy_queue_prompt(
         .post(&url)
         .json(&payload)
         .send()
-        .map_err(|err| format!("提交 Comfy 任务失败: {err}"))?;
+        .map_err(|err| format!("鎻愪氦 Comfy 浠诲姟澶辫触: {err}"))?;
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
         let body = resp.text().unwrap_or_else(|_| "".to_string());
-        return Err(format!("提交 Comfy 任务失败: HTTP {code} {body}"));
+        return Err(format!("鎻愪氦 Comfy 浠诲姟澶辫触: HTTP {code} {body}"));
     }
     let value: serde_json::Value = resp
         .json()
-        .map_err(|err| format!("解析 Comfy 响应失败: {err}"))?;
+        .map_err(|err| format!("瑙ｆ瀽 Comfy 鍝嶅簲澶辫触: {err}"))?;
     let prompt_id = value
         .get("prompt_id")
         .and_then(|item| item.as_str())
         .unwrap_or("")
         .to_string();
     if prompt_id.is_empty() {
-        return Err("Comfy 未返回 prompt_id".to_string());
+        return Err("Comfy 鏈繑鍥?prompt_id".to_string());
     }
     Ok(prompt_id)
 }
@@ -2185,28 +2374,71 @@ fn comfy_get_history(base_url: String, prompt_id: String) -> Result<serde_json::
     let resp = client
         .get(&url)
         .send()
-        .map_err(|err| format!("读取 Comfy history 失败: {err}"))?;
+        .map_err(|err| format!("璇诲彇 Comfy history 澶辫触: {err}"))?;
     if !resp.status().is_success() {
-        return Err(format!("读取 Comfy history 失败: HTTP {}", resp.status().as_u16()));
+        return Err(format!(
+            "璇诲彇 Comfy history 澶辫触: HTTP {}",
+            resp.status().as_u16()
+        ));
     }
     resp.json()
-        .map_err(|err| format!("解析 Comfy history 失败: {err}"))
+        .map_err(|err| format!("瑙ｆ瀽 Comfy history 澶辫触: {err}"))
+}
+
+#[tauri::command]
+fn comfy_maintenance(
+    base_url: String,
+    path: String,
+    payload: Option<serde_json::Value>,
+) -> Result<ComfyMaintenanceResult, String> {
+    let normalized_path = path.trim().to_string();
+    if normalized_path != "/interrupt" && normalized_path != "/free" {
+        return Err(format!(
+            "Unsupported comfy maintenance path: {}",
+            normalized_path
+        ));
+    }
+    let url = format!("{}{}", normalize_base_url(&base_url), normalized_path);
+    let client = comfy_http_client(12)?;
+    let body = payload.unwrap_or_else(|| serde_json::json!({}));
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .map_err(|err| format!("Comfy maintenance request failed: {err}"))?;
+    let status = response.status().as_u16();
+    let status_ok = response.status().is_success();
+    let response_text = response.text().unwrap_or_else(|_| "".to_string());
+    Ok(ComfyMaintenanceResult {
+        ok: status_ok,
+        status_code: Some(status),
+        message: if status_ok {
+            format!("HTTP {}", status)
+        } else if response_text.trim().is_empty() {
+            format!("HTTP {}", status)
+        } else {
+            format!("HTTP {} {}", status, response_text)
+                .chars()
+                .take(240)
+                .collect()
+        },
+    })
 }
 
 #[tauri::command]
 fn comfy_fetch_view_base64(url: String) -> Result<String, String> {
     let target = url.trim();
     if target.is_empty() {
-        return Err("url 不能为空".to_string());
+        return Err("url 涓嶈兘涓虹┖".to_string());
     }
     let client = comfy_http_client(30)?;
     let bytes = client
         .get(target)
         .send()
         .and_then(|resp| resp.error_for_status())
-        .map_err(|err| format!("下载 Comfy 图像失败: {err}"))?
+        .map_err(|err| format!("涓嬭浇 Comfy 鍥惧儚澶辫触: {err}"))?
         .bytes()
-        .map_err(|err| format!("读取 Comfy 图像字节失败: {err}"))?;
+        .map_err(|err| format!("璇诲彇 Comfy 鍥惧儚瀛楄妭澶辫触: {err}"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
@@ -2224,12 +2456,15 @@ fn comfy_discover_endpoints() -> Result<ComfyDiscoverResult, String> {
     let client = comfy_http_client(2)?;
     let mut found = Vec::new();
     for base in candidates {
-        let checks = ["/system_stats", "/queue"];
+        let checks = ["/queue", "/object_info"];
         let mut ok = false;
         for path in checks {
             let url = format!("{base}{path}");
             if let Ok(resp) = client.get(&url).send() {
-                if resp.status().is_success() {
+                if resp.status().is_success()
+                    || resp.status().as_u16() == 401
+                    || resp.status().as_u16() == 403
+                {
                     ok = true;
                     break;
                 }
@@ -2368,17 +2603,20 @@ fn count_model_files(path: &Path) -> usize {
 }
 
 #[tauri::command]
-fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<PluginInstallResult, String> {
+fn comfy_install_plugins(
+    comfy_root_dir: String,
+    repos: Vec<String>,
+) -> Result<PluginInstallResult, String> {
     let comfy_root = PathBuf::from(comfy_root_dir.trim());
     if !comfy_root.exists() || !comfy_root.is_dir() {
         return Err(format!(
-            "ComfyUI 根目录无效: {}",
+            "ComfyUI 鏍圭洰褰曟棤鏁? {}",
             comfy_root.to_string_lossy()
         ));
     }
     let custom_nodes_dir = comfy_root.join("custom_nodes");
     fs::create_dir_all(&custom_nodes_dir)
-        .map_err(|err| format!("创建 custom_nodes 目录失败: {err}"))?;
+        .map_err(|err| format!("鍒涘缓 custom_nodes 鐩綍澶辫触: {err}"))?;
     let venv_python = comfy_root.join(".venv").join("bin").join("python");
     let has_venv_python = venv_python.exists();
 
@@ -2394,14 +2632,14 @@ fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<P
         if !is_valid_github_repo_url(&repo) {
             failed.push(PluginInstallFailure {
                 repo: repo.clone(),
-                error: "仅支持 https://github.com/ 开头的仓库地址".to_string(),
+                error: "浠呮敮鎸?https://github.com/ 寮€澶寸殑浠撳簱鍦板潃".to_string(),
             });
             continue;
         }
         let Some(dir_name) = repo_dir_name(&repo) else {
             failed.push(PluginInstallFailure {
                 repo: repo.clone(),
-                error: "无法从仓库地址推断目录名".to_string(),
+                error: "Unable to infer the repository directory name".to_string(),
             });
             continue;
         };
@@ -2414,7 +2652,7 @@ fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<P
                 .arg("pull")
                 .arg("--ff-only")
                 .status()
-                .map_err(|err| format!("执行 git pull 失败: {err}"))
+                .map_err(|err| format!("鎵ц git pull 澶辫触: {err}"))
         } else {
             Command::new("git")
                 .arg("clone")
@@ -2422,7 +2660,7 @@ fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<P
                 .arg(&repo)
                 .arg(&target_dir)
                 .status()
-                .map_err(|err| format!("执行 git clone 失败: {err}"))
+                .map_err(|err| format!("鎵ц git clone 澶辫触: {err}"))
         };
 
         match git_status {
@@ -2430,7 +2668,7 @@ fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<P
             Ok(status) => {
                 failed.push(PluginInstallFailure {
                     repo: repo.clone(),
-                    error: format!("git 退出码异常: {:?}", status.code()),
+                    error: format!("git 閫€鍑虹爜寮傚父: {:?}", status.code()),
                 });
                 continue;
             }
@@ -2453,13 +2691,13 @@ fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<P
                     .arg("-r")
                     .arg(&requirements)
                     .status()
-                    .map_err(|err| format!("安装依赖失败: {err}"));
+                    .map_err(|err| format!("瀹夎渚濊禆澶辫触: {err}"));
                 match pip_status {
                     Ok(status) if status.success() => {}
                     Ok(status) => {
                         failed.push(PluginInstallFailure {
                             repo: repo.clone(),
-                            error: format!("pip 退出码异常: {:?}", status.code()),
+                            error: format!("pip 閫€鍑虹爜寮傚父: {:?}", status.code()),
                         });
                         continue;
                     }
@@ -2472,7 +2710,9 @@ fn comfy_install_plugins(comfy_root_dir: String, repos: Vec<String>) -> Result<P
                     }
                 }
             } else {
-                skipped.push(format!("{dir_name}（未检测到 .venv/bin/python，跳过依赖安装）"));
+                skipped.push(format!(
+                    "{dir_name}锛堟湭妫€娴嬪埌 .venv/bin/python锛岃烦杩囦緷璧栧畨瑁咃級"
+                ));
             }
         }
 
@@ -2495,22 +2735,47 @@ fn comfy_check_model_health(comfy_root_dir: String) -> Result<ComfyModelHealthRe
     let comfy_root = PathBuf::from(comfy_root_dir.trim());
     if !comfy_root.exists() || !comfy_root.is_dir() {
         return Err(format!(
-            "ComfyUI 根目录无效: {}",
+            "ComfyUI 鏍圭洰褰曟棤鏁? {}",
             comfy_root.to_string_lossy()
         ));
     }
     let model_root = comfy_root.join("models");
     let checks_spec = vec![
-        ("checkpoints", "基础模型 Checkpoints", true, model_root.join("checkpoints")),
+        (
+            "checkpoints",
+            "Base model checkpoints",
+            true,
+            model_root.join("checkpoints"),
+        ),
         ("vae", "VAE", false, model_root.join("vae")),
         ("loras", "Lora", false, model_root.join("loras")),
-        ("controlnet", "ControlNet", false, model_root.join("controlnet")),
-        ("ipadapter", "IPAdapter", false, model_root.join("ipadapter")),
-        ("clip_vision", "CLIP Vision", false, model_root.join("clip_vision")),
-        ("animatediff_models", "AnimateDiff Motion Models", false, model_root.join("animatediff_models")),
+        (
+            "controlnet",
+            "ControlNet",
+            false,
+            model_root.join("controlnet"),
+        ),
+        (
+            "ipadapter",
+            "IPAdapter",
+            false,
+            model_root.join("ipadapter"),
+        ),
+        (
+            "clip_vision",
+            "CLIP Vision",
+            false,
+            model_root.join("clip_vision"),
+        ),
+        (
+            "animatediff_models",
+            "AnimateDiff Motion Models",
+            false,
+            model_root.join("animatediff_models"),
+        ),
         (
             "animatediff_models_plugin",
-            "AnimateDiff 插件 Models",
+            "AnimateDiff 鎻掍欢 Models",
             false,
             comfy_root
                 .join("custom_nodes")
@@ -2541,15 +2806,15 @@ fn comfy_get_object_info(base_url: String) -> Result<serde_json::Value, String> 
     let resp = client
         .get(&url)
         .send()
-        .map_err(|err| format!("读取 Comfy object_info 失败: {err}"))?;
+        .map_err(|err| format!("璇诲彇 Comfy object_info 澶辫触: {err}"))?;
     if !resp.status().is_success() {
         return Err(format!(
-            "读取 Comfy object_info 失败: HTTP {}",
+            "璇诲彇 Comfy object_info 澶辫触: HTTP {}",
             resp.status().as_u16()
         ));
     }
     resp.json()
-        .map_err(|err| format!("解析 Comfy object_info 失败: {err}"))
+        .map_err(|err| format!("瑙ｆ瀽 Comfy object_info 澶辫触: {err}"))
 }
 
 #[tauri::command]
@@ -2586,7 +2851,10 @@ fn copy_file_to(
     video_continuity::reject_authority_file_command_path(&app, &target_path)?;
     let source = PathBuf::from(source_path.trim());
     if !source.exists() || !source.is_file() {
-        return Err(format!("Source file not found: {}", source.to_string_lossy()));
+        return Err(format!(
+            "Source file not found: {}",
+            source.to_string_lossy()
+        ));
     }
     let target = PathBuf::from(target_path.trim());
     if target.as_os_str().is_empty() {
@@ -2669,7 +2937,9 @@ fn delete_generated_file_families_at_app_data(
             }
             if let Some(stripped) = strip_trailing_numbered_suffix(&normalized, "_panel") {
                 normalized = stripped;
-            } else if let Some(stripped) = strip_trailing_numbered_suffix(&normalized, "_triptych_input_") {
+            } else if let Some(stripped) =
+                strip_trailing_numbered_suffix(&normalized, "_triptych_input_")
+            {
                 normalized = stripped;
             }
             if normalized == before {
@@ -2751,7 +3021,8 @@ fn delete_generated_file_families_at_app_data(
             if !candidate_path.is_file() || excludes.contains(&candidate_path) {
                 continue;
             }
-            let Some(file_name) = candidate_path.file_name().and_then(|value| value.to_str()) else {
+            let Some(file_name) = candidate_path.file_name().and_then(|value| value.to_str())
+            else {
                 continue;
             };
             if !prefixes
@@ -2777,6 +3048,782 @@ fn delete_generated_file_families_at_app_data(
     Ok(DeleteGeneratedFileFamiliesResult { deleted_paths })
 }
 
+fn compute_threeview_sheet_ranges(image: &image::RgbaImage) -> [(u32, u32); 3] {
+    let (width, height) = image.dimensions();
+    if width < 3 || height == 0 {
+        return [(0, width.max(1)), (0, width.max(1)), (0, width.max(1))];
+    }
+
+    let mut border_r: u64 = 0;
+    let mut border_g: u64 = 0;
+    let mut border_b: u64 = 0;
+    let mut border_count: u64 = 0;
+    let mut sample_border = |x: u32, y: u32| {
+        let pixel = image.get_pixel(x, y).0;
+        border_r += pixel[0] as u64;
+        border_g += pixel[1] as u64;
+        border_b += pixel[2] as u64;
+        border_count += 1;
+    };
+    for x in 0..width {
+        sample_border(x, 0);
+        sample_border(x, height - 1);
+    }
+    if height > 2 {
+        for y in 1..(height - 1) {
+            sample_border(0, y);
+            sample_border(width - 1, y);
+        }
+    }
+    let bg_r = border_r as f32 / border_count.max(1) as f32;
+    let bg_g = border_g as f32 / border_count.max(1) as f32;
+    let bg_b = border_b as f32 / border_count.max(1) as f32;
+    let threshold_sq = 26.0_f32 * 26.0_f32;
+
+    let mut column_scores = vec![0_u32; width as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y).0;
+            if pixel[3] <= 8 {
+                continue;
+            }
+            let dr = pixel[0] as f32 - bg_r;
+            let dg = pixel[1] as f32 - bg_g;
+            let db = pixel[2] as f32 - bg_b;
+            let distance_sq = dr * dr + dg * dg + db * db;
+            if distance_sq >= threshold_sq {
+                column_scores[x as usize] += 1;
+            }
+        }
+    }
+
+    let smoothing_radius = (((width as f32) / 192.0).round() as i32).clamp(1, 4);
+    let mut smoothed_scores = vec![0_u32; width as usize];
+    for x in 0..width as i32 {
+        let start = (x - smoothing_radius).max(0) as u32;
+        let end = (x + smoothing_radius).min(width as i32 - 1) as u32;
+        let mut sum: u64 = 0;
+        let mut count: u64 = 0;
+        for sample_x in start..=end {
+            sum += column_scores[sample_x as usize] as u64;
+            count += 1;
+        }
+        smoothed_scores[x as usize] = (sum / count.max(1)) as u32;
+    }
+
+    let panel_width = width / 3;
+    let fallback_overlap = ((panel_width as f32 * 0.08).round() as u32).clamp(6, 48);
+    let fallback_ranges = [
+        (0, width.min(panel_width + fallback_overlap).max(1)),
+        (
+            panel_width.saturating_sub(fallback_overlap),
+            width
+                .min(panel_width * 2 + fallback_overlap)
+                .max(panel_width.saturating_sub(fallback_overlap) + 1),
+        ),
+        ((panel_width * 2).saturating_sub(fallback_overlap), width),
+    ];
+    let min_panel_width = ((width as f32) / 5.0).round() as u32;
+    let search_radius = ((panel_width as f32 * 0.22).round() as u32).clamp(16, 96);
+
+    let find_separator = |expected: u32, lower_bound: u32, upper_bound: u32| -> u32 {
+        let start = lower_bound.max(expected.saturating_sub(search_radius));
+        let end = upper_bound
+            .min(expected.saturating_add(search_radius))
+            .min(width.saturating_sub(2));
+        if end <= start {
+            return expected.clamp(lower_bound, upper_bound.min(width.saturating_sub(2)));
+        }
+        let mut best_x = expected.clamp(start, end);
+        let mut best_score = u32::MAX;
+        let mut best_distance = u32::MAX;
+        for x in start..=end {
+            let score = smoothed_scores[x as usize];
+            let distance = x.abs_diff(expected);
+            if score < best_score || (score == best_score && distance < best_distance) {
+                best_x = x;
+                best_score = score;
+                best_distance = distance;
+            }
+        }
+        best_x
+    };
+
+    let separator1 = find_separator(
+        panel_width,
+        12,
+        width.saturating_sub(min_panel_width * 2).max(12),
+    );
+    let separator2 = find_separator(
+        panel_width * 2,
+        separator1.saturating_add(min_panel_width),
+        width.saturating_sub(12),
+    );
+    if separator2 <= separator1.saturating_add(min_panel_width / 2) {
+        return fallback_ranges;
+    }
+
+    let padding = ((panel_width as f32 * 0.06).round() as u32).clamp(8, 36);
+    let safe_padding = padding.min(separator2.saturating_sub(separator1).saturating_sub(12) / 2);
+    let front_end = separator1.saturating_add(safe_padding).min(width);
+    let side_start = separator1.saturating_sub(safe_padding);
+    let side_end = separator2.saturating_add(safe_padding).min(width);
+    let back_start = separator2.saturating_sub(safe_padding);
+
+    if front_end <= 1 || side_end <= side_start + 1 || width <= back_start + 1 {
+        return fallback_ranges;
+    }
+
+    [(0, front_end), (side_start, side_end), (back_start, width)]
+}
+
+fn trusted_character_image_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        return Some("png");
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some("jpeg");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    None
+}
+
+#[tauri::command]
+fn read_trusted_character_reference(
+    app: tauri::AppHandle,
+    file_path: String,
+) -> Result<TrustedCharacterReferenceResult, String> {
+    video_continuity::reject_authority_file_command_path(&app, &file_path)?;
+    read_trusted_character_reference_file(file_path)
+}
+
+fn read_trusted_character_reference_file(
+    file_path: String,
+) -> Result<TrustedCharacterReferenceResult, String> {
+    const MAX_REFERENCE_BYTES: u64 = 40 * 1024 * 1024;
+    let requested = PathBuf::from(file_path.trim());
+    if requested.as_os_str().is_empty() {
+        return Err("reference_path_missing".to_string());
+    }
+    let canonical =
+        fs::canonicalize(&requested).map_err(|_| "reference_read_failed".to_string())?;
+    let metadata = fs::metadata(&canonical).map_err(|_| "reference_read_failed".to_string())?;
+    if !metadata.file_type().is_file() || metadata.len() == 0 {
+        return Err("reference_image_invalid".to_string());
+    }
+    if metadata.len() > MAX_REFERENCE_BYTES {
+        return Err("reference_too_large".to_string());
+    }
+    let extension = canonical
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+        return Err("reference_image_invalid".to_string());
+    }
+    let bytes = fs::read(&canonical).map_err(|_| "reference_read_failed".to_string())?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_REFERENCE_BYTES {
+        let reason = if bytes.is_empty() {
+            "reference_image_invalid"
+        } else {
+            "reference_too_large"
+        };
+        return Err(reason.to_string());
+    }
+    let image_format = trusted_character_image_format(&bytes)
+        .ok_or_else(|| "reference_image_invalid".to_string())?;
+    let extension_matches = match extension.as_str() {
+        "png" => image_format == "png",
+        "jpg" | "jpeg" => image_format == "jpeg",
+        "webp" => image_format == "webp",
+        _ => false,
+    };
+    if !extension_matches {
+        return Err("reference_image_invalid".to_string());
+    }
+    Ok(TrustedCharacterReferenceResult {
+        base64_data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        byte_length: bytes.len(),
+        image_format: image_format.to_string(),
+    })
+}
+
+const MAX_CHARACTER_EVIDENCE_INPUT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_CHARACTER_EVIDENCE_IMAGE_BYTES: u64 = 40 * 1024 * 1024;
+const MAX_CHARACTER_ATTESTOR_OUTPUT_BYTES: usize = 1024 * 1024;
+const CHARACTER_ATTESTOR_DEADLINE: Duration = Duration::from_secs(120);
+
+fn valid_receipt_id(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn kill_attestor_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn read_attestor_pipe<R: Read + Send + 'static>(
+    mut pipe: R,
+    exceeded: Arc<AtomicBool>,
+) -> thread::JoinHandle<Result<Vec<u8>, String>> {
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            let count = pipe
+                .read(&mut chunk)
+                .map_err(|_| "attestor_failed".to_string())?;
+            if count == 0 {
+                return Ok(output);
+            }
+            if output.len().saturating_add(count) > MAX_CHARACTER_ATTESTOR_OUTPUT_BYTES {
+                exceeded.store(true, Ordering::SeqCst);
+                return Err("attestor_output_too_large".to_string());
+            }
+            output.extend_from_slice(&chunk[..count]);
+        }
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|_| "receipt_artifact_read_failed".to_string())?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_CHARACTER_EVIDENCE_IMAGE_BYTES {
+        return Err("receipt_artifact_invalid".to_string());
+    }
+    let mut digest = Sha256::new();
+    digest.update(&bytes);
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn validate_receipt_image_path(
+    path_value: &str,
+    root: Option<&Path>,
+    expected_sha: &str,
+) -> Result<PathBuf, String> {
+    let requested = PathBuf::from(path_value.trim());
+    if requested.as_os_str().is_empty() || !requested.is_absolute() {
+        return Err("receipt_path_invalid".to_string());
+    }
+    let canonical = fs::canonicalize(&requested).map_err(|_| "receipt_path_invalid".to_string())?;
+    if let Some(required_root) = root {
+        if canonical == required_root || !canonical.starts_with(required_root) {
+            return Err("receipt_path_invalid".to_string());
+        }
+    }
+    let metadata = fs::metadata(&canonical).map_err(|_| "receipt_artifact_invalid".to_string())?;
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_CHARACTER_EVIDENCE_IMAGE_BYTES
+    {
+        return Err("receipt_artifact_invalid".to_string());
+    }
+    let extension = canonical
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+        return Err("receipt_artifact_invalid".to_string());
+    }
+    let bytes = fs::read(&canonical).map_err(|_| "receipt_artifact_read_failed".to_string())?;
+    let format = trusted_character_image_format(&bytes)
+        .ok_or_else(|| "receipt_artifact_invalid".to_string())?;
+    let extension_matches = match extension.as_str() {
+        "png" => format == "png",
+        "jpg" | "jpeg" => format == "jpeg",
+        "webp" => format == "webp",
+        _ => false,
+    };
+    if !extension_matches {
+        return Err("receipt_artifact_invalid".to_string());
+    }
+    if expected_sha.len() != 64 || sha256_file(&canonical)? != expected_sha.to_ascii_lowercase() {
+        return Err("receipt_artifact_hash_mismatch".to_string());
+    }
+    Ok(canonical)
+}
+
+fn prevalidate_character_attestation_report(report: &serde_json::Value) -> Result<(), String> {
+    let bundle = report
+        .get("verificationBundle")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "receipt_verification_bundle_missing".to_string())?;
+    let root_value = bundle
+        .get("artifactRoot")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "receipt_path_invalid".to_string())?;
+    let artifact_root =
+        fs::canonicalize(root_value).map_err(|_| "receipt_path_invalid".to_string())?;
+    if !artifact_root.is_dir() {
+        return Err("receipt_path_invalid".to_string());
+    }
+    let shots = report
+        .get("shots")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "receipt_shot_invalid".to_string())?;
+    let outputs = bundle
+        .get("outputs")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "receipt_verification_bundle_missing".to_string())?;
+    if shots.len() != 8 || outputs.len() != 8 {
+        return Err("receipt_verification_bundle_missing".to_string());
+    }
+    let shot_ids: HashSet<&str> = shots
+        .iter()
+        .filter_map(|shot| shot.get("id").and_then(|value| value.as_str()))
+        .collect();
+    let output_ids: HashSet<&str> = outputs
+        .iter()
+        .filter_map(|output| output.get("id").and_then(|value| value.as_str()))
+        .collect();
+    if shot_ids.len() != 8 || output_ids != shot_ids {
+        return Err("receipt_shot_invalid".to_string());
+    }
+    for output in outputs {
+        let id = output
+            .get("id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "receipt_shot_invalid".to_string())?;
+        let output_path = output
+            .get("outputPath")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "receipt_path_invalid".to_string())?;
+        let output_sha = output
+            .get("outputSha256")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "receipt_output_hash_mismatch".to_string())?;
+        let shot_sha = shots
+            .iter()
+            .find(|shot| shot.get("id").and_then(|value| value.as_str()) == Some(id))
+            .and_then(|shot| shot.get("outputSha256"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "receipt_shot_invalid".to_string())?;
+        if output_sha != shot_sha {
+            return Err("receipt_output_hash_mismatch".to_string());
+        }
+        validate_receipt_image_path(output_path, Some(&artifact_root), output_sha)?;
+    }
+    let references = bundle
+        .get("references")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "receipt_verification_bundle_missing".to_string())?;
+    let expected_slots = ["front", "side", "back"];
+    if references.len() != expected_slots.len()
+        || references.iter().enumerate().any(|(index, item)| {
+            item.get("slot").and_then(|value| value.as_str()) != Some(expected_slots[index])
+        })
+    {
+        return Err("receipt_reference_invalid".to_string());
+    }
+    for reference in references {
+        let source_path = reference
+            .get("sourcePath")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "receipt_path_invalid".to_string())?;
+        let source_sha = reference
+            .get("sourceSha256")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "receipt_reference_hash_mismatch".to_string())?;
+        validate_receipt_image_path(source_path, None, source_sha)?;
+    }
+    let routed = report
+        .get("references")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "receipt_reference_evidence_mismatch".to_string())?;
+    if routed.len() != 16 {
+        return Err("receipt_reference_evidence_mismatch".to_string());
+    }
+    let identity = bundle
+        .get("identityContext")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "receipt_identity_context_mismatch".to_string())?;
+    let subject = report
+        .get("subject")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "receipt_identity_context_mismatch".to_string())?;
+    for field in [
+        "characterAssetId",
+        "identityPackVersion",
+        "identityMetadataDigest",
+    ] {
+        if identity.get(field) != subject.get(field) {
+            return Err("receipt_identity_context_mismatch".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn resolve_comfy_python(comfy_root_dir: &str) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(PathBuf::from(comfy_root_dir.trim()))
+        .map_err(|_| "comfy_root_invalid".to_string())?;
+    let candidates = if cfg!(windows) {
+        vec![root.join(".venv").join("Scripts").join("python.exe")]
+    } else {
+        vec![
+            root.join(".venv").join("bin").join("python3"),
+            root.join(".venv").join("bin").join("python"),
+        ]
+    };
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file() && candidate.starts_with(&root))
+        .ok_or_else(|| "comfy_python_missing".to_string())
+}
+
+fn character_attestor_script(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let resource = app
+        .path()
+        .resource_dir()
+        .map_err(|_| "attestor_resource_missing".to_string())?
+        .join("scripts")
+        .join("evaluators")
+        .join("siglip2-character-attestor.py");
+    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("scripts")
+        .join("evaluators")
+        .join("siglip2-character-attestor.py");
+    [resource, development]
+        .into_iter()
+        .find_map(|candidate| fs::canonicalize(candidate).ok())
+        .filter(|path| path.is_file())
+        .ok_or_else(|| "attestor_resource_missing".to_string())
+}
+
+fn character_evaluator_model_dir(comfy_root_dir: &str) -> Result<PathBuf, String> {
+    let root =
+        fs::canonicalize(comfy_root_dir.trim()).map_err(|_| "comfy_root_invalid".to_string())?;
+    let mut candidates = vec![root
+        .join("models")
+        .join("character_evaluators")
+        .join("siglip2-base-patch16-224-75de2d5")];
+    for ancestor in root.ancestors() {
+        if ancestor
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("ComfyUI-Installs"))
+            .unwrap_or(false)
+        {
+            if let Some(parent) = ancestor.parent() {
+                candidates.push(
+                    parent
+                        .join("ComfyUI-Shared")
+                        .join("models")
+                        .join("character_evaluators")
+                        .join("siglip2-base-patch16-224-75de2d5"),
+                );
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find_map(|candidate| fs::canonicalize(candidate).ok())
+        .filter(|path| path.is_dir())
+        .ok_or_else(|| "character_evaluator_model_missing".to_string())
+}
+
+fn run_character_attestor(
+    app: &tauri::AppHandle,
+    operation: &str,
+    payload: serde_json::Value,
+    comfy_root_dir: &str,
+) -> Result<serde_json::Value, String> {
+    let serialized =
+        serde_json::to_vec(&payload).map_err(|_| "attestation_input_invalid".to_string())?;
+    if serialized.is_empty() || serialized.len() > MAX_CHARACTER_EVIDENCE_INPUT_BYTES {
+        return Err("attestation_input_too_large".to_string());
+    }
+    let python = resolve_comfy_python(comfy_root_dir)?;
+    let script = character_attestor_script(app)?;
+    let registry = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "receipt_registry_invalid".to_string())?
+        .join("character-evidence")
+        .join("receipts");
+    fs::create_dir_all(&registry).map_err(|_| "receipt_registry_invalid".to_string())?;
+    let model_dir = character_evaluator_model_dir(comfy_root_dir)?;
+    let manifest = script
+        .parent()
+        .and_then(|value| value.parent())
+        .and_then(|value| value.parent())
+        .ok_or_else(|| "attestor_resource_missing".to_string())?
+        .join("examples")
+        .join("character-consistency-benchmark")
+        .join("siglip2-snapshot-manifest.json");
+    let mut child = Command::new(python)
+        .arg(&script)
+        .arg(operation)
+        .arg(&registry)
+        .env("CHARACTER_EVALUATOR_MODEL_DIR", model_dir)
+        .env("CHARACTER_EVALUATOR_SNAPSHOT_MANIFEST", manifest)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| "attestor_start_failed".to_string())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "attestor_start_failed".to_string())?;
+    let writer = thread::spawn(move || -> Result<(), String> {
+        stdin
+            .write_all(&serialized)
+            .map_err(|_| "attestor_write_failed".to_string())?;
+        stdin
+            .flush()
+            .map_err(|_| "attestor_write_failed".to_string())
+    });
+    let exceeded = Arc::new(AtomicBool::new(false));
+    let stdout_reader = read_attestor_pipe(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| "attestor_start_failed".to_string())?,
+        Arc::clone(&exceeded),
+    );
+    let stderr_reader = read_attestor_pipe(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| "attestor_start_failed".to_string())?,
+        Arc::clone(&exceeded),
+    );
+    let started = Instant::now();
+    let status = loop {
+        if exceeded.load(Ordering::SeqCst) {
+            kill_attestor_tree(&mut child);
+            break Err("attestor_output_too_large".to_string());
+        }
+        if started.elapsed() >= CHARACTER_ATTESTOR_DEADLINE {
+            kill_attestor_tree(&mut child);
+            break Err("attestor_timeout".to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(_) => {
+                kill_attestor_tree(&mut child);
+                break Err("attestor_failed".to_string());
+            }
+        }
+    }?;
+    writer
+        .join()
+        .map_err(|_| "attestor_write_failed".to_string())??;
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "attestor_failed".to_string())??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "attestor_failed".to_string())??;
+    if !status.success() {
+        let parsed = serde_json::from_slice::<serde_json::Value>(&stderr)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(|item| item.as_str())
+                    .map(str::to_string)
+            });
+        return Err(parsed.unwrap_or_else(|| "attestor_failed".to_string()));
+    }
+    serde_json::from_slice(&stdout).map_err(|_| "attestor_protocol_invalid".to_string())
+}
+
+#[tauri::command]
+fn attest_character_generation_report(
+    app: tauri::AppHandle,
+    report: serde_json::Value,
+    comfy_root_dir: String,
+) -> Result<serde_json::Value, String> {
+    prevalidate_character_attestation_report(&report)?;
+    run_character_attestor(
+        &app,
+        "attest",
+        serde_json::json!({ "report": report }),
+        &comfy_root_dir,
+    )
+}
+
+#[tauri::command]
+fn verify_character_evidence_receipt(
+    app: tauri::AppHandle,
+    receipt: serde_json::Value,
+    evidence: serde_json::Value,
+    comfy_root_dir: String,
+) -> Result<serde_json::Value, String> {
+    let receipt_id = receipt
+        .get("receiptId")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "trusted_receipt_invalid".to_string())?;
+    if !valid_receipt_id(receipt_id) {
+        return Err("trusted_receipt_invalid".to_string());
+    }
+    run_character_attestor(
+        &app,
+        "verify",
+        serde_json::json!({ "receipt": receipt, "evidence": evidence }),
+        &comfy_root_dir,
+    )
+}
+
+#[cfg(test)]
+mod trusted_character_reference_tests {
+    use super::*;
+
+    #[test]
+    fn workbench_sqlite_roundtrip_preserves_unknown_fields() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "CREATE TABLE snapshot_meta (id INTEGER PRIMARY KEY, workbench_snapshot_json TEXT NOT NULL)",
+                [],
+            )
+            .unwrap();
+        let mut extra_snapshot_fields = HashMap::new();
+        extra_snapshot_fields.insert(
+            "futureLegacyField".to_string(),
+            serde_json::json!({ "retained": true }),
+        );
+        let payload = StoryboardSnapshotPayload {
+            schema_version: 2,
+            migration_backup_pending: true,
+            director_plan: serde_json::Value::Null,
+            spatial_scenes: vec![],
+            spatial_objects: vec![],
+            pose_keyframes: vec![],
+            camera_plans: vec![],
+            project: serde_json::from_value(serde_json::json!({
+                "id": "p1", "name": "Project", "fps": 24, "width": 1920,
+                "height": 1080, "createdAt": "now", "updatedAt": "now"
+            })).unwrap(),
+            sequences: vec![],
+            shots: vec![],
+            layers: vec![],
+            assets: vec![],
+            audio_tracks: vec![],
+            selected_shot_id: String::new(),
+            active_layer_by_shot_id: HashMap::new(),
+            canvas_tool: serde_json::from_value(serde_json::json!({ "brushColor": "#000", "brushSize": 4 })).unwrap(),
+            export_settings: serde_json::from_value(serde_json::json!({ "width": 1920, "height": 1080, "fps": 24, "videoBitrateKbps": 8000 })).unwrap(),
+            shot_strokes: HashMap::new(),
+            shot_history: HashMap::new(),
+            extra_snapshot_fields,
+        };
+        let serialized = serialize_workbench_snapshot(&payload).unwrap();
+        connection
+            .execute(
+                "INSERT INTO snapshot_meta (id, workbench_snapshot_json) VALUES (1, ?1)",
+                params![serialized],
+            )
+            .unwrap();
+        let raw: String = connection
+            .query_row("SELECT workbench_snapshot_json FROM snapshot_meta WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        let restored = deserialize_workbench_snapshot(&raw).unwrap();
+        assert_eq!(restored.schema_version, 2);
+        assert!(restored.migration_backup_pending);
+        assert_eq!(restored.extra_snapshot_fields["futureLegacyField"]["retained"], true);
+    }
+
+    #[test]
+    fn receipt_ids_are_canonical_lowercase_hashes_only() {
+        assert!(valid_receipt_id(&"a".repeat(64)));
+        assert!(!valid_receipt_id(&"A".repeat(64)));
+        assert!(!valid_receipt_id(&format!("../{}", "a".repeat(61))));
+        assert!(!valid_receipt_id(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn attestor_pipe_reader_fails_closed_at_hard_limit() {
+        let exceeded = Arc::new(AtomicBool::new(false));
+        let bytes = vec![b'x'; MAX_CHARACTER_ATTESTOR_OUTPUT_BYTES + 1];
+        let result = read_attestor_pipe(std::io::Cursor::new(bytes), Arc::clone(&exceeded))
+            .join()
+            .unwrap();
+        assert_eq!(result.unwrap_err(), "attestor_output_too_large");
+        assert!(exceeded.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn trusted_reference_accepts_matching_magic_and_rejects_disguised_files() {
+        let root = std::env::temp_dir().join(format!(
+            "storyboard-trusted-reference-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let valid = root.join("valid.png");
+        fs::write(&valid, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).unwrap();
+        let result = read_trusted_character_reference_file(valid.to_string_lossy().to_string()).unwrap();
+        assert_eq!(result.image_format, "png");
+        assert_eq!(result.byte_length, 8);
+
+        let disguised = root.join("disguised.png");
+        fs::write(&disguised, b"not an image").unwrap();
+        assert_eq!(
+            read_trusted_character_reference_file(disguised.to_string_lossy().to_string()).unwrap_err(),
+            "reference_image_invalid"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn generic_family_delete_cannot_remove_task7_authority_or_managed_files() {
+        let root = std::env::temp_dir().join(format!(
+            "storyboard-task7-delete-guard-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let app_data = root.join("app-data");
+        let project = root.join("guard.sbproj");
+        let assets = project.join("assets");
+        let authority = app_data.join("video-normalization-authority");
+        fs::create_dir_all(authority.join("receipts")).unwrap();
+        fs::create_dir_all(assets.join("video-assembled")).unwrap();
+        fs::write(app_data.join("current-project.txt"), project.to_string_lossy().as_bytes()).unwrap();
+        let keyring = authority.join("authority.keys.json");
+        let record = authority.join("receipts").join(format!("{}.json", "a".repeat(64)));
+        let assembled = assets.join("video-assembled/final.mp4");
+        fs::write(&keyring, b"keyring-unchanged").unwrap();
+        fs::write(&record, b"record-unchanged").unwrap();
+        fs::write(&assembled, b"assembly-unchanged").unwrap();
+
+        for target in [&keyring, &record, &assembled] {
+            assert!(delete_generated_file_families_at_app_data(
+                &app_data,
+                vec![target.to_string_lossy().to_string()],
+                None,
+            ).is_err());
+        }
+        assert_eq!(fs::read(keyring).unwrap(), b"keyring-unchanged");
+        assert_eq!(fs::read(record).unwrap(), b"record-unchanged");
+        assert_eq!(fs::read(assembled).unwrap(), b"assembly-unchanged");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 #[tauri::command]
 fn split_threeview_sheet(
     app: tauri::AppHandle,
@@ -2785,10 +3832,14 @@ fn split_threeview_sheet(
     video_continuity::reject_authority_file_command_path(&app, &source_path)?;
     let source = PathBuf::from(source_path.trim());
     if !source.exists() || !source.is_file() {
-        return Err(format!("Three-view sheet not found: {}", source.to_string_lossy()));
+        return Err(format!(
+            "Three-view sheet not found: {}",
+            source.to_string_lossy()
+        ));
     }
 
-    let image = image::open(&source).map_err(|err| format!("Failed to open three-view sheet: {err}"))?;
+    let image =
+        image::open(&source).map_err(|err| format!("Failed to open three-view sheet: {err}"))?;
     let (width, height) = image.dimensions();
     if width < 3 || height == 0 {
         return Err(format!(
@@ -2797,23 +3848,8 @@ fn split_threeview_sheet(
         ));
     }
 
-    let panel_width = width / 3;
-    let overlap = ((panel_width as f32 * 0.08).round() as u32).clamp(6, 48);
-    let starts = [
-        0,
-        panel_width.saturating_sub(overlap),
-        (panel_width * 2).saturating_sub(overlap),
-    ];
-    let ends = [
-        width.min(panel_width + overlap),
-        width.min(panel_width * 2 + overlap),
-        width,
-    ];
-    let widths = [
-        (ends[0]).saturating_sub(starts[0]).max(1),
-        (ends[1]).saturating_sub(starts[1]).max(1),
-        (ends[2]).saturating_sub(starts[2]).max(1),
-    ];
+    let rgba = image.to_rgba8();
+    let ranges = compute_threeview_sheet_ranges(&rgba);
     let stem = source
         .file_stem()
         .and_then(|value| value.to_str())
@@ -2824,13 +3860,13 @@ fn split_threeview_sheet(
     let side_path = parent.join(format!("{stem}_side.png"));
     let back_path = parent.join(format!("{stem}_back.png"));
     let targets = [front_path.clone(), side_path.clone(), back_path.clone()];
-
     for target in &targets {
         video_continuity::reject_authority_file_command_path(
             &app,
             target.to_string_lossy().as_ref(),
         )?;
     }
+
     for (index, target) in targets.iter().enumerate() {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)
@@ -2840,7 +3876,9 @@ fn split_threeview_sheet(
             fs::remove_file(target)
                 .map_err(|err| format!("Failed to overwrite split image: {err}"))?;
         }
-        let crop = image.crop_imm(starts[index], 0, widths[index], height);
+        let (start_x, end_x) = ranges[index];
+        let crop_width = end_x.saturating_sub(start_x).max(1);
+        let crop = image.crop_imm(start_x, 0, crop_width, height);
         crop.save(target)
             .map_err(|err| format!("Failed to save split image: {err}"))?;
     }
@@ -2879,7 +3917,9 @@ fn comfy_read_server_log_tail(
         .ok_or_else(|| {
             format!(
                 "Comfy server log not found: {} or {}",
-                user_dir.join(format!("comfyui_{port}.log")).to_string_lossy(),
+                user_dir
+                    .join(format!("comfyui_{port}.log"))
+                    .to_string_lossy(),
                 user_dir.join("comfyui.log").to_string_lossy()
             )
         })?;
@@ -2904,6 +3944,7 @@ fn main() {
             open_path_in_os,
             find_missing_paths,
             save_current_project,
+            create_migration_backup,
             load_current_project,
             export_animatic,
             export_animatic_from_frames,
@@ -2925,6 +3966,9 @@ fn main() {
             mix_audio_tracks,
             generate_local_video_from_images,
             write_base64_file,
+            read_trusted_character_reference,
+            attest_character_generation_report,
+            verify_character_evidence_receipt,
             copy_file_to,
             delete_generated_file_families,
             split_threeview_sheet,
@@ -2932,6 +3976,7 @@ fn main() {
             comfy_ping,
             comfy_queue_prompt,
             comfy_get_history,
+            comfy_maintenance,
             comfy_fetch_view_base64,
             comfy_discover_endpoints,
             comfy_discover_local_dirs,

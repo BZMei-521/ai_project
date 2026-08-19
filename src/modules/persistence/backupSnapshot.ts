@@ -1,4 +1,6 @@
 import type { StoryboardSnapshot } from "../storyboard-core/store";
+import { invokeDesktopCommand } from "../platform/desktopBridge";
+import { migrateStoryboardSnapshot } from "../../services/persistence/workbenchMigration";
 
 type SnapshotBackupFile = {
   schemaVersion: number;
@@ -8,23 +10,10 @@ type SnapshotBackupFile = {
 
 const SNAPSHOT_BACKUP_SCHEMA_VERSION = 1;
 
-type NodeFileSystem = {
-  mkdir(path: string, options: { recursive: true }): Promise<unknown>;
-  writeFile(
-    path: string,
-    data: string,
-    options: { encoding: "utf8"; flag: "wx" }
-  ): Promise<unknown>;
-};
-
-const loadNodeFileSystem = new Function(
-  "return import('node:fs/promises')"
-) as () => Promise<NodeFileSystem>;
-
-function migrationBackupName(now: Date): string {
-  const timestamp = now.toISOString().replace(/[-:]/g, "");
-  return `migration-backup-${timestamp}.json`;
-}
+export type DesktopCommandInvoker = (
+  command: string,
+  args?: Record<string, unknown>
+) => Promise<unknown>;
 
 export function createSnapshotBackup(snapshot: StoryboardSnapshot): SnapshotBackupFile {
   return {
@@ -36,26 +25,18 @@ export function createSnapshotBackup(snapshot: StoryboardSnapshot): SnapshotBack
 
 export async function createMigrationBackup(
   snapshot: unknown,
-  destination: string
+  destination: string,
+  invokeCommand: DesktopCommandInvoker = invokeDesktopCommand
 ): Promise<string> {
   if (typeof destination !== "string" || destination.trim().length === 0) {
     throw new Error("Migration backup destination must be a non-empty path");
   }
 
-  const fileSystem = await loadNodeFileSystem();
-  const directory = destination.replace(/[\\/]$/, "");
-  await fileSystem.mkdir(directory, { recursive: true });
-  const backupPath = `${directory}/${migrationBackupName(new Date())}`;
-  const payload = {
-    schemaVersion: SNAPSHOT_BACKUP_SCHEMA_VERSION,
-    exportedAt: new Date().toISOString(),
-    snapshot
-  };
-  await fileSystem.writeFile(backupPath, `${JSON.stringify(payload, null, 2)}\n`, {
-    encoding: "utf8",
-    flag: "wx"
-  });
-  return backupPath;
+  const result = await invokeCommand("create_migration_backup", { snapshot, destination });
+  if (!result || typeof result !== "object" || !("backupPath" in result)) {
+    throw new Error("Desktop migration backup did not return a backup path");
+  }
+  return String((result as { backupPath: unknown }).backupPath);
 }
 
 export function parseSnapshotBackup(raw: string): StoryboardSnapshot {
@@ -75,5 +56,5 @@ export function parseSnapshotBackup(raw: string): StoryboardSnapshot {
     throw new Error("Incomplete snapshot payload");
   }
 
-  return snapshot as StoryboardSnapshot;
+  return migrateStoryboardSnapshot(snapshot).snapshot as unknown as StoryboardSnapshot;
 }

@@ -3,6 +3,38 @@ export type DesktopSnapshotSyncBaseline = {
   snapshotFingerprint: string;
 };
 
+export function choosePreferredDesktopSnapshot<T extends Record<string, any>>(
+  desktopSnapshot: T | null,
+  autosaveSnapshot: T | null
+): T | null {
+  if (!desktopSnapshot) return autosaveSnapshot;
+  if (!autosaveSnapshot) return desktopSnapshot;
+  if ((desktopSnapshot.project?.id ?? "") !== (autosaveSnapshot.project?.id ?? "")) return desktopSnapshot;
+  const score = (snapshot: T) => {
+    const assetScore = (snapshot.assets ?? []).reduce((sum: number, asset: any) => sum +
+      ((asset?.filePath?.trim() || "").length > 0 ? 2 : 0) +
+      ((asset?.characterFrontPath?.trim() || "").length > 0 ? 3 : 0) +
+      ((asset?.characterSidePath?.trim() || "").length > 0 ? 4 : 0) +
+      ((asset?.characterBackPath?.trim() || "").length > 0 ? 4 : 0) +
+      ((asset?.characterFaceRefPath?.trim() || "").length > 0 ? 2 : 0) +
+      ((asset?.characterDetailRefPath?.trim() || "").length > 0 ? 2 : 0) +
+      ((asset?.skyboxFaces?.front?.trim() || "").length > 0 ? 3 : 0), 0);
+    const shotScore = (snapshot.shots ?? []).reduce((sum: number, shot: any) => sum +
+      ((shot?.generatedImagePath?.trim() || "").length > 0 ? 5 : 0) +
+      ((shot?.generatedVideoPath?.trim() || "").length > 0 ? 6 : 0) +
+      ((shot?.characterRefs?.length ?? 0) > 0 ? 1 : 0) +
+      ((shot?.sceneRefId?.trim() || "").length > 0 ? 1 : 0), 0);
+    return assetScore * 10 + shotScore;
+  };
+  const preferred = score(autosaveSnapshot) >= score(desktopSnapshot) ? autosaveSnapshot : desktopSnapshot;
+  if (!desktopSnapshot.migrationBackupPending) return preferred;
+  return {
+    ...preferred,
+    migrationBackupPending: true,
+    migrationBackupSource: desktopSnapshot.migrationBackupSource ?? preferred.migrationBackupSource
+  };
+}
+
 export type DesktopSnapshotSyncState = {
   phase: "disabled" | "transitioning" | "synced" | "unsynced" | "blocked";
   workspacePath: string;

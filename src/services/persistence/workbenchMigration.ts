@@ -10,6 +10,8 @@ export const CURRENT_WORKBENCH_SCHEMA_VERSION = 2;
 
 export type WorkbenchStoryboardSnapshot = Record<string, unknown> & {
   schemaVersion: typeof CURRENT_WORKBENCH_SCHEMA_VERSION;
+  migrationBackupPending: boolean;
+  migrationBackupSource?: Record<string, unknown>;
   project: Record<string, unknown>;
   directorPlan: DirectorPlan | null;
   spatialScenes: SpatialScene[];
@@ -40,12 +42,37 @@ function cloneSnapshot<T>(value: T): T {
   return structuredClone(value);
 }
 
+function requireObjectArray(snapshot: Record<string, unknown>, field: string): void {
+  const value = snapshot[field];
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.some((item) => !isRecord(item))) {
+    throw new Error(`Invalid storyboard snapshot: ${field} must be an array of objects`);
+  }
+}
+
 export function migrateStoryboardSnapshot(input: unknown): MigrationResult {
   if (!isRecord(input)) {
     throw new Error("Invalid storyboard snapshot: snapshot must be an object");
   }
   if (!isRecord(input.project)) {
     throw new Error("Invalid storyboard snapshot: project must be an object");
+  }
+  if (typeof input.project.id !== "string" || input.project.id.trim().length === 0) {
+    throw new Error("Invalid storyboard snapshot: project.id must be a non-empty string");
+  }
+  for (const field of ["shots", "assets"]) {
+    if (!Array.isArray(input[field])) {
+      throw new Error(`Invalid storyboard snapshot: ${field} must be an array`);
+    }
+  }
+  if (input.directorPlan !== undefined && input.directorPlan !== null && !isRecord(input.directorPlan)) {
+    throw new Error("Invalid storyboard snapshot: directorPlan must be an object or null");
+  }
+  if (input.migrationBackupPending !== undefined && typeof input.migrationBackupPending !== "boolean") {
+    throw new Error("Invalid storyboard snapshot: migrationBackupPending must be a boolean");
+  }
+  for (const field of ["spatialScenes", "spatialObjects", "poseKeyframes", "cameraPlans"]) {
+    requireObjectArray(input, field);
   }
   if (
     input.schemaVersion !== undefined &&
@@ -57,11 +84,14 @@ export function migrateStoryboardSnapshot(input: unknown): MigrationResult {
     throw new Error(`Unsupported storyboard snapshot schemaVersion: ${input.schemaVersion}`);
   }
 
+  const missingFields = Object.keys(WORKBENCH_DEFAULTS).filter((field) => input[field] === undefined);
+  const migrated = input.schemaVersion !== CURRENT_WORKBENCH_SCHEMA_VERSION || missingFields.length > 0;
   const snapshot = cloneSnapshot(input) as Record<string, unknown>;
-  const missingFields = Object.keys(WORKBENCH_DEFAULTS).filter((field) => snapshot[field] === undefined);
-  const migrated = snapshot.schemaVersion !== CURRENT_WORKBENCH_SCHEMA_VERSION || missingFields.length > 0;
 
   snapshot.schemaVersion = CURRENT_WORKBENCH_SCHEMA_VERSION;
+  snapshot.migrationBackupPending = migrated ? true : input.migrationBackupPending ?? false;
+  if (migrated) snapshot.migrationBackupSource = cloneSnapshot(input);
+  else if (isRecord(input.migrationBackupSource)) snapshot.migrationBackupSource = cloneSnapshot(input.migrationBackupSource);
   for (const field of missingFields) {
     snapshot[field] = cloneSnapshot(WORKBENCH_DEFAULTS[field as keyof typeof WORKBENCH_DEFAULTS]);
   }
