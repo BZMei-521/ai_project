@@ -1,6 +1,24 @@
 import { create } from "zustand";
 import { audioTracks, assets, layers, project, sequences, shots } from "./mockData";
-import type { AudioTrack, Asset, Project, Sequence, Shot, ShotLayer, SkyboxFace, SkyboxUpdateEvent } from "./types";
+// @ts-ignore Executable store transition is intentionally plain ESM for the security harness.
+import { applyCharacterEvidencePatch } from "./characterEvidenceStoreRuntime.mjs";
+import { createEmptySceneStage, normalizeSceneStages } from "../spatial-stage/normalizeStage";
+import { addStage, deleteStage, patchStage } from "../spatial-stage/stageStoreActions";
+import { computeStageSourceDigest } from "../spatial-stage/stageDigest";
+import type { SceneStage } from "../spatial-stage/types";
+import type { DirectorPlan } from "../../domains/director/types";
+import type { CameraPlan, PoseKeyframe, SpatialObject, SpatialScene } from "../../domains/spatial-scene/types";
+import type {
+  AudioTrack,
+  Asset,
+  Project,
+  Sequence,
+  Shot,
+  ShotLayer,
+  SkyboxFace,
+  SkyboxUpdateEvent,
+  StoryboardGenerationTask
+} from "./types";
 
 export type ImportedShotScriptItem = {
   id?: string;
@@ -94,6 +112,15 @@ export type ExportSettings = {
 };
 
 type StoryboardState = {
+  schemaVersion: 2;
+  migrationBackupPending: boolean;
+  migrationBackupSource: Record<string, unknown> | null;
+  directorPlan: DirectorPlan | null;
+  spatialScenes: SpatialScene[];
+  selectedSpatialObjectId: string | null;
+  spatialObjects: SpatialObject[];
+  poseKeyframes: PoseKeyframe[];
+  cameraPlans: CameraPlan[];
   project: Project;
   sequences: Sequence[];
   currentSequenceId: string;
@@ -111,6 +138,9 @@ type StoryboardState = {
   selectedShotIds: string[];
   shotFilterQuery: string;
   shotFilterTag: string;
+  generationTasks: StoryboardGenerationTask[];
+  spatialStages: SceneStage[];
+  completeWorkbenchMigration: () => void;
   selectShot: (shotId: string) => void;
   toggleShotSelection: (shotId: string) => void;
   clearShotSelection: () => void;
@@ -141,6 +171,14 @@ type StoryboardState = {
     characterFrontPath?: string;
     characterSidePath?: string;
     characterBackPath?: string;
+    characterFaceRefPath?: string;
+    characterDetailRefPath?: string;
+    characterIdentityPack?: Asset["characterIdentityPack"];
+    characterLora?: Asset["characterLora"];
+    characterZeroShotEvidence?: Asset["characterZeroShotEvidence"];
+    currentZeroContext?: Asset["currentZeroContext"];
+    currentLoraContext?: Asset["currentLoraContext"];
+    characterConsistencyBaseline?: Asset["characterConsistencyBaseline"];
     characterAnchorModelName?: string;
     voiceProfile?: string;
     skyboxDescription?: string;
@@ -159,6 +197,14 @@ type StoryboardState = {
         | "characterFrontPath"
         | "characterSidePath"
         | "characterBackPath"
+        | "characterFaceRefPath"
+        | "characterDetailRefPath"
+        | "characterIdentityPack"
+        | "characterLora"
+        | "characterZeroShotEvidence"
+        | "currentZeroContext"
+        | "currentLoraContext"
+        | "characterConsistencyBaseline"
         | "characterAnchorModelName"
         | "voiceProfile"
         | "skyboxDescription"
@@ -247,6 +293,22 @@ type StoryboardState = {
   addStroke: (shotId: string, stroke: Stroke) => void;
   undoStroke: (shotId: string) => void;
   redoStroke: (shotId: string) => void;
+  upsertGenerationTask: (task: StoryboardGenerationTask) => void;
+  markGenerationTaskFailed: (
+    id: string,
+    error: Pick<StoryboardGenerationTask, "errorCode" | "errorMessage" | "bestPreviewPath" | "reviewReasons">
+  ) => void;
+  markGenerationTaskCancelled: (
+    id: string,
+    review?: Pick<StoryboardGenerationTask, "bestPreviewPath" | "reviewReasons" | "errorMessage">
+  ) => void;
+  markGenerationTaskNeedsReview: (id: string, bestPreviewPath: string, reviewReasons: string[]) => void;
+  completeGenerationTask: (id: string, outputPath: string) => void;
+  createSpatialStage: (sceneId: string) => string;
+  updateSpatialScene: (scene: SpatialScene) => void;
+  setSelectedSpatialObject: (objectId: string | null) => void;
+  updateSpatialStage: (id: string, patch: Partial<SceneStage>) => void;
+  removeSpatialStage: (id: string) => void;
   hydrateFromSnapshot: (snapshot: Partial<StoryboardSnapshot>) => void;
   resetForNewProject: (name: string) => void;
   addShot: () => void;
@@ -255,6 +317,15 @@ type StoryboardState = {
 
 export type StoryboardSnapshot = Pick<
   StoryboardState,
+  | "schemaVersion"
+  | "migrationBackupPending"
+  | "migrationBackupSource"
+  | "directorPlan"
+  | "spatialScenes"
+  | "selectedSpatialObjectId"
+  | "spatialObjects"
+  | "poseKeyframes"
+  | "cameraPlans"
   | "project"
   | "sequences"
   | "currentSequenceId"
@@ -268,9 +339,49 @@ export type StoryboardSnapshot = Pick<
   | "exportSettings"
   | "shotStrokes"
   | "shotHistory"
+  | "generationTasks"
+  | "spatialStages"
 >;
 
+export function createStoryboardSnapshot(state: StoryboardState): StoryboardSnapshot {
+  return {
+    schemaVersion: state.schemaVersion,
+    migrationBackupPending: state.migrationBackupPending,
+    migrationBackupSource: state.migrationBackupSource,
+    directorPlan: state.directorPlan,
+    spatialScenes: state.spatialScenes,
+    selectedSpatialObjectId: state.selectedSpatialObjectId,
+    spatialObjects: state.spatialObjects,
+    poseKeyframes: state.poseKeyframes,
+    cameraPlans: state.cameraPlans,
+    project: state.project,
+    sequences: state.sequences,
+    currentSequenceId: state.currentSequenceId,
+    shots: state.shots,
+    layers: state.layers,
+    assets: state.assets,
+    audioTracks: state.audioTracks,
+    selectedShotId: state.selectedShotId,
+    activeLayerByShotId: state.activeLayerByShotId,
+    canvasTool: state.canvasTool,
+    exportSettings: state.exportSettings,
+    shotStrokes: state.shotStrokes,
+    shotHistory: state.shotHistory,
+    generationTasks: state.generationTasks,
+    spatialStages: state.spatialStages
+  };
+}
+
 export const useStoryboardStore = create<StoryboardState>((set, get) => ({
+  schemaVersion: 2,
+  migrationBackupPending: false,
+  migrationBackupSource: null,
+  directorPlan: null,
+  spatialScenes: [],
+  selectedSpatialObjectId: null,
+  spatialObjects: [],
+  poseKeyframes: [],
+  cameraPlans: [],
   project,
   sequences,
   currentSequenceId: sequences[0]?.id ?? "",
@@ -299,6 +410,10 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
   selectedShotIds: [],
   shotFilterQuery: "",
   shotFilterTag: "",
+  generationTasks: [],
+  spatialStages: [],
+
+  completeWorkbenchMigration: () => set({ migrationBackupPending: false, migrationBackupSource: null }),
 
   selectShot: (shotId) =>
     set((state) => ({
@@ -707,6 +822,8 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const front = input.characterFrontPath?.trim() ?? "";
       const side = input.characterSidePath?.trim() ?? "";
       const back = input.characterBackPath?.trim() ?? "";
+      const faceRef = input.characterFaceRefPath?.trim() ?? "";
+      const detailRef = input.characterDetailRefPath?.trim() ?? "";
       const characterAnchorModelName = input.characterAnchorModelName?.trim() ?? "";
       const voiceProfile = input.voiceProfile?.trim() ?? "";
       const skyboxDescription = input.skyboxDescription?.trim() ?? "";
@@ -722,6 +839,15 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         characterFrontPath: input.type === "character" ? front : undefined,
         characterSidePath: input.type === "character" ? side || undefined : undefined,
         characterBackPath: input.type === "character" ? back || undefined : undefined,
+        characterFaceRefPath: input.type === "character" ? faceRef || undefined : undefined,
+        characterDetailRefPath: input.type === "character" ? detailRef || undefined : undefined,
+        characterIdentityPack: input.type === "character" ? input.characterIdentityPack : undefined,
+        characterLora: input.type === "character" ? input.characterLora : undefined,
+        characterZeroShotEvidence: input.type === "character" ? input.characterZeroShotEvidence : undefined,
+        currentZeroContext: input.type === "character" ? input.currentZeroContext : undefined,
+        currentLoraContext: input.type === "character" ? input.currentLoraContext : undefined,
+        characterConsistencyBaseline:
+          input.type === "character" ? input.characterConsistencyBaseline : undefined,
         characterAnchorModelName: input.type === "character" ? characterAnchorModelName || undefined : undefined,
         voiceProfile: input.type === "character" ? voiceProfile : undefined,
         skyboxDescription: input.type === "skybox" ? skyboxDescription : undefined,
@@ -738,7 +864,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => ({
       assets: state.assets.map((asset) =>
         asset.id === assetId
-          ? {
+          ? applyCharacterEvidencePatch({
               ...asset,
               type: patch.type ?? asset.type,
               name: patch.name?.trim() || asset.name,
@@ -755,6 +881,38 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                 patch.characterBackPath !== undefined
                   ? patch.characterBackPath.trim()
                   : asset.characterBackPath,
+              characterFaceRefPath:
+                patch.characterFaceRefPath !== undefined
+                  ? patch.characterFaceRefPath.trim()
+                  : asset.characterFaceRefPath,
+              characterDetailRefPath:
+                patch.characterDetailRefPath !== undefined
+                  ? patch.characterDetailRefPath.trim()
+                  : asset.characterDetailRefPath,
+              characterIdentityPack:
+                (patch.type ?? asset.type) === "character"
+                  ? patch.characterIdentityPack ?? asset.characterIdentityPack
+                  : undefined,
+              characterLora:
+                (patch.type ?? asset.type) === "character"
+                  ? patch.characterLora ?? asset.characterLora
+                  : undefined,
+              characterZeroShotEvidence:
+                (patch.type ?? asset.type) === "character"
+                  ? patch.characterZeroShotEvidence ?? asset.characterZeroShotEvidence
+                  : undefined,
+              currentZeroContext:
+                (patch.type ?? asset.type) === "character"
+                  ? patch.currentZeroContext ?? asset.currentZeroContext
+                  : undefined,
+              currentLoraContext:
+                (patch.type ?? asset.type) === "character"
+                  ? patch.currentLoraContext ?? asset.currentLoraContext
+                  : undefined,
+              characterConsistencyBaseline:
+                (patch.type ?? asset.type) === "character"
+                  ? patch.characterConsistencyBaseline ?? asset.characterConsistencyBaseline
+                  : undefined,
               characterAnchorModelName:
                 patch.characterAnchorModelName !== undefined
                   ? patch.characterAnchorModelName.trim()
@@ -773,7 +931,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                   : asset.skyboxTags,
               skyboxFaces: patch.skyboxFaces ?? asset.skyboxFaces,
               skyboxUpdateEvents: patch.skyboxUpdateEvents ?? asset.skyboxUpdateEvents
-            }
+            }, patch)
           : asset
       )
     })),
@@ -1582,6 +1740,155 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       };
     }),
 
+  upsertGenerationTask: (task) =>
+    set((state) => {
+      if (!state.shots.some((shot) => shot.id === task.shotId)) {
+        throw new Error(`Cannot create generation task for unknown shot: ${task.shotId}`);
+      }
+
+      const existingTask = state.generationTasks.find((item) => item.id === task.id);
+      const nextTask: StoryboardGenerationTask = {
+        ...existingTask,
+        ...task,
+        errorCode: task.errorCode ?? existingTask?.errorCode,
+        errorMessage: task.errorMessage ?? existingTask?.errorMessage
+      };
+
+      return {
+        generationTasks: existingTask
+          ? state.generationTasks.map((item) => (item.id === task.id ? nextTask : item))
+          : [...state.generationTasks, nextTask]
+      };
+    }),
+
+  markGenerationTaskFailed: (id, error) =>
+    set((state) => {
+      const task = state.generationTasks.find((item) => item.id === id);
+      if (!task) throw new Error(`Cannot fail unknown generation task: ${id}`);
+
+      return {
+        generationTasks: state.generationTasks.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                stage: "failed",
+                status: "failed",
+                errorCode: error.errorCode ?? item.errorCode,
+                errorMessage: error.errorMessage ?? item.errorMessage,
+                bestPreviewPath: error.bestPreviewPath ?? item.bestPreviewPath,
+                reviewReasons: error.reviewReasons ? [...error.reviewReasons] : item.reviewReasons,
+                finishedAt: new Date().toISOString()
+              }
+            : item
+        )
+      };
+    }),
+
+  markGenerationTaskCancelled: (id, review = {}) =>
+    set((state) => {
+      const task = state.generationTasks.find((item) => item.id === id);
+      if (!task) throw new Error(`Cannot cancel unknown generation task: ${id}`);
+      return {
+        generationTasks: state.generationTasks.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                stage: "cancelled",
+                status: "cancelled",
+                errorCode: "cancelled",
+                errorMessage: review.errorMessage ?? item.errorMessage ?? "Generation cancelled",
+                bestPreviewPath: review.bestPreviewPath ?? item.bestPreviewPath,
+                reviewReasons: review.reviewReasons ? [...review.reviewReasons] : item.reviewReasons,
+                finishedAt: new Date().toISOString()
+              }
+            : item
+        )
+      };
+    }),
+
+  markGenerationTaskNeedsReview: (id, bestPreviewPath, reviewReasons) =>
+    set((state) => {
+      const task = state.generationTasks.find((item) => item.id === id);
+      if (!task) throw new Error(`Cannot review unknown generation task: ${id}`);
+      return {
+        generationTasks: state.generationTasks.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                stage: "needs_review",
+                status: "needs_review",
+                bestPreviewPath,
+                reviewReasons: [...reviewReasons],
+                finishedAt: new Date().toISOString()
+              }
+            : item
+        )
+      };
+    }),
+
+  completeGenerationTask: (id, outputPath) =>
+    set((state) => {
+      const task = state.generationTasks.find((item) => item.id === id);
+      if (!task) throw new Error(`Cannot complete unknown generation task: ${id}`);
+      if (task.status === "needs_review" || task.status === "cancelled") return state;
+      if (!state.shots.some((shot) => shot.id === task.shotId)) {
+        throw new Error(`Cannot complete generation task for unknown shot: ${task.shotId}`);
+      }
+
+      const finishedAt = new Date().toISOString();
+      return {
+        shots: state.shots.map((shot) =>
+          shot.id === task.shotId ? { ...shot, generatedImagePath: outputPath } : shot
+        ),
+        generationTasks: state.generationTasks.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                stage: "completed",
+                status: "completed",
+                outputPath,
+                finishedAt
+              }
+            : item
+        )
+      };
+    }),
+
+  createSpatialStage: (sceneId) => {
+    const stage = createEmptySceneStage(sceneId);
+    stage.sourceDigest = computeStageSourceDigest(stage);
+    set((state) => ({ spatialStages: addStage(state.spatialStages, stage) }));
+    return stage.id;
+  },
+
+  updateSpatialScene: (scene) =>
+    set((state) => {
+      const spatialScenes = state.spatialScenes.some((item) => item.id === scene.id)
+        ? state.spatialScenes.map((item) => (item.id === scene.id ? scene : item))
+        : [...state.spatialScenes, scene];
+      const selectedSpatialObjectId =
+        state.selectedSpatialObjectId && !scene.objects.some((object) => object.id === state.selectedSpatialObjectId) &&
+        state.spatialScenes.some((item) => item.id === scene.id)
+          ? null
+          : state.selectedSpatialObjectId;
+      return { spatialScenes, selectedSpatialObjectId };
+    }),
+
+  setSelectedSpatialObject: (objectId) =>
+    set((state) => {
+      if (objectId === null) return { selectedSpatialObjectId: null };
+      const scene = state.spatialScenes.find((item) => item.objects.some((object) => object.id === objectId));
+      return { selectedSpatialObjectId: scene ? objectId : state.selectedSpatialObjectId };
+    }),
+
+  updateSpatialStage: (id, patch) =>
+    set((state) => ({
+      spatialStages: patchStage(state.spatialStages, id, patch, new Date().toISOString())
+    })),
+
+  removeSpatialStage: (id) =>
+    set((state) => ({ spatialStages: deleteStage(state.spatialStages, id) })),
+
   hydrateFromSnapshot: (snapshot) =>
     set((state) => {
       const nextSequences = snapshot.sequences ?? state.sequences;
@@ -1592,6 +1899,19 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
 
       return {
         ...state,
+        schemaVersion: snapshot.schemaVersion ?? state.schemaVersion,
+        migrationBackupPending: snapshot.migrationBackupPending ?? state.migrationBackupPending,
+        migrationBackupSource:
+          snapshot.migrationBackupSource === undefined ? state.migrationBackupSource : snapshot.migrationBackupSource,
+        directorPlan: snapshot.directorPlan === undefined ? state.directorPlan : snapshot.directorPlan,
+        spatialScenes: snapshot.spatialScenes ?? state.spatialScenes,
+        selectedSpatialObjectId:
+          snapshot.selectedSpatialObjectId === undefined
+            ? state.selectedSpatialObjectId
+            : snapshot.selectedSpatialObjectId,
+        spatialObjects: snapshot.spatialObjects ?? state.spatialObjects,
+        poseKeyframes: snapshot.poseKeyframes ?? state.poseKeyframes,
+        cameraPlans: snapshot.cameraPlans ?? state.cameraPlans,
         project: snapshot.project ?? state.project,
         sequences: nextSequences,
         currentSequenceId: safeCurrentSequenceId,
@@ -1604,7 +1924,11 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         activeLayerByShotId: snapshot.activeLayerByShotId ?? state.activeLayerByShotId,
         exportSettings: snapshot.exportSettings ?? state.exportSettings,
         shotStrokes: snapshot.shotStrokes ?? state.shotStrokes,
-        shotHistory: snapshot.shotHistory ?? state.shotHistory
+        shotHistory: snapshot.shotHistory ?? state.shotHistory,
+        generationTasks: snapshot.generationTasks ?? state.generationTasks,
+        spatialStages: snapshot.spatialStages == null
+          ? state.spatialStages
+          : normalizeSceneStages(snapshot.spatialStages)
       };
     }),
 
@@ -1617,6 +1941,15 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
 
       return {
         ...state,
+        schemaVersion: 2,
+        migrationBackupPending: false,
+        migrationBackupSource: null,
+        directorPlan: null,
+        spatialScenes: [],
+        selectedSpatialObjectId: null,
+        spatialObjects: [],
+        poseKeyframes: [],
+        cameraPlans: [],
         project: {
           ...state.project,
           id: projectId,
@@ -1651,7 +1984,9 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           videoBitrateKbps: 8000
         },
         shotStrokes: {},
-        shotHistory: {}
+        shotHistory: {},
+        generationTasks: [],
+        spatialStages: []
       };
     }),
 

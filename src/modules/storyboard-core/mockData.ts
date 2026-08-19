@@ -61,6 +61,8 @@ export const assets: Asset[] = [
     characterFrontPath: "assets/characters/lead_front.png",
     characterSidePath: "assets/characters/lead_side.png",
     characterBackPath: "assets/characters/lead_back.png",
+    characterFaceRefPath: "assets/characters/lead_face_ref.png",
+    characterDetailRefPath: "assets/characters/lead_detail_ref.png",
     voiceProfile: "young_female_calm"
   }
 ];
