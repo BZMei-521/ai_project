@@ -31,6 +31,18 @@ try {
     'import { DeadPanel } from "../legacy/deadPanel";\nvoid DeadPanel;\n'
   );
   await writeFile(
+    path.join(rootDir, "src/features/multilineImport.ts"),
+    'import {\n  DeadPanel\n} from "../legacy/deadPanel";\nvoid DeadPanel;\n'
+  );
+  await writeFile(
+    path.join(rootDir, "src/features/multilineReexport.ts"),
+    'export {\n  DeadPanel\n} from "../legacy/deadPanel";\n'
+  );
+  await writeFile(
+    path.join(rootDir, "src/features/importEquals.ts"),
+    'import legacyPanel = require("../legacy/deadPanel");\nvoid legacyPanel;\n'
+  );
+  await writeFile(
     path.join(rootDir, "src/features/dynamic.ts"),
     'export const load = () => import("../legacy/deadPanel");\n'
   );
@@ -69,6 +81,24 @@ try {
   assert.ok(
     blocked.blockedCandidates[0]?.references.some((reference) => reference.detail === "@legacy/deadPanel"),
     "tsconfig paths alias import should block deletion"
+  );
+  assert.ok(
+    blocked.blockedCandidates[0]?.references.some(
+      (reference) => reference.kind === "static-import" && reference.file === "src/features/multilineImport.ts"
+    ),
+    "multiline static import should block deletion"
+  );
+  assert.ok(
+    blocked.blockedCandidates[0]?.references.some(
+      (reference) => reference.kind === "static-import" && reference.file === "src/features/multilineReexport.ts"
+    ),
+    "multiline re-export should block deletion"
+  );
+  assert.ok(
+    blocked.blockedCandidates[0]?.references.some(
+      (reference) => reference.kind === "static-import" && reference.file === "src/features/importEquals.ts"
+    ),
+    "ImportEquals external module reference should block deletion"
   );
   const formatted = formatDeadCodeAudit(blocked);
   assert.match(formatted, /src\/legacy\/deadPanel\.ts/);
@@ -122,6 +152,9 @@ try {
   );
 
   await writeFile(path.join(rootDir, "src/features/static.ts"), "export const current = true;\n");
+  await writeFile(path.join(rootDir, "src/features/multilineImport.ts"), "export const current = true;\n");
+  await writeFile(path.join(rootDir, "src/features/multilineReexport.ts"), "export const current = true;\n");
+  await writeFile(path.join(rootDir, "src/features/importEquals.ts"), "export const current = true;\n");
   await writeFile(path.join(rootDir, "src/features/dynamic.ts"), "export const current = true;\n");
   await writeFile(path.join(rootDir, "src/features/baseUrl.ts"), "export const current = true;\n");
   await writeFile(path.join(rootDir, "src/features/alias.ts"), "export const current = true;\n");

@@ -55,29 +55,53 @@ function importTargetsCandidate(importerPath, specifier, candidatePath, tsconfig
     .some((resolved) => stripSourceExtension(normalizePath(resolved)) === stripSourceExtension(candidate));
 }
 
+function scriptKindForPath(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".tsx") return ts.ScriptKind.TSX;
+  if (extension === ".jsx") return ts.ScriptKind.JSX;
+  if (extension === ".js" || extension === ".mjs" || extension === ".cjs") return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
 function collectImportReferences({ source, absoluteFile, relativeFile, absoluteCandidate, tsconfigResolvers }) {
   const references = [];
-  const dynamicSpans = [];
-  const dynamicPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-  for (const match of source.matchAll(dynamicPattern)) {
-    dynamicSpans.push([match.index, match.index + match[0].length]);
-    if (importTargetsCandidate(absoluteFile, match[1], absoluteCandidate, tsconfigResolvers)) {
-      references.push({ kind: "dynamic-import", file: relativeFile, detail: match[1] });
+  const sourceFile = ts.createSourceFile(
+    relativeFile,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(relativeFile)
+  );
+  const addReference = (kind, moduleSpecifier) => {
+    if (importTargetsCandidate(absoluteFile, moduleSpecifier, absoluteCandidate, tsconfigResolvers)) {
+      references.push({ kind, file: relativeFile, detail: moduleSpecifier });
     }
-  }
-
-  const staticPatterns = [
-    /\b(?:import|export)\s+(?:type\s+)?[^;\n]*?\sfrom\s*["']([^"']+)["']/g,
-    /\bimport\s*["']([^"']+)["']/g
-  ];
-  for (const pattern of staticPatterns) {
-    for (const match of source.matchAll(pattern)) {
-      if (dynamicSpans.some(([start, end]) => match.index >= start && match.index < end)) continue;
-      if (importTargetsCandidate(absoluteFile, match[1], absoluteCandidate, tsconfigResolvers)) {
-        references.push({ kind: "static-import", file: relativeFile, detail: match[1] });
-      }
+  };
+  const visit = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      addReference("static-import", node.moduleSpecifier.text);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression &&
+      ts.isStringLiteralLike(node.moduleReference.expression)
+    ) {
+      addReference("static-import", node.moduleReference.expression.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      addReference("dynamic-import", node.arguments[0].text);
     }
-  }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
   return references;
 }
 
