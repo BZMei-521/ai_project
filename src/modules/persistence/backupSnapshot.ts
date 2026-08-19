@@ -8,12 +8,54 @@ type SnapshotBackupFile = {
 
 const SNAPSHOT_BACKUP_SCHEMA_VERSION = 1;
 
+type NodeFileSystem = {
+  mkdir(path: string, options: { recursive: true }): Promise<unknown>;
+  writeFile(
+    path: string,
+    data: string,
+    options: { encoding: "utf8"; flag: "wx" }
+  ): Promise<unknown>;
+};
+
+const loadNodeFileSystem = new Function(
+  "return import('node:fs/promises')"
+) as () => Promise<NodeFileSystem>;
+
+function migrationBackupName(now: Date): string {
+  const timestamp = now.toISOString().replace(/[-:]/g, "");
+  return `migration-backup-${timestamp}.json`;
+}
+
 export function createSnapshotBackup(snapshot: StoryboardSnapshot): SnapshotBackupFile {
   return {
     schemaVersion: SNAPSHOT_BACKUP_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     snapshot
   };
+}
+
+export async function createMigrationBackup(
+  snapshot: unknown,
+  destination: string
+): Promise<string> {
+  if (typeof destination !== "string" || destination.trim().length === 0) {
+    throw new Error("Migration backup destination must be a non-empty path");
+  }
+
+  const fileSystem = await loadNodeFileSystem();
+  const directory = destination.replace(/[\\/]$/, "");
+  await fileSystem.mkdir(directory, { recursive: true });
+  const backupPath = `${directory}/${migrationBackupName(new Date())}`;
+  const payload = {
+    schemaVersion: SNAPSHOT_BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    snapshot
+  };
+  await fileSystem.writeFile(backupPath, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx"
+  });
+  return backupPath;
 }
 
 export function parseSnapshotBackup(raw: string): StoryboardSnapshot {
