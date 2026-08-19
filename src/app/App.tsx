@@ -1467,7 +1467,7 @@ export function App() {
           </div>
         </div>
       </header>
-      {showOnboardingPanel && (
+      {showOnboardingPanel && workbenchStage !== "preview" && (
         <section className="panel onboarding-panel">
           <header className="panel-header">
             <h2>开始引导</h2>

@@ -56,6 +56,7 @@ const appSource = await readFile("src/app/App.tsx", "utf8");
 assert.match(appSource, /WorkbenchShell/);
 assert.match(appSource, /AppToastHost/);
 assert.match(appSource, /AppDialogHost/);
+assert.match(appSource, /showOnboardingPanel && workbenchStage !== "preview"/);
 const css = await readFile("src/styles/global.css", "utf8");
 assert.match(css, /prefers-reduced-motion/);
 assert.match(css, /animation-duration:\s*0\.01ms\s*!important/);
