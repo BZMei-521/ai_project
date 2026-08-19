@@ -21,6 +21,9 @@ export type ComfyClientOptions = {
   desktopInvoke?: ComfyDesktopInvoke;
 };
 
+export const COMFY_DESKTOP_UNAVAILABLE_MESSAGE =
+  "未检测到桌面运行环境。请使用 Tauri 桌面版或 Windows Web 启动脚本。";
+
 export function normalizeComfyBaseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, "");
   return trimmed || "http://127.0.0.1:8188";
@@ -99,7 +102,7 @@ export class ComfyClient {
 
   private invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
     if (!this.desktopInvoke) {
-      return Promise.reject(new Error(`Desktop transport unavailable for ${command}`));
+      return Promise.reject(new Error(COMFY_DESKTOP_UNAVAILABLE_MESSAGE));
     }
     return this.desktopInvoke<T>(command, args);
   }

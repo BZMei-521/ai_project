@@ -1,6 +1,7 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import ts from "typescript";
 
 const SOURCE_EXTENSION_PATTERN = /\.(?:[cm]?[jt]sx?)$/i;
 const ROUTE_REGISTRY_PATTERN = /(?:^|\/)(?:[^/]*(?:route|registry)[^/]*)\.[cm]?[jt]sx?$/i;
@@ -23,20 +24,44 @@ function stripSourceExtension(value) {
   return value.replace(SOURCE_EXTENSION_PATTERN, "");
 }
 
-function importTargetsCandidate(importerPath, specifier, candidatePath) {
-  if (!specifier.startsWith(".")) return false;
-  const resolved = normalizePath(path.resolve(path.dirname(importerPath), specifier));
-  const candidate = normalizePath(path.resolve(candidatePath));
-  return stripSourceExtension(resolved) === stripSourceExtension(candidate);
+function matchesPathPattern(specifier, pattern) {
+  const wildcard = pattern.indexOf("*");
+  if (wildcard < 0) return specifier === pattern ? "" : null;
+  const prefix = pattern.slice(0, wildcard);
+  const suffix = pattern.slice(wildcard + 1);
+  if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) return null;
+  return specifier.slice(prefix.length, specifier.length - suffix.length);
 }
 
-function collectImportReferences({ source, absoluteFile, relativeFile, absoluteCandidate }) {
+function resolveImportPaths(importerPath, specifier, tsconfigResolvers) {
+  if (specifier.startsWith(".")) return [path.resolve(path.dirname(importerPath), specifier)];
+  const resolved = [];
+  for (const config of tsconfigResolvers) {
+    for (const [pattern, targets] of Object.entries(config.paths)) {
+      const wildcardValue = matchesPathPattern(specifier, pattern);
+      if (wildcardValue === null) continue;
+      for (const target of targets) {
+        resolved.push(path.resolve(config.basePath, target.replace("*", wildcardValue)));
+      }
+    }
+    resolved.push(path.resolve(config.basePath, specifier));
+  }
+  return resolved;
+}
+
+function importTargetsCandidate(importerPath, specifier, candidatePath, tsconfigResolvers) {
+  const candidate = normalizePath(path.resolve(candidatePath));
+  return resolveImportPaths(importerPath, specifier, tsconfigResolvers)
+    .some((resolved) => stripSourceExtension(normalizePath(resolved)) === stripSourceExtension(candidate));
+}
+
+function collectImportReferences({ source, absoluteFile, relativeFile, absoluteCandidate, tsconfigResolvers }) {
   const references = [];
   const dynamicSpans = [];
   const dynamicPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
   for (const match of source.matchAll(dynamicPattern)) {
     dynamicSpans.push([match.index, match.index + match[0].length]);
-    if (importTargetsCandidate(absoluteFile, match[1], absoluteCandidate)) {
+    if (importTargetsCandidate(absoluteFile, match[1], absoluteCandidate, tsconfigResolvers)) {
       references.push({ kind: "dynamic-import", file: relativeFile, detail: match[1] });
     }
   }
@@ -48,7 +73,7 @@ function collectImportReferences({ source, absoluteFile, relativeFile, absoluteC
   for (const pattern of staticPatterns) {
     for (const match of source.matchAll(pattern)) {
       if (dynamicSpans.some(([start, end]) => match.index >= start && match.index < end)) continue;
-      if (importTargetsCandidate(absoluteFile, match[1], absoluteCandidate)) {
+      if (importTargetsCandidate(absoluteFile, match[1], absoluteCandidate, tsconfigResolvers)) {
         references.push({ kind: "static-import", file: relativeFile, detail: match[1] });
       }
     }
@@ -80,6 +105,29 @@ async function readPackageScripts(rootDir) {
   }
 }
 
+async function readTsconfigResolvers(rootDir) {
+  const entries = await readdir(rootDir, { withFileTypes: true });
+  const configPaths = entries
+    .filter((entry) => entry.isFile() && /^tsconfig(?:\.[^.]+)?\.json$/i.test(entry.name))
+    .map((entry) => path.join(rootDir, entry.name));
+  const resolvers = [];
+  for (const configPath of configPaths) {
+    const diagnostics = [];
+    const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: (diagnostic) => diagnostics.push(diagnostic)
+    });
+    if (!parsed || diagnostics.length > 0) {
+      throw new Error(`Unable to parse TypeScript config: ${normalizePath(path.relative(rootDir, configPath))}`);
+    }
+    const basePath = parsed.options.baseUrl
+      ? path.resolve(parsed.options.baseUrl)
+      : path.dirname(configPath);
+    resolvers.push({ basePath, paths: parsed.options.paths ?? {} });
+  }
+  return resolvers;
+}
+
 function packageScriptReferencesCandidate(command, candidatePath) {
   const normalizedCommand = normalizePath(String(command));
   const normalizedCandidate = normalizePath(candidatePath);
@@ -91,10 +139,23 @@ export async function scanDeadCodeCandidates({ rootDir = process.cwd(), candidat
   const absoluteRoot = path.resolve(rootDir);
   const sourceFiles = await listSourceFiles(absoluteRoot);
   const packageScripts = await readPackageScripts(absoluteRoot);
+  const tsconfigResolvers = await readTsconfigResolvers(absoluteRoot);
   const auditedCandidates = [];
 
   for (const candidate of candidates) {
     const absoluteCandidate = path.resolve(absoluteRoot, candidate.path);
+    const relativeCandidate = path.relative(absoluteRoot, absoluteCandidate);
+    if (relativeCandidate.startsWith("..") || path.isAbsolute(relativeCandidate)) {
+      throw new Error(`Candidate is outside repository root: ${candidate.path}`);
+    }
+    let candidateStat;
+    try {
+      candidateStat = await stat(absoluteCandidate);
+    } catch (error) {
+      if (error?.code === "ENOENT") throw new Error(`Candidate does not exist: ${candidate.path}`);
+      throw error;
+    }
+    if (!candidateStat.isFile()) throw new Error(`Candidate is not a file: ${candidate.path}`);
     const references = [];
     for (const absoluteFile of sourceFiles) {
       if (stripSourceExtension(normalizePath(absoluteFile)) === stripSourceExtension(normalizePath(absoluteCandidate))) {
@@ -102,7 +163,13 @@ export async function scanDeadCodeCandidates({ rootDir = process.cwd(), candidat
       }
       const relativeFile = normalizePath(path.relative(absoluteRoot, absoluteFile));
       const source = await readFile(absoluteFile, "utf8");
-      references.push(...collectImportReferences({ source, absoluteFile, relativeFile, absoluteCandidate }));
+      references.push(...collectImportReferences({
+        source,
+        absoluteFile,
+        relativeFile,
+        absoluteCandidate,
+        tsconfigResolvers
+      }));
       if (ROUTE_REGISTRY_PATTERN.test(relativeFile)) {
         for (const token of candidate.routeTokens ?? []) {
           if (token && source.includes(token)) {
@@ -140,13 +207,31 @@ export function formatDeadCodeAudit(result) {
   return lines.join("\n");
 }
 
-function parseCliCandidates(args) {
+export function parseCliCandidates(args) {
   return args.map((value) => {
-    const separator = value.indexOf("=");
-    if (separator <= 0 || separator === value.length - 1) {
-      throw new Error(`Candidate must use path=replacement syntax: ${value}`);
+    const tokenSeparator = value.indexOf("::");
+    const mapping = tokenSeparator >= 0 ? value.slice(0, tokenSeparator) : value;
+    const routeTokenText = tokenSeparator >= 0 ? value.slice(tokenSeparator + 2) : "";
+    const separator = mapping.indexOf("=");
+    if (separator <= 0 || separator === mapping.length - 1) {
+      throw new Error(`Candidate must use candidate=replacement::routeToken1,routeToken2 syntax: ${value}`);
     }
-    return { path: value.slice(0, separator), replacement: value.slice(separator + 1), routeTokens: [] };
+    const candidatePath = mapping.slice(0, separator);
+    const routeTokens = routeTokenText
+      .split(",")
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (routeTokens.length === 0) {
+      const basename = path.basename(candidatePath).replace(SOURCE_EXTENSION_PATTERN, "");
+      routeTokens.push(basename);
+      const exportedName = basename ? `${basename[0].toUpperCase()}${basename.slice(1)}` : "";
+      if (exportedName && exportedName !== basename) routeTokens.push(exportedName);
+    }
+    return {
+      path: candidatePath,
+      replacement: mapping.slice(separator + 1),
+      routeTokens
+    };
   });
 }
 
