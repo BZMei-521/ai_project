@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { build } from "esbuild";
 
 const repoRoot = process.cwd();
@@ -49,4 +50,33 @@ assert.equal(jsonChannel?.mimeType, "application/json");
 assert.ok(jsonChannel?.metadata && typeof jsonChannel.metadata === "object");
 assert.doesNotThrow(() => JSON.stringify(jsonChannel?.metadata));
 assert.deepEqual(references, runtime.createPreviewReferenceSet(scene, camera), "references should be deterministic");
+
+const storeResult = await build({
+  stdin: {
+    contents: 'export * from "./src/features/spatial-preview/spatialPreviewStore.ts";',
+    loader: "ts",
+    resolveDir: repoRoot,
+    sourcefile: "spatial-preview-store-check.ts"
+  },
+  absWorkingDir: repoRoot,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node20",
+  write: false
+});
+const storeBundle = storeResult.outputFiles[0]?.text;
+assert.ok(storeBundle, "spatial preview store bundle should be available");
+const storeRuntime = await import(`data:text/javascript;base64,${Buffer.from(storeBundle).toString("base64")}`);
+const store = storeRuntime.useSpatialPreviewStore;
+const scene0 = structuredClone(scene);
+const scene1 = { ...scene0, revision: scene0.revision + 1, objects: [{ ...scene0.objects[0], position: { x: 2, y: 1, z: 0 } }] };
+store.getState().reset();
+store.getState().recordScene(scene0, scene1);
+assert.deepEqual(store.getState().undo(), scene0, "undo should restore the previous S0 snapshot");
+assert.deepEqual(store.getState().redo(), scene1, "redo should restore the applied S1 snapshot");
+store.getState().setSelection("hero");
+assert.equal(store.getState().selectedObjectId, "hero", "store should retain local object selection");
+const canvasSource = readFileSync(new URL("../src/features/spatial-preview/SpatialPreviewCanvas.tsx", import.meta.url), "utf8");
+assert.match(canvasSource, /getState\(\)\.setSelection\(selection\)/, "canvas selection prop should synchronize into the local preview store");
 console.log("PASS spatial preview runtime");

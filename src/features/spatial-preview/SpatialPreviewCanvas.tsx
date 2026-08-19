@@ -88,9 +88,9 @@ export function SpatialPreviewCanvas({ scene, selection, onSelectionChange, onSc
     const pointer = new THREE.Vector2();
     const selectedMesh = () => proxies.find((proxy) => proxy.userData.spatialObjectId === selection) ?? null;
 
-    const syncTransform = () => {
+    const syncTransform = (): SpatialScene | null => {
       const mesh = selectedMesh();
-      if (!mesh) return;
+      if (!mesh) return null;
       const objectId = String(mesh.userData.spatialObjectId);
       const nextObjects = scene.objects.map((object) => object.id === objectId
         ? {
@@ -100,7 +100,7 @@ export function SpatialPreviewCanvas({ scene, selection, onSelectionChange, onSc
             scale: { x: mesh.scale.x, y: mesh.scale.y, z: mesh.scale.z }
           }
         : object);
-      onSceneChange({ ...scene, revision: scene.revision + 1, objects: nextObjects, updatedAt: new Date().toISOString() });
+      return { ...scene, revision: scene.revision + 1, objects: nextObjects, updatedAt: new Date().toISOString() };
     };
     let transformDirty = false;
     const onTransformDrag = (event: { value: unknown }) => {
@@ -108,8 +108,11 @@ export function SpatialPreviewCanvas({ scene, selection, onSelectionChange, onSc
       orbit.enabled = !dragging;
       if (!dragging && transformDirty) {
         transformDirty = false;
-        recordScene(scene);
-        syncTransform();
+        const nextScene = syncTransform();
+        if (nextScene) {
+          recordScene(scene, nextScene);
+          onSceneChange(nextScene);
+        }
       }
     };
     const onObjectChange = () => { transformDirty = true; };
@@ -164,6 +167,10 @@ export function SpatialPreviewCanvas({ scene, selection, onSelectionChange, onSc
       host.replaceChildren();
     };
   }, [scene, selection, activeTool, onSceneChange, onSelectionChange, panoramaBackground]);
+
+  useEffect(() => {
+    useSpatialPreviewStore.getState().setSelection(selection);
+  }, [selection]);
 
   return <div ref={hostRef} style={{ width: "100%", minHeight: 280, height: "clamp(280px, 58vh, 680px)", aspectRatio: "16 / 9", overflow: "hidden", background: "#101820" }} />;
 }

@@ -21,8 +21,9 @@ Three.js (`three@0.185.1`) and `@types/three@0.185.4` were already present, so `
 ## Verification
 
 - `node scripts/check-spatial-preview-runtime.mjs` -> `PASS spatial preview runtime`.
-- `npm.cmd run build` -> TypeScript and Vite production build passed.
-- Existing build emitted only the repository's existing large-chunk warning.
+- Focused checker now also covers `S0 -> S1 -> undo -> redo` and Canvas prop-to-local-store selection synchronization.
+- `npm.cmd run build` was rerun after the fix. It reaches the repository's existing baseline error at `src/modules/spatial-stage/rigState.ts:143` (`string[]` is not assignable to the existing metadata value union), before Vite bundling; no spatial-preview TypeScript errors are reported.
+- The earlier baseline build had passed before this follow-up; the current failure is outside Task 4 and was not modified.
 - Feature source was checked for forbidden Comfy/Tauri/model/filesystem/global storyboard imports; none are present.
 - Visual screenshots were not captured because Task 4 components are not mounted by the current App route yet; the canvas uses stable responsive dimensions and the inspector uses a compact responsive grid for the later shell integration.
 

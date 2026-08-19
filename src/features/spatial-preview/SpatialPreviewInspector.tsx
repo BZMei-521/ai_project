@@ -28,8 +28,9 @@ export function SpatialPreviewInspector({ scene, selection, onSelectionChange, o
     const value = Number(event.target.value);
     if (!Number.isFinite(value)) return;
     const next = { ...selectedObject, position: { ...selectedObject.position, [axis]: value } };
-    recordScene(scene);
-    onSceneChange({ ...scene, revision: scene.revision + 1, objects: scene.objects.map((object) => object.id === next.id ? next : object) });
+    const nextScene = { ...scene, revision: scene.revision + 1, objects: scene.objects.map((object) => object.id === next.id ? next : object) };
+    recordScene(scene, nextScene);
+    onSceneChange(nextScene);
   };
 
   return (

@@ -8,12 +8,13 @@ export type SpatialPreviewStoreState = {
   activeTool: SpatialPreviewTool;
   undoStack: SpatialScene[];
   redoStack: SpatialScene[];
+  currentScene: SpatialScene | null;
   cameraPlan: CameraPlan | null;
   isDirty: boolean;
   setSelection: (selectedObjectId: string | null) => void;
   setActiveTool: (activeTool: SpatialPreviewTool) => void;
   setCameraPlan: (cameraPlan: CameraPlan | null) => void;
-  recordScene: (scene: SpatialScene) => void;
+  recordScene: (previousScene: SpatialScene, nextScene: SpatialScene) => void;
   undo: () => SpatialScene | null;
   redo: () => SpatialScene | null;
   markClean: () => void;
@@ -25,6 +26,7 @@ const initialState = {
   activeTool: "select" as SpatialPreviewTool,
   undoStack: [] as SpatialScene[],
   redoStack: [] as SpatialScene[],
+  currentScene: null as SpatialScene | null,
   cameraPlan: null as CameraPlan | null,
   isDirty: false
 };
@@ -34,24 +36,25 @@ export const useSpatialPreviewStore = create<SpatialPreviewStoreState>((set, get
   setSelection: (selectedObjectId) => set({ selectedObjectId }),
   setActiveTool: (activeTool) => set({ activeTool }),
   setCameraPlan: (cameraPlan) => set({ cameraPlan, isDirty: true }),
-  recordScene: (scene) => set((state) => ({
-    undoStack: [...state.undoStack, scene].slice(-50),
+  recordScene: (previousScene, nextScene) => set((state) => ({
+    undoStack: [...state.undoStack, previousScene].slice(-50),
     redoStack: [],
-    cameraPlan: scene.camera,
+    currentScene: nextScene,
+    cameraPlan: nextScene.camera,
     isDirty: true
   })),
   undo: () => {
     const state = get();
     const previous = state.undoStack.length > 0 ? state.undoStack[state.undoStack.length - 1] : null;
-    if (!previous) return null;
-    set({ undoStack: state.undoStack.slice(0, -1), redoStack: [...state.redoStack, previous], cameraPlan: previous.camera, isDirty: true });
+    if (!previous || !state.currentScene) return null;
+    set({ undoStack: state.undoStack.slice(0, -1), redoStack: [...state.redoStack, state.currentScene], currentScene: previous, cameraPlan: previous.camera, isDirty: true });
     return previous;
   },
   redo: () => {
     const state = get();
     const next = state.redoStack.length > 0 ? state.redoStack[state.redoStack.length - 1] : null;
-    if (!next) return null;
-    set({ redoStack: state.redoStack.slice(0, -1), undoStack: [...state.undoStack, next], cameraPlan: next.camera, isDirty: true });
+    if (!next || !state.currentScene) return null;
+    set({ redoStack: state.redoStack.slice(0, -1), undoStack: [...state.undoStack, state.currentScene], currentScene: next, cameraPlan: next.camera, isDirty: true });
     return next;
   },
   markClean: () => set({ isDirty: false }),
