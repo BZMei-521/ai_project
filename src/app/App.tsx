@@ -1,10 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { AssetPanel } from "../modules/asset-manager/AssetPanel";
-import { LayerPanel } from "../modules/canvas-engine/LayerPanel";
-import { ProjectHealthPanel } from "../modules/editor-shell/ProjectHealthPanel";
-import { ShotInspectorPanel } from "../modules/editor-shell/ShotInspectorPanel";
-import { ShotListPanel } from "../modules/editor-shell/ShotListPanel";
-import { ComfyPipelinePanel } from "../modules/comfy-pipeline/ComfyPipelinePanel";
+import { startTransition, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
   createWorkspaceProject,
   deleteWorkspaceProject,
@@ -16,6 +10,23 @@ import {
   selectWorkspaceProject,
   type WorkspaceProjectEntry
 } from "../modules/persistence/desktopProject";
+import {
+  beginDesktopSnapshotSyncTransition,
+  blockDesktopSnapshotSync,
+  canManuallySaveDesktopSnapshot,
+  completeDesktopSnapshotLoad,
+  completeDesktopSnapshotSave,
+  createDesktopSnapshotSaveCoordinator,
+  choosePreferredDesktopSnapshot,
+  createDesktopSnapshotSyncState,
+  disableDesktopSnapshotSync,
+  markDesktopSnapshotSynced,
+  markDesktopSnapshotUnsynced,
+  restoreDesktopSnapshotSyncState,
+  shouldScheduleDesktopSnapshotSave,
+  type DesktopSnapshotSaveCoordinator,
+  type DesktopSnapshotSyncState
+} from "../modules/persistence/desktopSnapshotSync";
 import {
   beginSessionAndDetectUncleanExit,
   clearAutosaveHistory,
@@ -32,6 +43,7 @@ import {
 } from "../modules/persistence/backupSnapshot";
 import { StoryboardPreviewPanel } from "../modules/preview-engine/StoryboardPreviewPanel";
 import { TimelinePanel } from "../modules/preview-engine/TimelinePanel";
+import { SpatialStageWorkbench } from "../modules/spatial-stage/SpatialStageWorkbench";
 import { AudioTrackPanel } from "../modules/preview-engine/AudioTrackPanel";
 import { AppDialogHost, confirmDialog, promptDialog } from "../modules/ui/dialogStore";
 import { AppToastHost, pushToast } from "../modules/ui/toastStore";
@@ -40,13 +52,26 @@ import {
   safeStorageSetItem
 } from "../modules/platform/safeStorage";
 import {
+  createStoryboardSnapshot,
   selectShotStartFrame,
   selectFilteredShotsForCurrentSequence,
   useStoryboardStore,
   type StoryboardSnapshot
 } from "../modules/storyboard-core/store";
+import { LazyAuxPanelContent, preloadAuxPanel } from "./LazyAuxPanelContent";
+import { WorkbenchShell } from "../app-shell/WorkbenchShell";
+import type { WorkbenchStage } from "../app-shell/workbenchRoutes";
+import { ProjectWorkspaceView } from "../features/project/ProjectWorkspaceView";
+import { ScriptDirectorView } from "../features/script-director/ScriptDirectorView";
+import { AssetWorkspaceView } from "../features/assets/AssetWorkspaceView";
+import { PreviewWorkspaceView } from "../features/spatial-preview/PreviewWorkspaceView";
+import { StoryboardWorkspaceView } from "../features/storyboard/StoryboardWorkspaceView";
+import { ProductionWorkspaceView } from "../features/production/ProductionWorkspaceView";
+import { AdvancedPipelinePanel, AdvancedToolsView, preloadAdvancedPipeline } from "../features/advanced-tools/AdvancedToolsView";
+import type { SpatialScene } from "../domains/spatial-scene/types";
 
 type AuxPanelSection = "shots" | "inspector" | "layers" | "audio" | "assets" | "health" | "pipeline";
+type WorkspaceMode = "storyboard" | "spatial_stage";
 type ShortcutItem = {
   keys: string;
   label: string;
@@ -92,44 +117,8 @@ const LAYOUT_DEBUG_KEY = "storyboard-pro/layout-debug/v1";
 const MAIN_LAYOUT_KEY = "storyboard-pro/main-layout/v1";
 const TIMELINE_SPLIT_KEY = "storyboard-pro/timeline-split/v1";
 
-function snapshotRichnessScore(snapshot: Partial<StoryboardSnapshot> | null): number {
-  if (!snapshot) return Number.NEGATIVE_INFINITY;
-  const assetScore = (snapshot.assets ?? []).reduce((sum, asset) => {
-    if (!asset) return sum;
-    return (
-      sum +
-      ((asset.filePath?.trim() || "").length > 0 ? 2 : 0) +
-      ((asset.characterFrontPath?.trim() || "").length > 0 ? 3 : 0) +
-      ((asset.characterSidePath?.trim() || "").length > 0 ? 4 : 0) +
-      ((asset.characterBackPath?.trim() || "").length > 0 ? 4 : 0) +
-      ((asset.skyboxFaces?.front?.trim() || "").length > 0 ? 3 : 0)
-    );
-  }, 0);
-  const shotScore = (snapshot.shots ?? []).reduce((sum, shot) => {
-    if (!shot) return sum;
-    return (
-      sum +
-      ((shot.generatedImagePath?.trim() || "").length > 0 ? 5 : 0) +
-      ((shot.generatedVideoPath?.trim() || "").length > 0 ? 6 : 0) +
-      ((shot.characterRefs?.length ?? 0) > 0 ? 1 : 0) +
-      ((shot.sceneRefId?.trim() || "").length > 0 ? 1 : 0)
-    );
-  }, 0);
-  return assetScore * 10 + shotScore;
-}
-
-function choosePreferredStartupSnapshot(
-  desktopSnapshot: StoryboardSnapshot | null,
-  autosaveSnapshot: StoryboardSnapshot | null
-): StoryboardSnapshot | null {
-  if (!desktopSnapshot) return autosaveSnapshot;
-  if (!autosaveSnapshot) return desktopSnapshot;
-  if ((desktopSnapshot.project?.id ?? "") !== (autosaveSnapshot.project?.id ?? "")) {
-    return desktopSnapshot;
-  }
-  return snapshotRichnessScore(autosaveSnapshot) >= snapshotRichnessScore(desktopSnapshot)
-    ? autosaveSnapshot
-    : desktopSnapshot;
+function readCurrentStoryboardSnapshot(): StoryboardSnapshot {
+  return createStoryboardSnapshot(useStoryboardStore.getState());
 }
 
 function loadAuxPanelState(): {
@@ -174,25 +163,64 @@ export function App() {
   const exportSettings = useStoryboardStore((state) => state.exportSettings);
   const shotStrokes = useStoryboardStore((state) => state.shotStrokes);
   const shotHistory = useStoryboardStore((state) => state.shotHistory);
+  const generationTasks = useStoryboardStore((state) => state.generationTasks);
+  const schemaVersion = useStoryboardStore((state) => state.schemaVersion);
+  const migrationBackupPending = useStoryboardStore((state) => state.migrationBackupPending);
+  const migrationBackupSource = useStoryboardStore((state) => state.migrationBackupSource);
+  const directorPlan = useStoryboardStore((state) => state.directorPlan);
+  const spatialScenes = useStoryboardStore((state) => state.spatialScenes);
+  const selectedSpatialObjectId = useStoryboardStore((state) => state.selectedSpatialObjectId);
+  const spatialObjects = useStoryboardStore((state) => state.spatialObjects);
+  const poseKeyframes = useStoryboardStore((state) => state.poseKeyframes);
+  const cameraPlans = useStoryboardStore((state) => state.cameraPlans);
+  const spatialStages = useStoryboardStore((state) => state.spatialStages);
   const hydrateFromSnapshot = useStoryboardStore((state) => state.hydrateFromSnapshot);
   const resetForNewProject = useStoryboardStore((state) => state.resetForNewProject);
   const updateProjectSettings = useStoryboardStore((state) => state.updateProjectSettings);
   const togglePlayback = useStoryboardStore((state) => state.togglePlayback);
   const setCurrentFrame = useStoryboardStore((state) => state.setCurrentFrame);
   const addShot = useStoryboardStore((state) => state.addShot);
+  const updateSpatialScene = useStoryboardStore((state) => state.updateSpatialScene);
+  const setSelectedSpatialObject = useStoryboardStore((state) => state.setSelectedSpatialObject);
   const [projectLocation, setProjectLocation] = useState<string>("网页模式");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("storyboard");
+  const [workbenchStage, setWorkbenchStage] = useState<WorkbenchStage>("storyboard");
   const [saveState, setSaveState] = useState<string>("空闲");
   const mountedRef = useRef(false);
-  const desktopSyncReadyRef = useRef(false);
+  const desktopSyncStateRef = useRef<DesktopSnapshotSyncState>(
+    createDesktopSnapshotSyncState()
+  );
+  const desktopSaveCoordinatorRef = useRef<DesktopSnapshotSaveCoordinator<StoryboardSnapshot> | null>(null);
+  if (!desktopSaveCoordinatorRef.current) {
+    desktopSaveCoordinatorRef.current = createDesktopSnapshotSaveCoordinator(saveSnapshotToDesktop);
+    desktopSaveCoordinatorRef.current.activateWorkspace(
+      desktopSyncStateRef.current.workspacePath,
+      desktopSyncStateRef.current.workspaceToken
+    );
+  }
+  const desktopSaveCoordinator = desktopSaveCoordinatorRef.current;
+  const setDesktopSyncState = (nextState: DesktopSnapshotSyncState) => {
+    desktopSyncStateRef.current = nextState;
+    desktopSaveCoordinator.activateWorkspace(
+      nextState.workspacePath,
+      nextState.workspaceToken
+    );
+  };
   const [workspaceProjects, setWorkspaceProjects] = useState<WorkspaceProjectEntry[]>([]);
   const [activeWorkspacePath, setActiveWorkspacePath] = useState<string>("");
+  const activeWorkspacePathRef = useRef(activeWorkspacePath);
+  activeWorkspacePathRef.current = activeWorkspacePath;
   const [showRecoveryPanel, setShowRecoveryPanel] = useState(false);
   const [showHelpPanel, setShowHelpPanel] = useState(false);
   const [helpShortcutQuery, setHelpShortcutQuery] = useState("");
   const [showOnboardingPanel, setShowOnboardingPanel] = useState(true);
-  const [auxPanelOpen, setAuxPanelOpen] = useState(() => loadAuxPanelState().open);
-  const [auxPanelSection, setAuxPanelSection] = useState<AuxPanelSection>(() => loadAuxPanelState().section);
-  const [auxPanelPinned, setAuxPanelPinned] = useState(() => loadAuxPanelState().pinned);
+  const [initialAuxPanelState] = useState(loadAuxPanelState);
+  const [auxPanelOpen, setAuxPanelOpen] = useState(initialAuxPanelState.open);
+  const [auxPanelSection, setAuxPanelSection] = useState<AuxPanelSection>(initialAuxPanelState.section);
+  const [auxPanelPinned, setAuxPanelPinned] = useState(initialAuxPanelState.pinned);
+  const [pipelinePanelMounted, setPipelinePanelMounted] = useState(
+    () => initialAuxPanelState.open && initialAuxPanelState.section === "pipeline"
+  );
   const [focusMode, setFocusMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return safeStorageGetItem(FOCUS_MODE_KEY) === "1";
@@ -336,11 +364,15 @@ export function App() {
         setProjectLocation(current.path);
         const desktopSnapshot = await loadSnapshotFromDesktop();
         const autosaveSnapshot = loadAutosaveSnapshot();
-        const preferredSnapshot = choosePreferredStartupSnapshot(desktopSnapshot, autosaveSnapshot);
+        const preferredSnapshot = choosePreferredDesktopSnapshot(desktopSnapshot, autosaveSnapshot);
         if (preferredSnapshot) {
           hydrateFromSnapshot(preferredSnapshot);
         }
-        desktopSyncReadyRef.current = true;
+        setDesktopSyncState(markDesktopSnapshotSynced(
+          desktopSyncStateRef.current,
+          current.path,
+          readCurrentStoryboardSnapshot()
+        ));
       }
     };
 
@@ -350,6 +382,15 @@ export function App() {
   useEffect(() => {
     const timerId = window.setInterval(() => {
       saveAutosaveSnapshot({
+        schemaVersion,
+        migrationBackupPending,
+        migrationBackupSource,
+        directorPlan,
+        spatialScenes,
+        selectedSpatialObjectId,
+        spatialObjects,
+        poseKeyframes,
+        cameraPlans,
         project,
         sequences,
         currentSequenceId,
@@ -362,7 +403,9 @@ export function App() {
         canvasTool,
         exportSettings,
         shotStrokes,
-        shotHistory
+        shotHistory,
+        generationTasks,
+        spatialStages
       }, 30);
 
       const versions = listAutosaveSnapshots();
@@ -371,6 +414,16 @@ export function App() {
 
     return () => window.clearInterval(timerId);
   }, [
+    schemaVersion,
+    migrationBackupPending,
+    migrationBackupSource,
+    directorPlan,
+    spatialScenes,
+    selectedSpatialObjectId,
+    spatialObjects,
+    poseKeyframes,
+    cameraPlans,
+    spatialStages,
     canvasTool,
     exportSettings,
     activeLayerByShotId,
@@ -381,6 +434,7 @@ export function App() {
     project,
     selectedShotId,
     sequences,
+    generationTasks,
     shotHistory,
     shotStrokes,
     shots
@@ -388,26 +442,59 @@ export function App() {
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;
-    if (!activeWorkspacePath || !desktopSyncReadyRef.current) return;
+    const snapshot = readCurrentStoryboardSnapshot();
+    if (!shouldScheduleDesktopSnapshotSave({
+      state: desktopSyncStateRef.current,
+      workspacePath: activeWorkspacePath,
+      snapshot
+    })) return;
+    const scheduledWorkspaceToken = desktopSyncStateRef.current.workspaceToken;
     const timerId = window.setTimeout(() => {
-      void saveSnapshotToDesktop({
-        project,
-        sequences,
-        currentSequenceId,
-        shots,
-        layers,
-        assets,
-        audioTracks,
-        selectedShotId,
-        activeLayerByShotId,
-        canvasTool,
-        exportSettings,
-        shotStrokes,
-        shotHistory
-      }).catch(() => undefined);
+      if (activeWorkspacePathRef.current !== activeWorkspacePath) return;
+      const latestSnapshot = readCurrentStoryboardSnapshot();
+      if (!shouldScheduleDesktopSnapshotSave({
+        state: desktopSyncStateRef.current,
+        workspacePath: activeWorkspacePath,
+        snapshot: latestSnapshot,
+        scheduledWorkspaceToken
+      })) return;
+      const submittedWorkspaceToken = desktopSyncStateRef.current.workspaceToken;
+      void desktopSaveCoordinator.save({
+        workspacePath: activeWorkspacePath,
+        workspaceToken: submittedWorkspaceToken,
+        snapshot: latestSnapshot
+      })
+        .then((result) => {
+          if (
+            !result ||
+            result.status !== "completed" ||
+            !result.savedPath ||
+            activeWorkspacePathRef.current !== result.submission.workspacePath ||
+            desktopSyncStateRef.current.workspaceToken !== result.submission.workspaceToken
+          ) return;
+          setDesktopSyncState(completeDesktopSnapshotSave(
+            desktopSyncStateRef.current,
+            {
+              workspacePath: result.submission.workspacePath,
+              workspaceToken: result.submission.workspaceToken,
+              submittedSnapshot: result.submission.snapshot
+            }
+          ));
+        })
+        .catch(() => undefined);
     }, 1200);
     return () => window.clearTimeout(timerId);
   }, [
+    schemaVersion,
+    migrationBackupPending,
+    migrationBackupSource,
+    directorPlan,
+    spatialScenes,
+    selectedSpatialObjectId,
+    spatialObjects,
+    poseKeyframes,
+    cameraPlans,
+    spatialStages,
     activeLayerByShotId,
     activeWorkspacePath,
     assets,
@@ -419,35 +506,49 @@ export function App() {
     project,
     selectedShotId,
     sequences,
+    generationTasks,
     shotHistory,
     shotStrokes,
     shots
   ]);
 
   const onSaveDesktop = async () => {
+    const workspacePath = activeWorkspacePathRef.current;
+    if (!canManuallySaveDesktopSnapshot(desktopSyncStateRef.current, workspacePath)) {
+      setSaveState("保存已阻止：请先完成或重新加载当前项目");
+      return;
+    }
     try {
       setSaveState("保存中...");
-      const path = await saveSnapshotToDesktop({
-        project,
-        sequences,
-        currentSequenceId,
-        shots,
-        layers,
-        assets,
-        audioTracks,
-        selectedShotId,
-        activeLayerByShotId,
-        canvasTool,
-        exportSettings,
-        shotStrokes,
-        shotHistory
+      const snapshotToSave = readCurrentStoryboardSnapshot();
+      const submittedWorkspaceToken = desktopSyncStateRef.current.workspaceToken;
+      const result = await desktopSaveCoordinator.save({
+        workspacePath,
+        workspaceToken: submittedWorkspaceToken,
+        snapshot: snapshotToSave
       });
+      const path = result.savedPath;
 
-      if (path) {
+      if (result.status === "cancelled") {
+        setSaveState("保存已取消：当前项目已变化");
+      } else if (!path) {
+        setSaveState("已跳过（非 Tauri 环境）");
+      } else if (
+        activeWorkspacePathRef.current === result.submission.workspacePath &&
+        desktopSyncStateRef.current.workspaceToken === result.submission.workspaceToken
+      ) {
+        setDesktopSyncState(completeDesktopSnapshotSave(
+          desktopSyncStateRef.current,
+          {
+            workspacePath: result.submission.workspacePath,
+            workspaceToken: result.submission.workspaceToken,
+            submittedSnapshot: result.submission.snapshot
+          }
+        ));
         setProjectLocation(path);
         setSaveState("已保存");
       } else {
-        setSaveState("已跳过（非 Tauri 环境）");
+        setSaveState("已保存；当前项目已变化，未推进同步基线");
       }
     } catch (error) {
       setSaveState(`保存失败：${String(error)}`);
@@ -455,18 +556,32 @@ export function App() {
   };
 
   const onLoadDesktop = async () => {
+    const previousSyncState = desktopSyncStateRef.current;
+    setDesktopSyncState(beginDesktopSnapshotSyncTransition(previousSyncState));
     try {
       setSaveState("加载中...");
       const snapshot = await loadSnapshotFromDesktop();
       if (!snapshot) {
+        setDesktopSyncState(restoreDesktopSnapshotSyncState(
+          desktopSyncStateRef.current,
+          previousSyncState
+        ));
         setSaveState("未找到桌面快照");
         return;
       }
 
       hydrateFromSnapshot(snapshot);
-      desktopSyncReadyRef.current = true;
+      setDesktopSyncState(markDesktopSnapshotSynced(
+        desktopSyncStateRef.current,
+        activeWorkspacePath,
+        readCurrentStoryboardSnapshot()
+      ));
       setSaveState("已加载");
     } catch (error) {
+      setDesktopSyncState(restoreDesktopSnapshotSyncState(
+        desktopSyncStateRef.current,
+        previousSyncState
+      ));
       setSaveState(`加载失败：${String(error)}`);
     }
   };
@@ -480,58 +595,137 @@ export function App() {
     if (!rawName) return;
     const name = rawName.trim();
     if (!name) return;
+    const previousStoreState = useStoryboardStore.getState();
+    const previousSyncState = desktopSyncStateRef.current;
+    let createdPath = "";
 
     try {
+      setDesktopSyncState(beginDesktopSnapshotSyncTransition(previousSyncState));
       resetForNewProject(name);
       const path = await createWorkspaceProject(name);
-      if (!path) return;
+      if (!path) {
+        useStoryboardStore.setState(previousStoreState, true);
+        setDesktopSyncState(restoreDesktopSnapshotSyncState(
+          desktopSyncStateRef.current,
+          previousSyncState
+        ));
+        setSaveState("创建失败：未创建桌面项目");
+        return;
+      }
+      createdPath = path;
+      setDesktopSyncState(markDesktopSnapshotUnsynced(
+        desktopSyncStateRef.current,
+        path
+      ));
 
       setActiveWorkspacePath(path);
       setProjectLocation(path);
       const list = await listWorkspaceProjects();
       setWorkspaceProjects(list);
-      const snapshotAfterReset = useStoryboardStore.getState();
-      await saveSnapshotToDesktop({
-        project: snapshotAfterReset.project,
-        sequences: snapshotAfterReset.sequences,
-        currentSequenceId: snapshotAfterReset.currentSequenceId,
-        shots: snapshotAfterReset.shots,
-        layers: snapshotAfterReset.layers,
-        assets: snapshotAfterReset.assets,
-        audioTracks: snapshotAfterReset.audioTracks,
-        selectedShotId: snapshotAfterReset.selectedShotId,
-        activeLayerByShotId: snapshotAfterReset.activeLayerByShotId,
-        canvasTool: snapshotAfterReset.canvasTool,
-        exportSettings: snapshotAfterReset.exportSettings,
-        shotStrokes: snapshotAfterReset.shotStrokes,
-        shotHistory: snapshotAfterReset.shotHistory
+      const submittedSnapshot = readCurrentStoryboardSnapshot();
+      const submittedWorkspaceToken = desktopSyncStateRef.current.workspaceToken;
+      const result = await desktopSaveCoordinator.save({
+        workspacePath: path,
+        workspaceToken: submittedWorkspaceToken,
+        snapshot: submittedSnapshot
       });
-      desktopSyncReadyRef.current = true;
+      if (result.status === "cancelled") {
+        setSaveState("项目已创建；当前项目已变化，初始保存已取消");
+        return;
+      }
+      const savedPath = result.savedPath;
+      if (!savedPath) throw new Error("Desktop project initial save returned no path");
+      if (
+        desktopSyncStateRef.current.workspacePath === result.submission.workspacePath &&
+        desktopSyncStateRef.current.workspaceToken === result.submission.workspaceToken
+      ) {
+        setDesktopSyncState(completeDesktopSnapshotSave(
+          desktopSyncStateRef.current,
+          {
+            workspacePath: result.submission.workspacePath,
+            workspaceToken: result.submission.workspaceToken,
+            submittedSnapshot: result.submission.snapshot
+          }
+        ));
+      }
       setSaveState("项目已创建");
     } catch (error) {
+      if (createdPath) {
+        if (desktopSyncStateRef.current.workspacePath === createdPath) {
+          setDesktopSyncState(markDesktopSnapshotUnsynced(
+            desktopSyncStateRef.current,
+            createdPath
+          ));
+        }
+      } else {
+        useStoryboardStore.setState(previousStoreState, true);
+        setDesktopSyncState(restoreDesktopSnapshotSyncState(
+          desktopSyncStateRef.current,
+          previousSyncState
+        ));
+      }
       setSaveState(`创建项目失败：${String(error)}`);
     }
   };
 
   const onChangeProject = async (path: string) => {
     if (!path || path === activeWorkspacePath) return;
+    const previousSyncState = desktopSyncStateRef.current;
+    let selectedPath = "";
     try {
+      setDesktopSyncState(beginDesktopSnapshotSyncTransition(previousSyncState));
       setSaveState("切换项目中...");
       const selected = await selectWorkspaceProject(path);
-      if (!selected) return;
+      if (!selected) {
+        setDesktopSyncState(restoreDesktopSnapshotSyncState(
+          desktopSyncStateRef.current,
+          previousSyncState
+        ));
+        return;
+      }
+      selectedPath = selected;
+      setDesktopSyncState(blockDesktopSnapshotSync(
+        desktopSyncStateRef.current,
+        selected
+      ));
       setActiveWorkspacePath(selected);
       setProjectLocation(selected);
 
       const snapshot = await loadSnapshotFromDesktop();
-      if (snapshot) {
-        hydrateFromSnapshot(snapshot);
+      if (!snapshot) {
+        setDesktopSyncState(completeDesktopSnapshotLoad(
+          desktopSyncStateRef.current,
+          selected,
+          null
+        ));
+        setSaveState("项目已切换，但快照未加载；请重试加载");
+        return;
       }
-      desktopSyncReadyRef.current = true;
+      hydrateFromSnapshot(snapshot);
+      setDesktopSyncState(completeDesktopSnapshotLoad(
+        desktopSyncStateRef.current,
+        selected,
+        readCurrentStoryboardSnapshot()
+      ));
 
       const list = await listWorkspaceProjects();
       setWorkspaceProjects(list);
       setSaveState("项目已切换");
     } catch (error) {
+      if (!selectedPath) {
+        setDesktopSyncState(restoreDesktopSnapshotSyncState(
+          desktopSyncStateRef.current,
+          previousSyncState
+        ));
+      } else if (
+        desktopSyncStateRef.current.workspacePath !== selectedPath ||
+        desktopSyncStateRef.current.phase !== "synced"
+      ) {
+        setDesktopSyncState(blockDesktopSnapshotSync(
+          desktopSyncStateRef.current,
+          selectedPath
+        ));
+      }
       setSaveState(`切换项目失败：${String(error)}`);
     }
   };
@@ -566,6 +760,11 @@ export function App() {
       if (!newPath) return;
       setActiveWorkspacePath(newPath);
       setProjectLocation(newPath);
+      setDesktopSyncState(markDesktopSnapshotSynced(
+        desktopSyncStateRef.current,
+        newPath,
+        readCurrentStoryboardSnapshot()
+      ));
       const list = await listWorkspaceProjects();
       setWorkspaceProjects(list);
       setSaveState("项目已重命名");
@@ -576,6 +775,8 @@ export function App() {
 
   const onDeleteProject = async () => {
     if (!activeWorkspacePath) return;
+    const previousSyncState = desktopSyncStateRef.current;
+    let selectedPath = "";
     const current = workspaceProjects.find((item) => item.path === activeWorkspacePath);
     const confirmed = await confirmDialog({
       title: "删除项目",
@@ -586,24 +787,57 @@ export function App() {
     if (!confirmed) return;
 
     try {
+      setDesktopSyncState(beginDesktopSnapshotSyncTransition(previousSyncState));
       setSaveState("删除项目中...");
       const list = await deleteWorkspaceProject(activeWorkspacePath);
       setWorkspaceProjects(list);
       const selected = list.find((item) => item.isCurrent) ?? list[0];
       if (selected) {
+        selectedPath = selected.path;
+        setDesktopSyncState(blockDesktopSnapshotSync(
+          desktopSyncStateRef.current,
+          selected.path
+        ));
         setActiveWorkspacePath(selected.path);
         setProjectLocation(selected.path);
         const snapshot = await loadSnapshotFromDesktop();
-        if (snapshot) {
-          hydrateFromSnapshot(snapshot);
+        if (!snapshot) {
+          setDesktopSyncState(completeDesktopSnapshotLoad(
+            desktopSyncStateRef.current,
+            selected.path,
+            null
+          ));
+          setSaveState("项目已删除，但替代项目快照未加载；请重试加载");
+          return;
         }
-        desktopSyncReadyRef.current = true;
+        hydrateFromSnapshot(snapshot);
+        setDesktopSyncState(completeDesktopSnapshotLoad(
+          desktopSyncStateRef.current,
+          selected.path,
+          readCurrentStoryboardSnapshot()
+        ));
       } else {
         setActiveWorkspacePath("");
-        desktopSyncReadyRef.current = false;
+        setDesktopSyncState(disableDesktopSnapshotSync(
+          desktopSyncStateRef.current
+        ));
       }
       setSaveState("项目已删除");
     } catch (error) {
+      if (!selectedPath) {
+        setDesktopSyncState(restoreDesktopSnapshotSyncState(
+          desktopSyncStateRef.current,
+          previousSyncState
+        ));
+      } else if (
+        desktopSyncStateRef.current.workspacePath !== selectedPath ||
+        desktopSyncStateRef.current.phase !== "synced"
+      ) {
+        setDesktopSyncState(blockDesktopSnapshotSync(
+          desktopSyncStateRef.current,
+          selectedPath
+        ));
+      }
       setSaveState(`删除失败：${String(error)}`);
     }
   };
@@ -691,21 +925,7 @@ export function App() {
 
   const onExportBackup = () => {
     try {
-      const snapshot = {
-        project,
-        sequences,
-        currentSequenceId,
-        shots,
-        layers,
-        assets,
-        audioTracks,
-        selectedShotId,
-        activeLayerByShotId,
-        canvasTool,
-        exportSettings,
-        shotStrokes,
-        shotHistory
-      };
+      const snapshot = readCurrentStoryboardSnapshot();
       const backup = createSnapshotBackup(snapshot);
       const blob = new Blob([JSON.stringify(backup, null, 2)], {
         type: "application/json"
@@ -742,8 +962,19 @@ export function App() {
     }
   };
 
+  const selectAuxPanelSection = (section: AuxPanelSection) => {
+    void preloadAuxPanel(section);
+    if (section === "pipeline") {
+      void preloadAdvancedPipeline();
+      setPipelinePanelMounted(true);
+    }
+    startTransition(() => {
+      setAuxPanelSection(section);
+    });
+  };
+
   const toggleAuxPanel = (section: AuxPanelSection) => {
-    setAuxPanelSection(section);
+    selectAuxPanelSection(section);
     setAuxPanelOpen((previous) => {
       if (auxPanelPinned) return true;
       return auxPanelSection === section ? !previous : true;
@@ -783,6 +1014,15 @@ export function App() {
     if (timelineSplitPercent === null) return;
     safeStorageSetItem(TIMELINE_SPLIT_KEY, String(timelineSplitPercent));
   }, [timelineSplitPercent]);
+
+  useEffect(() => {
+    if (!auxPanelOpen) return;
+    void preloadAuxPanel(auxPanelSection);
+    if (auxPanelSection === "pipeline") {
+      void preloadAdvancedPipeline();
+      setPipelinePanelMounted(true);
+    }
+  }, [auxPanelOpen, auxPanelSection]);
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -861,7 +1101,7 @@ export function App() {
           if (Number.isInteger(digit) && digit >= 1 && digit <= 7) {
             event.preventDefault();
             const section = AUX_PANEL_ORDER[digit - 1];
-            setAuxPanelSection(section);
+            selectAuxPanelSection(section);
             setAuxPanelOpen(true);
             return;
           }
@@ -947,12 +1187,148 @@ export function App() {
     document.body.classList.add("is-resizing-timeline");
   };
 
-  return (
+  const onWorkbenchStageChange = (nextStage: WorkbenchStage) => {
+    setWorkbenchStage(nextStage);
+    if (nextStage === "preview") setWorkspaceMode("spatial_stage");
+    if (nextStage === "storyboard") setWorkspaceMode("storyboard");
+  };
+
+  const fallbackPreviewScene: SpatialScene = {
+    id: "preview-default",
+    name: project.name || "预演场景",
+    revision: 0,
+    objects: [],
+    camera: { yaw: 0, pitch: 0, fov: 45 },
+    poseKeyframes: []
+  };
+  const activePreviewScene = spatialScenes[0] ?? fallbackPreviewScene;
+  const storyboardLegacyWorkspace = workspaceMode === "spatial_stage" ? <SpatialStageWorkbench /> : <>
+    <StoryboardPreviewPanel />
     <div
-      className={`app-shell ${focusMode ? "focus-mode" : ""} ${layoutDebug ? "layout-debug" : ""} ${
-        canvasPriorityLayout ? "canvas-priority" : "balanced-layout"
-      }`}
+      className="timeline-splitter"
+      onMouseDown={onTimelineSplitMouseDown}
+      role="separator"
+      aria-label="调整预览与时间轴高度"
+      aria-orientation="horizontal"
+    />
+    <TimelinePanel />
+  </>;
+  const focusedStageView = (() => {
+    switch (workbenchStage) {
+      case "project": return <ProjectWorkspaceView projectName={project.name} onCreateProject={onCreateProject} />;
+      case "script": return <ScriptDirectorView onContinue={() => onWorkbenchStageChange("assets")} />;
+      case "assets": return <AssetWorkspaceView assetCount={assets.length} onContinue={() => onWorkbenchStageChange("preview")} />;
+      case "preview": return <PreviewWorkspaceView scene={activePreviewScene} selection={selectedSpatialObjectId} onSceneChange={updateSpatialScene} onSelectionChange={setSelectedSpatialObject} />;
+      case "production": return <ProductionWorkspaceView taskLabel={generationTasks.length ? "处理中" : "等待生成"} />;
+      case "storyboard":
+      default: return <StoryboardWorkspaceView shotCount={shots.length}>{storyboardLegacyWorkspace}</StoryboardWorkspaceView>;
+    }
+  })();
+
+  const workbenchInspector = (
+    <div className="workbench-object-inspector">
+      <span className="workbench-inspector-eyebrow">当前对象</span>
+      <strong>{selectedShotId ? (shots.find((shot) => shot.id === selectedShotId)?.title ?? "镜头") : "未选择镜头"}</strong>
+      <small>{project.name || "未命名项目"}</small>
+    </div>
+  );
+
+  const advancedTools = (
+    <div className="workbench-legacy-tools">
+      <p>旧版辅助面板</p>
+      <div className="workbench-advanced-tool-actions">
+        <button
+          onClick={() => {
+            setAuxPanelOpen(true);
+            void preloadAuxPanel(auxPanelSection);
+          }}
+          type="button"
+        >
+          打开当前辅助面板
+        </button>
+        <span>{AUX_PANEL_META[auxPanelSection].label}</span>
+      </div>
+      <div className="workbench-advanced-panel-host">
+        <aside className="panel aux-quickbar workbench-tool-rail" data-advanced-legacy-panel>
+          {AUX_PANEL_ORDER.map((section, index) => (
+            <button
+              className={`aux-quick-btn ${auxPanelOpen && auxPanelSection === section ? "toggle-on" : ""}`}
+              data-tip={`${index + 1} ${AUX_PANEL_META[section].label}`}
+              key={section}
+              onFocus={() => void preloadAuxPanel(section)}
+              onMouseEnter={() => void preloadAuxPanel(section)}
+              onClick={() => toggleAuxPanel(section)}
+              title={AUX_PANEL_META[section].label}
+              type="button"
+            >
+              <span className="aux-quick-icon-wrap">
+                <span className="aux-quick-icon">{AUX_PANEL_META[section].icon}</span>
+                <span className="aux-quick-hotkey">{index + 1}</span>
+              </span>
+              <span className="aux-quick-label">{AUX_PANEL_META[section].label}</span>
+            </button>
+          ))}
+        </aside>
+        <aside className={`panel aux-drawer workbench-inspector ${auxPanelOpen ? "open" : ""}`}>
+          <header className="panel-header aux-drawer-header">
+            <div className="aux-drawer-title">
+              <h2>{AUX_PANEL_META[auxPanelSection].label}</h2>
+              <small>快捷键 {AUX_PANEL_ORDER.indexOf(auxPanelSection) + 1} 切换</small>
+            </div>
+            <div className="aux-drawer-actions">
+              <button
+                className={`btn-ghost ${auxPanelPinned ? "toggle-on" : ""}`}
+                onClick={() => {
+                  setAuxPanelPinned((previous) => {
+                    const next = !previous;
+                    if (next) setAuxPanelOpen(true);
+                    return next;
+                  });
+                }}
+                type="button"
+              >
+                {auxPanelPinned ? "已固定" : "固定"}
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setAuxPanelPinned(false);
+                  setAuxPanelOpen(false);
+                }}
+                type="button"
+              >
+                收起
+              </button>
+            </div>
+          </header>
+          <div className="aux-drawer-body">
+            <LazyAuxPanelContent
+              pipelineContent={pipelinePanelMounted ? <AdvancedPipelinePanel hidden={auxPanelSection !== "pipeline"} /> : undefined}
+              section={auxPanelSection}
+            />
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+
+  return (
+    <WorkbenchShell
+      advancedTools={<AdvancedToolsView>{advancedTools}</AdvancedToolsView>}
+      inspector={workbenchInspector}
+      onStageChange={onWorkbenchStageChange}
+      stage={workbenchStage}
+      statusSnapshot={{
+        saveState,
+        engineState: isDesktopRuntime() ? "桌面引擎" : "网页引擎",
+        taskState: generationTasks.length > 0 ? "处理中" : "空闲"
+      }}
     >
+      <div
+        className={`app-shell ${focusMode ? "focus-mode" : ""} ${layoutDebug ? "layout-debug" : ""} ${
+          canvasPriorityLayout ? "canvas-priority" : "balanced-layout"
+        }`}
+      >
       {showRecoveryPanel && (
         <section className="recovery-panel-backdrop">
           <section className="panel recovery-panel">
@@ -1017,6 +1393,10 @@ export function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          <div className="workspace-mode-switch" role="group" aria-label="工作区模式">
+            <button className={workspaceMode === "storyboard" ? "active" : ""} aria-pressed={workspaceMode === "storyboard"} onClick={() => setWorkspaceMode("storyboard")} type="button">分镜</button>
+            <button className={workspaceMode === "spatial_stage" ? "active" : ""} aria-pressed={workspaceMode === "spatial_stage"} onClick={() => setWorkspaceMode("spatial_stage")} type="button">空间预演</button>
+          </div>
           <div className="toolbar-group toolbar-project">
             <button
               className={`btn-primary ${guideAction === "create-project" ? "guide-focus" : ""}`}
@@ -1193,84 +1573,14 @@ export function App() {
           </div>
         </section>
       )}
-      <main className={`editor-layout single-screen ${auxPanelOpen ? "aux-open" : ""}`}>
+      <main className={`editor-layout single-screen workbench-layout ${auxPanelOpen ? "aux-open" : ""}`}>
         <section
-          className="center-column main-focus"
+          className="center-column main-focus workbench-stage"
           ref={centerColumnRef}
           style={{ gridTemplateRows: centerColumnGridRows }}
         >
-          <StoryboardPreviewPanel />
-          <div
-            className="timeline-splitter"
-            onMouseDown={onTimelineSplitMouseDown}
-            role="separator"
-            aria-label="调整预览与时间轴高度"
-            aria-orientation="horizontal"
-          />
-          <TimelinePanel />
+          {focusedStageView}
         </section>
-        <aside className="panel aux-quickbar">
-          {AUX_PANEL_ORDER.map((section, index) => (
-            <button
-              className={`aux-quick-btn ${auxPanelOpen && auxPanelSection === section ? "toggle-on" : ""}`}
-              data-tip={`${index + 1} ${AUX_PANEL_META[section].label}`}
-              key={section}
-              onClick={() => toggleAuxPanel(section)}
-              title={AUX_PANEL_META[section].label}
-              type="button"
-            >
-              <span className="aux-quick-icon-wrap">
-                <span className="aux-quick-icon">{AUX_PANEL_META[section].icon}</span>
-                <span className="aux-quick-hotkey">{index + 1}</span>
-              </span>
-              <span className="aux-quick-label">{AUX_PANEL_META[section].label}</span>
-            </button>
-          ))}
-        </aside>
-        <aside className={`panel aux-drawer ${auxPanelOpen ? "open" : ""}`} aria-hidden={!auxPanelOpen}>
-            <header className="panel-header aux-drawer-header">
-              <div className="aux-drawer-title">
-                <h2>{AUX_PANEL_META[auxPanelSection].label}</h2>
-                <small>快捷键 {AUX_PANEL_ORDER.indexOf(auxPanelSection) + 1} 切换</small>
-              </div>
-              <div className="aux-drawer-actions">
-                <button
-                  className={`btn-ghost ${auxPanelPinned ? "toggle-on" : ""}`}
-                  onClick={() => {
-                    setAuxPanelPinned((previous) => {
-                      const next = !previous;
-                      if (next) setAuxPanelOpen(true);
-                      return next;
-                    });
-                  }}
-                  type="button"
-                >
-                  {auxPanelPinned ? "已固定" : "固定"}
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => {
-                    setAuxPanelPinned(false);
-                    setAuxPanelOpen(false);
-                  }}
-                  type="button"
-                >
-                  收起
-                </button>
-              </div>
-            </header>
-            <div className="aux-drawer-body">
-              {auxPanelSection === "shots" && <ShotListPanel />}
-              {auxPanelSection === "inspector" && <ShotInspectorPanel />}
-              {auxPanelSection === "layers" && <LayerPanel />}
-              {auxPanelSection === "audio" && <AudioTrackPanel />}
-              {auxPanelSection === "assets" && <AssetPanel />}
-              {auxPanelSection === "health" && <ProjectHealthPanel />}
-              <div hidden={auxPanelSection !== "pipeline"}>
-                <ComfyPipelinePanel />
-              </div>
-            </div>
-          </aside>
       </main>
       {focusMode && (
         <button
@@ -1284,5 +1594,6 @@ export function App() {
       <AppToastHost />
       <AppDialogHost />
     </div>
+    </WorkbenchShell>
   );
 }
