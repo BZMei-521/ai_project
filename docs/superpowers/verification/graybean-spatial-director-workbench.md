@@ -4,7 +4,7 @@ Date: 2026-08-19
 
 ## Gate result
 
-The release gate is **NOT READY**. The acceptance runner completed every runnable gate under root authorization and deliberately records non-green gates as `FAIL` or `BLOCKED`.
+The current working-tree release gate is **READY** for automated checks. Visual/Tauri QA remains a separate manual gate and has not been run.
 
 Acceptance command:
 
@@ -12,7 +12,7 @@ Acceptance command:
 node scripts/check-graybean-workbench-acceptance.mjs
 ```
 
-Authorized run: `exit 1`, 38 `PASS`, 2 `FAIL`, 2 `BLOCKED`, `releaseReady: false`.
+Latest authorized run: `exit 0`, 42 `PASS`, 0 `FAIL`, 0 `BLOCKED`, `releaseReady: true`.
 
 The first restricted-runtime attempt was blocked before the runner started by Node: `EPERM lstat C:\Users\Administrator`. A root-authorized rerun was performed. The runner invokes `npm.cmd` through `cmd.exe` on Windows so npm checks execute instead of being misclassified as spawn failures.
 
@@ -54,8 +54,8 @@ The first restricted-runtime attempt was blocked before the runner started by No
 | h3-presets | `node scripts/check-minimax-h3-presets.mjs` | PASS | 0 | MiniMax H3 API presets |
 | h3-profile-registry | `node scripts/check-minimax-h3-profile-registry.mjs` | PASS | 0 | MiniMax H3 profile registry |
 | h3-binding | `node scripts/check-minimax-h3-binding.mjs` | PASS | 0 | MiniMax H3 binding |
-| audio-round-trip | `node scripts/check-audio-round-trip.mjs` | BLOCKED | - | required dedicated checker does not exist |
-| timeline-export-round-trip | `node scripts/check-timeline-export-round-trip.mjs` | BLOCKED | - | required dedicated checker does not exist |
+| audio-round-trip | `node scripts/check-audio-round-trip.mjs` | PASS | 0 | PASS audio track serialization and recovery round-trip |
+| timeline-export-round-trip | `node scripts/check-timeline-export-round-trip.mjs` | PASS | 0 | PASS timeline and export media-reference round-trip |
 | video-production-schema | `npm.cmd run test:video-production-schema` | PASS | 0 | legacy migration, desktop sync, import/update, serialization/reload |
 | video-workflow-router | `npm.cmd run test:video-workflow-router` | PASS | 0 | video workflow router |
 | video-transition-graph | `node scripts/check-video-transition-graph.mjs` | PASS | 0 | Smooth six-shot transition graph |
@@ -73,7 +73,7 @@ An actual desktop file open/save/reopen run was not performed in this acceptance
 
 ## Generation round-trip
 
-Character, storyboard, H3, video schema/router/normalization/continuity/quality, workflow preset/registry, and concat checks are listed above and passed unless explicitly marked otherwise. No dedicated audio or timeline/export checker exists in the repository; those gates are `BLOCKED`, not PASS. No live Comfy generation was attempted.
+Character, storyboard, H3, video schema/router/normalization/continuity/quality, workflow preset/registry, concat, audio, and timeline/export checks passed in the latest authorized working-tree run. No live Comfy generation was attempted.
 
 ## Visual and desktop QA
 
