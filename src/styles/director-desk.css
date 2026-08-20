@@ -1,0 +1,500 @@
+/* Director Desk: a quiet, contrast-led control room rather than a generic dashboard. */
+.director-desk {
+  min-height: 100vh;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 174px minmax(0, 1fr) 250px;
+  grid-template-rows: 62px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--director-ink);
+  color: var(--director-mist);
+  font-family: var(--director-ui-font);
+  color-scheme: dark;
+}
+
+.director-desk *,
+.director-desk *::before,
+.director-desk *::after {
+  box-sizing: border-box;
+}
+
+.director-desk button,
+.director-desk input {
+  font: inherit;
+}
+
+.director-desk button {
+  border: 1px solid transparent;
+  border-radius: var(--director-radius-control);
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--director-motion) ease, border-color var(--director-motion) ease,
+    color var(--director-motion) ease, transform var(--director-motion) ease;
+}
+
+.director-desk button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.director-desk :focus-visible {
+  outline: 2px solid var(--director-teal);
+  outline-offset: 3px;
+}
+
+.director-desk [data-director-top-bar],
+.director-topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 174px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--director-line);
+  background: linear-gradient(90deg, #0c1a1e, var(--director-panel) 62%, #0d1d21);
+}
+
+.director-desk [data-director-product-mark] {
+  color: var(--director-teal);
+  font-family: var(--director-title-font);
+  font-size: 1.04rem;
+  letter-spacing: 0.045em;
+  white-space: nowrap;
+}
+
+.director-desk [data-director-project] {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.director-desk [data-director-project] > button {
+  max-width: min(38vw, 360px);
+  overflow: hidden;
+  padding: 7px 9px;
+  color: var(--director-mist);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.director-desk [data-director-project-path] {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--director-muted);
+  font-family: var(--director-data-font);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.director-desk [data-director-save-status] {
+  flex: 0 0 auto;
+  color: var(--director-teal);
+  font-size: 0.78rem;
+}
+
+.director-desk [data-director-project-menu] {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 0;
+  z-index: 30;
+  min-width: 190px;
+  padding: 7px;
+  border: 1px solid var(--director-line);
+  border-radius: var(--director-radius-control);
+  background: #0d2025;
+  box-shadow: 0 18px 42px rgb(0 0 0 / 35%);
+}
+
+.director-desk [data-director-project-menu] button {
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.director-desk [data-director-top-actions] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.director-desk [data-director-top-actions] > button:not([data-director-primary]) {
+  padding: 8px 10px;
+  border-color: var(--director-line);
+  color: var(--director-muted);
+}
+
+.director-desk .director-primary-action,
+.director-desk [data-director-primary] {
+  padding: 9px 14px;
+  border-color: var(--director-tungsten);
+  background: var(--director-tungsten);
+  color: #182124;
+  font-weight: 700;
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  overflow: hidden auto;
+  padding: 16px 10px 10px;
+  border-right: 1px solid var(--director-line);
+  background: #09191d;
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) ol {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 39px;
+  padding: 8px;
+  color: var(--director-muted);
+  text-align: left;
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button > span:first-child {
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border: 1px solid var(--director-line);
+  border-radius: 50%;
+  font-family: var(--director-data-font);
+  font-size: 0.7rem;
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button[data-stage-state="active"] {
+  border-color: color-mix(in srgb, var(--director-teal) 35%, transparent);
+  background: color-mix(in srgb, var(--director-teal) 13%, transparent);
+  color: var(--director-mist);
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button[data-stage-state="active"] > span:first-child,
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button[data-stage-state="done"] > span:first-child {
+  border-color: var(--director-teal);
+  color: var(--director-teal);
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button[data-stage-attention="true"] {
+  color: var(--director-mist);
+}
+
+.director-desk :is(.production-stage-rail, [data-director-stage-rail]) button[data-stage-attention="true"] > span:first-child {
+  border-color: var(--director-stop);
+  color: var(--director-stop);
+}
+
+.director-desk [data-director-stage-rail-footer] {
+  margin-top: auto;
+  padding-top: 14px;
+  color: var(--director-muted);
+  font-size: 0.76rem;
+}
+
+.director-desk-workspace {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  background: radial-gradient(circle at 50% 0, #122a2e 0, var(--director-ink) 52%);
+}
+
+.director-desk-workspace > button[aria-label="打开当前对象检查器"] {
+  min-height: 38px;
+  padding: 8px 11px;
+  border-color: var(--director-line);
+  color: var(--director-teal);
+}
+
+.director-desk :is(.director-object-inspector, [data-director-inspector]) {
+  grid-column: 3;
+  grid-row: 2;
+  min-width: 0;
+  overflow: auto;
+  border-left: 1px solid var(--director-line);
+  background: var(--director-panel);
+}
+
+.director-desk :is(.director-object-inspector, [data-director-inspector]) > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px;
+  border-bottom: 1px solid var(--director-line);
+}
+
+.director-desk :is(.director-object-inspector, [data-director-inspector]) h2 {
+  margin: 0;
+  color: var(--director-mist);
+  font-family: var(--director-title-font);
+  font-size: 1rem;
+}
+
+.director-desk :is(.director-object-inspector, [data-director-inspector]) p {
+  color: var(--director-muted);
+}
+
+.director-desk [data-director-inspector-content] {
+  min-width: 0;
+  padding: 16px;
+}
+
+.director-desk :is(.director-object-inspector, [data-director-inspector]) > header button,
+.director-desk .director-advanced-drawer > button {
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border-color: var(--director-line);
+  color: var(--director-muted);
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) {
+  position: fixed;
+  z-index: 60;
+  top: clamp(72px, 16vh, 160px);
+  left: 50%;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(68vh, 620px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--director-line);
+  border-radius: var(--director-radius-shell);
+  background: #10242a;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+  transform: translateX(-50%);
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--director-line);
+  border-radius: var(--director-radius-control);
+  outline: none;
+  background: #09191d;
+  color: var(--director-mist);
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [role="listbox"] {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [role="option"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [role="option"][aria-selected="true"] {
+  background: color-mix(in srgb, var(--director-teal) 14%, transparent);
+  color: var(--director-mist);
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [data-danger="true"] {
+  color: var(--director-stop);
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) kbd {
+  color: var(--director-muted);
+  font-family: var(--director-data-font);
+  font-size: 0.72rem;
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) > button[aria-label="关闭命令面板"] {
+  padding: 7px 10px;
+  border-color: var(--director-line);
+  color: var(--director-muted);
+}
+
+.director-desk .director-advanced-drawer {
+  position: fixed;
+  z-index: 45;
+  top: 62px;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 100vw);
+  overflow: auto;
+  padding: 16px;
+  border-left: 1px solid var(--director-line);
+  background: #0d2025;
+  box-shadow: -18px 0 48px rgb(0 0 0 / 32%);
+}
+
+.director-desk button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--director-teal) 45%, var(--director-line));
+  background-color: color-mix(in srgb, var(--director-teal) 9%, transparent);
+}
+
+.director-desk .director-primary-action:hover:not(:disabled),
+.director-desk [data-director-primary]:hover:not(:disabled) {
+  border-color: var(--director-tungsten);
+  background-color: #f0b87f;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 1099px) {
+  .director-desk {
+    grid-template-columns: 174px minmax(0, 1fr);
+  }
+
+  .director-desk :is(.director-object-inspector, [data-director-inspector]) {
+    position: fixed;
+    z-index: 40;
+    top: 62px;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 92vw);
+    border-left: 1px solid var(--director-line);
+    box-shadow: -18px 0 48px rgb(0 0 0 / 38%);
+  }
+}
+
+@media (max-width: 767px) {
+  .director-desk {
+    height: 100dvh;
+    min-height: 100dvh;
+    display: block;
+    overflow: hidden;
+  }
+
+  .director-desk [data-director-top-bar],
+  .director-topbar {
+    height: 56px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .director-desk [data-director-product-mark],
+  .director-desk [data-director-project-path],
+  .director-desk [data-director-save-status] {
+    display: none;
+  }
+
+  .director-desk [data-director-project] {
+    min-width: 0;
+  }
+
+  .director-desk [data-director-project] > button {
+    max-width: 100%;
+  }
+
+  .director-desk [data-director-top-actions] > button:not([data-director-primary]) {
+    display: none;
+  }
+
+  .director-desk-workspace {
+    height: calc(100dvh - 56px);
+    padding: 14px 12px 86px;
+  }
+
+  .director-desk :is(.production-stage-rail, [data-director-stage-rail]) {
+    position: fixed;
+    z-index: 50;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 72px;
+    overflow: visible;
+    padding: 5px 4px calc(5px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--director-line);
+    border-right: 0;
+    background: #0b1c20;
+  }
+
+  .director-desk :is(.production-stage-rail, [data-director-stage-rail]) ol {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .director-desk :is(.production-stage-rail, [data-director-stage-rail]) li {
+    min-width: 0;
+  }
+
+  .director-desk :is(.production-stage-rail, [data-director-stage-rail]) button {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 2px;
+    min-height: 44px;
+    padding: 3px 2px;
+    font-size: 0.68rem;
+    text-align: center;
+  }
+
+  .director-desk :is(.production-stage-rail, [data-director-stage-rail]) button > span:first-child {
+    width: 18px;
+    height: 18px;
+  }
+
+  .director-desk [data-director-stage-rail-footer] {
+    display: none;
+  }
+
+  .director-desk :is(.director-object-inspector, [data-director-inspector]) {
+    top: auto;
+    right: 0;
+    bottom: 72px;
+    left: 0;
+    width: 100%;
+    max-height: min(70dvh, 620px);
+    border-top: 1px solid var(--director-line);
+    border-left: 0;
+    border-radius: var(--director-radius-shell) var(--director-radius-shell) 0 0;
+    box-shadow: 0 -18px 48px rgb(0 0 0 / 42%);
+  }
+
+  .director-desk .director-advanced-drawer {
+    top: 56px;
+    bottom: 72px;
+    width: 100%;
+    border-left: 0;
+  }
+
+  .director-desk :is(.director-command-palette, [data-director-command-palette]) {
+    top: 68px;
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 156px);
+  }
+
+  .director-desk button,
+  .director-desk input {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .director-desk *,
+  .director-desk *::before,
+  .director-desk *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transform: none !important;
+  }
+}

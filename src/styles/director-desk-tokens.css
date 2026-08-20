@@ -1,0 +1,16 @@
+:root {
+  --director-ink: #071216;
+  --director-panel: #10242a;
+  --director-mist: #dce8e9;
+  --director-teal: #75b9b4;
+  --director-tungsten: #e7a86e;
+  --director-stop: #b85b58;
+  --director-line: #26383d;
+  --director-muted: #80999d;
+  --director-radius-shell: 16px;
+  --director-radius-control: 9px;
+  --director-motion: 180ms;
+  --director-title-font: "Noto Serif SC", "Source Han Serif SC", SimSun, serif;
+  --director-ui-font: "Microsoft YaHei UI", system-ui, sans-serif;
+  --director-data-font: Bahnschrift, ui-monospace, monospace;
+}
