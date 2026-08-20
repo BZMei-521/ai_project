@@ -14,6 +14,28 @@ assert.match(css, /@media\s*\(max-width:\s*767px\)/);
 assert.match(css, /min-height:\s*44px/);
 assert.match(css, /prefers-reduced-motion/);
 assert.match(css, /:focus-visible/);
+const commandPaletteRule = css.match(/\.director-desk :is\(\.director-command-palette, \[data-director-command-palette\]\) \{.*?\n\}/s)?.[0] ?? "";
+assert.match(commandPaletteRule, /left:\s*16px/);
+assert.match(commandPaletteRule, /right:\s*16px/);
+assert.match(commandPaletteRule, /margin-inline:\s*auto/);
+assert.doesNotMatch(commandPaletteRule, /transform/);
+assert.doesNotMatch(css, /translateX\(/);
+assert.match(css, /\.director-desk \.director-project-menu \[data-danger="true"\]/);
+assert.match(css, /\[data-director-project-menu\] \[data-danger="true"\]/);
+assert.match(css, /\.director-desk \.btn-danger/);
+assert.match(css, /\.director-advanced-drawer \.aux-quick-btn\.toggle-on/);
+assert.match(css, /outline:\s*2px solid var\(--director-teal\)/);
+assert.match(css, /box-shadow:\s*0 0 0 3px color-mix\(in srgb, var\(--director-teal\)/);
+assert.doesNotMatch(css, /director-command-palette[^}]*outline:\s*none/s);
+for (const selector of [
+  ".director-desk .director-project-menu [data-danger=\"true\"]",
+  ".director-desk .btn-danger",
+  ".director-desk .director-advanced-drawer .aux-quick-btn.toggle-on"
+]) {
+  const index = css.indexOf(selector);
+  assert.notEqual(index, -1, `Missing ${selector}`);
+  assert.match(css.slice(index, index + 700), /var\(--director-stop\)|var\(--director-teal\)/);
+}
 assert.match(main, /director-desk-tokens\.css/);
 assert.match(main, /director-desk\.css/);
 console.log("PASS director desk responsive contract");

@@ -270,8 +270,10 @@
   position: fixed;
   z-index: 60;
   top: clamp(72px, 16vh, 160px);
-  left: 50%;
+  right: 16px;
+  left: 16px;
   width: min(560px, calc(100vw - 32px));
+  margin-inline: auto;
   max-height: min(68vh, 620px);
   overflow: auto;
   padding: 12px;
@@ -279,7 +281,6 @@
   border-radius: var(--director-radius-shell);
   background: #10242a;
   box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
-  transform: translateX(-50%);
 }
 
 .director-desk :is(.director-command-palette, [data-director-command-palette]) input {
@@ -288,9 +289,14 @@
   padding: 9px 11px;
   border: 1px solid var(--director-line);
   border-radius: var(--director-radius-control);
-  outline: none;
   background: #09191d;
   color: var(--director-mist);
+}
+
+.director-desk :is(.director-command-palette, [data-director-command-palette]) input:focus-visible {
+  outline: 2px solid var(--director-teal);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--director-teal) 24%, transparent);
 }
 
 .director-desk :is(.director-command-palette, [data-director-command-palette]) [role="listbox"] {
@@ -354,6 +360,35 @@
   border-color: var(--director-tungsten);
   background-color: #f0b87f;
   transform: translateY(-1px);
+}
+
+.director-desk .director-project-menu [data-danger="true"],
+.director-desk [data-director-project-menu] [data-danger="true"],
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [data-danger="true"],
+.director-desk .btn-danger {
+  border-color: var(--director-stop);
+  background-color: color-mix(in srgb, var(--director-stop) 12%, transparent);
+  color: var(--director-stop);
+}
+
+.director-desk .director-project-menu [data-danger="true"]:hover:not(:disabled),
+.director-desk [data-director-project-menu] [data-danger="true"]:hover:not(:disabled),
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [data-danger="true"]:hover:not(:disabled),
+.director-desk .btn-danger:hover:not(:disabled),
+.director-desk .director-project-menu [data-danger="true"]:focus-visible,
+.director-desk [data-director-project-menu] [data-danger="true"]:focus-visible,
+.director-desk :is(.director-command-palette, [data-director-command-palette]) [data-danger="true"]:focus-visible,
+.director-desk .btn-danger:focus-visible {
+  border-color: var(--director-stop);
+  background-color: color-mix(in srgb, var(--director-stop) 20%, transparent);
+  color: var(--director-stop);
+  outline-color: var(--director-stop);
+}
+
+.director-desk .director-advanced-drawer .aux-quick-btn.toggle-on {
+  border-color: var(--director-teal);
+  background-color: color-mix(in srgb, var(--director-teal) 17%, transparent);
+  color: var(--director-teal);
 }
 
 @media (max-width: 1099px) {
