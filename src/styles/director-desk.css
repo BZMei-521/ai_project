@@ -374,7 +374,12 @@
 .director-desk .director-project-menu [data-danger="true"]:hover:not(:disabled),
 .director-desk [data-director-project-menu] [data-danger="true"]:hover:not(:disabled),
 .director-desk :is(.director-command-palette, [data-director-command-palette]) [data-danger="true"]:hover:not(:disabled),
-.director-desk .btn-danger:hover:not(:disabled),
+.director-desk .btn-danger:hover:not(:disabled) {
+  border-color: var(--director-stop);
+  background-color: color-mix(in srgb, var(--director-stop) 20%, transparent);
+  color: var(--director-stop);
+}
+
 .director-desk .director-project-menu [data-danger="true"]:focus-visible,
 .director-desk [data-director-project-menu] [data-danger="true"]:focus-visible,
 .director-desk :is(.director-command-palette, [data-director-command-palette]) [data-danger="true"]:focus-visible,
@@ -383,12 +388,14 @@
   background-color: color-mix(in srgb, var(--director-stop) 20%, transparent);
   color: var(--director-stop);
   outline-color: var(--director-stop);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--director-stop) 28%, transparent);
 }
 
 .director-desk .director-advanced-drawer .aux-quick-btn.toggle-on {
   border-color: var(--director-teal);
   background-color: color-mix(in srgb, var(--director-teal) 17%, transparent);
   color: var(--director-teal);
+  box-shadow: none;
 }
 
 @media (max-width: 1099px) {

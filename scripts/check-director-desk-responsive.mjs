@@ -24,18 +24,32 @@ assert.match(css, /\.director-desk \.director-project-menu \[data-danger="true"\
 assert.match(css, /\[data-director-project-menu\] \[data-danger="true"\]/);
 assert.match(css, /\.director-desk \.btn-danger/);
 assert.match(css, /\.director-advanced-drawer \.aux-quick-btn\.toggle-on/);
-assert.match(css, /outline:\s*2px solid var\(--director-teal\)/);
-assert.match(css, /box-shadow:\s*0 0 0 3px color-mix\(in srgb, var\(--director-teal\)/);
-assert.doesNotMatch(css, /director-command-palette[^}]*outline:\s*none/s);
-for (const selector of [
-  ".director-desk .director-project-menu [data-danger=\"true\"]",
-  ".director-desk .btn-danger",
-  ".director-desk .director-advanced-drawer .aux-quick-btn.toggle-on"
-]) {
+const ruleFor = (selector) => {
   const index = css.indexOf(selector);
   assert.notEqual(index, -1, `Missing ${selector}`);
-  assert.match(css.slice(index, index + 700), /var\(--director-stop\)|var\(--director-teal\)/);
-}
+  return css.slice(index, css.indexOf("\n}", index) + 2);
+};
+const commandSearchInputRule = ruleFor(
+  ".director-desk :is(.director-command-palette, [data-director-command-palette]) input {"
+);
+const commandSearchInputFocusRule = ruleFor(
+  ".director-desk :is(.director-command-palette, [data-director-command-palette]) input:focus-visible {"
+);
+assert.doesNotMatch(commandSearchInputRule, /outline:\s*none/);
+assert.match(commandSearchInputFocusRule, /outline:\s*2px solid var\(--director-teal\)/);
+assert.match(commandSearchInputFocusRule, /box-shadow:\s*0 0 0 3px color-mix\(in srgb, var\(--director-teal\)/);
+const dangerBaseRule = ruleFor(".director-desk .director-project-menu [data-danger=\"true\"],");
+const dangerHoverRule = ruleFor(".director-desk .director-project-menu [data-danger=\"true\"]:hover:not(:disabled),");
+const dangerFocusRule = ruleFor(".director-desk .director-project-menu [data-danger=\"true\"]:focus-visible,");
+assert.match(dangerBaseRule, /var\(--director-stop\)/);
+assert.match(dangerHoverRule, /var\(--director-stop\)/);
+assert.match(dangerFocusRule, /var\(--director-stop\)/);
+assert.match(dangerFocusRule, /box-shadow:\s*0 0 0 3px color-mix\(in srgb, var\(--director-stop\)/);
+const advancedToggleRule = ruleFor(
+  ".director-desk .director-advanced-drawer .aux-quick-btn.toggle-on {"
+);
+assert.match(advancedToggleRule, /var\(--director-teal\)/);
+assert.match(advancedToggleRule, /box-shadow:\s*(?:none|0 0 0 3px color-mix\(in srgb, var\(--director-teal\))/);
 assert.match(main, /director-desk-tokens\.css/);
 assert.match(main, /director-desk\.css/);
 console.log("PASS director desk responsive contract");
