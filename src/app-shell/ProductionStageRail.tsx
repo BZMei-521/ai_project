@@ -12,12 +12,10 @@ export type ProductionStageRailProps = {
 function getStageState(
   stage: WorkbenchStage,
   activeStage: WorkbenchStage,
-  completedStages: ReadonlySet<WorkbenchStage>,
-  attentionStages: ReadonlySet<WorkbenchStage>
-): "active" | "done" | "attention" | "idle" {
+  completedStages: ReadonlySet<WorkbenchStage>
+): "active" | "done" | "idle" {
   if (stage === activeStage) return "active";
   if (completedStages.has(stage)) return "done";
-  if (attentionStages.has(stage)) return "attention";
   return "idle";
 }
 
@@ -35,13 +33,14 @@ export function ProductionStageRail({
     <nav aria-label="制作阶段" data-director-stage-rail>
       <ol>
         {WORKBENCH_STAGES.map((route) => {
-          const state = getStageState(route.stage, activeStage, completed, attention);
+          const state = getStageState(route.stage, activeStage, completed);
           return (
             <li key={route.stage}>
               <button
                 type="button"
                 data-stage={route.stage}
                 data-stage-state={state}
+                data-stage-attention={attention.has(route.stage) ? "true" : "false"}
                 aria-current={route.stage === activeStage ? "page" : undefined}
                 onClick={() => onStageChange(route.stage)}
               >

@@ -1,17 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { DirectorCommand } from "./directorDeskCommands";
+import { searchDirectorCommands, type DirectorCommand } from "./directorDeskCommands";
 
 export type CommandPaletteProps = {
   open: boolean;
   commands: readonly DirectorCommand[];
   onClose: () => void;
 };
-
-function matchesCommand(command: DirectorCommand, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase();
-  return !needle || [command.label, ...command.keywords]
-    .some((value) => value.toLocaleLowerCase().includes(needle));
-}
 
 export function CommandPalette({ open, commands, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
@@ -20,7 +14,7 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const results = useMemo(
-    () => commands.filter((command) => matchesCommand(command, query)),
+    () => searchDirectorCommands(commands, query),
     [commands, query]
   );
 
@@ -29,7 +23,9 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
 
     if (open) {
       const activeElement = document.activeElement;
-      previousFocusRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+      previousFocusRef.current = typeof HTMLElement !== "undefined" && activeElement instanceof HTMLElement
+        ? activeElement
+        : null;
       queueMicrotask(() => inputRef.current?.focus());
       return;
     }
