@@ -212,9 +212,44 @@
   grid-row: 2;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 20px;
   background: radial-gradient(circle at 50% 0, #122a2e 0, var(--director-ink) 52%);
+}
+
+.director-desk-workspace > .app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.director-desk-workspace > .app-shell > .onboarding-panel {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 12px;
+  width: min(560px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow: auto;
+}
+
+.director-desk-workspace .workbench-layout {
+  height: 100%;
+  min-height: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.director-desk-workspace [data-stage-view] > button {
+  display: none;
 }
 
 .director-desk-workspace > button[aria-label="打开当前对象检查器"] {
