@@ -12,7 +12,17 @@ export type ShotTransitionBoundaryRef = Pick<
 >;
 
 // @ts-ignore JavaScript runtime intentionally has no declaration file.
-import { resolveShotTransitionBoundary as runtimeResolveShotTransitionBoundary } from "./shotTransitionBoundaryRuntime.mjs";
+import { createShotTransitionBoundaryResolver as runtimeCreateShotTransitionBoundaryResolver, resolveShotTransitionBoundary as runtimeResolveShotTransitionBoundary } from "./shotTransitionBoundaryRuntime.mjs";
+
+export type ShotTransitionBoundaryResolver = (
+  fromShot: ShotTransitionBoundaryRef,
+  toShot: ShotTransitionBoundaryRef
+) => VideoBoundaryInput;
+
+export const createShotTransitionBoundaryResolver = runtimeCreateShotTransitionBoundaryResolver as (input: {
+  sequenceId: string;
+  transitions: readonly ShotTransitionBoundarySource[];
+}) => ShotTransitionBoundaryResolver;
 
 export const resolveShotTransitionBoundary = runtimeResolveShotTransitionBoundary as (input: {
   sequenceId: string;

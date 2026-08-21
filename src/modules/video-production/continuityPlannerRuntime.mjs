@@ -480,7 +480,7 @@ function stableSerialize(value) {
 }
 
 function boundaryKey(fromShotId, toShotId) {
-  return `${fromShotId}\u0000${toShotId}`;
+  return JSON.stringify([fromShotId, toShotId]);
 }
 
 function boundaryId(fromShotId, toShotId) {

@@ -1,21 +1,34 @@
-const sequencePairKey = (sequenceId, fromShotId, toShotId) =>
-  JSON.stringify([sequenceId, fromShotId, toShotId]);
+const shotPairKey = (fromShotId, toShotId) => JSON.stringify([fromShotId, toShotId]);
+
+export function createShotTransitionBoundaryResolver(input = {}) {
+  const sequenceId = cleanText(input.sequenceId);
+  const transitionByPair = new Map();
+  for (const item of Array.isArray(input.transitions) ? input.transitions : []) {
+    if (!item || typeof item !== "object") continue;
+    const itemSequenceId = cleanText(item.sequenceId);
+    if (itemSequenceId !== sequenceId) continue;
+    transitionByPair.set(
+      shotPairKey(cleanText(item.fromShotId), cleanText(item.toShotId)),
+      item
+    );
+  }
+  return (fromShotValue, toShotValue) => resolveIndexedBoundary({
+    fromShotValue,
+    toShotValue,
+    transitionByPair
+  });
+}
 
 export function resolveShotTransitionBoundary(input = {}) {
-  const sequenceId = cleanText(input.sequenceId);
-  const fromShot = input.fromShot && typeof input.fromShot === "object" ? input.fromShot : {};
-  const toShot = input.toShot && typeof input.toShot === "object" ? input.toShot : {};
+  return createShotTransitionBoundaryResolver(input)(input.fromShot, input.toShot);
+}
+
+function resolveIndexedBoundary({ fromShotValue, toShotValue, transitionByPair }) {
+  const fromShot = fromShotValue && typeof fromShotValue === "object" ? fromShotValue : {};
+  const toShot = toShotValue && typeof toShotValue === "object" ? toShotValue : {};
   const fromShotId = cleanText(fromShot.id);
   const toShotId = cleanText(toShot.id);
-  const transitionBySequencePair = new Map(
-    (Array.isArray(input.transitions) ? input.transitions : [])
-      .filter((item) => item && typeof item === "object")
-      .map((item) => [
-        sequencePairKey(cleanText(item.sequenceId), cleanText(item.fromShotId), cleanText(item.toShotId)),
-        item
-      ])
-  );
-  const configured = transitionBySequencePair.get(sequencePairKey(sequenceId, fromShotId, toShotId));
+  const configured = transitionByPair.get(shotPairKey(fromShotId, toShotId));
   if (!configured) {
     const legacySharedFramePath = cleanText(fromShot.approvedBoundaryFramePath);
     return {
@@ -25,12 +38,12 @@ export function resolveShotTransitionBoundary(input = {}) {
       ...(legacySharedFramePath ? {
         sharedFramePath: legacySharedFramePath,
         sharedFrameSource: "independent",
-        approvalStatus: "approved"
+        approvalStatus: "pending"
       } : { approvalStatus: "pending" })
     };
   }
 
-  const frameDependency = configured.frameDependency;
+  const frameDependency = configured.type === "hard_cut" ? "none" : configured.frameDependency;
   const sharedFramePath = frameDependency === "shared_frame"
     ? cleanText(configured.sharedFramePath)
     : "";
@@ -49,7 +62,7 @@ export function resolveShotTransitionBoundary(input = {}) {
     ...(sharedFramePath ? { sharedFramePath } : {}),
     ...(frameDependency === "shared_frame" ? { sharedFrameSource: "independent" } : {}),
     approvalStatus: frameDependency === "shared_frame"
-      ? sharedFramePath ? "approved" : "pending"
+      ? "pending"
       : frameDependency === "previous_tail" && cleanText(fromShot.approvedBoundaryFramePath)
         ? "approved"
         : "pending"

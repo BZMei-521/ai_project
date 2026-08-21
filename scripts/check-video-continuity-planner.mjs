@@ -6,6 +6,7 @@ import {
   planContinuityInvalidation
 } from "../src/modules/video-production/continuityPlannerRuntime.mjs";
 import {
+  createShotTransitionBoundaryResolver,
   resolveShotTransitionBoundary
 } from "../src/modules/video-production/shotTransitionBoundaryRuntime.mjs";
 
@@ -74,7 +75,7 @@ const expectedSeqOneBoundary = {
   notes: "warm light",
   sharedFramePath: "frames/seq-one.png",
   sharedFrameSource: "independent",
-  approvalStatus: "approved"
+  approvalStatus: "pending"
 };
 for (const transitions of [
   [seqOneTransition, seqTwoTransition],
@@ -105,8 +106,60 @@ assert.deepEqual(resolveShotTransitionBoundary({
   kind: "scene_change",
   sharedFramePath: "frames/legacy.png",
   sharedFrameSource: "independent",
-  approvalStatus: "approved"
+  approvalStatus: "pending"
 }, "legacy shot boundary fields are allowed only when the exact sequence edge is absent");
+
+const arbitrarySharedBoundary = resolveShotTransitionBoundary({
+  sequenceId: "seq-one",
+  fromShot: resolverShots[0],
+  toShot: resolverShots[1],
+  transitions: [seqOneTransition]
+});
+const arbitrarySharedPlan = planVideoContinuity({
+  shots: [shot("same-a", 1), shot("same-b", 2)],
+  boundaries: [arbitrarySharedBoundary]
+});
+assert.equal(arbitrarySharedBoundary.approvalStatus, "pending",
+  "an arbitrary shared-frame text path must not manufacture approval");
+assert.equal(arbitrarySharedPlan.boundaries[0].approvalStatus, "pending");
+assert.equal(arbitrarySharedPlan.shotExecutions[1].status, "awaiting_approval");
+assert.equal(arbitrarySharedPlan.shotExecutions[1].firstFrameInput, undefined,
+  "an untrusted shared-frame path must never become a consumable first frame");
+
+const cleanedHardCutBoundary = resolveShotTransitionBoundary({
+  sequenceId: "seq-hard",
+  fromShot: { id: "hard-from", approvedBoundaryFramePath: "frames/stale-hard.png" },
+  toShot: { id: "hard-to" },
+  transitions: [{
+    ...transitionFor("seq-hard", "hard_cut"),
+    fromShotId: "hard-from",
+    toShotId: "hard-to",
+    durationSeconds: 0,
+    frameDependency: "shared_frame",
+    sharedFramePath: "frames/untrusted-hard.png"
+  }]
+});
+assert.equal(cleanedHardCutBoundary.frameDependency, "none");
+assert.equal(Object.hasOwn(cleanedHardCutBoundary, "sharedFramePath"), false);
+assert.equal(Object.hasOwn(cleanedHardCutBoundary, "sharedFrameSource"), false);
+assert.equal(cleanedHardCutBoundary.approvalStatus, "pending");
+
+const cleanedPreviousTailBoundary = resolveShotTransitionBoundary({
+  sequenceId: "seq-tail",
+  fromShot: { id: "tail-from" },
+  toShot: { id: "tail-to" },
+  transitions: [{
+    ...transitionFor("seq-tail", "continuous"),
+    fromShotId: "tail-from",
+    toShotId: "tail-to",
+    frameDependency: "previous_tail",
+    sharedFramePath: "frames/untrusted-tail.png"
+  }]
+});
+assert.equal(cleanedPreviousTailBoundary.frameDependency, "previous_tail");
+assert.equal(Object.hasOwn(cleanedPreviousTailBoundary, "sharedFramePath"), false);
+assert.equal(Object.hasOwn(cleanedPreviousTailBoundary, "sharedFrameSource"), false);
+assert.equal(cleanedPreviousTailBoundary.approvalStatus, "pending");
 
 const collidingTransitionA = {
   ...transitionFor("sequence\u0000left", "continuous"),
@@ -143,6 +196,30 @@ for (const transitions of [
   }).actionContinuity, "collision-b-guidance",
   "tuple B must not collide with tuple A when ids contain the old delimiter");
 }
+
+let sequenceReads = 0;
+const countedTransitions = ["count-a", "count-b", "other-sequence"].map((sequenceId, index) => {
+  const item = transitionFor(sequenceId === "other-sequence" ? sequenceId : "count-sequence", "continuous", {
+    fromShotId: `count-${index}`,
+    toShotId: `count-${index + 1}`
+  });
+  Object.defineProperty(item, "sequenceId", {
+    enumerable: true,
+    get() { sequenceReads += 1; return sequenceId === "other-sequence" ? sequenceId : "count-sequence"; }
+  });
+  return item;
+});
+const resolveCountedBoundary = createShotTransitionBoundaryResolver({
+  sequenceId: "count-sequence",
+  transitions: countedTransitions
+});
+assert.equal(sequenceReads, countedTransitions.length,
+  "building a sequence resolver must scan each transition exactly once");
+for (let index = 0; index < 2; index += 1) {
+  resolveCountedBoundary({ id: `count-${index}` }, { id: `count-${index + 1}` });
+}
+assert.equal(sequenceReads, countedTransitions.length,
+  "resolving every adjacent edge must reuse the prebuilt index without rescanning transitions");
 
 assert.deepEqual(planVideoContinuity(), {
   segments: [],
@@ -407,6 +484,24 @@ assert.notEqual(encodedLeftIdPlan.boundaries[0].id, encodedRightIdPlan.boundarie
   "encoded boundary ids must not collide when shot ids contain delimiters");
 assert.notEqual(encodedLeftIdPlan.segments[0].id, encodedRightIdPlan.segments[0].id,
   "encoded segment ids must not collide when shot ids contain delimiters");
+
+const plannerCollisionShots = [
+  shot("planner-a\u0000b", 1),
+  shot("planner-c", 2),
+  shot("planner-a", 3),
+  shot("b\u0000planner-c", 4)
+];
+const plannerCollisionBoundaries = [
+  boundary("planner-a\u0000b", "planner-c", "continuous"),
+  boundary("planner-a", "b\u0000planner-c", "match_cut", {
+    frameDependency: "none"
+  })
+];
+for (const boundaries of [plannerCollisionBoundaries, [...plannerCollisionBoundaries].reverse()]) {
+  const collisionSafePlan = planVideoContinuity({ shots: plannerCollisionShots, boundaries });
+  assert.equal(collisionSafePlan.boundaries.find((item) => item.fromShotId === "planner-a\u0000b")?.kind, "continuous");
+  assert.equal(collisionSafePlan.boundaries.find((item) => item.fromShotId === "planner-a")?.kind, "match_cut");
+}
 
 const orderedAcyclicPlan = planVideoContinuity({
   shots: [
@@ -703,7 +798,7 @@ async function assertPanelTransitionWiring() {
   const resolverImport = sourceFile.statements.find((statement) =>
     ts.isImportDeclaration(statement) &&
     statement.moduleSpecifier.text === "./shotTransitionBoundary" &&
-    statement.importClause?.namedBindings?.elements?.some((item) => item.name.text === "resolveShotTransitionBoundary")
+    statement.importClause?.namedBindings?.elements?.some((item) => item.name.text === "createShotTransitionBoundaryResolver")
   );
   assert.ok(resolverImport, "VideoProductionPanel must import the typed pure transition resolver");
   const buildContexts = sourceFile.statements.find((statement) =>
@@ -739,23 +834,28 @@ async function assertPanelTransitionWiring() {
     ts.forEachChild(node, visitBuild);
   };
   visitBuild(buildContexts);
-  const resolverCalls = buildDescendants.filter((node) =>
-    ts.isCallExpression(node) && textOf(node.expression) === "resolveShotTransitionBoundary"
+  const resolverFactoryCalls = buildDescendants.filter((node) =>
+    ts.isCallExpression(node) && textOf(node.expression) === "createShotTransitionBoundaryResolver"
   );
-  assert.equal(resolverCalls.length, 1, "buildContexts must delegate all edge resolution to the pure resolver");
-  const resolverInput = resolverCalls[0].arguments[0];
-  assert.ok(ts.isObjectLiteralExpression(resolverInput), "resolver input must be an explicit object");
-  const resolverFields = new Map(resolverInput.properties.map((property) => {
+  assert.equal(resolverFactoryCalls.length, 1,
+    "buildContexts must build exactly one sequence-scoped resolver per context pass");
+  const resolverFactoryInput = resolverFactoryCalls[0].arguments[0];
+  assert.ok(ts.isObjectLiteralExpression(resolverFactoryInput), "resolver factory input must be explicit");
+  const resolverFactoryFields = new Map(resolverFactoryInput.properties.map((property) => {
     if (ts.isShorthandPropertyAssignment(property)) return [property.name.text, property.name.text];
     if (ts.isPropertyAssignment(property)) return [textOf(property.name), textOf(property.initializer)];
     return ["", ""];
   }));
-  assert.deepEqual(Object.fromEntries(resolverFields), {
+  assert.deepEqual(Object.fromEntries(resolverFactoryFields), {
     sequenceId: "sequenceId",
-    fromShot: "shot",
-    toShot: "shots[index + 1]",
     transitions: "transitions"
-  }, "buildContexts must pass the exact sequence and adjacent pair to the pure resolver");
+  }, "buildContexts must scope the single resolver index by sequence and transitions");
+  const resolverDeclaration = buildContexts.body.statements
+    .filter(ts.isVariableStatement)
+    .flatMap((statement) => [...statement.declarationList.declarations])
+    .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "resolveBoundary");
+  assert.equal(resolverDeclaration?.initializer, resolverFactoryCalls[0],
+    "the resolver factory result must initialize the resolveBoundary function used by the edge map");
   const boundariesDeclaration = buildContexts.body.statements
     .filter(ts.isVariableStatement)
     .flatMap((statement) => [...statement.declarationList.declarations])
@@ -765,8 +865,10 @@ async function assertPanelTransitionWiring() {
   const boundaryMapCallback = boundariesDeclaration.initializer.arguments[0];
   assert.ok(ts.isArrowFunction(boundaryMapCallback) && ts.isCallExpression(boundaryMapCallback.body),
     "boundaries must be the direct result of mapping adjacent shots through a call");
-  assert.equal(textOf(boundaryMapCallback.body.expression), "resolveShotTransitionBoundary",
-    "the boundaries initializer must directly return the resolver result, preventing a dead resolver call");
+  assert.equal(textOf(boundaryMapCallback.body.expression), "resolveBoundary",
+    "the boundaries initializer must directly return the indexed resolver result, preventing a dead resolver call");
+  assert.deepEqual(boundaryMapCallback.body.arguments.map(textOf), ["shot", "shots[index + 1]"],
+    "each edge lookup must use only its adjacent shot pair after the one-time transition scan");
 
   const plannerCalls = buildDescendants.filter((node) =>
     ts.isCallExpression(node) && textOf(node.expression) === "planVideoContinuity"
