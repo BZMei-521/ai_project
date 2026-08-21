@@ -359,6 +359,78 @@ function assertGuardedImportControlFlow(source, label) {
   assert.ok(guard.end < replacements[0].getStart(), `${label}: replacement must occur only after the early-return guard`);
 }
 
+function descendants(node, predicate) {
+  const matches = [];
+  const visit = (current) => {
+    if (predicate(current)) matches.push(current);
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+  return matches;
+}
+
+function callsWithCalleeText(node, calleeText) {
+  return descendants(node, (current) => (
+    ts.isCallExpression(current) && current.expression.getText() === calleeText
+  ));
+}
+
+function hasObjectProperty(objectLiteral, propertyName) {
+  return objectLiteral.properties.some((property) => {
+    if (!property.name) return false;
+    return property.name.getText().replace(/^['"]|['"]$/g, "") === propertyName;
+  });
+}
+
+function assertEffectDependency(effect, dependencyName, message) {
+  const dependencies = effect.arguments[1];
+  assert.ok(ts.isArrayLiteralExpression(dependencies), message);
+  assert.ok(
+    dependencies.elements.some((element) => ts.isIdentifier(element) && element.text === dependencyName),
+    message
+  );
+}
+
+function assertSelectedShotIdsSnapshotEffects(source, label) {
+  assert.match(source, /const selectedShotIds = useStoryboardStore\(\(state\) => state\.selectedShotIds\)/, `${label}: App must subscribe to the persisted multi-shot selection`);
+  const root = parseTypeScript(source, label);
+  const effects = descendants(root, (node) => (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "useEffect"
+  ));
+  const browserEffects = effects.filter((effect) => (
+    effect.arguments[0] && callsWithCalleeText(effect.arguments[0], "saveAutosaveSnapshot").length > 0
+  ));
+  assert.equal(browserEffects.length, 1, `${label}: expected exactly one browser autosave effect`);
+  const browserEffect = browserEffects[0];
+  const browserWrites = callsWithCalleeText(browserEffect.arguments[0], "saveAutosaveSnapshot");
+  assert.equal(browserWrites.length, 1, `${label}: expected exactly one browser snapshot write`);
+  assert.ok(
+    browserWrites[0].arguments[0] &&
+      ts.isObjectLiteralExpression(browserWrites[0].arguments[0]) &&
+      hasObjectProperty(browserWrites[0].arguments[0], "selectedShotIds"),
+    `${label}: browser autosave snapshot must include selectedShotIds`
+  );
+  assertEffectDependency(
+    browserEffect,
+    "selectedShotIds",
+    `${label}: browser autosave effect dependency must include selectedShotIds`
+  );
+
+  const desktopEffects = effects.filter((effect) => (
+    effect.arguments[0] &&
+    callsWithCalleeText(effect.arguments[0], "shouldScheduleDesktopSnapshotSave").length > 0 &&
+    callsWithCalleeText(effect.arguments[0], "desktopSaveCoordinator.save").length > 0
+  ));
+  assert.equal(desktopEffects.length, 1, `${label}: expected exactly one desktop autosave effect`);
+  assertEffectDependency(
+    desktopEffects[0],
+    "selectedShotIds",
+    `${label}: desktop snapshot effect dependency must include selectedShotIds`
+  );
+}
+
 const stageViews = blockBetween(app, "const focusedStageView", "const selectedShot");
 const inspector = blockBetween(app, "const inspectorByStage", "const workbenchInspector");
 const primaryActions = blockBetween(app, "const stagePrimaryAction", "const currentStageIndex");
@@ -389,15 +461,46 @@ assert.match(app, /const scriptTransitionDirtyRef = useRef\(false\)/);
 assert.match(app, /const markScriptTransitionDirty = \(\) => \{\s*scriptRevisionRef\.current \+= 1;\s*setScriptTransitionDirtyValue\(true\);\s*\}/);
 assert.match(app, /const resetScriptTransitionTracking = \(\) => \{\s*scriptRevisionRef\.current \+= 1;\s*setScriptTransitionDirtyValue\(false\);\s*\}/);
 assert.match(app, /const shotTransitions = useStoryboardStore\(\(state\) => state\.shotTransitions\)/);
-assert.match(app, /const selectedShotIds = useStoryboardStore\(\(state\) => state\.selectedShotIds\)/, "App must subscribe to the persisted multi-shot selection");
 assert.match(app, /const selectedShotTransitionId = useStoryboardStore\(\(state\) => state\.selectedShotTransitionId\)/);
-const autosaveSelectionTracking = blockBetween(app, "saveAutosaveSnapshot({", "  ]);");
-assert.ok(
-  (autosaveSelectionTracking.match(/selectedShotIds/g) ?? []).length >= 2,
-  "browser autosave must persist selectedShotIds and reschedule when it changes"
+assertSelectedShotIdsSnapshotEffects(app, "App snapshot effects");
+const snapshotEffectsFixture = ({ browserProperty = true, browserDependency = true, desktopDependency = true } = {}) => `
+  const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    loadWorkspace();
+  }, []);
+  useEffect(() => {
+    saveAutosaveSnapshot({
+      ${browserProperty ? "selectedShotIds," : "project,"}
+    }, 30);
+  }, [
+    ${browserDependency ? "selectedShotIds" : "project"}
+  ]);
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    const snapshot = readCurrentStoryboardSnapshot();
+    if (!shouldScheduleDesktopSnapshotSave({ snapshot })) return;
+    void desktopSaveCoordinator.save({ snapshot });
+  }, [
+    ${desktopDependency ? "selectedShotIds" : "project"}
+  ]);
+  const onSaveDesktop = async () => true;
+`;
+assert.throws(
+  () => assertSelectedShotIdsSnapshotEffects(snapshotEffectsFixture({ desktopDependency: false }), "missing desktop dependency fixture"),
+  /desktop snapshot effect dependency must include selectedShotIds/,
+  "browser selection wiring must not satisfy a missing desktop effect dependency"
 );
-const desktopSelectionTracking = blockBetween(app, "if (!isDesktopRuntime()) return;", "const onSaveDesktop");
-assert.match(desktopSelectionTracking, /selectedShotIds/, "desktop snapshot scheduling must react to selectedShotIds changes");
+assert.throws(
+  () => assertSelectedShotIdsSnapshotEffects(snapshotEffectsFixture({ browserProperty: false }), "missing browser property fixture"),
+  /browser autosave snapshot must include selectedShotIds/,
+  "browser autosave dependency must not substitute for the persisted snapshot property"
+);
+assert.throws(
+  () => assertSelectedShotIdsSnapshotEffects(snapshotEffectsFixture({ browserDependency: false }), "missing browser dependency fixture"),
+  /browser autosave effect dependency must include selectedShotIds/,
+  "browser autosave snapshot property must not substitute for its effect dependency"
+);
 assert.match(app, /const scriptShots = shots[\s\S]*?\.filter\(\(shot\) => shot\.sequenceId === currentSequenceId\)[\s\S]*?\.sort\(\(a, b\) => a\.order - b\.order\)/);
 assert.match(app, /const scriptTransitions = shotTransitions\.filter\(\(item\) => item\.sequenceId === currentSequenceId\)/);
 
