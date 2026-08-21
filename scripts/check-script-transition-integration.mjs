@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { transform } from "esbuild";
 import {
+  canCommitConfirmedStageChange,
   createScriptTransitionPersistenceFingerprint,
-  shouldClearScriptTransitionDirtyAfterSave
+  shouldConfirmScriptStageExit,
+  shouldClearScriptTransitionDirtyAfterSave,
+  shouldMarkRecoveredScriptDirty,
+  shouldReplaceImportedScript
 } from "../src/app/scriptTransitionSaveGuard.mjs";
 
-const app = await readFile("src/app/App.tsx", "utf8");
+const [app, scriptDirectorViewSource] = await Promise.all([
+  readFile("src/app/App.tsx", "utf8"),
+  readFile("src/features/script-director/ScriptDirectorView.tsx", "utf8")
+]);
 
 const persistedScriptState = {
   shots: [
@@ -54,6 +61,19 @@ assert.equal(shouldClearScriptTransitionDirtyAfterSave({
   currentFingerprint: createScriptTransitionPersistenceFingerprint({ shots: [], shotTransitions: [] })
 }), false, "project reset or load fingerprint change must keep an older save from clearing dirty");
 assert.equal(shouldClearScriptTransitionDirtyAfterSave({ ...guardInput, saved: false }), false, "failed save must keep dirty");
+assert.equal(shouldMarkRecoveredScriptDirty({ recoveredFingerprint: "autosave-a", desktopFingerprint: null }), true, "web autosave recovery must be dirty");
+assert.equal(shouldMarkRecoveredScriptDirty({ recoveredFingerprint: "autosave-b", desktopFingerprint: "desktop-a" }), true, "different autosave recovery must be dirty");
+assert.equal(shouldMarkRecoveredScriptDirty({ recoveredFingerprint: "same", desktopFingerprint: "same" }), false, "desktop-identical recovery may be clean");
+assert.equal(shouldReplaceImportedScript({ dirty: false, confirmationAccepted: false, revisionAtPrompt: 3, currentRevision: 3 }), true, "clean script import does not need overwrite confirmation");
+assert.equal(shouldReplaceImportedScript({ dirty: true, confirmationAccepted: false, revisionAtPrompt: 3, currentRevision: 3 }), false, "cancelled overwrite must not replace script state");
+assert.equal(shouldReplaceImportedScript({ dirty: true, confirmationAccepted: true, revisionAtPrompt: 3, currentRevision: 3 }), true, "confirmed unchanged overwrite may replace script state");
+assert.equal(shouldReplaceImportedScript({ dirty: true, confirmationAccepted: true, revisionAtPrompt: 3, currentRevision: 4 }), false, "stale import confirmation must not replace newer edits");
+assert.equal(shouldConfirmScriptStageExit({ currentStage: "script", nextStage: "assets", dirty: true }), true, "dirty script exit needs confirmation");
+assert.equal(shouldConfirmScriptStageExit({ currentStage: "script", nextStage: "script", dirty: true }), false, "same-stage request needs no confirmation");
+assert.equal(shouldConfirmScriptStageExit({ currentStage: "assets", nextStage: "preview", dirty: true }), false, "non-script navigation keeps old behavior");
+assert.equal(canCommitConfirmedStageChange({ confirmationAccepted: false, requestId: 2, latestRequestId: 2 }), false, "cancelled stage exit must stay on script");
+assert.equal(canCommitConfirmedStageChange({ confirmationAccepted: true, requestId: 2, latestRequestId: 2 }), true, "confirmed latest stage exit may commit");
+assert.equal(canCommitConfirmedStageChange({ confirmationAccepted: true, requestId: 1, latestRequestId: 2 }), false, "stale stage confirmation must not win a navigation race");
 
 function blockBetween(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -112,6 +132,8 @@ const shortcuts = blockBetween(app, "const onKeyDown", "window.addEventListener(
 const addShotShortcut = blockBetween(shortcuts, "if ((event.key === \"n\"", "if ((event.metaKey || event.ctrlKey)");
 const scriptActions = blockBetween(app, "const onImportShotScript", "const directorCommands");
 const manualSave = constFunction(app, "onManualSaveDesktop");
+const importShotScript = constFunction(app, "onImportShotScript");
+const stageChange = constFunction(app, "onWorkbenchStageChange");
 const deleteScriptShot = blockBetween(scriptActions, "const onDeleteScriptShot", "const onUndoScriptSequence");
 const directorCommands = blockBetween(app, "const directorCommands", "const stagePrimaryAction");
 const scriptViewStart = stageViews.indexOf('<ScriptDirectorView');
@@ -187,6 +209,28 @@ assert.match(primaryActions, /保存转场[\s\S]*?void onManualSaveDesktop\(\)/)
 assert.match(addShotShortcut, /addShot\(\);\s*if \(workbenchStage === "script"\) markScriptTransitionDirty\(\);/, "N must mark script mutations dirty only in the script stage");
 assert.equal(app.match(/\baddShot\(\)/g)?.length, 1, "App must not retain another direct addShot mutation path");
 
+assert.match(app, /const stageChangeRequestRef = useRef\(0\)/);
+assert.match(stageChange, /const requestId = \+\+stageChangeRequestRef\.current/);
+assert.match(stageChange, /shouldConfirmScriptStageExit\(\{[\s\S]*currentStage: workbenchStage[\s\S]*nextStage[\s\S]*dirty: scriptTransitionDirtyRef\.current/);
+assert.match(stageChange, /await confirmDialog\(\{[\s\S]*title:\s*"未保存转场"/);
+assert.match(stageChange, /canCommitConfirmedStageChange\(\{[\s\S]*confirmationAccepted[\s\S]*requestId[\s\S]*latestRequestId: stageChangeRequestRef\.current/);
+assert.ok(stageChange.indexOf("canCommitConfirmedStageChange") < stageChange.indexOf("setWorkbenchStage(nextStage)"), "stage confirmation guard must run before committing navigation");
+assert.equal(app.match(/\bsetWorkbenchStage\(/g)?.length, 1, "all stage navigation must use the guarded stage-change function");
+
+assert.match(importShotScript, /const revisionAtPrompt = scriptRevisionRef\.current/);
+assert.match(importShotScript, /if \(scriptTransitionDirtyRef\.current\)[\s\S]*await confirmDialog\(\{[\s\S]*title:\s*"覆盖未保存剧本"/);
+assert.match(importShotScript, /shouldReplaceImportedScript\(\{[\s\S]*dirty:[\s\S]*confirmationAccepted[\s\S]*revisionAtPrompt[\s\S]*currentRevision: scriptRevisionRef\.current/);
+assert.ok(importShotScript.indexOf("shouldReplaceImportedScript") < importShotScript.indexOf("replaceShotScriptForCurrentSequence"), "overwrite decision must precede script replacement");
+assert.match(scriptDirectorViewSource, /event\.currentTarget\.value = "";[\s\S]*parseShotScriptText/);
+assert.match(scriptDirectorViewSource, /if \(!result\.ok\) \{ setIssues\(result\.issues\); return; \}[\s\S]*onImportScript\(result\.value\)/, "parse failures must not request destructive overwrite confirmation");
+
+const startupRecovery = blockBetween(app, "const hadUncleanExit", "return () =>");
+assert.match(startupRecovery, /loadAutosaveSnapshot\(\)[\s\S]*hydrateFromSnapshot\(snapshot\);\s*markScriptTransitionDirty\(\);[\s\S]*需保存/, "web autosave recovery must remain dirty");
+const workspaceRecovery = blockBetween(app, "const loadWorkspace", "void loadWorkspace");
+assert.match(workspaceRecovery, /const desktopFingerprint = desktopSnapshot[\s\S]*const recoveredFingerprint = createScriptTransitionPersistenceFingerprint/);
+assert.match(workspaceRecovery, /shouldMarkRecoveredScriptDirty\(\{ recoveredFingerprint, desktopFingerprint \}\)[\s\S]*markScriptTransitionDirty\(\)[\s\S]*resetScriptTransitionTracking\(\)/);
+assert.match(recovery, /hydrateFromSnapshot\(snapshot\);\s*markScriptTransitionDirty\(\);[\s\S]*需保存/, "explicit autosave recovery must remain dirty");
+
 for (const [wrapperName, operation] of [
   ["onImportShotScript", "replaceShotScriptForCurrentSequence"],
   ["onMoveScriptShot", "moveShotToIndex"],
@@ -212,7 +256,6 @@ for (const [block, operation] of [
   [loadDesktop, "hydrateFromSnapshot(snapshot)"],
   [changeProject, "hydrateFromSnapshot(snapshot)"],
   [deleteProject, "hydrateFromSnapshot(snapshot)"],
-  [recovery, "hydrateFromSnapshot(snapshot)"],
   [backupImport, "hydrateFromSnapshot(snapshot)"]
 ]) {
   assert.match(block, new RegExp(`${operation.replace(/[()]/g, "\\$&")};\\s*resetScriptTransitionTracking\\(\\);`), `${operation} must reset tracking in the same success path`);

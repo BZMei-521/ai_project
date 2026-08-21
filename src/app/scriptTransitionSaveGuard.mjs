@@ -28,3 +28,31 @@ export function shouldClearScriptTransitionDirtyAfterSave({
     currentFingerprint === fingerprintAtSaveStart
   );
 }
+
+export function shouldMarkRecoveredScriptDirty({ recoveredFingerprint, desktopFingerprint }) {
+  return desktopFingerprint === null || recoveredFingerprint !== desktopFingerprint;
+}
+
+export function shouldReplaceImportedScript({
+  dirty,
+  confirmationAccepted,
+  revisionAtPrompt,
+  currentRevision
+}) {
+  return !dirty || (
+    confirmationAccepted === true &&
+    currentRevision === revisionAtPrompt
+  );
+}
+
+export function shouldConfirmScriptStageExit({ currentStage, nextStage, dirty }) {
+  return currentStage === "script" && nextStage !== "script" && dirty === true;
+}
+
+export function canCommitConfirmedStageChange({
+  confirmationAccepted,
+  requestId,
+  latestRequestId
+}) {
+  return confirmationAccepted === true && requestId === latestRequestId;
+}
