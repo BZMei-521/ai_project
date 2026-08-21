@@ -156,36 +156,62 @@ function callsNamed(node, name) {
   ));
 }
 
-function staticBooleanValue(expression) {
+function knownExpressionValue(expression) {
   const current = unwrapParentheses(expression);
-  if (current.kind === ts.SyntaxKind.TrueKeyword) return true;
-  if (current.kind === ts.SyntaxKind.FalseKeyword) return false;
-  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
-    const operand = staticBooleanValue(current.operand);
-    return operand === undefined ? undefined : !operand;
+  if (current.kind === ts.SyntaxKind.TrueKeyword) return { known: true, value: true };
+  if (current.kind === ts.SyntaxKind.FalseKeyword) return { known: true, value: false };
+  if (current.kind === ts.SyntaxKind.NullKeyword) return { known: true, value: null };
+  if (ts.isIdentifier(current) && current.text === "undefined") return { known: true, value: undefined };
+  if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+    return { known: true, value: current.text };
   }
-  return undefined;
+  if (ts.isNumericLiteral(current)) return { known: true, value: Number(current.text) };
+  if (ts.isVoidExpression(current)) return { known: true, value: undefined };
+  if (ts.isPrefixUnaryExpression(current)) {
+    const operand = knownExpressionValue(current.operand);
+    if (!operand.known) return { known: false };
+    if (current.operator === ts.SyntaxKind.ExclamationToken) {
+      return { known: true, value: !operand.value };
+    }
+    if (current.operator === ts.SyntaxKind.PlusToken) {
+      return { known: true, value: Number(operand.value) };
+    }
+    if (current.operator === ts.SyntaxKind.MinusToken) {
+      return { known: true, value: -Number(operand.value) };
+    }
+    return { known: false };
+  }
+  if (ts.isBinaryExpression(current)) {
+    const left = knownExpressionValue(current.left);
+    if (!left.known) return { known: false };
+    if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return left.value ? knownExpressionValue(current.right) : left;
+    }
+    if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+      return left.value ? left : knownExpressionValue(current.right);
+    }
+    if (current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+      return left.value === null || left.value === undefined
+        ? knownExpressionValue(current.right)
+        : left;
+    }
+  }
+  if (ts.isConditionalExpression(current)) {
+    const condition = knownExpressionValue(current.condition);
+    if (!condition.known) return { known: false };
+    return knownExpressionValue(condition.value ? current.whenTrue : current.whenFalse);
+  }
+  return { known: false };
+}
+
+function staticBooleanValue(expression) {
+  const result = knownExpressionValue(expression);
+  return result.known ? Boolean(result.value) : undefined;
 }
 
 function staticNullishValue(expression) {
-  const current = unwrapParentheses(expression);
-  if (current.kind === ts.SyntaxKind.NullKeyword) return true;
-  if (ts.isIdentifier(current) && current.text === "undefined") return true;
-  if (ts.isVoidExpression(current)) return true;
-  if (
-    current.kind === ts.SyntaxKind.TrueKeyword ||
-    current.kind === ts.SyntaxKind.FalseKeyword ||
-    ts.isStringLiteral(current) ||
-    ts.isNoSubstitutionTemplateLiteral(current) ||
-    ts.isNumericLiteral(current) ||
-    ts.isBigIntLiteral(current) ||
-    ts.isObjectLiteralExpression(current) ||
-    ts.isArrayLiteralExpression(current) ||
-    ts.isArrowFunction(current) ||
-    ts.isFunctionExpression(current) ||
-    ts.isClassExpression(current)
-  ) return false;
-  return undefined;
+  const result = knownExpressionValue(expression);
+  return result.known ? result.value === null || result.value === undefined : undefined;
 }
 
 function scanReachable(node, callName) {
@@ -693,9 +719,16 @@ const browserSaveExpression = "saveAutosaveSnapshot({ selectedShotIds }, 30)";
 const desktopSaveExpression = "(shouldScheduleDesktopSnapshotSave({ snapshot }), desktopSaveCoordinator.save({ snapshot }))";
 for (const [name, browserBody] of [
   ["false-and browser save", `false && ${browserSaveExpression};`],
+  ["zero-and browser save", `0 && ${browserSaveExpression};`],
   ["true-or browser save", `true || ${browserSaveExpression};`],
+  ["nonempty-string-or browser save", `"kept" || ${browserSaveExpression};`],
   ["unselected browser ternary branch", `true ? keepBrowserState() : ${browserSaveExpression};`],
-  ["non-nullish browser fallback", `"kept" ?? ${browserSaveExpression};`]
+  ["zero-unselected browser ternary branch", `0 ? ${browserSaveExpression} : keepBrowserState();`],
+  ["nested false-and browser save", `(false && maybeEnabled) && ${browserSaveExpression};`],
+  ["false prefix browser save", `!1 && ${browserSaveExpression};`],
+  ["negative-zero browser save", `(-0) && ${browserSaveExpression};`],
+  ["non-nullish browser fallback", `"kept" ?? ${browserSaveExpression};`],
+  ["empty-string non-nullish browser fallback", `"" ?? ${browserSaveExpression};`]
 ]) {
   assert.throws(
     () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ browserBody }), `${name} fixture`),
@@ -705,8 +738,11 @@ for (const [name, browserBody] of [
 }
 for (const [name, expression] of [
   ["false-and desktop save", `false && ${desktopSaveExpression};`],
+  ["zero-and desktop save", `0 && ${desktopSaveExpression};`],
   ["true-or desktop save", `true || ${desktopSaveExpression};`],
+  ["nonempty-string-or desktop save", `"kept" || ${desktopSaveExpression};`],
   ["unselected desktop ternary branch", `true ? keepDesktopState() : ${desktopSaveExpression};`],
+  ["zero-unselected desktop ternary branch", `0 ? ${desktopSaveExpression} : keepDesktopState();`],
   ["non-nullish desktop fallback", `"kept" ?? ${desktopSaveExpression};`]
 ]) {
   const desktopBody = `const snapshot = readCurrentStoryboardSnapshot(); ${expression}`;
@@ -718,9 +754,15 @@ for (const [name, expression] of [
 }
 for (const [name, browserBody] of [
   ["true-and browser save", `true && ${browserSaveExpression};`],
+  ["one-and browser save", `1 && ${browserSaveExpression};`],
   ["false-or browser save", `false || ${browserSaveExpression};`],
+  ["empty-string-or browser save", `"" || ${browserSaveExpression};`],
   ["selected browser ternary branch", `true ? ${browserSaveExpression} : keepBrowserState();`],
+  ["one-selected browser ternary branch", `1 ? ${browserSaveExpression} : keepBrowserState();`],
   ["nullish browser fallback", `null ?? ${browserSaveExpression};`],
+  ["undefined browser fallback", `undefined ?? ${browserSaveExpression};`],
+  ["true prefix browser save", `!0 && ${browserSaveExpression};`],
+  ["positive-one browser save", `(+1) && ${browserSaveExpression};`],
   ["unknown-and browser save", `maybeEnabled && ${browserSaveExpression};`],
   ["unknown browser ternary branch", `maybeEnabled ? ${browserSaveExpression} : keepBrowserState();`],
   ["unknown nullish browser fallback", `maybeSnapshot ?? ${browserSaveExpression};`]
@@ -732,8 +774,11 @@ for (const [name, browserBody] of [
 }
 for (const [name, expression] of [
   ["true-and desktop save", `true && ${desktopSaveExpression};`],
+  ["one-and desktop save", `1 && ${desktopSaveExpression};`],
   ["false-or desktop save", `false || ${desktopSaveExpression};`],
+  ["empty-string-or desktop save", `"" || ${desktopSaveExpression};`],
   ["selected desktop ternary branch", `true ? ${desktopSaveExpression} : keepDesktopState();`],
+  ["one-selected desktop ternary branch", `1 ? ${desktopSaveExpression} : keepDesktopState();`],
   ["nullish desktop fallback", `null ?? ${desktopSaveExpression};`]
 ]) {
   const desktopBody = `const snapshot = readCurrentStoryboardSnapshot(); ${expression}`;
