@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { transform } from "esbuild";
+import ts from "typescript";
 import {
   canCommitConfirmedStageChange,
   createScriptTransitionPersistenceFingerprint,
@@ -118,6 +119,78 @@ function assertFalseBranch(source, pattern, label) {
   assert.match(source, pattern, `${label} must return false`);
 }
 
+function parseTypeScript(source, label) {
+  return ts.createSourceFile(label, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+}
+
+function descendants(node, predicate) {
+  const matches = [];
+  const visit = (current) => {
+    if (predicate(current)) matches.push(current);
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+  return matches;
+}
+
+function callsNamed(node, name) {
+  return descendants(node, (current) => (
+    ts.isCallExpression(current) &&
+    ts.isIdentifier(current.expression) &&
+    current.expression.text === name
+  ));
+}
+
+function ifCalling(root, name) {
+  return descendants(root, (node) => ts.isIfStatement(node) && callsNamed(node.expression, name).length === 1)[0];
+}
+
+function hasReturn(node, expectedExpression) {
+  return descendants(node, (current) => (
+    ts.isReturnStatement(current) &&
+    (expectedExpression === undefined
+      ? true
+      : current.expression?.getText() === expectedExpression)
+  )).length > 0;
+}
+
+function assertExclusiveRecoveryControlFlow(source, label) {
+  const root = parseTypeScript(source, label);
+  const decision = ifCalling(root, "shouldMarkRecoveredScriptDirty");
+  assert.ok(decision, `${label}: missing recovery decision`);
+  assert.ok(decision.elseStatement, `${label}: dirty and clean tracking must be explicit opposite branches`);
+  assert.equal(callsNamed(decision.thenStatement, "markScriptTransitionDirty").length, 1, `${label}: dirty branch must mark once`);
+  assert.equal(callsNamed(decision.thenStatement, "resetScriptTransitionTracking").length, 0, `${label}: dirty branch must never reset clean`);
+  assert.equal(callsNamed(decision.elseStatement, "resetScriptTransitionTracking").length, 1, `${label}: matching baseline branch must reset once`);
+  assert.equal(callsNamed(decision.elseStatement, "markScriptTransitionDirty").length, 0, `${label}: matching baseline branch must not mark dirty`);
+  assert.equal(callsNamed(root, "markScriptTransitionDirty").length, 1, `${label}: no mark call may escape the decision`);
+  assert.equal(callsNamed(root, "resetScriptTransitionTracking").length, 1, `${label}: no reset call may escape the decision`);
+}
+
+function assertGuardedStageControlFlow(source, label) {
+  const root = parseTypeScript(source, label);
+  const guard = ifCalling(root, "canCommitConfirmedStageChange");
+  assert.ok(guard, `${label}: missing stage commit guard`);
+  assert.match(guard.expression.getText(), /^!canCommitConfirmedStageChange\(/, `${label}: denied decisions must enter the guard branch`);
+  assert.ok(hasReturn(guard.thenStatement, "false"), `${label}: denied or stale request must return false`);
+  assert.equal(callsNamed(guard.thenStatement, "setWorkbenchStage").length, 0, `${label}: denied branch must not commit stage`);
+  const commits = callsNamed(root, "setWorkbenchStage");
+  assert.equal(commits.length, 1, `${label}: stage may commit exactly once`);
+  assert.ok(guard.end < commits[0].getStart(), `${label}: stage commit must occur only after the early-return guard`);
+}
+
+function assertGuardedImportControlFlow(source, label) {
+  const root = parseTypeScript(source, label);
+  const guard = ifCalling(root, "shouldReplaceImportedScript");
+  assert.ok(guard, `${label}: missing import replacement guard`);
+  assert.match(guard.expression.getText(), /^!shouldReplaceImportedScript\(/, `${label}: denied decisions must enter the guard branch`);
+  assert.ok(hasReturn(guard.thenStatement), `${label}: denied import must return`);
+  assert.equal(callsNamed(guard.thenStatement, "replaceShotScriptForCurrentSequence").length, 0, `${label}: denied branch must not replace script`);
+  const replacements = callsNamed(root, "replaceShotScriptForCurrentSequence");
+  assert.equal(replacements.length, 1, `${label}: accepted import may replace exactly once`);
+  assert.ok(guard.end < replacements[0].getStart(), `${label}: replacement must occur only after the early-return guard`);
+}
+
 const stageViews = blockBetween(app, "const focusedStageView", "const selectedShot");
 const inspector = blockBetween(app, "const inspectorByStage", "const workbenchInspector");
 const primaryActions = blockBetween(app, "const stagePrimaryAction", "const currentStageIndex");
@@ -216,11 +289,36 @@ assert.match(stageChange, /await confirmDialog\(\{[\s\S]*title:\s*"未保存转�
 assert.match(stageChange, /canCommitConfirmedStageChange\(\{[\s\S]*confirmationAccepted[\s\S]*requestId[\s\S]*latestRequestId: stageChangeRequestRef\.current/);
 assert.ok(stageChange.indexOf("canCommitConfirmedStageChange") < stageChange.indexOf("setWorkbenchStage(nextStage)"), "stage confirmation guard must run before committing navigation");
 assert.equal(app.match(/\bsetWorkbenchStage\(/g)?.length, 1, "all stage navigation must use the guarded stage-change function");
+const unsafeStageFixture = `
+  if (!canCommitConfirmedStageChange({ confirmationAccepted, requestId, latestRequestId })) {
+    setWorkbenchStage(nextStage);
+  }
+  setWorkbenchStage(nextStage);
+`;
+assert.throws(
+  () => assertGuardedStageControlFlow(unsafeStageFixture, "unsafe stage fixture"),
+  /must return false|must not commit stage/,
+  "control-flow contract must reject a denied/stale request that can still commit"
+);
+assertGuardedStageControlFlow(stageChange, "onWorkbenchStageChange");
 
 assert.match(importShotScript, /const revisionAtPrompt = scriptRevisionRef\.current/);
 assert.match(importShotScript, /if \(scriptTransitionDirtyRef\.current\)[\s\S]*await confirmDialog\(\{[\s\S]*title:\s*"覆盖未保存剧本"/);
 assert.match(importShotScript, /shouldReplaceImportedScript\(\{[\s\S]*dirty:[\s\S]*confirmationAccepted[\s\S]*revisionAtPrompt[\s\S]*currentRevision: scriptRevisionRef\.current/);
 assert.ok(importShotScript.indexOf("shouldReplaceImportedScript") < importShotScript.indexOf("replaceShotScriptForCurrentSequence"), "overwrite decision must precede script replacement");
+const unsafeImportFixture = `
+  if (!shouldReplaceImportedScript({ dirty, confirmationAccepted, revisionAtPrompt, currentRevision })) {
+    replaceShotScriptForCurrentSequence(value);
+    return;
+  }
+  replaceShotScriptForCurrentSequence(value);
+`;
+assert.throws(
+  () => assertGuardedImportControlFlow(unsafeImportFixture, "unsafe import fixture"),
+  /must not replace script|replace exactly once/,
+  "control-flow contract must reject replacement from the denied branch"
+);
+assertGuardedImportControlFlow(importShotScript, "onImportShotScript");
 assert.match(scriptDirectorViewSource, /event\.currentTarget\.value = "";[\s\S]*parseShotScriptText/);
 assert.match(scriptDirectorViewSource, /if \(!result\.ok\) \{ setIssues\(result\.issues\); return; \}[\s\S]*onImportScript\(result\.value\)/, "parse failures must not request destructive overwrite confirmation");
 
@@ -228,7 +326,24 @@ const startupRecovery = blockBetween(app, "const hadUncleanExit", "return () =>"
 assert.match(startupRecovery, /loadAutosaveSnapshot\(\)[\s\S]*hydrateFromSnapshot\(snapshot\);\s*markScriptTransitionDirty\(\);[\s\S]*需保存/, "web autosave recovery must remain dirty");
 const workspaceRecovery = blockBetween(app, "const loadWorkspace", "void loadWorkspace");
 assert.match(workspaceRecovery, /const desktopFingerprint = desktopSnapshot[\s\S]*const recoveredFingerprint = createScriptTransitionPersistenceFingerprint/);
-assert.match(workspaceRecovery, /shouldMarkRecoveredScriptDirty\(\{ recoveredFingerprint, desktopFingerprint \}\)[\s\S]*markScriptTransitionDirty\(\)[\s\S]*resetScriptTransitionTracking\(\)/);
+const legacyRecoveryContract = /shouldMarkRecoveredScriptDirty\(\{ recoveredFingerprint, desktopFingerprint \}\)[\s\S]*markScriptTransitionDirty\(\)[\s\S]*resetScriptTransitionTracking\(\)/;
+const legacyFalsePositive = `
+  if (shouldMarkRecoveredScriptDirty({ recoveredFingerprint, desktopFingerprint })) {
+    markScriptTransitionDirty();
+  }
+  resetScriptTransitionTracking();
+`;
+assert.equal(
+  legacyRecoveryContract.test(legacyFalsePositive),
+  true,
+  "fixture must demonstrate that the legacy regex admitted an unconditional reset"
+);
+assert.throws(
+  () => assertExclusiveRecoveryControlFlow(legacyFalsePositive, "legacy recovery false positive"),
+  /opposite branches|no reset call may escape/,
+  "AST contract must reject mark-then-unconditional-reset recovery"
+);
+assertExclusiveRecoveryControlFlow(workspaceRecovery, "loadWorkspace recovery");
 assert.match(recovery, /hydrateFromSnapshot\(snapshot\);\s*markScriptTransitionDirty\(\);[\s\S]*需保存/, "explicit autosave recovery must remain dirty");
 
 for (const [wrapperName, operation] of [
