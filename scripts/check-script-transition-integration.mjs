@@ -1,8 +1,59 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { transform } from "esbuild";
+import {
+  createScriptTransitionPersistenceFingerprint,
+  shouldClearScriptTransitionDirtyAfterSave
+} from "../src/app/scriptTransitionSaveGuard.mjs";
 
 const app = await readFile("src/app/App.tsx", "utf8");
+
+const persistedScriptState = {
+  shots: [
+    { id: "shot-1", sequenceId: "seq-1", order: 1, title: "开门" },
+    { id: "shot-2", sequenceId: "seq-1", order: 2, title: "进屋" }
+  ],
+  shotTransitions: [
+    { id: "edge-12", sequenceId: "seq-1", fromShotId: "shot-1", toShotId: "shot-2", durationSeconds: 0.6 }
+  ]
+};
+const fingerprintAtSaveStart = createScriptTransitionPersistenceFingerprint(persistedScriptState);
+assert.equal(
+  createScriptTransitionPersistenceFingerprint({
+    shotTransitions: persistedScriptState.shotTransitions.map(({ durationSeconds, ...edge }) => ({ durationSeconds, ...edge })),
+    shots: persistedScriptState.shots.map(({ title, ...shot }) => ({ title, ...shot }))
+  }),
+  fingerprintAtSaveStart,
+  "fingerprint must be deterministic across object key insertion order"
+);
+const guardInput = {
+  saved: true,
+  revisionAtSaveStart: 7,
+  currentRevision: 7,
+  fingerprintAtSaveStart,
+  currentFingerprint: fingerprintAtSaveStart
+};
+assert.equal(shouldClearScriptTransitionDirtyAfterSave(guardInput), true, "successful unchanged save may clear dirty");
+assert.equal(shouldClearScriptTransitionDirtyAfterSave({ ...guardInput, currentRevision: 8 }), false, "wrapper revision edit must keep dirty");
+assert.equal(shouldClearScriptTransitionDirtyAfterSave({
+  ...guardInput,
+  currentFingerprint: createScriptTransitionPersistenceFingerprint({
+    ...persistedScriptState,
+    shots: [...persistedScriptState.shots, { id: "shot-3", sequenceId: "seq-1", order: 3, title: "旁路新增" }]
+  })
+}), false, "shot content mutation without a revision bump must keep dirty");
+assert.equal(shouldClearScriptTransitionDirtyAfterSave({
+  ...guardInput,
+  currentFingerprint: createScriptTransitionPersistenceFingerprint({
+    ...persistedScriptState,
+    shotTransitions: persistedScriptState.shotTransitions.map((edge) => ({ ...edge, durationSeconds: 1.2 }))
+  })
+}), false, "transition content mutation without a revision bump must keep dirty");
+assert.equal(shouldClearScriptTransitionDirtyAfterSave({
+  ...guardInput,
+  currentFingerprint: createScriptTransitionPersistenceFingerprint({ shots: [], shotTransitions: [] })
+}), false, "project reset or load fingerprint change must keep an older save from clearing dirty");
+assert.equal(shouldClearScriptTransitionDirtyAfterSave({ ...guardInput, saved: false }), false, "failed save must keep dirty");
 
 function blockBetween(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -58,6 +109,7 @@ const deleteProject = blockBetween(app, "const onDeleteProject", "const onEditPr
 const recovery = blockBetween(app, "const restoreAutosaveVersion", "const removeAutosaveVersion");
 const backupImport = blockBetween(app, "const onImportBackupFile", "const selectAuxPanelSection");
 const shortcuts = blockBetween(app, "const onKeyDown", "window.addEventListener(\"keydown\"");
+const addShotShortcut = blockBetween(shortcuts, "if ((event.key === \"n\"", "if ((event.metaKey || event.ctrlKey)");
 const scriptActions = blockBetween(app, "const onImportShotScript", "const directorCommands");
 const manualSave = constFunction(app, "onManualSaveDesktop");
 const deleteScriptShot = blockBetween(scriptActions, "const onDeleteScriptShot", "const onUndoScriptSequence");
@@ -124,12 +176,16 @@ assertFalseBranch(saveDesktop, /catch \(error\) \{\s*setSaveState\(`保存失败
 assert.match(saveDesktop, /setSaveState\("已保存"\);\s*return true;/, "active completed save must be the sole true path");
 
 assert.match(manualSave, /const revisionAtSaveStart = scriptRevisionRef\.current/);
+assert.match(manualSave, /const fingerprintAtSaveStart = createScriptTransitionPersistenceFingerprint\(useStoryboardStore\.getState\(\)\)/);
 assert.match(manualSave, /const saved = await onSaveDesktop\(\)/);
-assert.match(manualSave, /if \(saved && scriptRevisionRef\.current === revisionAtSaveStart\) \{\s*setScriptTransitionDirtyValue\(false\);\s*\}/);
+assert.match(manualSave, /const currentFingerprint = createScriptTransitionPersistenceFingerprint\(useStoryboardStore\.getState\(\)\)/);
+assert.match(manualSave, /shouldClearScriptTransitionDirtyAfterSave\(\{\s*saved,\s*revisionAtSaveStart,\s*currentRevision: scriptRevisionRef\.current,\s*fingerprintAtSaveStart,\s*currentFingerprint\s*\}\)[\s\S]*?setScriptTransitionDirtyValue\(false\)/);
 assert.equal(app.match(/await onSaveDesktop\(\)/g)?.length, 1, "raw manual save must only be awaited by the revision-safe wrapper");
 assert.match(shortcuts, /event\.key === "s"[\s\S]*?void onManualSaveDesktop\(\)/);
 assert.match(directorCommands, /saveProject:\s*onManualSaveDesktop/);
 assert.match(primaryActions, /保存转场[\s\S]*?void onManualSaveDesktop\(\)/);
+assert.match(addShotShortcut, /addShot\(\);\s*if \(workbenchStage === "script"\) markScriptTransitionDirty\(\);/, "N must mark script mutations dirty only in the script stage");
+assert.equal(app.match(/\baddShot\(\)/g)?.length, 1, "App must not retain another direct addShot mutation path");
 
 for (const [wrapperName, operation] of [
   ["onImportShotScript", "replaceShotScriptForCurrentSequence"],
