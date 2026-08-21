@@ -5,6 +5,9 @@ import {
   planVideoContinuity,
   planContinuityInvalidation
 } from "../src/modules/video-production/continuityPlannerRuntime.mjs";
+import {
+  resolveShotTransitionBoundary
+} from "../src/modules/video-production/shotTransitionBoundaryRuntime.mjs";
 
 const shot = (id, order, overrides = {}) => ({
   id,
@@ -26,6 +29,84 @@ const boundary = (fromShotId, toShotId, kind, overrides = {}) => ({
   approvalStatus: "pending",
   ...overrides
 });
+
+const resolverShots = [
+  { id: "same-a", videoBoundaryKind: "scene_change", approvedBoundaryFramePath: "frames/legacy.png" },
+  { id: "same-b" }
+];
+const transitionFor = (sequenceId, type, overrides = {}) => ({
+  id: `transition:${sequenceId}`,
+  sequenceId,
+  fromShotId: "same-a",
+  toShotId: "same-b",
+  type,
+  durationSeconds: 0.6,
+  frameDependency: "previous_tail",
+  actionContinuity: "keep action",
+  characterPosition: "enter right",
+  cameraDirection: "track left",
+  notes: "warm light",
+  ...overrides
+});
+const seqOneTransition = transitionFor("seq-one", "continuous", {
+  durationSeconds: 0.4,
+  prompt: "transition prompt",
+  negativePrompt: "axis jump",
+  frameDependency: "shared_frame",
+  sharedFramePath: "frames/seq-one.png"
+});
+const seqTwoTransition = transitionFor("seq-two", "hard_cut", {
+  durationSeconds: 0,
+  frameDependency: "none",
+  actionContinuity: "seq-two action"
+});
+const expectedSeqOneBoundary = {
+  fromShotId: "same-a",
+  toShotId: "same-b",
+  kind: "continuous",
+  durationSeconds: 0.4,
+  prompt: "transition prompt",
+  negativePrompt: "axis jump",
+  frameDependency: "shared_frame",
+  actionContinuity: "keep action",
+  characterPosition: "enter right",
+  cameraDirection: "track left",
+  notes: "warm light",
+  sharedFramePath: "frames/seq-one.png",
+  sharedFrameSource: "independent",
+  approvalStatus: "approved"
+};
+for (const transitions of [
+  [seqOneTransition, seqTwoTransition],
+  [seqTwoTransition, seqOneTransition]
+]) {
+  assert.deepEqual(resolveShotTransitionBoundary({
+    sequenceId: "seq-one",
+    fromShot: resolverShots[0],
+    toShot: resolverShots[1],
+    transitions
+  }), expectedSeqOneBoundary,
+  "resolver must isolate identical shot pairs by sequence regardless of transition order");
+}
+assert.equal(resolveShotTransitionBoundary({
+  sequenceId: "seq-two",
+  fromShot: resolverShots[0],
+  toShot: resolverShots[1],
+  transitions: [seqOneTransition, seqTwoTransition]
+}).kind, "hard_cut", "a valid configured edge must never fall back to the legacy shot kind");
+assert.deepEqual(resolveShotTransitionBoundary({
+  sequenceId: "missing-sequence",
+  fromShot: resolverShots[0],
+  toShot: resolverShots[1],
+  transitions: [seqOneTransition, seqTwoTransition]
+}), {
+  fromShotId: "same-a",
+  toShotId: "same-b",
+  kind: "scene_change",
+  sharedFramePath: "frames/legacy.png",
+  sharedFrameSource: "independent",
+  approvalStatus: "approved"
+}, "legacy shot boundary fields are allowed only when the exact sequence edge is absent");
 
 assert.deepEqual(planVideoContinuity(), {
   segments: [],
@@ -226,31 +307,57 @@ assert.equal(explicitSharedFrame.boundaries[0].sharedFrameSource, "independent")
 assert.equal(explicitSharedFrame.boundaries[0].durationSeconds, 0.4);
 assert.equal(explicitSharedFrame.shotExecutions[1].firstFrameInput?.path, "frames/shared-match.png");
 
-const changedGuidancePlan = planVideoContinuity({
-  shots: guidedPlan.shotExecutions.map((execution, index) => shot(execution.shotId, index + 1, index === 0 ? {
-    approvedTailFramePath: "frames/a-tail.png",
-    tailFrameApprovalStatus: "approved"
-  } : {})),
-  boundaries: [{
-    fromShotId: "guided-a",
-    toShotId: "guided-b",
-    kind: "continuous",
-    approvalStatus: "approved",
-    durationSeconds: 0.7,
-    prompt: "keep the door-opening motion",
-    negativePrompt: "axis jump",
-    frameDependency: "previous_tail",
-    actionContinuity: "动作改为停顿后再推门",
-    characterPosition: "人物从右侧进入",
-    cameraDirection: "继续向左跟拍",
-    notes: "保持室内暖光"
-  }]
-});
-assert.deepEqual(planContinuityInvalidation(guidedPlan, changedGuidancePlan), {
-  staleShotIds: ["guided-a", "guided-b"],
-  staleTaskIds: ["video-assembly", "video-shot:guided-a", "video-shot:guided-b"],
-  reasons: ["boundary_changed:video-boundary:guided-a:guided-b"]
-}, "changing duration or continuity guidance must invalidate both boundary shots and assembly");
+for (const invalidDuration of [Number.NaN, Number.POSITIVE_INFINITY, -0.1]) {
+  const invalidDurationPlan = planVideoContinuity({
+    shots: [shot("duration-a", 1), shot("duration-b", 2)],
+    boundaries: [boundary("duration-a", "duration-b", "scene_change", {
+      durationSeconds: invalidDuration
+    })]
+  });
+  assert.equal(Object.hasOwn(invalidDurationPlan.boundaries[0], "durationSeconds"), false,
+    `invalid duration must normalize to absence: ${String(invalidDuration)}`);
+}
+
+const signatureShots = [shot("signature-a", 1), shot("signature-b", 2)];
+const signatureBoundary = {
+  fromShotId: "signature-a",
+  toShotId: "signature-b",
+  kind: "match_cut",
+  durationSeconds: 0.4,
+  prompt: "match the raised hand",
+  negativePrompt: "axis jump",
+  frameDependency: "shared_frame",
+  sharedFramePath: "frames/signature-shared.png",
+  sharedFrameSource: "independent",
+  actionContinuity: "keep hand raised",
+  characterPosition: "center frame",
+  cameraDirection: "track left",
+  notes: "warm light",
+  approvalStatus: "approved"
+};
+const signatureBasePlan = planVideoContinuity({ shots: signatureShots, boundaries: [signatureBoundary] });
+const guidanceMutations = [
+  ["durationSeconds", 0.7],
+  ["prompt", "match the lowered hand"],
+  ["negativePrompt", "camera shake"],
+  ["frameDependency", "none"],
+  ["sharedFramePath", "frames/signature-shared-v2.png"],
+  ["actionContinuity", "lower the hand"],
+  ["characterPosition", "right edge"],
+  ["cameraDirection", "track right"],
+  ["notes", "cool light"]
+];
+for (const [field, value] of guidanceMutations) {
+  const changedPlan = planVideoContinuity({
+    shots: signatureShots,
+    boundaries: [{ ...signatureBoundary, [field]: value }]
+  });
+  assert.deepEqual(planContinuityInvalidation(signatureBasePlan, changedPlan), {
+    staleShotIds: ["signature-a", "signature-b"],
+    staleTaskIds: ["video-assembly", "video-shot:signature-a", "video-shot:signature-b"],
+    reasons: ["boundary_changed:video-boundary:signature-a:signature-b"]
+  }, `changing only ${field} must alter the normalized boundary signature`);
+}
 
 const encodedLeftIdPlan = planVideoContinuity({
   shots: [shot("a:b", 1), shot("c", 2)],
@@ -557,12 +664,18 @@ async function assertPanelTransitionWiring() {
   };
   visit(sourceFile);
   const textOf = (node) => node.getText(sourceFile);
+  const resolverImport = sourceFile.statements.find((statement) =>
+    ts.isImportDeclaration(statement) &&
+    statement.moduleSpecifier.text === "./shotTransitionBoundary" &&
+    statement.importClause?.namedBindings?.elements?.some((item) => item.name.text === "resolveShotTransitionBoundary")
+  );
+  assert.ok(resolverImport, "VideoProductionPanel must import the typed pure transition resolver");
   const buildContexts = sourceFile.statements.find((statement) =>
     ts.isFunctionDeclaration(statement) && statement.name?.text === "buildContexts"
   );
   assert.ok(buildContexts, "VideoProductionPanel must declare buildContexts");
-  assert.deepEqual(buildContexts.parameters.map((parameter) => textOf(parameter.name)), ["shots", "assets", "transitions"],
-    "buildContexts must accept persisted transitions explicitly");
+  assert.deepEqual(buildContexts.parameters.map((parameter) => textOf(parameter.name)), ["sequenceId", "shots", "assets", "transitions"],
+    "buildContexts must accept sequence identity and persisted transitions explicitly");
 
   const selectors = descendants.filter((node) => ts.isCallExpression(node) && textOf(node.expression) === "useStoryboardStore");
   assert.ok(selectors.some((call) => call.arguments.some((argument) => textOf(argument).includes("state.shotTransitions"))),
@@ -570,29 +683,45 @@ async function assertPanelTransitionWiring() {
 
   const contextCalls = descendants.filter((node) => ts.isCallExpression(node) && textOf(node.expression) === "buildContexts");
   assert.equal(contextCalls.length, 2, "live and generation snapshot paths must be the only buildContexts call sites");
-  assert.ok(contextCalls.every((call) => call.arguments.length === 3),
-    "every buildContexts call must pass transitions");
-  assert.ok(contextCalls.some((call) => textOf(call.arguments[2]) === "scopedTransitions"),
-    "live contexts must use sequence-scoped persisted transitions");
-  assert.ok(contextCalls.some((call) => textOf(call.arguments[2]) === "state.shotTransitions"),
-    "generation snapshots must use the same persisted transition state");
+  assert.ok(contextCalls.every((call) => call.arguments.length === 4),
+    "every buildContexts call must pass sequence id and transitions; the old three-argument form is forbidden");
+  assert.ok(contextCalls.some((call) =>
+    textOf(call.arguments[0]) === "currentSequenceId" &&
+    textOf(call.arguments[1]) === "scopedShots" &&
+    textOf(call.arguments[3]) === "scopedTransitions"
+  ), "live contexts must pass their current sequence id and scoped persisted transitions");
+  assert.ok(contextCalls.some((call) =>
+    textOf(call.arguments[0]) === "state.currentSequenceId" &&
+    textOf(call.arguments[1]) === "allShots" &&
+    textOf(call.arguments[3]) === "state.shotTransitions"
+  ), "generation snapshots must pass their captured current sequence id and persisted transitions");
 
   const buildSource = textOf(buildContexts);
-  const requiredFragments = [
-    "configured?.type",
-    "configured?.durationSeconds",
-    "configured?.frameDependency",
-    "configured?.actionContinuity",
-    "configured?.characterPosition",
-    "configured?.cameraDirection",
-    "configured?.notes",
-    "configured.sharedFramePath"
-  ];
-  for (const fragment of requiredFragments) {
-    assert.ok(buildSource.includes(fragment), `buildContexts must preserve stored transition field: ${fragment}`);
-  }
-  assert.ok(buildSource.includes("shot.videoBoundaryKind"),
-    "buildContexts must retain a legacy fallback when no stored edge exists");
+  const buildDescendants = [];
+  const visitBuild = (node) => {
+    buildDescendants.push(node);
+    ts.forEachChild(node, visitBuild);
+  };
+  visitBuild(buildContexts);
+  const resolverCalls = buildDescendants.filter((node) =>
+    ts.isCallExpression(node) && textOf(node.expression) === "resolveShotTransitionBoundary"
+  );
+  assert.equal(resolverCalls.length, 1, "buildContexts must delegate all edge resolution to the pure resolver");
+  const resolverInput = resolverCalls[0].arguments[0];
+  assert.ok(ts.isObjectLiteralExpression(resolverInput), "resolver input must be an explicit object");
+  const resolverFields = new Map(resolverInput.properties.map((property) => {
+    if (ts.isShorthandPropertyAssignment(property)) return [property.name.text, property.name.text];
+    if (ts.isPropertyAssignment(property)) return [textOf(property.name), textOf(property.initializer)];
+    return ["", ""];
+  }));
+  assert.deepEqual(Object.fromEntries(resolverFields), {
+    sequenceId: "sequenceId",
+    fromShot: "shot",
+    toShot: "shots[index + 1]",
+    transitions: "transitions"
+  }, "buildContexts must pass the exact sequence and adjacent pair to the pure resolver");
+  assert.ok(!buildSource.includes("transitionByPair"),
+    "Panel must not retain the unscoped pair-only transition map");
 }
 
 await assertPanelTransitionWiring();
