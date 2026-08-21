@@ -389,7 +389,15 @@ assert.match(app, /const scriptTransitionDirtyRef = useRef\(false\)/);
 assert.match(app, /const markScriptTransitionDirty = \(\) => \{\s*scriptRevisionRef\.current \+= 1;\s*setScriptTransitionDirtyValue\(true\);\s*\}/);
 assert.match(app, /const resetScriptTransitionTracking = \(\) => \{\s*scriptRevisionRef\.current \+= 1;\s*setScriptTransitionDirtyValue\(false\);\s*\}/);
 assert.match(app, /const shotTransitions = useStoryboardStore\(\(state\) => state\.shotTransitions\)/);
+assert.match(app, /const selectedShotIds = useStoryboardStore\(\(state\) => state\.selectedShotIds\)/, "App must subscribe to the persisted multi-shot selection");
 assert.match(app, /const selectedShotTransitionId = useStoryboardStore\(\(state\) => state\.selectedShotTransitionId\)/);
+const autosaveSelectionTracking = blockBetween(app, "saveAutosaveSnapshot({", "  ]);");
+assert.ok(
+  (autosaveSelectionTracking.match(/selectedShotIds/g) ?? []).length >= 2,
+  "browser autosave must persist selectedShotIds and reschedule when it changes"
+);
+const desktopSelectionTracking = blockBetween(app, "if (!isDesktopRuntime()) return;", "const onSaveDesktop");
+assert.match(desktopSelectionTracking, /selectedShotIds/, "desktop snapshot scheduling must react to selectedShotIds changes");
 assert.match(app, /const scriptShots = shots[\s\S]*?\.filter\(\(shot\) => shot\.sequenceId === currentSequenceId\)[\s\S]*?\.sort\(\(a, b\) => a\.order - b\.order\)/);
 assert.match(app, /const scriptTransitions = shotTransitions\.filter\(\(item\) => item\.sequenceId === currentSequenceId\)/);
 
