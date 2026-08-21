@@ -12,6 +12,16 @@ export function parseShotScriptText(source, context) {
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.shots)) {
     return { ok: false, issues: [{ code: "shots_missing", path: "$.shots", message: "缺少 shots 数组" }] };
   }
+  for (let index = 0; index < parsed.shots.length; index += 1) {
+    const item = parsed.shots[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { ok: false, issues: [{ code: "shot_invalid", path: `$.shots[${index}]`, message: "镜头必须是对象" }] };
+    }
+  }
+  const hasTransitions = Object.prototype.hasOwnProperty.call(parsed, "transitions");
+  if (hasTransitions && parsed.transitions !== undefined && !Array.isArray(parsed.transitions)) {
+    return { ok: false, issues: [{ code: "transitions_invalid", path: "$.transitions", message: "transitions 必须是数组" }] };
+  }
   const fps = Math.max(1, Math.round(context.fps));
   const shots = parsed.shots.map((item, index) => {
     const id = text(item.id) || `shot_import_${String(index + 1).padStart(3, "0")}`;
@@ -47,6 +57,9 @@ export function parseShotScriptText(source, context) {
   const transitionPairs = new Set();
   for (let index = 0; index < (Array.isArray(parsed.transitions) ? parsed.transitions.length : 0); index += 1) {
     const item = parsed.transitions[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { ok: false, issues: [{ code: "transition_invalid", path: `$.transitions[${index}]`, message: "转场必须是对象" }] };
+    }
     const fromShotId = text(item.from ?? item.fromShotId);
     const toShotId = text(item.to ?? item.toShotId);
     if (!ids.has(fromShotId) || !ids.has(toShotId)) return { ok: false, issues: [{ code: "transition_shot_missing", path: `$.transitions[${index}]`, message: `${fromShotId} → ${toShotId} 引用了不存在的镜头` }] };

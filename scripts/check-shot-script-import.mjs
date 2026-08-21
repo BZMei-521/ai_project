@@ -39,4 +39,23 @@ for (const [payload, code] of [
   assert.equal(result.ok, false);
   assert.equal(result.issues[0].code, code);
 }
+
+const invalidShot = parseShotScriptText(JSON.stringify({ shots: [null] }), { fps: 24, sequenceId: "seq-1" });
+assert.equal(invalidShot.ok, false);
+assert.equal(invalidShot.issues[0].code, "shot_invalid");
+
+const invalidTransition = parseShotScriptText(JSON.stringify({
+  shots: [{ id: "a", title: "1" }, { id: "b", title: "2" }],
+  transitions: [null]
+}), { fps: 24, sequenceId: "seq-1" });
+assert.equal(invalidTransition.ok, false);
+assert.equal(invalidTransition.issues[0].code, "transition_invalid");
+
+const invalidTransitionsContainer = parseShotScriptText(JSON.stringify({
+  shots: [{ id: "a", title: "1" }, { id: "b", title: "2" }],
+  transitions: {}
+}), { fps: 24, sequenceId: "seq-1" });
+assert.equal(invalidTransitionsContainer.ok, false);
+assert.equal(invalidTransitionsContainer.issues[0].code, "transitions_invalid");
+
 console.log("PASS shot script import");
