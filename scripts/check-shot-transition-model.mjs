@@ -42,6 +42,36 @@ assert.deepEqual(
   ]
 );
 
+const [normalizedNonFiniteDuration] = reconcileLinearTransitions({
+  sequenceId: "seq-1",
+  orderedShots: [
+    { id: "shot-1", durationSeconds: 4 },
+    { id: "shot-2", durationSeconds: 0.25 }
+  ],
+  existingTransitions: [{ ...first, durationSeconds: Number.NaN }]
+});
+assert.equal(normalizedNonFiniteDuration.durationSeconds, 0.25);
+
+const [hardCut] = reconcileLinearTransitions({
+  sequenceId: "seq-1",
+  orderedShots: [
+    { id: "shot-1", durationSeconds: 4 },
+    { id: "shot-2", durationSeconds: 3 }
+  ],
+  existingTransitions: [{ ...first, type: "hard_cut", durationSeconds: 0.25 }]
+});
+assert.equal(hardCut.durationSeconds, 0);
+
+const [clampedOverlongDuration] = reconcileLinearTransitions({
+  sequenceId: "seq-1",
+  orderedShots: [
+    { id: "shot-1", durationSeconds: 4 },
+    { id: "shot-2", durationSeconds: 3 }
+  ],
+  existingTransitions: [{ ...first, durationSeconds: 8 }]
+});
+assert.equal(clampedOverlongDuration.durationSeconds, 3);
+
 const moved = moveShotInLinearSequence({
   sequenceId: "seq-1",
   orderedShots: [

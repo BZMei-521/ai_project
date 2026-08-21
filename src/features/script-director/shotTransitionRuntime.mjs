@@ -34,9 +34,12 @@ export function reconcileLinearTransitions({ sequenceId, orderedShots, existingT
     const ceiling = Math.min(fromShot.durationSeconds, toShot.durationSeconds);
     const existing = existingByPair.get(pairKey(fromShot.id, toShot.id));
     if (!existing) return createDefaultShotTransition(sequenceId, fromShot.id, toShot.id, { maxDurationSeconds: ceiling });
+    const existingDuration = Number.isFinite(existing.durationSeconds)
+      ? existing.durationSeconds
+      : DEFAULT_DURATION_SECONDS;
     const durationSeconds = existing.type === "hard_cut"
       ? 0
-      : Math.min(Math.max(0, existing.durationSeconds), ceiling);
+      : Math.min(Math.max(0, existingDuration), ceiling);
     return { ...existing, durationSeconds };
   });
 }
