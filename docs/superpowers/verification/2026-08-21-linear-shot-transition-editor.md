@@ -19,9 +19,13 @@
 
 首次在受限沙箱内运行聚合命令时，Node 对 `C:\Users\Administrator` 的 `lstat` 返回 `EPERM`；按批准权限在正常 Windows 用户上下文重跑后得到上表中的正式结果。
 
+最终 remediation 后再次 fresh 运行：`test:script-transitions` 6/6、`test:director-desk` 6/6、TypeScript 和 Task 7 owned diff-check 均 exit 0；build 仍只在 548 modules 后命中相同 RunningHub `spawnSync` blocker。全工作树 `git diff --check` fresh exit 2，输出仍只定位范围外 `docs/storyboard-workflows-20260304.md:3,:5` 两处 trailing whitespace。覆盖本轮行为的 remediation commits：domain/store `cb35d29`、`2ed5451`、`1f694ef`、`5b485fb`、`ee772a0`、`f539c4c`、`2f6cd7d`；App/guards/checkers `23e896c`、`a229863`、`28670c9`、`2c5aefe`、`1a75f7c`、`b65f8bc`、`c539970`、`d1470ac`、`206a8e8`、`9cbb0d3`、`8c01b0f`；downstream `51fd35a`、`1101312`。
+
 ## 真实浏览器交互
 
 所有交互均通过 Playwright CLI wrapper 完成，使用普通 click、native select/fill、pointer drag 和 keyboard press；没有 force click。
+
+下列 1–10 为初始验收历史；其恢复状态文本和交互结论已由后文“最终 remediation 后 fresh 验收”替代。未被重跑的 1024×768 / 390×844 布局证据仍保留。
 
 1. 普通点击“剧本”，普通点击可见“导入 JSON 镜头剧本”标签打开 file chooser，导入 3-shot JSON（无 `transitions`）。界面显示 3 个节点和 2 条“连续动作 · 0.6s”默认边。
 2. 选择第一条边，改为“匹配剪辑”，展开高级参数，填写共享匹配帧 `frames/task7-shared.png`、动作延续、人物位置、运镜方向和备注；边标签立即更新为“匹配剪辑 · 0.6s”。
@@ -31,8 +35,21 @@
 6. 三个视口均普通点击关闭并重新打开检查器；节点链保持可横向滚动，检查器内容可滚动，页面根节点没有意外横向溢出。
 7. 用户明确授权替换隔离测试浏览器中的当前测试项目后，走正式“项目菜单 → 新建项目”流程，输入 `Task7 Persistence Acceptance` 并普通点击确认；网页模式返回 `创建失败：未创建桌面项目`，未产生可保存的 `.sbproj` 基线。正式“打开项目”可见按钮的普通 click 又被工作区 `panel-header` 截获；改用同一菜单的普通键盘 `Tab` / `Enter` 可进入 `.sbproj` 路径对话框，但仓库中没有可打开的 `.sbproj`，随后普通点击取消。没有绕过桌面能力边界。
 8. 在最终顺序 1→3→2 上重新编辑仍存在的 1→3 边：`match_cut`、`1.2s`、`shared_frame`、`frames/TASK7_PERSIST_SHARED.png`，并填写动作延续、人物位置、运镜方向与备注。普通点击“保存转场”仍明确返回 `保存已阻止：请先完成或重新加载当前项目`，因此不能声称桌面项目保存成功。
-9. reload 后出现正式“检测到可恢复快照”界面；普通点击“恢复最新”后，UI 报告 `已从自动保存恢复`。恢复态保留顺序“推门→窗边→抬眼”、2 条边、第一边“匹配剪辑 · 1.2s”、`shared_frame`、共享帧路径和全部高级文本；镜头 1 的画面提示 `TASK7_PROMPT_PUSH_DOOR` 也由检查器确认。`negativePrompt` 没有剧本检查器可见字段，不能仅以真实 UI 单独证明，但 import/store 聚合合同覆盖该字段。
+9. pre-remediation reload 后曾显示 `已从自动保存恢复`；这条状态证据现已被最终 remediation 的 `已从自动保存恢复，需保存` fresh 证据替代。
 10. 进入“成片”并打开高级工具成功；继续点击“打开当前辅助面板”时，已知 `runningHubResult.mjs` 浏览器外部化异常触发错误边界，因此连续性 UI 状态无法继续读取。
+
+## 最终 remediation 后 fresh 验收
+
+独立 Playwright session、1440×900、实际 URL `http://127.0.0.1:5174/`：
+
+1. 普通点击进入剧本，通过可见 import label 和标准 file chooser 导入无 `transitions` 的 3-shot JSON。UI 显示 3 个唯一节点和 2 条“连续动作 · 0.6s”默认边。
+2. 将最终存在的第一边编辑为 `match_cut` / `1.1s` / `shared_frame`，填写 `frames/FINAL_RECOVERY_SHARED.png`、`FINAL_ACTION_CONTINUITY`、`FINAL_POSITION_CENTER`、`FINAL_CAMERA_PUSH`、`FINAL_RECOVERY_NOTE`。
+3. dirty 后普通点击“资产”出现“未保存转场”。点“取消”后仍停留剧本，3 节点、2 边和编辑值保持；再次触发并点“仍要离开”后进入资产，返回剧本时 dirty 内存态仍完整。
+4. dirty re-import 选择 2-shot fixture 后出现“覆盖未保存剧本”。点“取消”后原 3-shot / matching edge 不变；同一文件可再次选择，点“覆盖”后才变为 2 节点 / 1 默认边，证明取消 fail-closed 且允许分支才替换。
+5. 再次覆盖为 3-shot、重设最终边并等待一个 autosave 周期。reload 出现“检测到可恢复快照”，页面已标记 `已从自动保存恢复，需保存`；普通点击“恢复最新”后该文本保持准确。
+6. 恢复后顺序为“最终推门→最终窗边→最终回望”，第一边为“匹配剪辑 · 1.1s”并恢复全部高级字段，第二边为“连续动作 · 0.6s”。分别普通点击两边，检查器连接标题严格为“最终推门 → 最终窗边”和“最终窗边 → 最终回望”。
+7. 可见 DOM metrics：`shotCount=3`、`uniqueShotLabels=3`、`transitionCount=2`；两次用相同 external shot IDs 完成允许覆盖后没有重复节点、错连或自环，global canonical ID remediation 未在 UI 产生身份泄漏。
+8. viewport/root 为 `1440×900 / 1440×1440`，页面横向溢出 0；镜头链继续拥有自己的横向滚动。fresh console 为 3 条消息、0 error、0 warning（唯一返回条目为 React DevTools info）。
 
 ## 视口与布局指标
 
@@ -55,7 +72,7 @@
 ## Console
 
 - 普通剧本编辑流程：唯一 error 是缺失 `favicon.ico` 的 404，无 warning。
-- 持久化复验 session 在 reload / “恢复最新”后的 fresh console：3 条消息，0 error、0 warning（返回的唯一可见条目为 React DevTools info）。fresh 指标为 viewport/root `1440/1440`、页面横向溢出 0、边标签 `[匹配剪辑 · 1.2s, 连续动作 · 0.6s]`、保存状态 `已从自动保存恢复`。
+- 最终 remediation session 在 reload / “恢复最新”后的 fresh console：3 条消息，0 error、0 warning（唯一返回条目为 React DevTools info）。fresh 指标为 viewport/root `1440/1440`、页面横向溢出 0、边标签 `[匹配剪辑 · 1.1s, 连续动作 · 0.6s]`、保存状态 `已从自动保存恢复，需保存`。
 - 打开成片辅助面板后：React error boundary 捕获 RunningHub 模块异常；精确堆栈指向 `src/modules/video-production/runningHubResult.mjs:4:157`。
 
 ## 阻塞项
@@ -83,6 +100,6 @@ Cannot access "node:child_process.spawnSync" in client code.
 
 用户已明确授权在隔离测试浏览器内新建/替换测试项目，正式提交新建仍返回 `创建失败：未创建桌面项目`。正式打开流程可到达 `.sbproj` 路径对话框，但仓库没有可用基线；普通点击保存返回 `保存已阻止：请先完成或重新加载当前项目`。因此桌面项目的“保存成功 → reload / 打开项目”仍是环境阻塞，不能标记通过。
 
-浏览器自动保存是独立路径：reload 后普通点击“恢复最新”成功恢复最终顺序和转场全部高级字段，状态显示 `已从自动保存恢复`。该结果证明恢复快照保真，不等同于 `.sbproj` 手动保存成功。
+浏览器自动保存是独立路径：最终 remediation fresh reload 后普通点击“恢复最新”成功恢复最终顺序和转场全部高级字段，状态显示 `已从自动保存恢复，需保存`。该结果证明恢复快照保真且明确保持 dirty，不等同于 `.sbproj` 手动保存成功。
 
 另发现项目菜单打开时，可见且启用的“打开项目”普通指针点击被工作区 `panel-header` 截获；键盘 `Tab` / `Enter` 可达。这是可访问但指针命中层叠异常，未使用 force click。
