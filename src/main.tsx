@@ -5,6 +5,7 @@ import { AppErrorBoundary } from "./app/AppErrorBoundary";
 import "./styles/global.css";
 import "./styles/director-desk-tokens.css";
 import "./styles/director-desk.css";
+import "./styles/script-transition-editor.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

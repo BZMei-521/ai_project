@@ -1,0 +1,88 @@
+.director-desk [data-stage-view="script"] {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+  padding: 20px;
+}
+
+.director-desk [data-stage-view="script"] .script-transition-toolbar,
+.director-desk [data-stage-view="script"] .script-transition-toolbar-actions,
+.director-desk [data-stage-view="script"] [data-script-shot-chain],
+.director-desk [data-stage-view="script"] .script-shot-order-actions {
+  display: flex;
+  align-items: center;
+}
+
+.director-desk [data-stage-view="script"] .script-transition-toolbar { justify-content: space-between; gap: 16px; }
+.director-desk [data-stage-view="script"] .script-transition-toolbar :is(p, h1),
+.director-desk [data-stage-view="script"] .script-transition-inspector :is(p, h2),
+.director-desk [data-stage-view="script"] .script-shot-inspector :is(p, h2) { margin: 0; }
+.director-desk [data-stage-view="script"] .script-transition-toolbar-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+.director-desk [data-stage-view="script"] .script-import-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--director-teal);
+  border-radius: 8px;
+  color: var(--director-teal);
+  cursor: pointer;
+}
+
+.director-desk [data-stage-view="script"] .script-import-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.director-desk [data-stage-view="script"] .script-import-trigger:focus-within { outline: 2px solid var(--director-teal); outline-offset: 2px; }
+.director-desk [data-stage-view="script"] .script-shot-chain-viewport { max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; padding: 14px 4px 20px; }
+.director-desk [data-stage-view="script"] [data-script-shot-chain] { width: max-content; min-width: 100%; }
+
+.director-desk [data-stage-view="script"] [data-shot-node] {
+  flex: 0 0 248px;
+  width: 248px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--director-teal) 24%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--director-teal) 5%, transparent);
+}
+
+.director-desk [data-stage-view="script"] [data-shot-node][data-selected="true"] { border-color: var(--director-teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--director-teal) 25%, transparent); }
+.director-desk [data-stage-view="script"] .script-shot-select { display: grid; width: 100%; gap: 8px; padding: 0; border: 0; color: inherit; text-align: left; background: transparent; }
+.director-desk [data-stage-view="script"] .script-shot-thumb { display: grid; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 8px; background: #071216; }
+.director-desk [data-stage-view="script"] .script-shot-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.director-desk [data-stage-view="script"] .script-shot-order-actions { justify-content: space-between; margin-top: 8px; }
+
+.director-desk [data-stage-view="script"] [data-transition-edge] {
+  position: relative;
+  flex: 0 0 152px;
+  min-width: 152px;
+  height: 2px;
+  margin-inline: 8px;
+  background: color-mix(in srgb, var(--director-teal) 55%, transparent);
+}
+
+.director-desk [data-stage-view="script"] [data-transition-edge]::after { position: absolute; top: 50%; right: -1px; width: 8px; height: 8px; border-top: 2px solid var(--director-teal); border-right: 2px solid var(--director-teal); content: ""; transform: translateY(-50%) rotate(45deg); }
+.director-desk [data-stage-view="script"] [data-transition-edge] button { position: absolute; left: 50%; bottom: 8px; width: max-content; max-width: 146px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--director-teal) 35%, transparent); border-radius: 999px; transform: translateX(-50%); }
+.director-desk [data-stage-view="script"] [data-transition-edge][data-selected="true"] button { border-color: var(--director-teal); color: var(--director-teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--director-teal) 25%, transparent); }
+
+.director-desk [data-stage-view="script"] :is(.script-transition-empty, .script-import-errors) { padding: 20px; border: 1px solid color-mix(in srgb, var(--director-teal) 24%, transparent); border-radius: 12px; }
+.director-desk [data-stage-view="script"] .script-import-errors { border-color: var(--director-stop); color: var(--director-stop); }
+.director-desk [data-stage-view="script"] :is(.script-transition-inspector, .script-shot-inspector) { display: grid; gap: 14px; }
+.director-desk [data-stage-view="script"] :is(.script-transition-inspector, .script-shot-inspector) label { display: grid; gap: 6px; }
+.director-desk [data-stage-view="script"] :is(.script-transition-inspector, .script-shot-inspector) :is(input, select, textarea) { width: 100%; box-sizing: border-box; }
+.director-desk [data-stage-view="script"] [data-transition-advanced] { display: grid; gap: 12px; }
+.director-desk [data-stage-view="script"] [data-transition-advanced] > summary { cursor: pointer; }
+.director-desk [data-stage-view="script"] .script-boundary-waiting { color: var(--director-warn); }
+.director-desk [data-stage-view="script"] .script-shot-inspector dl { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); gap: 8px 12px; margin: 0; }
+.director-desk [data-stage-view="script"] .script-shot-inspector :is(dt, dd) { margin: 0; }
+
+@media (min-width: 768px) and (max-width: 1099px), (pointer: coarse) {
+  .director-desk [data-stage-view="script"] :is(button, input, select, summary, .script-import-trigger) { min-height: 44px; }
+}
+
+@media (max-width: 767px) {
+  .director-desk [data-stage-view="script"] { padding: 14px; }
+  .director-desk [data-stage-view="script"] .script-transition-toolbar { align-items: flex-start; flex-direction: column; }
+  .director-desk [data-stage-view="script"] .script-transition-toolbar-actions { width: 100%; justify-content: flex-start; }
+  .director-desk [data-stage-view="script"] :is(.script-transition-inspector, .script-shot-inspector) { gap: 16px; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+}
