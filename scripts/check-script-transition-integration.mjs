@@ -369,10 +369,68 @@ function descendants(node, predicate) {
   return matches;
 }
 
-function callsWithCalleeText(node, calleeText) {
-  return descendants(node, (current) => (
-    ts.isCallExpression(current) && current.expression.getText() === calleeText
-  ));
+function localCallbacksWithin(root) {
+  const callbacks = new Map();
+  const visit = (current) => {
+    if (current !== root && ts.isFunctionDeclaration(current)) {
+      if (current.name && current.body) callbacks.set(current.name.text, current);
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(current) &&
+      ts.isIdentifier(current.name) &&
+      current.initializer &&
+      (ts.isArrowFunction(current.initializer) || ts.isFunctionExpression(current.initializer))
+    ) {
+      callbacks.set(current.name.text, current.initializer);
+      return;
+    }
+    if (current !== root && ts.isFunctionLike(current)) return;
+    ts.forEachChild(current, visit);
+  };
+  visit(root);
+  return callbacks;
+}
+
+function reachableCallsWithCalleeText(root, calleeText) {
+  const matches = [];
+  const localCallbacks = localCallbacksWithin(root);
+  const activeCallbacks = new Set();
+  const timerCallees = new Set(["setInterval", "window.setInterval", "setTimeout", "window.setTimeout"]);
+
+  const visitCallback = (callback) => {
+    if (activeCallbacks.has(callback)) return;
+    activeCallbacks.add(callback);
+    visit(callback.body);
+    activeCallbacks.delete(callback);
+  };
+
+  const visit = (current) => {
+    if (current !== root && ts.isFunctionLike(current)) return;
+    if (ts.isCallExpression(current)) {
+      const currentCallee = current.expression.getText();
+      if (currentCallee === calleeText) matches.push(current);
+
+      if (ts.isIdentifier(current.expression)) {
+        const invokedCallback = localCallbacks.get(current.expression.text);
+        if (invokedCallback) visitCallback(invokedCallback);
+      }
+
+      if (timerCallees.has(currentCallee)) {
+        const scheduledCallback = current.arguments[0];
+        if (scheduledCallback && (ts.isArrowFunction(scheduledCallback) || ts.isFunctionExpression(scheduledCallback))) {
+          visitCallback(scheduledCallback);
+        } else if (scheduledCallback && ts.isIdentifier(scheduledCallback)) {
+          const referencedCallback = localCallbacks.get(scheduledCallback.text);
+          if (referencedCallback) visitCallback(referencedCallback);
+        }
+      }
+    }
+    ts.forEachChild(current, visit);
+  };
+
+  visit(root);
+  return matches;
 }
 
 function hasObjectProperty(objectLiteral, propertyName) {
@@ -400,11 +458,11 @@ function assertSelectedShotIdsSnapshotEffects(source, label) {
     node.expression.text === "useEffect"
   ));
   const browserEffects = effects.filter((effect) => (
-    effect.arguments[0] && callsWithCalleeText(effect.arguments[0], "saveAutosaveSnapshot").length > 0
+    effect.arguments[0] && reachableCallsWithCalleeText(effect.arguments[0], "saveAutosaveSnapshot").length > 0
   ));
   assert.equal(browserEffects.length, 1, `${label}: expected exactly one browser autosave effect`);
   const browserEffect = browserEffects[0];
-  const browserWrites = callsWithCalleeText(browserEffect.arguments[0], "saveAutosaveSnapshot");
+  const browserWrites = reachableCallsWithCalleeText(browserEffect.arguments[0], "saveAutosaveSnapshot");
   assert.equal(browserWrites.length, 1, `${label}: expected exactly one browser snapshot write`);
   assert.ok(
     browserWrites[0].arguments[0] &&
@@ -420,8 +478,8 @@ function assertSelectedShotIdsSnapshotEffects(source, label) {
 
   const desktopEffects = effects.filter((effect) => (
     effect.arguments[0] &&
-    callsWithCalleeText(effect.arguments[0], "shouldScheduleDesktopSnapshotSave").length > 0 &&
-    callsWithCalleeText(effect.arguments[0], "desktopSaveCoordinator.save").length > 0
+    reachableCallsWithCalleeText(effect.arguments[0], "shouldScheduleDesktopSnapshotSave").length > 0 &&
+    reachableCallsWithCalleeText(effect.arguments[0], "desktopSaveCoordinator.save").length > 0
   ));
   assert.equal(desktopEffects.length, 1, `${label}: expected exactly one desktop autosave effect`);
   assertEffectDependency(
@@ -463,24 +521,34 @@ assert.match(app, /const resetScriptTransitionTracking = \(\) => \{\s*scriptRevi
 assert.match(app, /const shotTransitions = useStoryboardStore\(\(state\) => state\.shotTransitions\)/);
 assert.match(app, /const selectedShotTransitionId = useStoryboardStore\(\(state\) => state\.selectedShotTransitionId\)/);
 assertSelectedShotIdsSnapshotEffects(app, "App snapshot effects");
-const snapshotEffectsFixture = ({ browserProperty = true, browserDependency = true, desktopDependency = true } = {}) => `
+const snapshotEffectsFixture = ({
+  browserProperty = true,
+  browserDependency = true,
+  desktopDependency = true,
+  deadBrowserOwnership = false,
+  deadDesktopOwnership = false
+} = {}) => `
   const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     loadWorkspace();
   }, []);
   useEffect(() => {
+    ${deadBrowserOwnership ? "const neverRunBrowserSave = () => {" : ""}
     saveAutosaveSnapshot({
       ${browserProperty ? "selectedShotIds," : "project,"}
     }, 30);
+    ${deadBrowserOwnership ? "};" : ""}
   }, [
     ${browserDependency ? "selectedShotIds" : "project"}
   ]);
   useEffect(() => {
+    ${deadDesktopOwnership ? "function neverRunDesktopSave() {" : ""}
     if (!isDesktopRuntime()) return;
     const snapshot = readCurrentStoryboardSnapshot();
     if (!shouldScheduleDesktopSnapshotSave({ snapshot })) return;
     void desktopSaveCoordinator.save({ snapshot });
+    ${deadDesktopOwnership ? "}" : ""}
   }, [
     ${desktopDependency ? "selectedShotIds" : "project"}
   ]);
@@ -500,6 +568,35 @@ assert.throws(
   () => assertSelectedShotIdsSnapshotEffects(snapshotEffectsFixture({ browserDependency: false }), "missing browser dependency fixture"),
   /browser autosave effect dependency must include selectedShotIds/,
   "browser autosave snapshot property must not substitute for its effect dependency"
+);
+assert.throws(
+  () => assertSelectedShotIdsSnapshotEffects(snapshotEffectsFixture({ deadBrowserOwnership: true }), "dead browser helper fixture"),
+  /expected exactly one browser autosave effect/,
+  "an uninvoked local browser-save helper must not establish effect ownership"
+);
+assert.throws(
+  () => assertSelectedShotIdsSnapshotEffects(snapshotEffectsFixture({ deadDesktopOwnership: true }), "dead desktop helper fixture"),
+  /expected exactly one desktop autosave effect/,
+  "uninvoked local desktop-save identifiers must not establish effect ownership"
+);
+const scheduledIdentifierCallbacksFixture = `
+  const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
+  useEffect(() => {
+    const writeBrowserSnapshot = () => saveAutosaveSnapshot({ selectedShotIds }, 30);
+    setInterval(writeBrowserSnapshot, 30000);
+  }, [selectedShotIds]);
+  useEffect(() => {
+    const writeDesktopSnapshot = () => {
+      const snapshot = readCurrentStoryboardSnapshot();
+      if (!shouldScheduleDesktopSnapshotSave({ snapshot })) return;
+      void desktopSaveCoordinator.save({ snapshot });
+    };
+    window.setTimeout(writeDesktopSnapshot, 1200);
+  }, [selectedShotIds]);
+`;
+assert.doesNotThrow(
+  () => assertSelectedShotIdsSnapshotEffects(scheduledIdentifierCallbacksFixture, "scheduled identifier callbacks fixture"),
+  "identifier callbacks actually passed to timers must establish scheduled effect ownership"
 );
 assert.match(app, /const scriptShots = shots[\s\S]*?\.filter\(\(shot\) => shot\.sequenceId === currentSequenceId\)[\s\S]*?\.sort\(\(a, b\) => a\.order - b\.order\)/);
 assert.match(app, /const scriptTransitions = shotTransitions\.filter\(\(item\) => item\.sequenceId === currentSequenceId\)/);
