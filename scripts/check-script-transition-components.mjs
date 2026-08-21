@@ -8,13 +8,17 @@ import { build } from "esbuild";
 
 const css = await readFile("src/styles/script-transition-editor.css", "utf8").catch(() => "");
 const main = await readFile("src/main.tsx", "utf8");
+const directorViewSource = await readFile("src/features/script-director/ScriptDirectorView.tsx", "utf8");
+assert.match(directorViewSource, /onSelectionChange:\s*\(selection:\s*\{\s*shotId:\s*string \| null;\s*transitionId:\s*string \| null\s*\}\)\s*=>\s*void;/, "selection change must be a required authoritative prop");
+assert.doesNotMatch(directorViewSource, /onSelect(?:Shot|Transition)\??:/, "view-level legacy selection callbacks must not remain public");
 const chainOverflowRule = css.match(/\.director-desk \[data-stage-view="script"\] \.script-shot-chain-viewport\s*\{[^}]*\}/s)?.[0] ?? "";
 assert.match(chainOverflowRule, /overflow-x:\s*auto/);
 assert.match(chainOverflowRule, /overflow-y:\s*hidden/);
 assert.equal([...css.matchAll(/overflow-x:\s*auto/g)].length, 1, "only the shot chain may own horizontal auto overflow");
 assert.match(css, /\[data-shot-node\]\s*\{[^}]*width:\s*248px/s);
 assert.match(css, /\[data-shot-node\]\[data-selected="true"\]/);
-assert.match(css, /\[data-shot-node\]\[data-drop-target="true"\]/);
+assert.match(css, /\[data-shot-node\]\[data-drop-side="left"\]/);
+assert.match(css, /\[data-shot-node\]\[data-drop-side="right"\]/);
 assert.match(css, /\[data-transition-edge\]\[data-selected="true"\]/);
 assert.match(css, /\[data-transition-edge\]\s*\{[^}]*height:\s*2px/s, "directed edge line must be two pixels");
 assert.match(css, /\[data-transition-edge\]::after\s*\{[^}]*border-top:\s*2px[^}]*border-right:\s*2px/s, "directed edge arrow must be two pixels");
@@ -66,8 +70,6 @@ try {
     type: "continuous", durationSeconds: 0.6, frameDependency: "previous_tail",
     actionContinuity: "", characterPosition: "", cameraDirection: "", notes: ""
   };
-  const selectedShots = [];
-  const selectedTransitions = [];
   const selectionChanges = [];
   const moves = [];
   const imports = [];
@@ -76,8 +78,6 @@ try {
   const view = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
     shots: [shotA, shotB], transitions: [transitionAB], fps: 24, sequenceId: "seq-1",
     selectedShotId: "a", selectedTransitionId: transitionAB.id,
-    onSelectShot: selectedShots.push.bind(selectedShots),
-    onSelectTransition: selectedTransitions.push.bind(selectedTransitions),
     onSelectionChange: (selection) => selectionChanges.push(selection),
     onMoveShot: (...args) => moves.push(args),
     onImportScript: (value) => imports.push(value),
@@ -102,11 +102,36 @@ try {
   assert.equal(view.root.findByProps({ "aria-label": "镜头 B 向前移动" }).props.disabled, false);
   assert.equal(view.root.findByProps({ "aria-label": "镜头 B 向后移动" }).props.disabled, true);
   view.root.findAllByProps({ className: "script-shot-select" })[0].props.onClick();
-  assert.deepEqual(selectedShots, ["a"]);
   assert.deepEqual(selectionChanges.at(-1), { shotId: "a", transitionId: null });
   edge.findByType("button").props.onClick();
-  assert.deepEqual(selectedTransitions, [transitionAB.id]);
   assert.deepEqual(selectionChanges.at(-1), { shotId: null, transitionId: transitionAB.id });
+
+  let controlledSelection = { shotId: "a", transitionId: null };
+  let controlledView;
+  const renderControlledView = () => React.createElement(runtime.ScriptDirectorView, {
+    shots: [shotA, shotB], transitions: [transitionAB], fps: 24, sequenceId: "seq-1",
+    selectedShotId: controlledSelection.shotId, selectedTransitionId: controlledSelection.transitionId,
+    onSelectionChange: (selection) => {
+      controlledSelection = selection;
+      controlledView.update(renderControlledView());
+    },
+    onMoveShot: () => undefined, onImportScript: () => undefined
+  });
+  controlledView = TestRenderer.create(renderControlledView());
+  assert.equal(controlledView.root.findAllByProps({ "data-selected": true }).length, 1);
+  assert.equal(controlledView.root.findAllByProps({ "data-shot-node": true })[0].props["data-selected"], true);
+  await TestRenderer.act(async () => {
+    controlledView.root.findByProps({ "data-transition-edge": true }).findByType("button").props.onClick();
+  });
+  assert.deepEqual(controlledSelection, { shotId: null, transitionId: transitionAB.id });
+  assert.equal(controlledView.root.findAllByProps({ "data-selected": true }).length, 1);
+  assert.equal(controlledView.root.findByProps({ "data-transition-edge": true }).props["data-selected"], true);
+  await TestRenderer.act(async () => {
+    controlledView.root.findAllByProps({ className: "script-shot-select" })[0].props.onClick();
+  });
+  assert.deepEqual(controlledSelection, { shotId: "a", transitionId: null });
+  assert.equal(controlledView.root.findAllByProps({ "data-selected": true }).length, 1);
+  assert.equal(controlledView.root.findAllByProps({ "data-shot-node": true })[0].props["data-selected"], true);
   view.root.findByProps({ "aria-label": "镜头 A 向后移动" }).props.onClick();
   view.root.findByProps({ "aria-label": "镜头 B 向前移动" }).props.onClick();
   assert.deepEqual(moves, [["a", 1], ["b", 0]]);
@@ -121,12 +146,25 @@ try {
     shotArticles[1].props.onDragOver({ preventDefault: () => { dragPrevented = true; } });
   });
   assert.equal(dragPrevented, true);
-  assert.equal(view.root.findAllByProps({ "data-shot-node": true })[1].props["data-drop-target"], true);
+  assert.equal(view.root.findAllByProps({ "data-shot-node": true })[1].props["data-drop-side"], "right");
   await TestRenderer.act(async () => {
     view.root.findAllByProps({ "data-shot-node": true })[1].props.onDrop({ preventDefault: () => undefined });
   });
   assert.deepEqual(moves.at(-1), ["a", 1], "drop must move the dragged shot to the exact target index");
-  assert.equal(view.root.findAllByProps({ "data-drop-target": true }).length, 0);
+  assert.equal(view.root.findAll((node) => node.props["data-drop-side"] !== undefined).length, 0);
+
+  await TestRenderer.act(async () => {
+    view.root.findAllByProps({ "data-shot-node": true })[1].props.onDragStart({ dataTransfer });
+  });
+  await TestRenderer.act(async () => {
+    view.root.findAllByProps({ "data-shot-node": true })[0].props.onDragOver({ preventDefault: () => undefined });
+  });
+  assert.equal(view.root.findAllByProps({ "data-shot-node": true })[0].props["data-drop-side"], "left");
+  await TestRenderer.act(async () => {
+    view.root.findAllByProps({ "data-shot-node": true })[0].props.onDrop({ preventDefault: () => undefined });
+  });
+  assert.deepEqual(moves.at(-1), ["b", 0], "backward drop must preserve the exact target index");
+  assert.equal(view.root.findAll((node) => node.props["data-drop-side"] !== undefined).length, 0);
   const undo = view.root.findByProps({ "aria-label": "撤销镜头排序" });
   const redo = view.root.findByProps({ "aria-label": "重做镜头排序" });
   assert.equal(undo.disabled ?? undo.props.disabled, false);
@@ -156,6 +194,7 @@ try {
   const readFailureImports = [];
   const readFailureView = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
     shots: [shotA], transitions: [], fps: 24, sequenceId: "seq-1",
+    onSelectionChange: () => undefined,
     onImportScript: (value) => readFailureImports.push(value)
   }), { createNodeMock(element) { return element.props.role === "alert" ? { focus() { alertFocusCount += 1; } } : null; } });
   await TestRenderer.act(async () => {
@@ -171,6 +210,7 @@ try {
   const parserFailureImports = [];
   const parserFailureView = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
     shots: [], transitions: [], fps: { valueOf() { throw new Error("unexpected parser failure"); } }, sequenceId: "seq-1",
+    onSelectionChange: () => undefined,
     onImportScript: (value) => parserFailureImports.push(value)
   }));
   await TestRenderer.act(async () => {
@@ -184,7 +224,7 @@ try {
   const emptyView = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
     shots: [], transitions: [], fps: 24, sequenceId: "seq-1",
     selectedShotId: null, selectedTransitionId: null,
-    onSelectShot: () => undefined, onSelectTransition: () => undefined,
+    onSelectionChange: () => undefined,
     onMoveShot: () => undefined, onImportScript: () => undefined
   }));
   assert.match(JSON.stringify(emptyView.toJSON()), /导入 JSON 镜头剧本/);

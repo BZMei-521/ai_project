@@ -11,9 +11,7 @@ export type ScriptDirectorViewProps = {
   sequenceId?: string;
   selectedShotId?: string | null;
   selectedTransitionId?: string | null;
-  onSelectShot?: (shotId: string) => void;
-  onSelectTransition?: (transitionId: string) => void;
-  onSelectionChange?: (selection: { shotId: string | null; transitionId: string | null }) => void;
+  onSelectionChange: (selection: { shotId: string | null; transitionId: string | null }) => void;
   onMoveShot?: (shotId: string, targetIndex: number) => void;
   onImportScript?: (script: NormalizedShotScript) => void;
   canUndo?: boolean;
@@ -24,7 +22,7 @@ export type ScriptDirectorViewProps = {
 
 const noop = () => undefined;
 
-export function ScriptDirectorView({ shots = [], transitions = [], fps = 24, sequenceId = "sequence-main", selectedShotId = null, selectedTransitionId = null, onSelectShot = noop, onSelectTransition = noop, onSelectionChange = noop, onMoveShot = noop, onImportScript = noop, canUndo = false, canRedo = false, onUndo = noop, onRedo = noop }: ScriptDirectorViewProps): JSX.Element {
+export function ScriptDirectorView({ shots = [], transitions = [], fps = 24, sequenceId = "sequence-main", selectedShotId = null, selectedTransitionId = null, onSelectionChange, onMoveShot = noop, onImportScript = noop, canUndo = false, canRedo = false, onUndo = noop, onRedo = noop }: ScriptDirectorViewProps): JSX.Element {
   const [draggedShotId, setDraggedShotId] = useState<string | null>(null);
   const [dragOverShotId, setDragOverShotId] = useState<string | null>(null);
   const [issues, setIssues] = useState<ShotScriptImportIssue[]>([]);
@@ -50,7 +48,11 @@ export function ScriptDirectorView({ shots = [], transitions = [], fps = 24, seq
 
   const importControl = <label className="script-import-trigger"><span>导入 JSON 镜头剧本</span><input id="script-shot-script-file" className="script-import-input" type="file" accept="application/json,.json" onChange={onFileChange} /></label>;
   const chainItems: ReactNode[] = [];
+  const draggedShotIndex = draggedShotId ? shots.findIndex((shot) => shot.id === draggedShotId) : -1;
   shots.forEach((shot, index) => {
+    const dropSide = dragOverShotId === shot.id && draggedShotIndex >= 0
+      ? draggedShotIndex < index ? "right" : draggedShotIndex > index ? "left" : null
+      : null;
     const onDragStart = (event: DragEvent<HTMLElement>) => {
       setDraggedShotId(shot.id);
       setDragOverShotId(null);
@@ -58,12 +60,12 @@ export function ScriptDirectorView({ shots = [], transitions = [], fps = 24, seq
       if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
     };
     chainItems.push(
-      <ShotNode key={shot.id} shot={shot} index={index} fps={fps} selected={selectedTransitionId === null && selectedShotId === shot.id} dropTarget={dragOverShotId === shot.id} canMoveBack={index > 0} canMoveForward={index < shots.length - 1} onSelect={() => { onSelectionChange({ shotId: shot.id, transitionId: null }); onSelectShot(shot.id); }} onMove={(offset) => onMoveShot(shot.id, index + offset)} onDragStart={onDragStart} onDragOver={(event) => { event.preventDefault(); if (draggedShotId && draggedShotId !== shot.id) setDragOverShotId(shot.id); }} onDragEnd={() => { setDraggedShotId(null); setDragOverShotId(null); }} onDrop={(event) => { event.preventDefault(); if (draggedShotId && draggedShotId !== shot.id) onMoveShot(draggedShotId, index); setDraggedShotId(null); setDragOverShotId(null); }} />
+      <ShotNode key={shot.id} shot={shot} index={index} fps={fps} selected={selectedTransitionId === null && selectedShotId === shot.id} dropSide={dropSide} canMoveBack={index > 0} canMoveForward={index < shots.length - 1} onSelect={() => onSelectionChange({ shotId: shot.id, transitionId: null })} onMove={(offset) => onMoveShot(shot.id, index + offset)} onDragStart={onDragStart} onDragOver={(event) => { event.preventDefault(); if (draggedShotId && draggedShotId !== shot.id) setDragOverShotId(shot.id); }} onDragEnd={() => { setDraggedShotId(null); setDragOverShotId(null); }} onDrop={(event) => { event.preventDefault(); if (draggedShotId && draggedShotId !== shot.id) onMoveShot(draggedShotId, index); setDraggedShotId(null); setDragOverShotId(null); }} />
     );
     const nextShot = shots[index + 1];
     if (!nextShot) return;
     const transition = transitions.find((item) => item.fromShotId === shot.id && item.toShotId === nextShot.id);
-    if (transition) chainItems.push(<TransitionEdge key={transition.id} transition={transition} selected={selectedTransitionId === transition.id} onSelect={() => { onSelectionChange({ shotId: null, transitionId: transition.id }); onSelectTransition(transition.id); }} />);
+    if (transition) chainItems.push(<TransitionEdge key={transition.id} transition={transition} selected={selectedTransitionId === transition.id} onSelect={() => onSelectionChange({ shotId: null, transitionId: transition.id })} />);
   });
 
   return (
