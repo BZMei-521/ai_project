@@ -25,7 +25,14 @@ assert.match(css, /\[data-transition-edge\]::after\s*\{[^}]*border-top:\s*2px[^}
 assert.match(css, /\.director-desk\[data-stage="script"\] :is\(\.script-transition-inspector, \.script-shot-inspector\)/, "inspector rules must match the sibling shell drawer while script stage is active");
 const inspectorSelectorLines = css.split(/\r?\n/).filter((line) => /(?:\.script-transition-inspector|\.script-shot-inspector)/.test(line));
 assert.ok(inspectorSelectorLines.length > 0 && inspectorSelectorLines.every((line) => line.trim().startsWith('.director-desk[data-stage="script"]')), "inspector rules cannot depend on being a child of the stage view");
-assert.match(css, /\.script-shot-order-actions button\s*\{[^}]*min-height:\s*44px[^}]*min-inline-size:\s*44px/s, "compact/coarse move controls must be 44 by 44 pixels");
+const importTriggerRule = css.match(/\.director-desk \[data-stage-view="script"\] \.script-import-trigger\s*\{[^}]*\}/s)?.[0] ?? "";
+assert.match(importTriggerRule, /min-height:\s*44px/, "visible import control must be at least 44px high at 390px");
+assert.match(importTriggerRule, /min-block-size:\s*44px/, "visible import control must preserve a logical 44px block target");
+const moveTargetRule = css.match(/\.director-desk \[data-stage-view="script"\] \.script-shot-order-actions button\s*\{[^}]*\}/s)?.[0] ?? "";
+for (const dimension of ["min-height", "min-block-size", "min-width", "min-inline-size"]) {
+  assert.match(moveTargetRule, new RegExp(`${dimension}:\\s*44px`), `move controls must declare ${dimension}: 44px`);
+}
+assert.match(moveTargetRule, /flex:\s*0\s+0\s+44px/, "move controls must not flex-shrink below 44px");
 assert.match(css, /@media\s*\(max-width:\s*767px\)[\s\S]*\.director-desk\[data-stage="script"\][^{]*(?:\.script-transition-inspector|\.script-shot-inspector)[\s\S]*safe-area-inset-bottom/);
 assert.ok(main.indexOf("director-desk.css") < main.indexOf("script-transition-editor.css"), "transition CSS must load after Director Desk CSS");
 
