@@ -1,4 +1,5 @@
 const BOUNDARY_KINDS = new Set(["continuous", "match_cut", "hard_cut", "scene_change"]);
+const FRAME_DEPENDENCIES = new Set(["none", "previous_tail", "shared_frame"]);
 
 export function planVideoContinuity(input = {}) {
   const shots = normalizeShots(input.shots);
@@ -14,17 +15,22 @@ export function planVideoContinuity(input = {}) {
     const kind = normalizeBoundaryKind(
       configured.kind ?? fromShot.videoBoundaryKind ?? toShot.videoBoundaryKind
     );
+    const frameDependency = normalizeFrameDependency(configured.frameDependency, kind);
+    const durationSeconds = normalizeBoundaryDuration(configured.durationSeconds, kind);
     boundaries.push({
       id: boundaryId(fromShot.id, toShot.id),
       fromShotId: fromShot.id,
       toShotId: toShot.id,
       kind,
-      ...(cleanText(configured.sharedFramePath)
+      ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+      ...normalizedBoundaryGuidance(configured),
+      frameDependency,
+      ...(frameDependency === "shared_frame" && cleanText(configured.sharedFramePath)
         ? { sharedFramePath: cleanText(configured.sharedFramePath) }
         : {}),
-      requiresApproval: kind === "continuous" || kind === "match_cut",
+      requiresApproval: frameDependency !== "none",
       approvalStatus: normalizeApprovalStatus(configured.approvalStatus),
-      ...(cleanText(configured.sharedFrameSource)
+      ...(frameDependency === "shared_frame" && cleanText(configured.sharedFrameSource)
         ? { sharedFrameSource: cleanText(configured.sharedFrameSource) }
         : {})
     });
@@ -44,11 +50,13 @@ export function planVideoContinuity(input = {}) {
     const target = executionByShotId.get(boundary.toShotId);
     if (!fromShot || !target) continue;
 
-    if (boundary.kind === "continuous") {
+    if (boundary.frameDependency === "previous_tail") {
       target.dependencyTaskIds = [shotTaskId(boundary.fromShotId)];
       if (boundary.approvalStatus !== "approved") {
         target.status = "awaiting_approval";
-        target.blockReason = "continuous_boundary_not_approved";
+        target.blockReason = boundary.kind === "continuous"
+          ? "continuous_boundary_not_approved"
+          : "previous_tail_boundary_not_approved";
         continue;
       }
       const approvedTailPath = cleanText(fromShot.approvedTailFramePath);
@@ -66,7 +74,7 @@ export function planVideoContinuity(input = {}) {
       continue;
     }
 
-    if (boundary.kind === "match_cut") {
+    if (boundary.frameDependency === "shared_frame") {
       const sharedFramePath = cleanText(boundary.sharedFramePath);
       if (
         boundary.approvalStatus !== "approved" ||
@@ -74,7 +82,9 @@ export function planVideoContinuity(input = {}) {
         !sharedFramePath
       ) {
         target.status = "awaiting_approval";
-        target.blockReason = "match_cut_shared_frame_not_independently_approved";
+        target.blockReason = boundary.kind === "match_cut"
+          ? "match_cut_shared_frame_not_independently_approved"
+          : "shared_frame_not_independently_approved";
         continue;
       }
       target.firstFrameInput = {
@@ -261,16 +271,22 @@ function normalizeBoundaryInputs(value) {
     if (!fromShotId || !toShotId) continue;
     const pairKey = boundaryKey(fromShotId, toShotId);
     const explicitId = cleanText(candidate.id);
+    const kind = normalizeBoundaryKind(candidate.kind);
+    const frameDependency = normalizeFrameDependency(candidate.frameDependency, kind);
+    const durationSeconds = normalizeBoundaryDuration(candidate.durationSeconds, kind);
     const normalized = {
       ...(explicitId ? { id: explicitId } : {}),
       fromShotId,
       toShotId,
-      kind: normalizeBoundaryKind(candidate.kind),
+      kind,
+      ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+      ...normalizedBoundaryGuidance(candidate),
+      frameDependency,
       approvalStatus: normalizeApprovalStatus(candidate.approvalStatus),
-      ...(cleanText(candidate.sharedFramePath)
+      ...(frameDependency === "shared_frame" && cleanText(candidate.sharedFramePath)
         ? { sharedFramePath: cleanText(candidate.sharedFramePath) }
         : {}),
-      ...(cleanText(candidate.sharedFrameSource)
+      ...(frameDependency === "shared_frame" && cleanText(candidate.sharedFrameSource)
         ? { sharedFrameSource: cleanText(candidate.sharedFrameSource) }
         : {})
     };
@@ -405,6 +421,30 @@ function indexSignatures(value) {
 
 function normalizeBoundaryKind(value) {
   return BOUNDARY_KINDS.has(value) ? value : "hard_cut";
+}
+
+function normalizeFrameDependency(value, kind) {
+  if (kind === "hard_cut") return "none";
+  if (FRAME_DEPENDENCIES.has(value)) return value;
+  if (kind === "continuous") return "previous_tail";
+  if (kind === "match_cut") return "shared_frame";
+  return "none";
+}
+
+function normalizeBoundaryDuration(value, kind) {
+  if (kind === "hard_cut") return 0;
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function normalizedBoundaryGuidance(value) {
+  return Object.fromEntries([
+    ["prompt", cleanText(value.prompt)],
+    ["negativePrompt", cleanText(value.negativePrompt)],
+    ["actionContinuity", cleanText(value.actionContinuity)],
+    ["characterPosition", cleanText(value.characterPosition)],
+    ["cameraDirection", cleanText(value.cameraDirection)],
+    ["notes", cleanText(value.notes)]
+  ].filter(([, item]) => item));
 }
 
 function normalizeApprovalStatus(value) {

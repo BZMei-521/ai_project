@@ -143,6 +143,115 @@ assert.deepEqual(sceneChangePlan.segments.map((segment) => segment.shotIds), [["
 assert.deepEqual(sceneChangePlan.shotExecutions[1].dependencyTaskIds, []);
 assert.equal(sceneChangePlan.shotExecutions[1].firstFrameInput, undefined);
 
+const guidedPlan = planVideoContinuity({
+  shots: [
+    shot("guided-a", 1, {
+      approvedTailFramePath: "frames/a-tail.png",
+      tailFrameApprovalStatus: "approved"
+    }),
+    shot("guided-b", 2)
+  ],
+  boundaries: [{
+    fromShotId: "guided-a",
+    toShotId: "guided-b",
+    kind: "continuous",
+    approvalStatus: "approved",
+    durationSeconds: 0.6,
+    prompt: "  keep the door-opening motion  ",
+    negativePrompt: "  axis jump  ",
+    frameDependency: "previous_tail",
+    sharedFramePath: "frames/must-not-leak.png",
+    sharedFrameSource: "independent",
+    actionContinuity: "保持推门动作",
+    characterPosition: "人物从右侧进入",
+    cameraDirection: "继续向左跟拍",
+    notes: "保持室内暖光"
+  }]
+});
+assert.deepEqual(guidedPlan.boundaries[0], {
+  id: "video-boundary:guided-a:guided-b",
+  fromShotId: "guided-a",
+  toShotId: "guided-b",
+  kind: "continuous",
+  durationSeconds: 0.6,
+  prompt: "keep the door-opening motion",
+  negativePrompt: "axis jump",
+  frameDependency: "previous_tail",
+  actionContinuity: "保持推门动作",
+  characterPosition: "人物从右侧进入",
+  cameraDirection: "继续向左跟拍",
+  notes: "保持室内暖光",
+  requiresApproval: true,
+  approvalStatus: "approved"
+}, "continuous guidance must survive normalization without leaking an unrelated shared frame");
+
+const hardCutGuidance = planVideoContinuity({
+  shots: [shot("hard-a", 1), shot("hard-b", 2)],
+  boundaries: [boundary("hard-a", "hard-b", "hard_cut", {
+    durationSeconds: 1.5,
+    prompt: "preserve edit rhythm",
+    negativePrompt: "freeze",
+    frameDependency: "shared_frame",
+    sharedFramePath: "frames/hard-cut-must-not-depend.png",
+    sharedFrameSource: "independent",
+    approvalStatus: "approved"
+  })]
+});
+assert.deepEqual(hardCutGuidance.boundaries[0], {
+  id: "video-boundary:hard-a:hard-b",
+  fromShotId: "hard-a",
+  toShotId: "hard-b",
+  kind: "hard_cut",
+  durationSeconds: 0,
+  prompt: "preserve edit rhythm",
+  negativePrompt: "freeze",
+  frameDependency: "none",
+  requiresApproval: false,
+  approvalStatus: "approved"
+}, "hard cuts must retain textual guidance while clearing frame dependencies and forcing zero duration");
+
+const explicitSharedFrame = planVideoContinuity({
+  shots: [shot("shared-a", 1), shot("shared-b", 2)],
+  boundaries: [boundary("shared-a", "shared-b", "match_cut", {
+    durationSeconds: 0.4,
+    frameDependency: "shared_frame",
+    sharedFramePath: "  frames/shared-match.png  ",
+    sharedFrameSource: "independent",
+    approvalStatus: "approved"
+  })]
+});
+assert.equal(explicitSharedFrame.boundaries[0].frameDependency, "shared_frame");
+assert.equal(explicitSharedFrame.boundaries[0].sharedFramePath, "frames/shared-match.png");
+assert.equal(explicitSharedFrame.boundaries[0].sharedFrameSource, "independent");
+assert.equal(explicitSharedFrame.boundaries[0].durationSeconds, 0.4);
+assert.equal(explicitSharedFrame.shotExecutions[1].firstFrameInput?.path, "frames/shared-match.png");
+
+const changedGuidancePlan = planVideoContinuity({
+  shots: guidedPlan.shotExecutions.map((execution, index) => shot(execution.shotId, index + 1, index === 0 ? {
+    approvedTailFramePath: "frames/a-tail.png",
+    tailFrameApprovalStatus: "approved"
+  } : {})),
+  boundaries: [{
+    fromShotId: "guided-a",
+    toShotId: "guided-b",
+    kind: "continuous",
+    approvalStatus: "approved",
+    durationSeconds: 0.7,
+    prompt: "keep the door-opening motion",
+    negativePrompt: "axis jump",
+    frameDependency: "previous_tail",
+    actionContinuity: "动作改为停顿后再推门",
+    characterPosition: "人物从右侧进入",
+    cameraDirection: "继续向左跟拍",
+    notes: "保持室内暖光"
+  }]
+});
+assert.deepEqual(planContinuityInvalidation(guidedPlan, changedGuidancePlan), {
+  staleShotIds: ["guided-a", "guided-b"],
+  staleTaskIds: ["video-assembly", "video-shot:guided-a", "video-shot:guided-b"],
+  reasons: ["boundary_changed:video-boundary:guided-a:guided-b"]
+}, "changing duration or continuity guidance must invalidate both boundary shots and assembly");
+
 const encodedLeftIdPlan = planVideoContinuity({
   shots: [shot("a:b", 1), shot("c", 2)],
   boundaries: [boundary("a:b", "c", "hard_cut")]
@@ -436,5 +545,56 @@ assert.deepEqual(resolveVideoFrameSources({
   firstFramePath: "frames/current.png",
   lastFramePath: ""
 }, "single-frame inference must not consume the next storyboard as a latent end frame");
+
+async function assertPanelTransitionWiring() {
+  const sourcePath = new URL("../src/modules/video-production/VideoProductionPanel.tsx", import.meta.url);
+  const source = await readFile(sourcePath, "utf8");
+  const sourceFile = ts.createSourceFile("VideoProductionPanel.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const descendants = [];
+  const visit = (node) => {
+    descendants.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const textOf = (node) => node.getText(sourceFile);
+  const buildContexts = sourceFile.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === "buildContexts"
+  );
+  assert.ok(buildContexts, "VideoProductionPanel must declare buildContexts");
+  assert.deepEqual(buildContexts.parameters.map((parameter) => textOf(parameter.name)), ["shots", "assets", "transitions"],
+    "buildContexts must accept persisted transitions explicitly");
+
+  const selectors = descendants.filter((node) => ts.isCallExpression(node) && textOf(node.expression) === "useStoryboardStore");
+  assert.ok(selectors.some((call) => call.arguments.some((argument) => textOf(argument).includes("state.shotTransitions"))),
+    "VideoProductionPanel must select shotTransitions from the store");
+
+  const contextCalls = descendants.filter((node) => ts.isCallExpression(node) && textOf(node.expression) === "buildContexts");
+  assert.equal(contextCalls.length, 2, "live and generation snapshot paths must be the only buildContexts call sites");
+  assert.ok(contextCalls.every((call) => call.arguments.length === 3),
+    "every buildContexts call must pass transitions");
+  assert.ok(contextCalls.some((call) => textOf(call.arguments[2]) === "scopedTransitions"),
+    "live contexts must use sequence-scoped persisted transitions");
+  assert.ok(contextCalls.some((call) => textOf(call.arguments[2]) === "state.shotTransitions"),
+    "generation snapshots must use the same persisted transition state");
+
+  const buildSource = textOf(buildContexts);
+  const requiredFragments = [
+    "configured?.type",
+    "configured?.durationSeconds",
+    "configured?.frameDependency",
+    "configured?.actionContinuity",
+    "configured?.characterPosition",
+    "configured?.cameraDirection",
+    "configured?.notes",
+    "configured.sharedFramePath"
+  ];
+  for (const fragment of requiredFragments) {
+    assert.ok(buildSource.includes(fragment), `buildContexts must preserve stored transition field: ${fragment}`);
+  }
+  assert.ok(buildSource.includes("shot.videoBoundaryKind"),
+    "buildContexts must retain a legacy fallback when no stored edge exists");
+}
+
+await assertPanelTransitionWiring();
 
 console.log("PASS video continuity planner");
