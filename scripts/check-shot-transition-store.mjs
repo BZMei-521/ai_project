@@ -132,6 +132,13 @@ try {
     assert.match(value, runningHubSafeId, `${label} must satisfy the RunningHub ID contract`);
     assert.equal(windowsReservedName.test(value), false, `${label} must not be a Windows reserved device name`);
   };
+  const assertSafeBitmapPath = (value, label) => {
+    const match = /^shots\/([A-Za-z0-9_-]{1,80})\/([A-Za-z0-9_-]{1,80})\.png$/.exec(value);
+    assert.ok(match, `${label} must be a canonical storyboard bitmap path`);
+    assertSafeComponent(match[1], `${label} shot component`);
+    assertSafeComponent(match[2], `${label} layer component`);
+    assert.equal(value.split("/").some((component) => component === "." || component === ".."), false);
+  };
   const transition = (id, sequence, from, to) => ({
     id,
     sequenceId: sequence,
@@ -625,12 +632,14 @@ try {
   useStoryboardStore.getState().selectSequence("seq-codec-b");
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
   const codecBIds = useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-codec-b").sort((a, b) => a.order - b.order).map(({ id }) => id);
+  assert.equal(codecAIds[0], "a");
+  assert.equal(codecAIds[1], "b");
   for (const [index, id] of [...codecAIds, ...codecBIds].entries()) assertSafeComponent(id, `codec shot ${index}`);
   assert.equal(codecAIds.every((id) => !codecBIds.includes(id)), true);
   assert.equal(Math.max(...[...codecAIds, ...codecBIds].map((id) => id.length)) <= 80, true);
   for (const [index, layer] of useStoryboardStore.getState().layers.entries()) {
     assertSafeComponent(layer.id, `codec layer ${index}`);
-    assertSafeComponent(layer.bitmapPath.split("/")[1], `codec bitmap shot segment ${index}`);
+    assertSafeBitmapPath(layer.bitmapPath, `codec bitmap ${index}`);
   }
   assert.equal(useStoryboardStore.getState().shotTransitions.some(({ fromShotId, toShotId }) => fromShotId === toShotId), false);
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
@@ -641,6 +650,40 @@ try {
   assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), stableCodecSnapshot.shots.map(({ id }) => id));
   useStoryboardStore.getState().hydrateFromSnapshot(createStoryboardSnapshot(useStoryboardStore.getState()));
   assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), stableCodecSnapshot.shots.map(({ id }) => id));
+
+  const saltedExternalId = "salted/unsafe/id";
+  useStoryboardStore.setState({
+    sequences: [{ id: "seq-codec-salt", projectId: "p", name: "Salt Probe", order: 1 }],
+    currentSequenceId: "seq-codec-salt",
+    shots: [], shotTransitions: [], selectedShotId: "", selectedShotIds: [],
+    layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
+  });
+  const saltedImport = { shots: [{ id: saltedExternalId, title: "Salted", prompt: "Salted", durationFrames: 48 }], transitions: [] };
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(saltedImport);
+  const saltZeroId = useStoryboardStore.getState().selectedShotId;
+  useStoryboardStore.setState({
+    sequences: [
+      { id: "seq-codec-blocker", projectId: "p", name: "Salt Blocker", order: 1 },
+      { id: "seq-codec-salt", projectId: "p", name: "Salt Target", order: 2 }
+    ],
+    currentSequenceId: "seq-codec-salt",
+    shots: [{ id: saltZeroId, sequenceId: "seq-codec-blocker", order: 1, durationFrames: 48 }],
+    shotTransitions: [], selectedShotId: "", selectedShotIds: [],
+    layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
+  });
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(saltedImport);
+  const saltOneId = useStoryboardStore.getState().selectedShotId;
+  assertSafeComponent(saltOneId, "salt-one shot");
+  assert.notEqual(saltOneId, saltZeroId);
+  assert.equal(useStoryboardStore.getState().shots.some(({ sequenceId, id }) => sequenceId === "seq-codec-blocker" && id === saltZeroId), true);
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(saltedImport);
+  assert.equal(useStoryboardStore.getState().selectedShotId, saltOneId);
+  const saltedSnapshot = createStoryboardSnapshot(useStoryboardStore.getState());
+  useStoryboardStore.getState().resetForNewProject("Salt sentinel");
+  useStoryboardStore.getState().hydrateFromSnapshot(saltedSnapshot);
+  assert.equal(useStoryboardStore.getState().shots.find(({ sequenceId }) => sequenceId === "seq-codec-salt").id, saltOneId);
+  useStoryboardStore.getState().hydrateFromSnapshot(createStoryboardSnapshot(useStoryboardStore.getState()));
+  assert.equal(useStoryboardStore.getState().shots.find(({ sequenceId }) => sequenceId === "seq-codec-salt").id, saltOneId);
 
   const oldExternalId = "shot-external:%5B%22external%22%2C%22old-seq%22%2C%22old%2Fshot%22%5D";
   useStoryboardStore.getState().hydrateFromSnapshot({
@@ -673,7 +716,7 @@ try {
   assert.equal(migratedCodecState.shots.find(({ id }) => id === migratedCodecIds[1]).videoProductionEvidence.shotId, migratedCodecIds[1]);
   for (const [index, layer] of migratedCodecState.layers.entries()) {
     assertSafeComponent(layer.id, `migrated codec layer ${index}`);
-    assertSafeComponent(layer.bitmapPath.split("/")[1], `migrated codec bitmap shot segment ${index}`);
+    assertSafeBitmapPath(layer.bitmapPath, `migrated codec bitmap ${index}`);
   }
   assert.equal(migratedCodecState.shotTransitions.some(({ fromShotId, toShotId }) => fromShotId === toShotId), false);
   const migratedCodecSnapshot = createStoryboardSnapshot(migratedCodecState);
@@ -683,7 +726,7 @@ try {
   assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), migratedCodecIds);
 
   const legacyStroke = { id: "legacy-stroke", points: [{ x: 1, y: 2 }], color: "#000", size: 2, layerId: "legacy-layer" };
-  const validHydrateEvidence = videoEvidence("legacy-duplicate", "seq-legacy-shot-b");
+  const validHydrateEvidence = videoEvidence("legacy/duplicate", "seq-legacy-shot-b");
   const foreignShotHydrateEvidence = videoEvidence("another-shot", "seq-legacy-shot-b");
   const foreignSequenceHydrateEvidence = videoEvidence("foreign-sequence-key", "another-sequence");
   useStoryboardStore.getState().hydrateFromSnapshot({
@@ -694,13 +737,13 @@ try {
     ],
     currentSequenceId: "seq-legacy-shot-b",
     shots: [
-      { id: "legacy-duplicate", sequenceId: "seq-legacy-shot-a", order: 1, durationFrames: 48 },
+      { id: "legacy/duplicate", sequenceId: "seq-legacy-shot-a", order: 1, durationFrames: 48 },
       { id: "legacy-tail-a", sequenceId: "seq-legacy-shot-a", order: 2, durationFrames: 48 },
       { id: "foreign-shot-key", sequenceId: "seq-legacy-shot-a", order: 3, durationFrames: 48 },
       { id: "foreign-sequence-key", sequenceId: "seq-legacy-shot-a", order: 4, durationFrames: 48 },
       { id: "malformed-key", sequenceId: "seq-legacy-shot-a", order: 5, durationFrames: 48 },
       {
-        id: "legacy-duplicate", sequenceId: "seq-legacy-shot-b", order: 1, durationFrames: 48,
+        id: "legacy/duplicate", sequenceId: "seq-legacy-shot-b", order: 1, durationFrames: 48,
         videoProductionEvidence: validHydrateEvidence
       },
       { id: "legacy-tail-b", sequenceId: "seq-legacy-shot-b", order: 2, durationFrames: 48 },
@@ -712,16 +755,16 @@ try {
       }
     ],
     shotTransitions: [
-      transition("legacy-shot-edge-a", "seq-legacy-shot-a", "legacy-duplicate", "legacy-tail-a"),
-      transition("legacy-shot-edge-b", "seq-legacy-shot-b", "legacy-duplicate", "legacy-tail-b")
+      transition("legacy-shot-edge-a", "seq-legacy-shot-a", "legacy/duplicate", "legacy-tail-a"),
+      transition("legacy-shot-edge-b", "seq-legacy-shot-b", "legacy/duplicate", "legacy-tail-b")
     ],
-    selectedShotId: "legacy-duplicate",
-    selectedShotIds: ["legacy-duplicate"],
-    layers: [{ id: "legacy-layer", shotId: "legacy-duplicate", name: "Legacy", visible: true, locked: false, zIndex: 1, bitmapPath: "legacy.png" }],
-    activeLayerByShotId: { "legacy-duplicate": "legacy-layer" },
-    shotStrokes: { "legacy-duplicate": [legacyStroke] },
-    shotHistory: { "legacy-duplicate": { past: [[legacyStroke]], future: [] } },
-    generationTasks: [{ id: "legacy-task", batchId: "batch", shotId: "legacy-duplicate", workflowId: "wf", stage: "image", status: "queued", promptHash: "hash", startedAt: "now" }]
+    selectedShotId: "legacy/duplicate",
+    selectedShotIds: ["legacy/duplicate"],
+    layers: [{ id: "legacy-layer", shotId: "legacy/duplicate", name: "Legacy", visible: true, locked: false, zIndex: 1, bitmapPath: "legacy.png" }],
+    activeLayerByShotId: { "legacy/duplicate": "legacy-layer" },
+    shotStrokes: { "legacy/duplicate": [legacyStroke] },
+    shotHistory: { "legacy/duplicate": { past: [[legacyStroke]], future: [] } },
+    generationTasks: [{ id: "legacy-task", batchId: "batch", shotId: "legacy/duplicate", workflowId: "wf", stage: "image", status: "queued", promptHash: "hash", startedAt: "now" }]
   });
   const migratedLegacyState = useStoryboardStore.getState();
   const migratedLegacyIds = migratedLegacyState.shots.map(({ id }) => id);
@@ -741,6 +784,7 @@ try {
   for (const [sequence, expectedFrom] of [["seq-legacy-shot-a", legacyAId], ["seq-legacy-shot-b", legacyBId]]) {
     const edge = migratedLegacyState.shotTransitions.find(({ sequenceId }) => sequenceId === sequence);
     assert.equal(edge.fromShotId, expectedFrom);
+    assert.equal(edge.toShotId, migratedLegacyState.shots.find(({ sequenceId, order }) => sequenceId === sequence && order === 2).id);
     assert.notEqual(edge.fromShotId, edge.toShotId);
   }
   const legacyALayer = migratedLegacyState.layers.find(({ shotId }) => shotId === legacyAId);
@@ -748,12 +792,15 @@ try {
   assert.ok(legacyALayer);
   assert.ok(legacyBLayer);
   assert.notEqual(legacyALayer.id, legacyBLayer.id);
+  assert.equal(migratedLegacyState.activeLayerByShotId[legacyAId], legacyALayer.id);
+  assert.equal(migratedLegacyState.activeLayerByShotId[legacyBId], legacyBLayer.id);
   assert.notEqual(migratedLegacyState.shotStrokes[legacyAId], migratedLegacyState.shotStrokes[legacyBId]);
   assert.notEqual(migratedLegacyState.shotHistory[legacyAId], migratedLegacyState.shotHistory[legacyBId]);
   assert.notEqual(migratedLegacyState.shotStrokes[legacyAId][0], migratedLegacyState.shotStrokes[legacyBId][0]);
   assert.notEqual(migratedLegacyState.shotStrokes[legacyAId][0].points, migratedLegacyState.shotStrokes[legacyBId][0].points);
   assert.notEqual(migratedLegacyState.shotHistory[legacyAId].past[0][0], migratedLegacyState.shotHistory[legacyBId].past[0][0]);
   assert.equal(migratedLegacyState.shotStrokes[legacyBId][0].layerId, legacyBLayer.id);
+  assert.equal(migratedLegacyState.shotStrokes[legacyAId][0].layerId, legacyALayer.id);
   assert.equal(migratedLegacyState.generationTasks[0].shotId, legacyBId);
   const stableLegacySnapshot = createStoryboardSnapshot(migratedLegacyState);
   const firstHydratedEvidence = migratedLegacyState.shots.find(({ id }) => id === legacyBId).videoProductionEvidence;
