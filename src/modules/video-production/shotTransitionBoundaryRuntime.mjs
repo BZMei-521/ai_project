@@ -30,16 +30,36 @@ function resolveIndexedBoundary({ fromShotValue, toShotValue, transitionByPair }
   const toShotId = cleanText(toShot.id);
   const configured = transitionByPair.get(shotPairKey(fromShotId, toShotId));
   if (!configured) {
-    const legacySharedFramePath = cleanText(fromShot.approvedBoundaryFramePath);
+    const kind = fromShot.videoBoundaryKind ?? "hard_cut";
+    const legacyFramePath = cleanText(fromShot.approvedBoundaryFramePath);
+    if (kind === "continuous") return {
+      fromShotId,
+      toShotId,
+      kind,
+      frameDependency: "previous_tail",
+      ...(legacyFramePath ? {
+        sharedFramePath: legacyFramePath,
+        sharedFrameSource: "previous_tail",
+        approvalStatus: "approved"
+      } : { approvalStatus: "pending" })
+    };
+    if (kind === "match_cut") return {
+      fromShotId,
+      toShotId,
+      kind,
+      frameDependency: "shared_frame",
+      ...(legacyFramePath ? {
+        sharedFramePath: legacyFramePath,
+        sharedFrameSource: "independent"
+      } : {}),
+      approvalStatus: "pending"
+    };
     return {
       fromShotId,
       toShotId,
-      kind: fromShot.videoBoundaryKind ?? "hard_cut",
-      ...(legacySharedFramePath ? {
-        sharedFramePath: legacySharedFramePath,
-        sharedFrameSource: "independent",
-        approvalStatus: "pending"
-      } : { approvalStatus: "pending" })
+      kind,
+      frameDependency: "none",
+      approvalStatus: "pending"
     };
   }
 

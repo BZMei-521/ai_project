@@ -104,10 +104,114 @@ assert.deepEqual(resolveShotTransitionBoundary({
   fromShotId: "same-a",
   toShotId: "same-b",
   kind: "scene_change",
-  sharedFramePath: "frames/legacy.png",
-  sharedFrameSource: "independent",
+  frameDependency: "none",
   approvalStatus: "pending"
 }, "legacy shot boundary fields are allowed only when the exact sequence edge is absent");
+
+const legacyApprovedTailPath = "frames/legacy-approved-tail.png";
+const legacyContinuousBoundary = resolveShotTransitionBoundary({
+  sequenceId: "legacy-sequence",
+  fromShot: {
+    id: "legacy-continuous-a",
+    videoBoundaryKind: "continuous",
+    approvedBoundaryFramePath: legacyApprovedTailPath
+  },
+  toShot: { id: "legacy-continuous-b" },
+  transitions: []
+});
+assert.deepEqual(legacyContinuousBoundary, {
+  fromShotId: "legacy-continuous-a",
+  toShotId: "legacy-continuous-b",
+  kind: "continuous",
+  frameDependency: "previous_tail",
+  sharedFramePath: legacyApprovedTailPath,
+  sharedFrameSource: "previous_tail",
+  approvalStatus: "approved"
+}, "legacy continuous fallback must preserve explicit approved-tail provenance");
+const legacyContinuousPlan = planVideoContinuity({
+  shots: [
+    shot("legacy-continuous-a", 1, {
+      approvedTailFramePath: legacyApprovedTailPath,
+      tailFrameApprovalStatus: "approved"
+    }),
+    shot("legacy-continuous-b", 2)
+  ],
+  boundaries: [legacyContinuousBoundary]
+});
+assert.equal(legacyContinuousPlan.shotExecutions[1].status, "ready");
+assert.deepEqual(legacyContinuousPlan.shotExecutions[1].firstFrameInput, {
+  kind: "approved_tail_frame",
+  path: legacyApprovedTailPath,
+  boundaryId: "video-boundary:legacy-continuous-a:legacy-continuous-b",
+  fromShotId: "legacy-continuous-a"
+}, "legacy approved continuous tails must remain consumable end to end");
+assert.equal(Object.hasOwn(legacyContinuousPlan.boundaries[0], "sharedFramePath"), false,
+  "the planner must normalize an approved tail away from shared-frame fields");
+
+const legacyMissingTailBoundary = resolveShotTransitionBoundary({
+  sequenceId: "legacy-sequence",
+  fromShot: { id: "legacy-missing-a", videoBoundaryKind: "continuous" },
+  toShot: { id: "legacy-missing-b" },
+  transitions: []
+});
+assert.deepEqual(legacyMissingTailBoundary, {
+  fromShotId: "legacy-missing-a",
+  toShotId: "legacy-missing-b",
+  kind: "continuous",
+  frameDependency: "previous_tail",
+  approvalStatus: "pending"
+});
+const legacyMissingTailPlan = planVideoContinuity({
+  shots: [shot("legacy-missing-a", 1), shot("legacy-missing-b", 2)],
+  boundaries: [legacyMissingTailBoundary]
+});
+assert.equal(legacyMissingTailPlan.shotExecutions[1].status, "awaiting_approval");
+assert.equal(legacyMissingTailPlan.shotExecutions[1].firstFrameInput, undefined);
+
+const legacyMatchBoundary = resolveShotTransitionBoundary({
+  sequenceId: "legacy-sequence",
+  fromShot: {
+    id: "legacy-match-a",
+    videoBoundaryKind: "match_cut",
+    approvedBoundaryFramePath: "frames/legacy-match-text-path.png"
+  },
+  toShot: { id: "legacy-match-b" },
+  transitions: []
+});
+assert.deepEqual(legacyMatchBoundary, {
+  fromShotId: "legacy-match-a",
+  toShotId: "legacy-match-b",
+  kind: "match_cut",
+  frameDependency: "shared_frame",
+  sharedFramePath: "frames/legacy-match-text-path.png",
+  sharedFrameSource: "independent",
+  approvalStatus: "pending"
+});
+const legacyMatchPlan = planVideoContinuity({
+  shots: [shot("legacy-match-a", 1), shot("legacy-match-b", 2)],
+  boundaries: [legacyMatchBoundary]
+});
+assert.equal(legacyMatchPlan.shotExecutions[1].status, "awaiting_approval");
+assert.equal(legacyMatchPlan.shotExecutions[1].firstFrameInput, undefined);
+
+for (const kind of ["hard_cut", "scene_change"]) {
+  assert.deepEqual(resolveShotTransitionBoundary({
+    sequenceId: "legacy-sequence",
+    fromShot: {
+      id: `legacy-${kind}-a`,
+      videoBoundaryKind: kind,
+      approvedBoundaryFramePath: `frames/stale-${kind}.png`
+    },
+    toShot: { id: `legacy-${kind}-b` },
+    transitions: []
+  }), {
+    fromShotId: `legacy-${kind}-a`,
+    toShotId: `legacy-${kind}-b`,
+    kind,
+    frameDependency: "none",
+    approvalStatus: "pending"
+  }, `${kind} fallback must clear irrelevant frame path and provenance`);
+}
 
 const arbitrarySharedBoundary = resolveShotTransitionBoundary({
   sequenceId: "seq-one",
