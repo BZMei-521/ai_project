@@ -167,6 +167,27 @@ function staticBooleanValue(expression) {
   return undefined;
 }
 
+function staticNullishValue(expression) {
+  const current = unwrapParentheses(expression);
+  if (current.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (ts.isIdentifier(current) && current.text === "undefined") return true;
+  if (ts.isVoidExpression(current)) return true;
+  if (
+    current.kind === ts.SyntaxKind.TrueKeyword ||
+    current.kind === ts.SyntaxKind.FalseKeyword ||
+    ts.isStringLiteral(current) ||
+    ts.isNoSubstitutionTemplateLiteral(current) ||
+    ts.isNumericLiteral(current) ||
+    ts.isBigIntLiteral(current) ||
+    ts.isObjectLiteralExpression(current) ||
+    ts.isArrayLiteralExpression(current) ||
+    ts.isArrowFunction(current) ||
+    ts.isFunctionExpression(current) ||
+    ts.isClassExpression(current)
+  ) return false;
+  return undefined;
+}
+
 function scanReachable(node, callName) {
   const sequence = (statements) => {
     const calls = [];
@@ -426,6 +447,35 @@ function reachableCallsWithCalleeText(root, calleeText) {
       const elseTerminates = current.elseStatement ? visit(current.elseStatement) : false;
       return thenTerminates && Boolean(current.elseStatement) && elseTerminates;
     }
+    if (ts.isBinaryExpression(current)) {
+      const operator = current.operatorToken.kind;
+      if (operator === ts.SyntaxKind.AmpersandAmpersandToken) {
+        visit(current.left);
+        if (staticBooleanValue(current.left) !== false) visit(current.right);
+        return false;
+      }
+      if (operator === ts.SyntaxKind.BarBarToken) {
+        visit(current.left);
+        if (staticBooleanValue(current.left) !== true) visit(current.right);
+        return false;
+      }
+      if (operator === ts.SyntaxKind.QuestionQuestionToken) {
+        visit(current.left);
+        if (staticNullishValue(current.left) !== false) visit(current.right);
+        return false;
+      }
+    }
+    if (ts.isConditionalExpression(current)) {
+      visit(current.condition);
+      const condition = staticBooleanValue(current.condition);
+      if (condition === true) visit(current.whenTrue);
+      else if (condition === false) visit(current.whenFalse);
+      else {
+        visit(current.whenTrue);
+        visit(current.whenFalse);
+      }
+      return false;
+    }
     if (ts.isTryStatement(current)) {
       const tryTerminates = visit(current.tryBlock);
       const catchTerminates = current.catchClause ? visit(current.catchClause.block) : tryTerminates;
@@ -637,6 +687,59 @@ for (const [name, desktopBody] of [
     () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ desktopBody }), `${name} fixture`),
     /expected exactly one desktop autosave effect/,
     `${name} must not establish reachable effect ownership`
+  );
+}
+const browserSaveExpression = "saveAutosaveSnapshot({ selectedShotIds }, 30)";
+const desktopSaveExpression = "(shouldScheduleDesktopSnapshotSave({ snapshot }), desktopSaveCoordinator.save({ snapshot }))";
+for (const [name, browserBody] of [
+  ["false-and browser save", `false && ${browserSaveExpression};`],
+  ["true-or browser save", `true || ${browserSaveExpression};`],
+  ["unselected browser ternary branch", `true ? keepBrowserState() : ${browserSaveExpression};`],
+  ["non-nullish browser fallback", `"kept" ?? ${browserSaveExpression};`]
+]) {
+  assert.throws(
+    () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ browserBody }), `${name} fixture`),
+    /expected exactly one browser autosave effect/,
+    `${name} must remain short-circuited and unreachable`
+  );
+}
+for (const [name, expression] of [
+  ["false-and desktop save", `false && ${desktopSaveExpression};`],
+  ["true-or desktop save", `true || ${desktopSaveExpression};`],
+  ["unselected desktop ternary branch", `true ? keepDesktopState() : ${desktopSaveExpression};`],
+  ["non-nullish desktop fallback", `"kept" ?? ${desktopSaveExpression};`]
+]) {
+  const desktopBody = `const snapshot = readCurrentStoryboardSnapshot(); ${expression}`;
+  assert.throws(
+    () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ desktopBody }), `${name} fixture`),
+    /expected exactly one desktop autosave effect/,
+    `${name} must remain short-circuited and unreachable`
+  );
+}
+for (const [name, browserBody] of [
+  ["true-and browser save", `true && ${browserSaveExpression};`],
+  ["false-or browser save", `false || ${browserSaveExpression};`],
+  ["selected browser ternary branch", `true ? ${browserSaveExpression} : keepBrowserState();`],
+  ["nullish browser fallback", `null ?? ${browserSaveExpression};`],
+  ["unknown-and browser save", `maybeEnabled && ${browserSaveExpression};`],
+  ["unknown browser ternary branch", `maybeEnabled ? ${browserSaveExpression} : keepBrowserState();`],
+  ["unknown nullish browser fallback", `maybeSnapshot ?? ${browserSaveExpression};`]
+]) {
+  assert.doesNotThrow(
+    () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ browserBody }), `${name} fixture`),
+    `${name} must establish reachable browser effect ownership`
+  );
+}
+for (const [name, expression] of [
+  ["true-and desktop save", `true && ${desktopSaveExpression};`],
+  ["false-or desktop save", `false || ${desktopSaveExpression};`],
+  ["selected desktop ternary branch", `true ? ${desktopSaveExpression} : keepDesktopState();`],
+  ["nullish desktop fallback", `null ?? ${desktopSaveExpression};`]
+]) {
+  const desktopBody = `const snapshot = readCurrentStoryboardSnapshot(); ${expression}`;
+  assert.doesNotThrow(
+    () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ desktopBody }), `${name} fixture`),
+    `${name} must establish reachable desktop effect ownership`
   );
 }
 const scheduledIdentifierCallbacksFixture = `
