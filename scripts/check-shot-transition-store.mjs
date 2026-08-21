@@ -479,6 +479,167 @@ try {
   useStoryboardStore.getState().updateProjectSettings({ fps: 48 });
   assert.deepEqual(useStoryboardStore.getState().shotTransitions.map(({ durationSeconds }) => durationSeconds), [0.25, 0.25]);
 
+  useStoryboardStore.setState({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: [
+      { id: "seq-shot-id-a", projectId: "p", name: "Shot ID A", order: 1 },
+      { id: "seq-shot-id-b", projectId: "p", name: "Shot ID B", order: 2 }
+    ],
+    currentSequenceId: "seq-shot-id-a",
+    shots: [],
+    shotTransitions: [],
+    selectedShotId: "",
+    selectedShotIds: [],
+    layers: [],
+    shotStrokes: {},
+    shotHistory: {},
+    activeLayerByShotId: {}
+  });
+  const duplicateExternalShotImport = {
+    shots: [
+      { id: "external-a", title: "External A", prompt: "External A", durationFrames: 48 },
+      { id: "external-b", title: "External B", prompt: "External B", durationFrames: 48 }
+    ],
+    transitions: [transition("external-edge", "ignored", "external-a", "external-b")]
+  };
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImport);
+  const sequenceAShotIds = useStoryboardStore.getState().shots
+    .filter(({ sequenceId: id }) => id === "seq-shot-id-a")
+    .sort((left, right) => left.order - right.order)
+    .map(({ id }) => id);
+  useStoryboardStore.getState().selectSequence("seq-shot-id-b");
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImport);
+  const sequenceBShotIds = useStoryboardStore.getState().shots
+    .filter(({ sequenceId: id }) => id === "seq-shot-id-b")
+    .sort((left, right) => left.order - right.order)
+    .map(({ id }) => id);
+  assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, 4);
+  assert.equal(sequenceBShotIds.every((id) => !sequenceAShotIds.includes(id)), true);
+  assert.deepEqual(
+    useStoryboardStore.getState().shotTransitions
+      .filter(({ sequenceId: id }) => id === "seq-shot-id-b")
+      .map(({ fromShotId, toShotId }) => [fromShotId, toShotId]),
+    [[sequenceBShotIds[0], sequenceBShotIds[1]]]
+  );
+  const firstBImportIds = [...sequenceBShotIds];
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImport);
+  assert.deepEqual(
+    useStoryboardStore.getState().shots
+      .filter(({ sequenceId: id }) => id === "seq-shot-id-b")
+      .sort((left, right) => left.order - right.order)
+      .map(({ id }) => id),
+    firstBImportIds
+  );
+  useStoryboardStore.getState().setShotDuration(sequenceBShotIds[0], 12);
+  assert.equal(useStoryboardStore.getState().shots.find(({ id }) => id === sequenceAShotIds[0]).durationFrames, 48);
+  useStoryboardStore.getState().deleteShot(sequenceBShotIds[0]);
+  assert.deepEqual(
+    useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-shot-id-a").map(({ id }) => id),
+    sequenceAShotIds
+  );
+  assert.equal(useStoryboardStore.getState().layers.some(({ shotId }) => shotId === sequenceAShotIds[0]), true);
+
+  const legacyStroke = { id: "legacy-stroke", points: [{ x: 1, y: 2 }], color: "#000", size: 2, layerId: "legacy-layer" };
+  useStoryboardStore.getState().hydrateFromSnapshot({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: [
+      { id: "seq-legacy-shot-a", projectId: "p", name: "Legacy Shot A", order: 1 },
+      { id: "seq-legacy-shot-b", projectId: "p", name: "Legacy Shot B", order: 2 }
+    ],
+    currentSequenceId: "seq-legacy-shot-b",
+    shots: [
+      { id: "legacy-duplicate", sequenceId: "seq-legacy-shot-a", order: 1, durationFrames: 48 },
+      { id: "legacy-tail-a", sequenceId: "seq-legacy-shot-a", order: 2, durationFrames: 48 },
+      {
+        id: "legacy-duplicate", sequenceId: "seq-legacy-shot-b", order: 1, durationFrames: 48,
+        videoProductionEvidence: { schemaVersion: 1, shotId: "legacy-duplicate", status: "ready" }
+      },
+      { id: "legacy-tail-b", sequenceId: "seq-legacy-shot-b", order: 2, durationFrames: 48 }
+    ],
+    shotTransitions: [
+      transition("legacy-shot-edge-a", "seq-legacy-shot-a", "legacy-duplicate", "legacy-tail-a"),
+      transition("legacy-shot-edge-b", "seq-legacy-shot-b", "legacy-duplicate", "legacy-tail-b")
+    ],
+    selectedShotId: "legacy-duplicate",
+    selectedShotIds: ["legacy-duplicate"],
+    layers: [{ id: "legacy-layer", shotId: "legacy-duplicate", name: "Legacy", visible: true, locked: false, zIndex: 1, bitmapPath: "legacy.png" }],
+    activeLayerByShotId: { "legacy-duplicate": "legacy-layer" },
+    shotStrokes: { "legacy-duplicate": [legacyStroke] },
+    shotHistory: { "legacy-duplicate": { past: [[legacyStroke]], future: [] } },
+    generationTasks: [{ id: "legacy-task", batchId: "batch", shotId: "legacy-duplicate", workflowId: "wf", stage: "image", status: "queued", promptHash: "hash", startedAt: "now" }]
+  });
+  const migratedLegacyState = useStoryboardStore.getState();
+  const migratedLegacyIds = migratedLegacyState.shots.map(({ id }) => id);
+  assert.equal(new Set(migratedLegacyIds).size, migratedLegacyIds.length);
+  const legacyAId = migratedLegacyState.shots.find(({ sequenceId: id, order }) => id === "seq-legacy-shot-a" && order === 1).id;
+  const legacyBId = migratedLegacyState.shots.find(({ sequenceId: id, order }) => id === "seq-legacy-shot-b" && order === 1).id;
+  assert.notEqual(legacyAId, legacyBId);
+  assert.equal(migratedLegacyState.selectedShotId, legacyBId);
+  assert.deepEqual(migratedLegacyState.selectedShotIds, [legacyBId]);
+  assert.equal(migratedLegacyState.shots.find(({ id }) => id === legacyBId).videoProductionEvidence.shotId, legacyBId);
+  for (const [sequence, expectedFrom] of [["seq-legacy-shot-a", legacyAId], ["seq-legacy-shot-b", legacyBId]]) {
+    const edge = migratedLegacyState.shotTransitions.find(({ sequenceId }) => sequenceId === sequence);
+    assert.equal(edge.fromShotId, expectedFrom);
+    assert.notEqual(edge.fromShotId, edge.toShotId);
+  }
+  const legacyALayer = migratedLegacyState.layers.find(({ shotId }) => shotId === legacyAId);
+  const legacyBLayer = migratedLegacyState.layers.find(({ shotId }) => shotId === legacyBId);
+  assert.ok(legacyALayer);
+  assert.ok(legacyBLayer);
+  assert.notEqual(legacyALayer.id, legacyBLayer.id);
+  assert.notEqual(migratedLegacyState.shotStrokes[legacyAId], migratedLegacyState.shotStrokes[legacyBId]);
+  assert.notEqual(migratedLegacyState.shotHistory[legacyAId], migratedLegacyState.shotHistory[legacyBId]);
+  assert.equal(migratedLegacyState.shotStrokes[legacyBId][0].layerId, legacyBLayer.id);
+  assert.equal(migratedLegacyState.generationTasks[0].shotId, legacyBId);
+  const stableLegacySnapshot = createStoryboardSnapshot(migratedLegacyState);
+  useStoryboardStore.getState().hydrateFromSnapshot(stableLegacySnapshot);
+  assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), migratedLegacyIds);
+  assert.equal(useStoryboardStore.getState().selectedShotId, legacyBId);
+  useStoryboardStore.getState().deleteShot(legacyBId);
+  assert.equal(useStoryboardStore.getState().shots.some(({ id }) => id === legacyAId), true);
+
+  useStoryboardStore.setState({
+    sequences: [
+      { id: "seq-global-id-a", projectId: "p", name: "Global A", order: 1 },
+      { id: "seq-global-id-b", projectId: "p", name: "Global B", order: 2 }
+    ],
+    currentSequenceId: "seq-global-id-b",
+    shots: [
+      { id: "shot_001", sequenceId: "seq-global-id-a", order: 1, durationFrames: 24 },
+      { id: "shot_001_1", sequenceId: "seq-global-id-a", order: 2, durationFrames: 24 }
+    ],
+    shotTransitions: [], layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
+  });
+  useStoryboardStore.getState().addShot();
+  assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, 3);
+  const originalDateNow = Date.now;
+  const originalRandom = Math.random;
+  try {
+    Date.now = () => 1234;
+    Math.random = () => 0.007;
+    useStoryboardStore.setState({
+      sequences: [
+        { id: "seq-generator-source", projectId: "p", name: "Source", order: 1 },
+        { id: "seq_1234_7", projectId: "p", name: "Collision", order: 2 }
+      ],
+      currentSequenceId: "seq-generator-source",
+      shots: [
+        { id: "source-shot", sequenceId: "seq-generator-source", order: 1, durationFrames: 24, title: "Source" },
+        { id: "shot_1234_7", sequenceId: "seq_1234_7", order: 1, durationFrames: 24 },
+        { id: "shot_1234_0_7", sequenceId: "seq_1234_7", order: 2, durationFrames: 24 }
+      ],
+      shotTransitions: [], layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
+    });
+    useStoryboardStore.getState().duplicateShot("source-shot");
+    assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, useStoryboardStore.getState().shots.length);
+    useStoryboardStore.getState().duplicateSequence("seq-generator-source");
+    assert.equal(new Set(useStoryboardStore.getState().sequences.map(({ id }) => id)).size, useStoryboardStore.getState().sequences.length);
+    assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, useStoryboardStore.getState().shots.length);
+  } finally {
+    Date.now = originalDateNow;
+    Math.random = originalRandom;
+  }
+
   let sequenceReads = 0;
   const perfSequences = Array.from({ length: 12 }, (_, index) => ({
     id: `seq-perf-${index}`,
