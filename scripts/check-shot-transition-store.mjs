@@ -110,6 +110,22 @@ try {
   useStoryboardStore.getState().undoShotSequenceEdit();
   assert.deepEqual(useStoryboardStore.getState().shotTransitions, []);
 
+  const videoEvidence = (shotId, sequenceId) => ({
+    schemaVersion: 1,
+    shotId,
+    sequenceId,
+    status: "ready",
+    sourceVideoPath: `C:/videos/${shotId}.mp4`,
+    routeDecision: { status: "selected", profileId: "minimax_h3_i2v", reason: "storyboard_anchor" },
+    profilePreflight: {
+      profileId: "minimax_h3_i2v",
+      available: true,
+      missingNodes: [],
+      missingModels: [],
+      warnings: []
+    },
+    nested: { marker: "must-deep-clone" }
+  });
   const transition = (id, sequence, from, to) => ({
     id,
     sequenceId: sequence,
@@ -499,10 +515,7 @@ try {
     shots: [
       {
         id: "external-a", title: "External A", prompt: "External A", durationFrames: 48,
-        videoProductionEvidence: {
-          schemaVersion: 1, shotId: "external-a", sequenceId: "external-source", status: "ready",
-          nested: { marker: "must-deep-clone" }
-        }
+        videoProductionEvidence: videoEvidence("external-a", "seq-shot-id-a")
       },
       { id: "external-b", title: "External B", prompt: "External B", durationFrames: 48 }
     ],
@@ -514,7 +527,13 @@ try {
     .sort((left, right) => left.order - right.order)
     .map(({ id }) => id);
   useStoryboardStore.getState().selectSequence("seq-shot-id-b");
-  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImport);
+  const duplicateExternalShotImportB = {
+    ...duplicateExternalShotImport,
+    shots: duplicateExternalShotImport.shots.map((shot) => shot.id === "external-a"
+      ? { ...shot, videoProductionEvidence: videoEvidence("external-a", "seq-shot-id-b") }
+      : shot)
+  };
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImportB);
   const sequenceBShotIds = useStoryboardStore.getState().shots
     .filter(({ sequenceId: id }) => id === "seq-shot-id-b")
     .sort((left, right) => left.order - right.order)
@@ -532,11 +551,11 @@ try {
   assert.equal(importedAEvidence.sequenceId, "seq-shot-id-a");
   assert.equal(importedBEvidence.shotId, sequenceBShotIds[0]);
   assert.equal(importedBEvidence.sequenceId, "seq-shot-id-b");
-  assert.notEqual(importedBEvidence, duplicateExternalShotImport.shots[0].videoProductionEvidence);
-  assert.notEqual(importedBEvidence.nested, duplicateExternalShotImport.shots[0].videoProductionEvidence.nested);
+  assert.notEqual(importedBEvidence, duplicateExternalShotImportB.shots[0].videoProductionEvidence);
+  assert.notEqual(importedBEvidence.nested, duplicateExternalShotImportB.shots[0].videoProductionEvidence.nested);
   assert.notEqual(importedBEvidence, importedAEvidence);
   const firstBImportIds = [...sequenceBShotIds];
-  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImport);
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(duplicateExternalShotImportB);
   assert.deepEqual(
     useStoryboardStore.getState().shots
       .filter(({ sequenceId: id }) => id === "seq-shot-id-b")
@@ -562,6 +581,22 @@ try {
   assert.deepEqual(useStoryboardStore.getState().shotStrokes[sequenceAShotIds[0]], []);
   assert.deepEqual(useStoryboardStore.getState().shotHistory[sequenceAShotIds[0]], { past: [], future: [] });
 
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence({
+    shots: [
+      { id: "validation-good", title: "Good", prompt: "Good", durationFrames: 48, videoProductionEvidence: videoEvidence("validation-good", "seq-shot-id-b") },
+      { id: "validation-foreign", title: "Foreign", prompt: "Foreign", durationFrames: 48, videoProductionEvidence: videoEvidence("another-shot", "seq-shot-id-b") },
+      {
+        id: "validation-malformed", title: "Malformed", prompt: "Malformed", durationFrames: 48,
+        videoProductionEvidence: { schemaVersion: 1, shotId: "validation-malformed", sequenceId: "seq-shot-id-b", status: "ready", sourceVideoPath: "C:/malformed.mp4" }
+      }
+    ],
+    transitions: []
+  });
+  const validationShots = useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-shot-id-b");
+  assert.ok(validationShots.find(({ id }) => id === "validation-good").videoProductionEvidence);
+  assert.equal(validationShots.find(({ id }) => id === "validation-foreign").videoProductionEvidence, undefined);
+  assert.equal(validationShots.find(({ id }) => id === "validation-malformed").videoProductionEvidence, undefined);
+
   const legacyStroke = { id: "legacy-stroke", points: [{ x: 1, y: 2 }], color: "#000", size: 2, layerId: "legacy-layer" };
   useStoryboardStore.getState().hydrateFromSnapshot({
     project: { ...useStoryboardStore.getState().project, fps: 24 },
@@ -575,7 +610,7 @@ try {
       { id: "legacy-tail-a", sequenceId: "seq-legacy-shot-a", order: 2, durationFrames: 48 },
       {
         id: "legacy-duplicate", sequenceId: "seq-legacy-shot-b", order: 1, durationFrames: 48,
-        videoProductionEvidence: { schemaVersion: 1, shotId: "legacy-duplicate", status: "ready" }
+        videoProductionEvidence: videoEvidence("legacy-duplicate", "seq-legacy-shot-b")
       },
       { id: "legacy-tail-b", sequenceId: "seq-legacy-shot-b", order: 2, durationFrames: 48 }
     ],
@@ -667,7 +702,7 @@ try {
       shots: [
         {
           id: "source-shot", sequenceId: "seq-generator-source", order: 1, durationFrames: 24, title: "Source",
-          videoProductionEvidence: { schemaVersion: 1, shotId: "source-shot", status: "ready", nested: { source: true } },
+          videoProductionEvidence: { ...videoEvidence("source-shot", "seq-generator-source"), nested: { source: true } },
           videoGenerationReceipt: { promptId: "source-prompt" }, videoGenerationContractDigest: "source-contract",
           videoProviderArtifact: { provider: "source" }, runningHubCloud: { status: "completed", taskId: "source-task" },
           approvedBoundaryFramePath: "source-boundary.png", generatedImagePath: "source.png", generatedVideoPath: "source.mp4",
