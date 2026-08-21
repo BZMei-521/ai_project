@@ -8,11 +8,21 @@ import { build } from "esbuild";
 
 const css = await readFile("src/styles/script-transition-editor.css", "utf8").catch(() => "");
 const main = await readFile("src/main.tsx", "utf8");
-assert.match(css, /\.director-desk \[data-stage-view="script"\] \.script-shot-chain-viewport\s*\{[^}]*overflow-x:\s*auto/s);
+const chainOverflowRule = css.match(/\.director-desk \[data-stage-view="script"\] \.script-shot-chain-viewport\s*\{[^}]*\}/s)?.[0] ?? "";
+assert.match(chainOverflowRule, /overflow-x:\s*auto/);
+assert.match(chainOverflowRule, /overflow-y:\s*hidden/);
+assert.equal([...css.matchAll(/overflow-x:\s*auto/g)].length, 1, "only the shot chain may own horizontal auto overflow");
 assert.match(css, /\[data-shot-node\]\s*\{[^}]*width:\s*248px/s);
-assert.match(css, /\[data-transition-edge\]\s*\{[^}]*height:\s*2px/s);
-assert.match(css, /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1099px\),\s*\(pointer:\s*coarse\)[\s\S]*min-height:\s*44px/);
-assert.match(css, /@media\s*\(max-width:\s*767px\)[\s\S]*safe-area-inset-bottom/);
+assert.match(css, /\[data-shot-node\]\[data-selected="true"\]/);
+assert.match(css, /\[data-shot-node\]\[data-drop-target="true"\]/);
+assert.match(css, /\[data-transition-edge\]\[data-selected="true"\]/);
+assert.match(css, /\[data-transition-edge\]\s*\{[^}]*height:\s*2px/s, "directed edge line must be two pixels");
+assert.match(css, /\[data-transition-edge\]::after\s*\{[^}]*border-top:\s*2px[^}]*border-right:\s*2px/s, "directed edge arrow must be two pixels");
+assert.match(css, /\.director-desk\[data-stage="script"\] :is\(\.script-transition-inspector, \.script-shot-inspector\)/, "inspector rules must match the sibling shell drawer while script stage is active");
+const inspectorSelectorLines = css.split(/\r?\n/).filter((line) => /(?:\.script-transition-inspector|\.script-shot-inspector)/.test(line));
+assert.ok(inspectorSelectorLines.length > 0 && inspectorSelectorLines.every((line) => line.trim().startsWith('.director-desk[data-stage="script"]')), "inspector rules cannot depend on being a child of the stage view");
+assert.match(css, /\.script-shot-order-actions button\s*\{[^}]*min-height:\s*44px[^}]*min-inline-size:\s*44px/s, "compact/coarse move controls must be 44 by 44 pixels");
+assert.match(css, /@media\s*\(max-width:\s*767px\)[\s\S]*\.director-desk\[data-stage="script"\][^{]*(?:\.script-transition-inspector|\.script-shot-inspector)[\s\S]*safe-area-inset-bottom/);
 assert.ok(main.indexOf("director-desk.css") < main.indexOf("script-transition-editor.css"), "transition CSS must load after Director Desk CSS");
 
 const result = await build({
@@ -58,15 +68,17 @@ try {
   };
   const selectedShots = [];
   const selectedTransitions = [];
+  const selectionChanges = [];
   const moves = [];
   const imports = [];
   const updates = [];
   const history = [];
   const view = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
     shots: [shotA, shotB], transitions: [transitionAB], fps: 24, sequenceId: "seq-1",
-    selectedShotId: "a", selectedTransitionId: null,
+    selectedShotId: "a", selectedTransitionId: transitionAB.id,
     onSelectShot: selectedShots.push.bind(selectedShots),
     onSelectTransition: selectedTransitions.push.bind(selectedTransitions),
+    onSelectionChange: (selection) => selectionChanges.push(selection),
     onMoveShot: (...args) => moves.push(args),
     onImportScript: (value) => imports.push(value),
     canUndo: true, canRedo: false,
@@ -74,10 +86,14 @@ try {
   }));
 
   const chain = view.root.findByProps({ "data-script-shot-chain": true });
+  assert.equal(view.root.findByType("h1").parent.type, "div", "block heading content must not be wrapped in a span");
   assert.deepEqual(chain.children.map((child) => child.type === runtime.ShotNode ? "shot" : child.type === runtime.TransitionEdge ? "edge" : "unknown"), ["shot", "edge", "shot"]);
   assert.equal(view.root.findAllByProps({ "data-shot-node": true }).length, 2);
   assert.equal(view.root.findAllByProps({ "data-transition-edge": true }).length, 1);
   const edge = view.root.findByProps({ "data-transition-edge": true });
+  assert.equal(view.root.findAllByProps({ "data-selected": true }).length, 1, "shot and transition selection must render mutually exclusively");
+  assert.equal(view.root.findAllByProps({ "data-shot-node": true })[0].props["data-selected"], undefined, "transition selection wins if both ids are supplied");
+  assert.equal(edge.props["data-selected"], true);
   assert.match(edge.findByType("button").children.join(""), /连续动作.*0\.6s/);
   assert.equal(edge.findByType("button").props.type, "button");
   assert.equal(view.root.findByProps({ type: "file" }).props.accept, "application/json,.json");
@@ -85,6 +101,32 @@ try {
   assert.equal(view.root.findByProps({ "aria-label": "镜头 A 向后移动" }).props.disabled, false);
   assert.equal(view.root.findByProps({ "aria-label": "镜头 B 向前移动" }).props.disabled, false);
   assert.equal(view.root.findByProps({ "aria-label": "镜头 B 向后移动" }).props.disabled, true);
+  view.root.findAllByProps({ className: "script-shot-select" })[0].props.onClick();
+  assert.deepEqual(selectedShots, ["a"]);
+  assert.deepEqual(selectionChanges.at(-1), { shotId: "a", transitionId: null });
+  edge.findByType("button").props.onClick();
+  assert.deepEqual(selectedTransitions, [transitionAB.id]);
+  assert.deepEqual(selectionChanges.at(-1), { shotId: null, transitionId: transitionAB.id });
+  view.root.findByProps({ "aria-label": "镜头 A 向后移动" }).props.onClick();
+  view.root.findByProps({ "aria-label": "镜头 B 向前移动" }).props.onClick();
+  assert.deepEqual(moves, [["a", 1], ["b", 0]]);
+
+  const shotArticles = view.root.findAllByProps({ "data-shot-node": true });
+  const dataTransfer = { values: new Map(), effectAllowed: "none", setData(type, value) { this.values.set(type, value); } };
+  await TestRenderer.act(async () => {
+    shotArticles[0].props.onDragStart({ dataTransfer });
+  });
+  let dragPrevented = false;
+  await TestRenderer.act(async () => {
+    shotArticles[1].props.onDragOver({ preventDefault: () => { dragPrevented = true; } });
+  });
+  assert.equal(dragPrevented, true);
+  assert.equal(view.root.findAllByProps({ "data-shot-node": true })[1].props["data-drop-target"], true);
+  await TestRenderer.act(async () => {
+    view.root.findAllByProps({ "data-shot-node": true })[1].props.onDrop({ preventDefault: () => undefined });
+  });
+  assert.deepEqual(moves.at(-1), ["a", 1], "drop must move the dragged shot to the exact target index");
+  assert.equal(view.root.findAllByProps({ "data-drop-target": true }).length, 0);
   const undo = view.root.findByProps({ "aria-label": "撤销镜头排序" });
   const redo = view.root.findByProps({ "aria-label": "重做镜头排序" });
   assert.equal(undo.disabled ?? undo.props.disabled, false);
@@ -100,6 +142,44 @@ try {
   });
   assert.match(JSON.stringify(view.toJSON()), /文件不是合法 JSON/);
   assert.equal(imports.length, 0, "invalid imports must not update project state");
+
+  await TestRenderer.act(async () => {
+    await view.root.findByProps({ type: "file" }).props.onChange({
+      currentTarget: { files: [{ text: async () => JSON.stringify({ shots: [{ id: "imported", title: "Imported", duration: 2 }] }) }], value: "valid.json" }
+    });
+  });
+  assert.equal(imports.length, 1, "valid imports must invoke the import callback exactly once");
+  assert.equal(imports[0].shots[0].id, "imported");
+  assert.equal(view.root.findAllByProps({ role: "alert" }).length, 0, "a valid import clears earlier errors");
+
+  let alertFocusCount = 0;
+  const readFailureImports = [];
+  const readFailureView = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
+    shots: [shotA], transitions: [], fps: 24, sequenceId: "seq-1",
+    onImportScript: (value) => readFailureImports.push(value)
+  }), { createNodeMock(element) { return element.props.role === "alert" ? { focus() { alertFocusCount += 1; } } : null; } });
+  await TestRenderer.act(async () => {
+    await readFailureView.root.findByProps({ type: "file" }).props.onChange({
+      currentTarget: { files: [{ text: async () => { throw new Error("disk read failed"); } }], value: "broken.json" }
+    });
+  });
+  assert.match(JSON.stringify(readFailureView.toJSON()), /无法读取镜头剧本/);
+  assert.equal(readFailureImports.length, 0, "file read rejection must not mutate project state");
+  assert.equal(alertFocusCount, 1, "new import error summaries must receive focus");
+  assert.equal(readFailureView.root.findByProps({ role: "alert" }).findAllByType("a").length, 1, "issues should navigate back to the import control");
+
+  const parserFailureImports = [];
+  const parserFailureView = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
+    shots: [], transitions: [], fps: { valueOf() { throw new Error("unexpected parser failure"); } }, sequenceId: "seq-1",
+    onImportScript: (value) => parserFailureImports.push(value)
+  }));
+  await TestRenderer.act(async () => {
+    await parserFailureView.root.findByProps({ type: "file" }).props.onChange({
+      currentTarget: { files: [{ text: async () => JSON.stringify({ shots: [] }) }], value: "unexpected.json" }
+    });
+  });
+  assert.match(JSON.stringify(parserFailureView.toJSON()), /无法读取镜头剧本/);
+  assert.equal(parserFailureImports.length, 0, "unexpected parser throws must not mutate project state");
 
   const emptyView = TestRenderer.create(React.createElement(runtime.ScriptDirectorView, {
     shots: [], transitions: [], fps: 24, sequenceId: "seq-1",
