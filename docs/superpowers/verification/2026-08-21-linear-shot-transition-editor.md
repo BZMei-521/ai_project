@@ -19,7 +19,7 @@
 
 首次在受限沙箱内运行聚合命令时，Node 对 `C:\Users\Administrator` 的 `lstat` 返回 `EPERM`；按批准权限在正常 Windows 用户上下文重跑后得到上表中的正式结果。
 
-最终 remediation 后再次 fresh 运行：`test:script-transitions` 6/6、`test:director-desk` 6/6、TypeScript 和 Task 7 owned diff-check 均 exit 0；build 仍只在 548 modules 后命中相同 RunningHub `spawnSync` blocker。全工作树 `git diff --check` fresh exit 2，输出仍只定位范围外 `docs/storyboard-workflows-20260304.md:3,:5` 两处 trailing whitespace。覆盖本轮行为的 remediation commits：domain/store `cb35d29`、`2ed5451`、`1f694ef`、`5b485fb`、`ee772a0`、`f539c4c`、`2f6cd7d`；App/guards/checkers `23e896c`、`a229863`、`28670c9`、`2c5aefe`、`1a75f7c`、`b65f8bc`、`c539970`、`d1470ac`、`206a8e8`、`9cbb0d3`、`8c01b0f`；downstream `51fd35a`、`1101312`。
+最终 remediation 后再次 fresh 运行：`test:script-transitions` 6/6、`test:director-desk` 6/6、TypeScript 和 Task 7 owned diff-check 均 exit 0；build 仍只在 548 modules 后命中相同 RunningHub `spawnSync` blocker。最终措辞复核时又 fresh 运行 aggregate 6/6 和 TypeScript，均 exit 0。全工作树 `git diff --check` fresh exit 2，输出仍只定位范围外 `docs/storyboard-workflows-20260304.md:3,:5` 两处 trailing whitespace。覆盖本轮行为的 remediation commits：domain/store `cb35d29`、`2ed5451`、`1f694ef`、`5b485fb`、`ee772a0`、`f539c4c`、`2f6cd7d`、safe codec `505c2bb`、`71d9ea7`；App/guards/checkers `23e896c`、`a229863`、`28670c9`、`2c5aefe`、`1a75f7c`、`b65f8bc`、`c539970`、`d1470ac`、`206a8e8`、`9cbb0d3`、`8c01b0f`；downstream `51fd35a`、`1101312`。
 
 ## 真实浏览器交互
 
@@ -48,8 +48,10 @@
 4. dirty re-import 选择 2-shot fixture 后出现“覆盖未保存剧本”。点“取消”后原 3-shot / matching edge 不变；同一文件可再次选择，点“覆盖”后才变为 2 节点 / 1 默认边，证明取消 fail-closed 且允许分支才替换。
 5. 再次覆盖为 3-shot、重设最终边并等待一个 autosave 周期。reload 出现“检测到可恢复快照”，页面已标记 `已从自动保存恢复，需保存`；普通点击“恢复最新”后该文本保持准确。
 6. 恢复后顺序为“最终推门→最终窗边→最终回望”，第一边为“匹配剪辑 · 1.1s”并恢复全部高级字段，第二边为“连续动作 · 0.6s”。分别普通点击两边，检查器连接标题严格为“最终推门 → 最终窗边”和“最终窗边 → 最终回望”。
-7. 可见 DOM metrics：`shotCount=3`、`uniqueShotLabels=3`、`transitionCount=2`；两次用相同 external shot IDs 完成允许覆盖后没有重复节点、错连或自环，global canonical ID remediation 未在 UI 产生身份泄漏。
+7. 可见 DOM metrics：`shotCount=3`、`uniqueShotLabels=3`、`transitionCount=2`；同一当前序列内使用相同 external shot IDs 完成 replacement 后没有重复节点、错连或自环。这项浏览器证据只证明当前序列 replacement 的 UI 稳定性，不声称覆盖双序列 canonicalization。
 8. viewport/root 为 `1440×900 / 1440×1440`，页面横向溢出 0；镜头链继续拥有自己的横向滚动。fresh console 为 3 条消息、0 error、0 warning（唯一返回条目为 React DevTools info）。
+
+真正的跨序列和 unsafe-ID canonicalization 由 Store 自动合同覆盖，而非本次单序列浏览器流程：`505c2bb` 验证两序列导入相同 `a/b` 及 `NUL`、斜杠、反斜杠、`..`、冒号、百分号、超长 Unicode/ASCII 和 Windows 保留名后得到安全、跨序列不相交且 hydrate/import 幂等的 shot/layer IDs；`71d9ea7` 进一步以真实 salt-0 候选预占和 mutation RED 证明 salted collision 必须前进，并验证完整 bitmap canonical path、selection、transition、layer/stroke/history、task/evidence 引用迁移。fresh aggregate 中 Store checker 与其余五项均 PASS。
 
 ## 视口与布局指标
 
