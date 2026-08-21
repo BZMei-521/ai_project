@@ -26,7 +26,7 @@ for (const [action, callback] of Object.entries({
   openProject: "onOpenProjectPath",
   renameProject: "onRenameProject",
   deleteProject: "onDeleteProject",
-  saveProject: "onSaveDesktop",
+  saveProject: "onManualSaveDesktop",
   loadProject: "onLoadDesktop",
   exportBackup: "onExportBackup",
   importBackup: "onImportBackupClick",
