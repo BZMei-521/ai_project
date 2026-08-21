@@ -377,7 +377,7 @@ try {
   assert.equal(new Set(legacyTransitions.map(({ id }) => id)).size, legacyTransitions.length);
   assert.equal(useStoryboardStore.getState().selectedShotTransitionId, null);
   useStoryboardStore.getState().updateShotTransition(legacyCollisionId, { notes: "must-remain-noop" });
-  assert.equal(legacyTransitions.every(({ notes }) => notes !== "must-remain-noop"), true);
+  assert.equal(useStoryboardStore.getState().shotTransitions.every(({ notes }) => notes !== "must-remain-noop"), true);
 
   useStoryboardStore.getState().hydrateFromSnapshot({
     project: { ...useStoryboardStore.getState().project, fps: 24 },
@@ -392,6 +392,28 @@ try {
   });
   assert.notEqual(useStoryboardStore.getState().selectedShotTransitionId, "legacy-unique-id");
   assert.equal(useStoryboardStore.getState().selectedShotTransitionId, useStoryboardStore.getState().shotTransitions[0].id);
+  const canonicalId = useStoryboardStore.getState().shotTransitions[0].id;
+  const canonicalSnapshot = createStoryboardSnapshot(useStoryboardStore.getState());
+  useStoryboardStore.getState().hydrateFromSnapshot(canonicalSnapshot);
+  assert.equal(useStoryboardStore.getState().shotTransitions[0].id, canonicalId);
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, canonicalId);
+  useStoryboardStore.getState().hydrateFromSnapshot(createStoryboardSnapshot(useStoryboardStore.getState()));
+  assert.equal(useStoryboardStore.getState().shotTransitions[0].id, canonicalId);
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, canonicalId);
+  const canonicalTransition = useStoryboardStore.getState().shotTransitions[0];
+  const canonicalImport = {
+    shots: [
+      { id: "unique-a", title: "Unique A", prompt: "Unique A", durationFrames: 48 },
+      { id: "unique-b", title: "Unique B", prompt: "Unique B", durationFrames: 48 }
+    ],
+    transitions: [canonicalTransition]
+  };
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(canonicalImport);
+  assert.equal(useStoryboardStore.getState().shotTransitions[0].id, canonicalId);
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, canonicalId);
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(canonicalImport);
+  assert.equal(useStoryboardStore.getState().shotTransitions[0].id, canonicalId);
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, canonicalId);
 
   useStoryboardStore.setState({
     sequences: [{ id: "seq-id-gap", projectId: "p", name: "ID Gap", order: 1 }],
@@ -456,6 +478,50 @@ try {
   });
   useStoryboardStore.getState().updateProjectSettings({ fps: 48 });
   assert.deepEqual(useStoryboardStore.getState().shotTransitions.map(({ durationSeconds }) => durationSeconds), [0.25, 0.25]);
+
+  let sequenceReads = 0;
+  const perfSequences = Array.from({ length: 12 }, (_, index) => ({
+    id: `seq-perf-${index}`,
+    projectId: "p",
+    name: `Perf ${index}`,
+    order: index + 1
+  }));
+  const perfShots = perfSequences.flatMap((sequence) => [0, 1].map((offset) => {
+    const shot = { id: `${sequence.id}-shot-${offset}`, order: offset + 1, durationFrames: 24 };
+    Object.defineProperty(shot, "sequenceId", {
+      enumerable: true,
+      get() {
+        sequenceReads += 1;
+        return sequence.id;
+      }
+    });
+    return shot;
+  }));
+  const perfTransitions = perfSequences.map((sequence) => {
+    const item = transition(
+      `${sequence.id}-edge`,
+      sequence.id,
+      `${sequence.id}-shot-0`,
+      `${sequence.id}-shot-1`
+    );
+    Object.defineProperty(item, "sequenceId", {
+      enumerable: true,
+      get() {
+        sequenceReads += 1;
+        return sequence.id;
+      }
+    });
+    return item;
+  });
+  useStoryboardStore.setState({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: perfSequences,
+    shots: perfShots,
+    shotTransitions: perfTransitions
+  });
+  sequenceReads = 0;
+  useStoryboardStore.getState().updateProjectSettings({ fps: 48 });
+  assert.equal(sequenceReads < 100, true, `FPS reconciliation performed ${sequenceReads} sequence reads`);
 
   useStoryboardStore.getState().resetForNewProject("Fresh");
   assert.deepEqual(useStoryboardStore.getState().shotTransitions, []);
