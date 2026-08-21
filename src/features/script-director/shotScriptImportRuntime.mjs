@@ -1,4 +1,4 @@
-import { reconcileLinearTransitions } from "./shotTransitionRuntime.mjs";
+import { createDefaultShotTransition, reconcileLinearTransitions } from "./shotTransitionRuntime.mjs";
 
 const TRANSITION_TYPES = new Set(["continuous", "match_cut", "hard_cut", "scene_change"]);
 const FRAME_DEPENDENCIES = new Set(["none", "previous_tail", "shared_frame"]);
@@ -54,7 +54,8 @@ export function parseShotScriptText(source, context) {
   }
   const position = new Map(shots.map((shot, index) => [shot.id, index]));
   const transitions = [];
-  const transitionPairs = new Set();
+  const transitionPairs = new Map();
+  const transitionIds = new Set();
   for (let index = 0; index < (Array.isArray(parsed.transitions) ? parsed.transitions.length : 0); index += 1) {
     const item = parsed.transitions[index];
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -64,9 +65,15 @@ export function parseShotScriptText(source, context) {
     const toShotId = text(item.to ?? item.toShotId);
     if (!ids.has(fromShotId) || !ids.has(toShotId)) return { ok: false, issues: [{ code: "transition_shot_missing", path: `$.transitions[${index}]`, message: `${fromShotId} → ${toShotId} 引用了不存在的镜头` }] };
     if (position.get(toShotId) !== position.get(fromShotId) + 1) return { ok: false, issues: [{ code: "transition_not_adjacent", path: `$.transitions[${index}]`, message: `${fromShotId} → ${toShotId} 不是相邻镜头` }] };
-    const transitionPair = `${fromShotId}\u0000${toShotId}`;
-    if (transitionPairs.has(transitionPair)) return { ok: false, issues: [{ code: "duplicate_transition", path: `$.transitions[${index}]`, message: `${fromShotId} → ${toShotId} 存在重复转场` }] };
-    transitionPairs.add(transitionPair);
+    const explicitId = text(item.id);
+    if (explicitId && transitionIds.has(explicitId)) return { ok: false, issues: [{ code: "duplicate_transition_id", path: `$.transitions[${index}].id`, message: `转场 ID 重复：${explicitId}` }] };
+    let toShotIds = transitionPairs.get(fromShotId);
+    if (!toShotIds) {
+      toShotIds = new Set();
+      transitionPairs.set(fromShotId, toShotIds);
+    }
+    if (toShotIds.has(toShotId)) return { ok: false, issues: [{ code: "duplicate_transition", path: `$.transitions[${index}]`, message: `${fromShotId} → ${toShotId} 存在重复转场` }] };
+    toShotIds.add(toShotId);
     const type = text(item.type);
     if (!TRANSITION_TYPES.has(type)) return { ok: false, issues: [{ code: "transition_type_invalid", path: `$.transitions[${index}].type`, message: `不支持的转场类型：${type}` }] };
     const requestedFrameDependency = text(item.frameDependency);
@@ -79,8 +86,11 @@ export function parseShotScriptText(source, context) {
     const parsedDuration = number(rawDuration);
     if (rawDuration !== undefined && (parsedDuration === undefined || parsedDuration < 0)) return { ok: false, issues: [{ code: "transition_duration_invalid", path: `$.transitions[${index}].duration`, message: "转场时长必须是大于或等于零的有限秒数" }] };
     const requestedDuration = parsedDuration ?? (type === "hard_cut" ? 0 : 0.6);
+    const id = explicitId || createDefaultShotTransition(context.sequenceId, fromShotId, toShotId).id;
+    if (transitionIds.has(id)) return { ok: false, issues: [{ code: "duplicate_transition_id", path: `$.transitions[${index}].id`, message: `转场 ID 重复：${id}` }] };
+    transitionIds.add(id);
     transitions.push({
-      id: text(item.id) || `shot-transition:${encodeURIComponent(fromShotId)}:${encodeURIComponent(toShotId)}`,
+      id,
       sequenceId: context.sequenceId,
       fromShotId,
       toShotId,

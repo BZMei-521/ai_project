@@ -9,8 +9,9 @@ import {
 const first = createDefaultShotTransition("seq-1", "shot-1", "shot-2", {
   maxDurationSeconds: 0.4
 });
-assert.deepEqual(first, {
-  id: "shot-transition:shot-1:shot-2",
+const { id: firstId, ...firstFields } = first;
+assert.equal(firstId.startsWith("shot-transition:"), true);
+assert.deepEqual(firstFields, {
   sequenceId: "seq-1",
   fromShotId: "shot-1",
   toShotId: "shot-2",
@@ -22,6 +23,42 @@ assert.deepEqual(first, {
   cameraDirection: "",
   notes: ""
 });
+
+assert.notEqual(
+  createDefaultShotTransition("seq-1", "same-from", "same-to").id,
+  createDefaultShotTransition("seq-2", "same-from", "same-to").id
+);
+assert.notEqual(
+  createDefaultShotTransition("seq:a", "from", "to").id,
+  createDefaultShotTransition("seq", "a:from", "to").id
+);
+
+const nulPairOne = {
+  ...createDefaultShotTransition("seq-nul", "a\u0000b", "c"),
+  notes: "pair-one"
+};
+const nulPairTwo = {
+  ...createDefaultShotTransition("seq-nul", "a", "b\u0000c"),
+  notes: "pair-two"
+};
+for (const existingTransitions of [[nulPairOne, nulPairTwo], [nulPairTwo, nulPairOne]]) {
+  assert.equal(reconcileLinearTransitions({
+    sequenceId: "seq-nul",
+    orderedShots: [
+      { id: "a\u0000b", durationSeconds: 1 },
+      { id: "c", durationSeconds: 1 }
+    ],
+    existingTransitions
+  })[0].notes, "pair-one");
+  assert.equal(reconcileLinearTransitions({
+    sequenceId: "seq-nul",
+    orderedShots: [
+      { id: "a", durationSeconds: 1 },
+      { id: "b\u0000c", durationSeconds: 1 }
+    ],
+    existingTransitions
+  })[0].notes, "pair-two");
+}
 
 const edited = { ...first, durationSeconds: 0.25, actionContinuity: "保持推门动作" };
 assert.deepEqual(

@@ -1,15 +1,14 @@
 const DEFAULT_DURATION_SECONDS = 0.6;
 
-const pairKey = (fromShotId, toShotId) => `${fromShotId}\u0000${toShotId}`;
-const transitionId = (fromShotId, toShotId) =>
-  `shot-transition:${encodeURIComponent(fromShotId)}:${encodeURIComponent(toShotId)}`;
+const transitionId = (sequenceId, fromShotId, toShotId) =>
+  `shot-transition:${encodeURIComponent(JSON.stringify([sequenceId, fromShotId, toShotId]))}`;
 
 export function createDefaultShotTransition(sequenceId, fromShotId, toShotId, options = {}) {
   const ceiling = Number.isFinite(options.maxDurationSeconds)
     ? Math.max(0, options.maxDurationSeconds)
     : DEFAULT_DURATION_SECONDS;
   return {
-    id: transitionId(fromShotId, toShotId),
+    id: transitionId(sequenceId, fromShotId, toShotId),
     sequenceId,
     fromShotId,
     toShotId,
@@ -24,15 +23,20 @@ export function createDefaultShotTransition(sequenceId, fromShotId, toShotId, op
 }
 
 export function reconcileLinearTransitions({ sequenceId, orderedShots, existingTransitions }) {
-  const existingByPair = new Map(
-    existingTransitions
-      .filter((item) => item.sequenceId === sequenceId)
-      .map((item) => [pairKey(item.fromShotId, item.toShotId), item])
-  );
+  const existingByPair = new Map();
+  for (const item of existingTransitions) {
+    if (item.sequenceId !== sequenceId) continue;
+    let byToShotId = existingByPair.get(item.fromShotId);
+    if (!byToShotId) {
+      byToShotId = new Map();
+      existingByPair.set(item.fromShotId, byToShotId);
+    }
+    byToShotId.set(item.toShotId, item);
+  }
   return orderedShots.slice(0, -1).map((fromShot, index) => {
     const toShot = orderedShots[index + 1];
     const ceiling = Math.min(fromShot.durationSeconds, toShot.durationSeconds);
-    const existing = existingByPair.get(pairKey(fromShot.id, toShot.id));
+    const existing = existingByPair.get(fromShot.id)?.get(toShot.id);
     if (!existing) return createDefaultShotTransition(sequenceId, fromShot.id, toShot.id, { maxDurationSeconds: ceiling });
     const existingDuration = Number.isFinite(existing.durationSeconds)
       ? existing.durationSeconds
