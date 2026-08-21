@@ -38,6 +38,12 @@ try {
     ],
     transitions: []
   });
+  useStoryboardStore.getState().selectShot("b");
+  assert.equal(useStoryboardStore.getState().selectedShotId, "b");
+  assert.equal(useStoryboardStore.getState().selectedShotIds.includes("b"), true);
+  useStoryboardStore.getState().selectShot(null);
+  assert.equal(useStoryboardStore.getState().selectedShotId, "");
+  assert.deepEqual(useStoryboardStore.getState().selectedShotIds, []);
   assert.deepEqual(useStoryboardStore.getState().shotTransitions.map(({ fromShotId, toShotId }) => [fromShotId, toShotId]), [["a", "b"], ["b", "c"]]);
   const firstId = useStoryboardStore.getState().shotTransitions[0].id;
   useStoryboardStore.getState().selectShotTransition(firstId);
