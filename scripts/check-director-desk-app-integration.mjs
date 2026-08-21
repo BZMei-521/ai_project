@@ -52,6 +52,9 @@ assert.match(stageProgress, /const attentionStages = nextOnboardingStep \? \[wor
 const stageViews = blockBetween(app, "const focusedStageView", "const selectedShot");
 assert.doesNotMatch(stageViews, /<(?:ProjectWorkspaceView|ScriptDirectorView|AssetWorkspaceView)[^>]*(?:onCreateProject|onContinue)=/s);
 assert.doesNotMatch(stageViews, /<(?:StoryboardWorkspaceView|ProductionWorkspaceView)[^>]*(?:onContinue|onExport)=/s);
+assert.match(stageViews, /<ScriptDirectorView[\s\S]*?onSelectionChange=/);
+assert.doesNotMatch(stageViews, /<ScriptDirectorView[\s\S]*?onSelectionChange=\{\(\) => undefined\}/);
+assert.doesNotMatch(stageViews, /<ScriptDirectorView[\s\S]*?\bonSelect(?:Shot|Transition)=/);
 
 const inspector = blockBetween(app, "const inspectorByStage", "const workbenchInspector");
 for (const stage of ["project", "script", "assets", "preview", "storyboard", "production"]) {
