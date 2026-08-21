@@ -123,18 +123,33 @@ function parseTypeScript(source, label) {
   return ts.createSourceFile(label, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 }
 
-function descendants(node, predicate) {
+function scopedDescendants(node, predicate) {
   const matches = [];
   const visit = (current) => {
     if (predicate(current)) matches.push(current);
+    if (current !== node && ts.isFunctionLike(current)) return;
     ts.forEachChild(current, visit);
   };
   visit(node);
   return matches;
 }
 
+function controlFlowScope(sourceFile) {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.body) return statement.body;
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        declaration.initializer &&
+        (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))
+      ) return declaration.initializer.body;
+    }
+  }
+  return sourceFile;
+}
+
 function callsNamed(node, name) {
-  return descendants(node, (current) => (
+  return scopedDescendants(node, (current) => (
     ts.isCallExpression(current) &&
     ts.isIdentifier(current.expression) &&
     current.expression.text === name
@@ -142,22 +157,59 @@ function callsNamed(node, name) {
 }
 
 function ifCalling(root, name) {
-  return descendants(root, (node) => ts.isIfStatement(node) && callsNamed(node.expression, name).length === 1)[0];
+  return scopedDescendants(root, (node) => ts.isIfStatement(node) && callsNamed(node.expression, name).length === 1)[0];
 }
 
-function hasReturn(node, expectedExpression) {
-  return descendants(node, (current) => (
+function hasUnconditionalReturn(node, expectedExpression) {
+  const matches = (current) => (
     ts.isReturnStatement(current) &&
-    (expectedExpression === undefined
-      ? true
-      : current.expression?.getText() === expectedExpression)
-  )).length > 0;
+    (expectedExpression === undefined || current.expression?.getText() === expectedExpression)
+  );
+  if (matches(node)) return true;
+  if (!ts.isBlock(node)) return false;
+  return node.statements.some(matches);
+}
+
+function unwrapParentheses(expression) {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
+function isDirectCallTo(expression, name) {
+  const current = unwrapParentheses(expression);
+  return (
+    ts.isCallExpression(current) &&
+    ts.isIdentifier(current.expression) &&
+    current.expression.text === name
+  );
+}
+
+function isFalseLiteral(expression) {
+  return unwrapParentheses(expression).kind === ts.SyntaxKind.FalseKeyword;
+}
+
+function isDeniedGuardExpression(expression, helperName) {
+  const current = unwrapParentheses(expression);
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
+    return isDirectCallTo(current.operand, helperName);
+  }
+  if (!ts.isBinaryExpression(current)) return false;
+  if (
+    current.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    current.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsToken
+  ) return false;
+  return (
+    (isDirectCallTo(current.left, helperName) && isFalseLiteral(current.right)) ||
+    (isFalseLiteral(current.left) && isDirectCallTo(current.right, helperName))
+  );
 }
 
 function assertExclusiveRecoveryControlFlow(source, label) {
-  const root = parseTypeScript(source, label);
+  const root = controlFlowScope(parseTypeScript(source, label));
   const decision = ifCalling(root, "shouldMarkRecoveredScriptDirty");
   assert.ok(decision, `${label}: missing recovery decision`);
+  assert.ok(isDirectCallTo(decision.expression, "shouldMarkRecoveredScriptDirty"), `${label}: recovery decision must directly control the branch`);
   assert.ok(decision.elseStatement, `${label}: dirty and clean tracking must be explicit opposite branches`);
   assert.equal(callsNamed(decision.thenStatement, "markScriptTransitionDirty").length, 1, `${label}: dirty branch must mark once`);
   assert.equal(callsNamed(decision.thenStatement, "resetScriptTransitionTracking").length, 0, `${label}: dirty branch must never reset clean`);
@@ -168,11 +220,11 @@ function assertExclusiveRecoveryControlFlow(source, label) {
 }
 
 function assertGuardedStageControlFlow(source, label) {
-  const root = parseTypeScript(source, label);
+  const root = controlFlowScope(parseTypeScript(source, label));
   const guard = ifCalling(root, "canCommitConfirmedStageChange");
   assert.ok(guard, `${label}: missing stage commit guard`);
-  assert.match(guard.expression.getText(), /^!canCommitConfirmedStageChange\(/, `${label}: denied decisions must enter the guard branch`);
-  assert.ok(hasReturn(guard.thenStatement, "false"), `${label}: denied or stale request must return false`);
+  assert.ok(isDeniedGuardExpression(guard.expression, "canCommitConfirmedStageChange"), `${label}: denied decisions must enter the guard branch`);
+  assert.ok(hasUnconditionalReturn(guard.thenStatement, "false"), `${label}: denied or stale request must return false`);
   assert.equal(callsNamed(guard.thenStatement, "setWorkbenchStage").length, 0, `${label}: denied branch must not commit stage`);
   const commits = callsNamed(root, "setWorkbenchStage");
   assert.equal(commits.length, 1, `${label}: stage may commit exactly once`);
@@ -180,11 +232,11 @@ function assertGuardedStageControlFlow(source, label) {
 }
 
 function assertGuardedImportControlFlow(source, label) {
-  const root = parseTypeScript(source, label);
+  const root = controlFlowScope(parseTypeScript(source, label));
   const guard = ifCalling(root, "shouldReplaceImportedScript");
   assert.ok(guard, `${label}: missing import replacement guard`);
-  assert.match(guard.expression.getText(), /^!shouldReplaceImportedScript\(/, `${label}: denied decisions must enter the guard branch`);
-  assert.ok(hasReturn(guard.thenStatement), `${label}: denied import must return`);
+  assert.ok(isDeniedGuardExpression(guard.expression, "shouldReplaceImportedScript"), `${label}: denied decisions must enter the guard branch`);
+  assert.ok(hasUnconditionalReturn(guard.thenStatement), `${label}: denied import must return`);
   assert.equal(callsNamed(guard.thenStatement, "replaceShotScriptForCurrentSequence").length, 0, `${label}: denied branch must not replace script`);
   const replacements = callsNamed(root, "replaceShotScriptForCurrentSequence");
   assert.equal(replacements.length, 1, `${label}: accepted import may replace exactly once`);
@@ -301,6 +353,37 @@ assert.throws(
   "control-flow contract must reject a denied/stale request that can still commit"
 );
 assertGuardedStageControlFlow(stageChange, "onWorkbenchStageChange");
+const nestedReturnStageFixture = `
+  if (!canCommitConfirmedStageChange({ confirmationAccepted, requestId, latestRequestId })) {
+    const deadReturn = () => { return false; };
+  }
+  setWorkbenchStage(nextStage);
+`;
+assert.throws(
+  () => assertGuardedStageControlFlow(nestedReturnStageFixture, "nested return stage fixture"),
+  /must return false/,
+  "a return hidden in a nested function must not terminate the denied stage path"
+);
+const compoundFalseStageFixture = `
+  if (!canCommitConfirmedStageChange({ confirmationAccepted, requestId, latestRequestId }) && false) {
+    return false;
+  }
+  setWorkbenchStage(nextStage);
+`;
+assert.throws(
+  () => assertGuardedStageControlFlow(compoundFalseStageFixture, "compound false stage fixture"),
+  /denied decisions must enter the guard branch/,
+  "a compound condition that can never guard must be rejected"
+);
+for (const equivalentStageGuard of [
+  `if (canCommitConfirmedStageChange({ confirmationAccepted, requestId, latestRequestId }) === false) return false; setWorkbenchStage(nextStage);`,
+  `if (!(canCommitConfirmedStageChange({ confirmationAccepted, requestId, latestRequestId }))) return false; setWorkbenchStage(nextStage);`
+]) {
+  assert.doesNotThrow(
+    () => assertGuardedStageControlFlow(equivalentStageGuard, "equivalent stage guard"),
+    "semantically equivalent denied-stage guards must be accepted"
+  );
+}
 
 assert.match(importShotScript, /const revisionAtPrompt = scriptRevisionRef\.current/);
 assert.match(importShotScript, /if \(scriptTransitionDirtyRef\.current\)[\s\S]*await confirmDialog\(\{[\s\S]*title:\s*"覆盖未保存剧本"/);
@@ -319,6 +402,15 @@ assert.throws(
   "control-flow contract must reject replacement from the denied branch"
 );
 assertGuardedImportControlFlow(importShotScript, "onImportShotScript");
+for (const equivalentImportGuard of [
+  `if (shouldReplaceImportedScript(input) === false) return; replaceShotScriptForCurrentSequence(value);`,
+  `if (!(shouldReplaceImportedScript(input))) return; replaceShotScriptForCurrentSequence(value);`
+]) {
+  assert.doesNotThrow(
+    () => assertGuardedImportControlFlow(equivalentImportGuard, "equivalent import guard"),
+    "semantically equivalent denied-import guards must be accepted"
+  );
+}
 assert.match(scriptDirectorViewSource, /event\.currentTarget\.value = "";[\s\S]*parseShotScriptText/);
 assert.match(scriptDirectorViewSource, /if \(!result\.ok\) \{ setIssues\(result\.issues\); return; \}[\s\S]*onImportScript\(result\.value\)/, "parse failures must not request destructive overwrite confirmation");
 
@@ -344,6 +436,18 @@ assert.throws(
   "AST contract must reject mark-then-unconditional-reset recovery"
 );
 assertExclusiveRecoveryControlFlow(workspaceRecovery, "loadWorkspace recovery");
+const deadRecoveryMarkFixture = `
+  if (shouldMarkRecoveredScriptDirty({ recoveredFingerprint, desktopFingerprint })) {
+    function deadMark() { markScriptTransitionDirty(); }
+  } else {
+    resetScriptTransitionTracking();
+  }
+`;
+assert.throws(
+  () => assertExclusiveRecoveryControlFlow(deadRecoveryMarkFixture, "dead recovery mark fixture"),
+  /dirty branch must mark once/,
+  "a mark hidden in a nested declaration must not satisfy recovery control flow"
+);
 assert.match(recovery, /hydrateFromSnapshot\(snapshot\);\s*markScriptTransitionDirty\(\);[\s\S]*需保存/, "explicit autosave recovery must remain dirty");
 
 for (const [wrapperName, operation] of [
