@@ -81,9 +81,8 @@
 .director-desk[data-stage="script"] .script-shot-inspector :is(dt, dd) { margin: 0; }
 
 @media (min-width: 768px) and (max-width: 1099px), (pointer: coarse) {
-  .director-desk [data-stage-view="script"] :is(button, .script-import-trigger),
+  .director-desk [data-stage-view="script"] button:not(.script-shot-order-actions button),
   .director-desk[data-stage="script"] :is(input, select, summary) { min-height: 44px; }
-  .director-desk [data-stage-view="script"] .script-shot-order-actions button { min-height: 44px; min-inline-size: 44px; min-width: 44px; }
 }
 
 @media (max-width: 767px) {
