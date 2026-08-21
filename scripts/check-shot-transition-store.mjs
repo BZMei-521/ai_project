@@ -126,6 +126,12 @@ try {
     },
     nested: { marker: "must-deep-clone" }
   });
+  const runningHubSafeId = /^[A-Za-z0-9_-]{1,80}$/;
+  const windowsReservedName = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+  const assertSafeComponent = (value, label) => {
+    assert.match(value, runningHubSafeId, `${label} must satisfy the RunningHub ID contract`);
+    assert.equal(windowsReservedName.test(value), false, `${label} must not be a Windows reserved device name`);
+  };
   const transition = (id, sequence, from, to) => ({
     id,
     sequenceId: sequence,
@@ -596,6 +602,85 @@ try {
   assert.ok(validationShots.find(({ id }) => id === "validation-good").videoProductionEvidence);
   assert.equal(validationShots.find(({ id }) => id === "validation-foreign").videoProductionEvidence, undefined);
   assert.equal(validationShots.find(({ id }) => id === "validation-malformed").videoProductionEvidence, undefined);
+
+  const adversarialExternalIds = [
+    "a", "b", "NUL", "path/segment", "path\\segment", "..", "colon:id", "percent%id",
+    "界".repeat(120), "CON", "x".repeat(81)
+  ];
+  useStoryboardStore.setState({
+    sequences: [
+      { id: "seq-codec-a", projectId: "p", name: "Codec A", order: 1 },
+      { id: "seq-codec-b", projectId: "p", name: "Codec B", order: 2 }
+    ],
+    currentSequenceId: "seq-codec-a",
+    shots: [], shotTransitions: [], selectedShotId: "", selectedShotIds: [],
+    layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
+  });
+  const codecImport = {
+    shots: adversarialExternalIds.map((id, index) => ({ id, title: `Codec ${index}`, prompt: `Codec ${index}`, durationFrames: 48 })),
+    transitions: []
+  };
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
+  const codecAIds = useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-codec-a").sort((a, b) => a.order - b.order).map(({ id }) => id);
+  useStoryboardStore.getState().selectSequence("seq-codec-b");
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
+  const codecBIds = useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-codec-b").sort((a, b) => a.order - b.order).map(({ id }) => id);
+  for (const [index, id] of [...codecAIds, ...codecBIds].entries()) assertSafeComponent(id, `codec shot ${index}`);
+  assert.equal(codecAIds.every((id) => !codecBIds.includes(id)), true);
+  assert.equal(Math.max(...[...codecAIds, ...codecBIds].map((id) => id.length)) <= 80, true);
+  for (const [index, layer] of useStoryboardStore.getState().layers.entries()) {
+    assertSafeComponent(layer.id, `codec layer ${index}`);
+    assertSafeComponent(layer.bitmapPath.split("/")[1], `codec bitmap shot segment ${index}`);
+  }
+  assert.equal(useStoryboardStore.getState().shotTransitions.some(({ fromShotId, toShotId }) => fromShotId === toShotId), false);
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
+  assert.deepEqual(useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-codec-b").sort((a, b) => a.order - b.order).map(({ id }) => id), codecBIds);
+  const stableCodecSnapshot = createStoryboardSnapshot(useStoryboardStore.getState());
+  useStoryboardStore.getState().resetForNewProject("Codec sentinel");
+  useStoryboardStore.getState().hydrateFromSnapshot(stableCodecSnapshot);
+  assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), stableCodecSnapshot.shots.map(({ id }) => id));
+  useStoryboardStore.getState().hydrateFromSnapshot(createStoryboardSnapshot(useStoryboardStore.getState()));
+  assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), stableCodecSnapshot.shots.map(({ id }) => id));
+
+  const oldExternalId = "shot-external:%5B%22external%22%2C%22old-seq%22%2C%22old%2Fshot%22%5D";
+  useStoryboardStore.getState().hydrateFromSnapshot({
+    sequences: [{ id: "seq-codec-legacy", projectId: "p", name: "Codec Legacy", order: 1 }],
+    currentSequenceId: "seq-codec-legacy",
+    shots: [
+      { id: oldExternalId, sequenceId: "seq-codec-legacy", order: 1, durationFrames: 48 },
+      { id: "unsafe/id", sequenceId: "seq-codec-legacy", order: 2, durationFrames: 48, videoProductionEvidence: videoEvidence("unsafe/id", "seq-codec-legacy") },
+      { id: "CON", sequenceId: "seq-codec-legacy", order: 3, durationFrames: 48 }
+    ],
+    shotTransitions: [transition("legacy-codec-edge", "seq-codec-legacy", oldExternalId, "unsafe/id")],
+    selectedShotId: "unsafe/id",
+    selectedShotIds: ["unsafe/id"],
+    layers: [
+      { id: "layer:old", shotId: oldExternalId, name: "Old", visible: true, locked: false, zIndex: 1, bitmapPath: `shots/${oldExternalId}/layer:old.png` },
+      { id: "layer/unsafe", shotId: "unsafe/id", name: "Unsafe", visible: true, locked: false, zIndex: 1, bitmapPath: "shots/unsafe/id/layer.png" }
+    ],
+    activeLayerByShotId: { "unsafe/id": "layer/unsafe" },
+    shotStrokes: { "unsafe/id": [{ id: "stroke", points: [{ x: 0, y: 0 }], color: "#000", size: 1, layerId: "layer/unsafe" }] },
+    shotHistory: { "unsafe/id": { past: [], future: [] } },
+    generationTasks: [{ id: "codec-task", batchId: "batch", shotId: "unsafe/id", workflowId: "wf", stage: "image", status: "queued", promptHash: "hash", startedAt: "now" }]
+  });
+  const migratedCodecState = useStoryboardStore.getState();
+  const migratedCodecIds = migratedCodecState.shots.slice().sort((a, b) => a.order - b.order).map(({ id }) => id);
+  for (const [index, id] of migratedCodecIds.entries()) assertSafeComponent(id, `migrated codec shot ${index}`);
+  assert.equal(migratedCodecIds.includes(oldExternalId), false);
+  assert.equal(migratedCodecState.selectedShotId, migratedCodecIds[1]);
+  assert.deepEqual(migratedCodecState.selectedShotIds, [migratedCodecIds[1]]);
+  assert.equal(migratedCodecState.generationTasks[0].shotId, migratedCodecIds[1]);
+  assert.equal(migratedCodecState.shots.find(({ id }) => id === migratedCodecIds[1]).videoProductionEvidence.shotId, migratedCodecIds[1]);
+  for (const [index, layer] of migratedCodecState.layers.entries()) {
+    assertSafeComponent(layer.id, `migrated codec layer ${index}`);
+    assertSafeComponent(layer.bitmapPath.split("/")[1], `migrated codec bitmap shot segment ${index}`);
+  }
+  assert.equal(migratedCodecState.shotTransitions.some(({ fromShotId, toShotId }) => fromShotId === toShotId), false);
+  const migratedCodecSnapshot = createStoryboardSnapshot(migratedCodecState);
+  useStoryboardStore.getState().hydrateFromSnapshot(migratedCodecSnapshot);
+  assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), migratedCodecIds);
+  useStoryboardStore.getState().hydrateFromSnapshot(createStoryboardSnapshot(useStoryboardStore.getState()));
+  assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), migratedCodecIds);
 
   const legacyStroke = { id: "legacy-stroke", points: [{ x: 1, y: 2 }], color: "#000", size: 2, layerId: "legacy-layer" };
   const validHydrateEvidence = videoEvidence("legacy-duplicate", "seq-legacy-shot-b");
