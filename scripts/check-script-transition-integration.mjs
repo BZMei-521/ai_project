@@ -156,6 +156,80 @@ function callsNamed(node, name) {
   ));
 }
 
+function staticBooleanValue(expression) {
+  const current = unwrapParentheses(expression);
+  if (current.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (current.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
+    const operand = staticBooleanValue(current.operand);
+    return operand === undefined ? undefined : !operand;
+  }
+  return undefined;
+}
+
+function scanReachable(node, callName) {
+  const sequence = (statements) => {
+    const calls = [];
+    let terminated = false;
+    for (const statement of statements) {
+      if (terminated) break;
+      const result = scanReachable(statement, callName);
+      calls.push(...result.calls);
+      terminated = result.terminated;
+    }
+    return { calls, terminated };
+  };
+
+  if (ts.isSourceFile(node) || ts.isBlock(node)) return sequence(node.statements);
+  if (ts.isFunctionLike(node)) return { calls: [], terminated: false };
+  if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) {
+    return {
+      calls: node.expression ? callsNamed(node.expression, callName) : [],
+      terminated: true
+    };
+  }
+  if (ts.isIfStatement(node)) {
+    const conditionCalls = callsNamed(node.expression, callName);
+    const condition = staticBooleanValue(node.expression);
+    if (condition === true) {
+      const branch = scanReachable(node.thenStatement, callName);
+      return { calls: [...conditionCalls, ...branch.calls], terminated: branch.terminated };
+    }
+    if (condition === false) {
+      const branch = node.elseStatement
+        ? scanReachable(node.elseStatement, callName)
+        : { calls: [], terminated: false };
+      return { calls: [...conditionCalls, ...branch.calls], terminated: branch.terminated };
+    }
+    const whenTrue = scanReachable(node.thenStatement, callName);
+    const whenFalse = node.elseStatement
+      ? scanReachable(node.elseStatement, callName)
+      : { calls: [], terminated: false };
+    return {
+      calls: [...conditionCalls, ...whenTrue.calls, ...whenFalse.calls],
+      terminated: whenTrue.terminated && Boolean(node.elseStatement) && whenFalse.terminated
+    };
+  }
+  if (ts.isTryStatement(node)) {
+    const attempted = scanReachable(node.tryBlock, callName);
+    const caught = node.catchClause
+      ? scanReachable(node.catchClause.block, callName)
+      : { calls: [], terminated: true };
+    const finalized = node.finallyBlock
+      ? scanReachable(node.finallyBlock, callName)
+      : { calls: [], terminated: false };
+    return {
+      calls: [...attempted.calls, ...caught.calls, ...finalized.calls],
+      terminated: finalized.terminated || (attempted.terminated && caught.terminated)
+    };
+  }
+  return { calls: callsNamed(node, callName), terminated: false };
+}
+
+function reachableCallsNamed(node, name) {
+  return scanReachable(node, name).calls;
+}
+
 function ifCalling(root, name) {
   return scopedDescendants(root, (node) => ts.isIfStatement(node) && callsNamed(node.expression, name).length === 1)[0];
 }
@@ -211,12 +285,12 @@ function assertExclusiveRecoveryControlFlow(source, label) {
   assert.ok(decision, `${label}: missing recovery decision`);
   assert.ok(isDirectCallTo(decision.expression, "shouldMarkRecoveredScriptDirty"), `${label}: recovery decision must directly control the branch`);
   assert.ok(decision.elseStatement, `${label}: dirty and clean tracking must be explicit opposite branches`);
-  assert.equal(callsNamed(decision.thenStatement, "markScriptTransitionDirty").length, 1, `${label}: dirty branch must mark once`);
-  assert.equal(callsNamed(decision.thenStatement, "resetScriptTransitionTracking").length, 0, `${label}: dirty branch must never reset clean`);
-  assert.equal(callsNamed(decision.elseStatement, "resetScriptTransitionTracking").length, 1, `${label}: matching baseline branch must reset once`);
-  assert.equal(callsNamed(decision.elseStatement, "markScriptTransitionDirty").length, 0, `${label}: matching baseline branch must not mark dirty`);
-  assert.equal(callsNamed(root, "markScriptTransitionDirty").length, 1, `${label}: no mark call may escape the decision`);
-  assert.equal(callsNamed(root, "resetScriptTransitionTracking").length, 1, `${label}: no reset call may escape the decision`);
+  assert.equal(reachableCallsNamed(decision.thenStatement, "markScriptTransitionDirty").length, 1, `${label}: dirty branch must mark once`);
+  assert.equal(reachableCallsNamed(decision.thenStatement, "resetScriptTransitionTracking").length, 0, `${label}: dirty branch must never reset clean`);
+  assert.equal(reachableCallsNamed(decision.elseStatement, "resetScriptTransitionTracking").length, 1, `${label}: matching baseline branch must reset once`);
+  assert.equal(reachableCallsNamed(decision.elseStatement, "markScriptTransitionDirty").length, 0, `${label}: matching baseline branch must not mark dirty`);
+  assert.equal(reachableCallsNamed(root, "markScriptTransitionDirty").length, 1, `${label}: no reachable mark call may escape the decision`);
+  assert.equal(reachableCallsNamed(root, "resetScriptTransitionTracking").length, 1, `${label}: no reachable reset call may escape the decision`);
 }
 
 function assertGuardedStageControlFlow(source, label) {
@@ -447,6 +521,31 @@ assert.throws(
   () => assertExclusiveRecoveryControlFlow(deadRecoveryMarkFixture, "dead recovery mark fixture"),
   /dirty branch must mark once/,
   "a mark hidden in a nested declaration must not satisfy recovery control flow"
+);
+const afterReturnRecoveryFixture = `
+  if (shouldMarkRecoveredScriptDirty({ recoveredFingerprint, desktopFingerprint })) {
+    return;
+    markScriptTransitionDirty();
+  } else {
+    resetScriptTransitionTracking();
+  }
+`;
+assert.throws(
+  () => assertExclusiveRecoveryControlFlow(afterReturnRecoveryFixture, "after-return recovery fixture"),
+  /dirty branch must mark once/,
+  "a mark after an unconditional return must be unreachable"
+);
+const staticFalseRecoveryFixture = `
+  if (shouldMarkRecoveredScriptDirty({ recoveredFingerprint, desktopFingerprint })) {
+    if (false) markScriptTransitionDirty();
+  } else {
+    resetScriptTransitionTracking();
+  }
+`;
+assert.throws(
+  () => assertExclusiveRecoveryControlFlow(staticFalseRecoveryFixture, "static-false recovery fixture"),
+  /dirty branch must mark once/,
+  "a mark inside a statically false branch must be unreachable"
 );
 assert.match(recovery, /hydrateFromSnapshot\(snapshot\);\s*markScriptTransitionDirty\(\);[\s\S]*需保存/, "explicit autosave recovery must remain dirty");
 
