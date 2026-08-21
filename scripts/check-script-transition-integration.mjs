@@ -406,7 +406,32 @@ function reachableCallsWithCalleeText(root, calleeText) {
   };
 
   const visit = (current) => {
-    if (current !== root && ts.isFunctionLike(current)) return;
+    if (current !== root && ts.isFunctionLike(current)) return false;
+    if (ts.isSourceFile(current) || ts.isBlock(current)) {
+      for (const statement of current.statements) {
+        if (visit(statement)) return true;
+      }
+      return false;
+    }
+    if (ts.isReturnStatement(current) || ts.isThrowStatement(current)) {
+      if (current.expression) visit(current.expression);
+      return true;
+    }
+    if (ts.isIfStatement(current)) {
+      visit(current.expression);
+      const condition = staticBooleanValue(current.expression);
+      if (condition === true) return visit(current.thenStatement);
+      if (condition === false) return current.elseStatement ? visit(current.elseStatement) : false;
+      const thenTerminates = visit(current.thenStatement);
+      const elseTerminates = current.elseStatement ? visit(current.elseStatement) : false;
+      return thenTerminates && Boolean(current.elseStatement) && elseTerminates;
+    }
+    if (ts.isTryStatement(current)) {
+      const tryTerminates = visit(current.tryBlock);
+      const catchTerminates = current.catchClause ? visit(current.catchClause.block) : tryTerminates;
+      const finallyTerminates = current.finallyBlock ? visit(current.finallyBlock) : false;
+      return finallyTerminates || (tryTerminates && catchTerminates);
+    }
     if (ts.isCallExpression(current)) {
       const currentCallee = current.expression.getText();
       if (currentCallee === calleeText) matches.push(current);
@@ -426,7 +451,8 @@ function reachableCallsWithCalleeText(root, calleeText) {
         }
       }
     }
-    ts.forEachChild(current, visit);
+    ts.forEachChild(current, (child) => { visit(child); });
+    return false;
   };
 
   visit(root);
@@ -579,6 +605,40 @@ assert.throws(
   /expected exactly one desktop autosave effect/,
   "uninvoked local desktop-save identifiers must not establish effect ownership"
 );
+const controlFlowOwnershipFixture = ({
+  browserBody = "saveAutosaveSnapshot({ selectedShotIds }, 30);",
+  desktopBody = "const snapshot = readCurrentStoryboardSnapshot(); if (!shouldScheduleDesktopSnapshotSave({ snapshot })) return; void desktopSaveCoordinator.save({ snapshot });"
+} = {}) => `
+  const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
+  useEffect(() => {
+    ${browserBody}
+  }, [selectedShotIds]);
+  useEffect(() => {
+    ${desktopBody}
+  }, [selectedShotIds]);
+`;
+for (const [name, browserBody] of [
+  ["static-false local browser call", "const deadSave = () => saveAutosaveSnapshot({ selectedShotIds }, 30); if (false) deadSave();"],
+  ["post-return local browser call", "const deadSave = () => saveAutosaveSnapshot({ selectedShotIds }, 30); return; deadSave();"],
+  ["static-false browser timer", "if (false) setInterval(() => saveAutosaveSnapshot({ selectedShotIds }, 30), 30000);"]
+]) {
+  assert.throws(
+    () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ browserBody }), `${name} fixture`),
+    /expected exactly one browser autosave effect/,
+    `${name} must not establish reachable effect ownership`
+  );
+}
+for (const [name, desktopBody] of [
+  ["static-false local desktop call", "const deadSave = () => { const snapshot = readCurrentStoryboardSnapshot(); shouldScheduleDesktopSnapshotSave({ snapshot }); desktopSaveCoordinator.save({ snapshot }); }; if (false) deadSave();"],
+  ["post-return local desktop call", "const deadSave = () => { const snapshot = readCurrentStoryboardSnapshot(); shouldScheduleDesktopSnapshotSave({ snapshot }); desktopSaveCoordinator.save({ snapshot }); }; return; deadSave();"],
+  ["static-false desktop timer", "if (false) setTimeout(() => { const snapshot = readCurrentStoryboardSnapshot(); shouldScheduleDesktopSnapshotSave({ snapshot }); desktopSaveCoordinator.save({ snapshot }); }, 1200);"]
+]) {
+  assert.throws(
+    () => assertSelectedShotIdsSnapshotEffects(controlFlowOwnershipFixture({ desktopBody }), `${name} fixture`),
+    /expected exactly one desktop autosave effect/,
+    `${name} must not establish reachable effect ownership`
+  );
+}
 const scheduledIdentifierCallbacksFixture = `
   const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
   useEffect(() => {
