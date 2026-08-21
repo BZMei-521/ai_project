@@ -202,7 +202,8 @@ try {
     ["hydrate-b1", "hydrate-b2"]
   ]);
   assert.equal(useStoryboardStore.getState().shotTransitions[0].notes, supplied.notes);
-  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, supplied.id);
+  assert.notEqual(useStoryboardStore.getState().selectedShotTransitionId, supplied.id);
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, useStoryboardStore.getState().shotTransitions[0].id);
 
   useStoryboardStore.setState({
     project: { ...useStoryboardStore.getState().project, fps: 24 },
@@ -310,6 +311,151 @@ try {
   useStoryboardStore.setState({ shots: [] });
   useStoryboardStore.getState().hydrateFromSnapshot(negativeSnapshot);
   assert.equal(useStoryboardStore.getState().shots[0].negativePrompt, "模糊");
+
+  useStoryboardStore.setState({
+    sequences: [
+      { id: "seq-import-a", projectId: "p", name: "Import A", order: 1 },
+      { id: "seq-import-b", projectId: "p", name: "Import B", order: 2 }
+    ],
+    currentSequenceId: "seq-import-a",
+    shots: [],
+    shotTransitions: [],
+    selectedShotTransitionId: null,
+    layers: [],
+    shotStrokes: {},
+    shotHistory: {},
+    activeLayerByShotId: {},
+    selectedShotIds: []
+  });
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence({
+    shots: [
+      { id: "import-a1", title: "A1", prompt: "A1", durationFrames: 48 },
+      { id: "import-a2", title: "A2", prompt: "A2", durationFrames: 48 }
+    ],
+    transitions: [transition("shared-explicit-id", "seq-import-a", "import-a1", "import-a2")]
+  });
+  useStoryboardStore.getState().selectSequence("seq-import-b");
+  useStoryboardStore.getState().replaceShotScriptForCurrentSequence({
+    shots: [
+      { id: "import-b1", title: "B1", prompt: "B1", durationFrames: 48 },
+      { id: "import-b2", title: "B2", prompt: "B2", durationFrames: 48 }
+    ],
+    transitions: [transition("shared-explicit-id", "seq-import-b", "import-b1", "import-b2")]
+  });
+  const importedA = useStoryboardStore.getState().shotTransitions.find(({ sequenceId: id }) => id === "seq-import-a");
+  const importedB = useStoryboardStore.getState().shotTransitions.find(({ sequenceId: id }) => id === "seq-import-b");
+  assert.notEqual(importedA.id, importedB.id);
+  assert.match(importedA.id, /^shot-transition-external:/);
+  assert.match(importedB.id, /^shot-transition-external:/);
+  useStoryboardStore.getState().selectShotTransition(importedA.id);
+  useStoryboardStore.getState().updateShotTransition(importedA.id, { notes: "updated-a" });
+  useStoryboardStore.getState().selectShotTransition(importedB.id);
+  useStoryboardStore.getState().updateShotTransition(importedB.id, { notes: "updated-b" });
+  assert.deepEqual(useStoryboardStore.getState().shotTransitions.map(({ notes }) => notes), ["updated-a", "updated-b"]);
+
+  const legacyCollisionId = "shot-transition:legacy-a:legacy-b";
+  useStoryboardStore.getState().hydrateFromSnapshot({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: [
+      { id: "seq-legacy-a", projectId: "p", name: "Legacy A", order: 1 },
+      { id: "seq-legacy-b", projectId: "p", name: "Legacy B", order: 2 }
+    ],
+    currentSequenceId: "seq-legacy-a",
+    shots: [
+      { id: "legacy-a", sequenceId: "seq-legacy-a", order: 1, durationFrames: 48 },
+      { id: "legacy-b", sequenceId: "seq-legacy-a", order: 2, durationFrames: 48 },
+      { id: "legacy-a", sequenceId: "seq-legacy-b", order: 1, durationFrames: 48 },
+      { id: "legacy-b", sequenceId: "seq-legacy-b", order: 2, durationFrames: 48 }
+    ],
+    shotTransitions: [
+      transition(legacyCollisionId, "seq-legacy-a", "legacy-a", "legacy-b"),
+      transition(legacyCollisionId, "seq-legacy-b", "legacy-a", "legacy-b")
+    ],
+    selectedShotTransitionId: legacyCollisionId
+  });
+  const legacyTransitions = useStoryboardStore.getState().shotTransitions;
+  assert.equal(new Set(legacyTransitions.map(({ id }) => id)).size, legacyTransitions.length);
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, null);
+  useStoryboardStore.getState().updateShotTransition(legacyCollisionId, { notes: "must-remain-noop" });
+  assert.equal(legacyTransitions.every(({ notes }) => notes !== "must-remain-noop"), true);
+
+  useStoryboardStore.getState().hydrateFromSnapshot({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: [{ id: "seq-legacy-unique", projectId: "p", name: "Legacy Unique", order: 1 }],
+    currentSequenceId: "seq-legacy-unique",
+    shots: [
+      { id: "unique-a", sequenceId: "seq-legacy-unique", order: 1, durationFrames: 48 },
+      { id: "unique-b", sequenceId: "seq-legacy-unique", order: 2, durationFrames: 48 }
+    ],
+    shotTransitions: [transition("legacy-unique-id", "seq-legacy-unique", "unique-a", "unique-b")],
+    selectedShotTransitionId: "legacy-unique-id"
+  });
+  assert.notEqual(useStoryboardStore.getState().selectedShotTransitionId, "legacy-unique-id");
+  assert.equal(useStoryboardStore.getState().selectedShotTransitionId, useStoryboardStore.getState().shotTransitions[0].id);
+
+  useStoryboardStore.setState({
+    sequences: [{ id: "seq-id-gap", projectId: "p", name: "ID Gap", order: 1 }],
+    currentSequenceId: "seq-id-gap",
+    shots: [
+      { id: "shot_001", sequenceId: "seq-id-gap", order: 1, durationFrames: 48 },
+      { id: "shot_002", sequenceId: "seq-id-gap", order: 2, durationFrames: 48 },
+      { id: "shot_003", sequenceId: "seq-id-gap", order: 3, durationFrames: 48 }
+    ],
+    shotTransitions: [
+      transition("gap-edge-1", "seq-id-gap", "shot_001", "shot_002"),
+      transition("gap-edge-2", "seq-id-gap", "shot_002", "shot_003")
+    ],
+    selectedShotTransitionId: null,
+    layers: [],
+    shotStrokes: {},
+    shotHistory: {},
+    activeLayerByShotId: {},
+    selectedShotIds: []
+  });
+  useStoryboardStore.getState().deleteShot("shot_002");
+  useStoryboardStore.getState().addShot();
+  const gapShots = useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-id-gap");
+  const addedGapShotId = useStoryboardStore.getState().selectedShotId;
+  assert.equal(new Set(gapShots.map(({ id }) => id)).size, gapShots.length);
+  assert.notEqual(addedGapShotId, "shot_003");
+  const gapTransitions = useStoryboardStore.getState().shotTransitions.filter(({ sequenceId: id }) => id === "seq-id-gap");
+  assert.equal(gapTransitions.length, gapShots.length - 1);
+  assert.equal(gapTransitions.some(({ fromShotId, toShotId }) => fromShotId === toShotId), false);
+  useStoryboardStore.getState().deleteShot(addedGapShotId);
+  assert.deepEqual(useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-id-gap").map(({ id }) => id).sort(), ["shot_001", "shot_003"]);
+
+  useStoryboardStore.setState({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: [{ id: "seq-single-duration", projectId: "p", name: "Single Duration", order: 1 }],
+    currentSequenceId: "seq-single-duration",
+    shots: [
+      { id: "single-a", sequenceId: "seq-single-duration", order: 1, durationFrames: 48 },
+      { id: "single-b", sequenceId: "seq-single-duration", order: 2, durationFrames: 48 }
+    ],
+    shotTransitions: [{ ...transition("single-edge", "seq-single-duration", "single-a", "single-b"), durationSeconds: 2 }]
+  });
+  useStoryboardStore.getState().setShotDuration("single-b", 6);
+  assert.equal(useStoryboardStore.getState().shotTransitions[0].durationSeconds, 0.25);
+
+  useStoryboardStore.setState({
+    project: { ...useStoryboardStore.getState().project, fps: 24 },
+    sequences: [
+      { id: "seq-fps-a", projectId: "p", name: "FPS A", order: 1 },
+      { id: "seq-fps-b", projectId: "p", name: "FPS B", order: 2 }
+    ],
+    shots: [
+      { id: "fps-a1", sequenceId: "seq-fps-a", order: 1, durationFrames: 12 },
+      { id: "fps-a2", sequenceId: "seq-fps-a", order: 2, durationFrames: 12 },
+      { id: "fps-b1", sequenceId: "seq-fps-b", order: 1, durationFrames: 12 },
+      { id: "fps-b2", sequenceId: "seq-fps-b", order: 2, durationFrames: 12 }
+    ],
+    shotTransitions: [
+      { ...transition("fps-edge-a", "seq-fps-a", "fps-a1", "fps-a2"), durationSeconds: 0.5 },
+      { ...transition("fps-edge-b", "seq-fps-b", "fps-b1", "fps-b2"), durationSeconds: 0.5 }
+    ]
+  });
+  useStoryboardStore.getState().updateProjectSettings({ fps: 48 });
+  assert.deepEqual(useStoryboardStore.getState().shotTransitions.map(({ durationSeconds }) => durationSeconds), [0.25, 0.25]);
 
   useStoryboardStore.getState().resetForNewProject("Fresh");
   assert.deepEqual(useStoryboardStore.getState().shotTransitions, []);
