@@ -598,6 +598,9 @@ try {
   assert.equal(validationShots.find(({ id }) => id === "validation-malformed").videoProductionEvidence, undefined);
 
   const legacyStroke = { id: "legacy-stroke", points: [{ x: 1, y: 2 }], color: "#000", size: 2, layerId: "legacy-layer" };
+  const validHydrateEvidence = videoEvidence("legacy-duplicate", "seq-legacy-shot-b");
+  const foreignShotHydrateEvidence = videoEvidence("another-shot", "seq-legacy-shot-b");
+  const foreignSequenceHydrateEvidence = videoEvidence("foreign-sequence-key", "another-sequence");
   useStoryboardStore.getState().hydrateFromSnapshot({
     project: { ...useStoryboardStore.getState().project, fps: 24 },
     sequences: [
@@ -608,11 +611,20 @@ try {
     shots: [
       { id: "legacy-duplicate", sequenceId: "seq-legacy-shot-a", order: 1, durationFrames: 48 },
       { id: "legacy-tail-a", sequenceId: "seq-legacy-shot-a", order: 2, durationFrames: 48 },
+      { id: "foreign-shot-key", sequenceId: "seq-legacy-shot-a", order: 3, durationFrames: 48 },
+      { id: "foreign-sequence-key", sequenceId: "seq-legacy-shot-a", order: 4, durationFrames: 48 },
+      { id: "malformed-key", sequenceId: "seq-legacy-shot-a", order: 5, durationFrames: 48 },
       {
         id: "legacy-duplicate", sequenceId: "seq-legacy-shot-b", order: 1, durationFrames: 48,
-        videoProductionEvidence: videoEvidence("legacy-duplicate", "seq-legacy-shot-b")
+        videoProductionEvidence: validHydrateEvidence
       },
-      { id: "legacy-tail-b", sequenceId: "seq-legacy-shot-b", order: 2, durationFrames: 48 }
+      { id: "legacy-tail-b", sequenceId: "seq-legacy-shot-b", order: 2, durationFrames: 48 },
+      { id: "foreign-shot-key", sequenceId: "seq-legacy-shot-b", order: 3, durationFrames: 48, videoProductionEvidence: foreignShotHydrateEvidence },
+      { id: "foreign-sequence-key", sequenceId: "seq-legacy-shot-b", order: 4, durationFrames: 48, videoProductionEvidence: foreignSequenceHydrateEvidence },
+      {
+        id: "malformed-key", sequenceId: "seq-legacy-shot-b", order: 5, durationFrames: 48,
+        videoProductionEvidence: { schemaVersion: 1, shotId: "malformed-key", sequenceId: "seq-legacy-shot-b", status: "ready" }
+      }
     ],
     shotTransitions: [
       transition("legacy-shot-edge-a", "seq-legacy-shot-a", "legacy-duplicate", "legacy-tail-a"),
@@ -635,6 +647,12 @@ try {
   assert.equal(migratedLegacyState.selectedShotId, legacyBId);
   assert.deepEqual(migratedLegacyState.selectedShotIds, [legacyBId]);
   assert.equal(migratedLegacyState.shots.find(({ id }) => id === legacyBId).videoProductionEvidence.shotId, legacyBId);
+  assert.equal(migratedLegacyState.shots.find(({ sequenceId: id, order }) => id === "seq-legacy-shot-b" && order === 1).videoProductionEvidence.sequenceId, "seq-legacy-shot-b");
+  assert.notEqual(migratedLegacyState.shots.find(({ id }) => id === legacyBId).videoProductionEvidence, validHydrateEvidence);
+  assert.notEqual(migratedLegacyState.shots.find(({ id }) => id === legacyBId).videoProductionEvidence.nested, validHydrateEvidence.nested);
+  assert.equal(migratedLegacyState.shots.find(({ sequenceId: id, order }) => id === "seq-legacy-shot-b" && order === 3).videoProductionEvidence, undefined);
+  assert.equal(migratedLegacyState.shots.find(({ sequenceId: id, order }) => id === "seq-legacy-shot-b" && order === 4).videoProductionEvidence, undefined);
+  assert.equal(migratedLegacyState.shots.find(({ sequenceId: id, order }) => id === "seq-legacy-shot-b" && order === 5).videoProductionEvidence, undefined);
   for (const [sequence, expectedFrom] of [["seq-legacy-shot-a", legacyAId], ["seq-legacy-shot-b", legacyBId]]) {
     const edge = migratedLegacyState.shotTransitions.find(({ sequenceId }) => sequenceId === sequence);
     assert.equal(edge.fromShotId, expectedFrom);
@@ -653,15 +671,20 @@ try {
   assert.equal(migratedLegacyState.shotStrokes[legacyBId][0].layerId, legacyBLayer.id);
   assert.equal(migratedLegacyState.generationTasks[0].shotId, legacyBId);
   const stableLegacySnapshot = createStoryboardSnapshot(migratedLegacyState);
+  const firstHydratedEvidence = migratedLegacyState.shots.find(({ id }) => id === legacyBId).videoProductionEvidence;
   assert.deepEqual(stableLegacySnapshot.selectedShotIds, [legacyBId]);
   useStoryboardStore.getState().resetForNewProject("Selection fallback sentinel");
   useStoryboardStore.getState().hydrateFromSnapshot(stableLegacySnapshot);
   assert.deepEqual(useStoryboardStore.getState().shots.map(({ id }) => id), migratedLegacyIds);
   assert.equal(useStoryboardStore.getState().selectedShotId, legacyBId);
   assert.deepEqual(useStoryboardStore.getState().selectedShotIds, [legacyBId]);
+  assert.deepEqual(useStoryboardStore.getState().shots.find(({ id }) => id === legacyBId).videoProductionEvidence, firstHydratedEvidence);
+  assert.notEqual(useStoryboardStore.getState().shots.find(({ id }) => id === legacyBId).videoProductionEvidence, firstHydratedEvidence);
   useStoryboardStore.getState().hydrateFromSnapshot(createStoryboardSnapshot(useStoryboardStore.getState()));
   assert.equal(useStoryboardStore.getState().selectedShotId, legacyBId);
   assert.deepEqual(useStoryboardStore.getState().selectedShotIds, [legacyBId]);
+  assert.deepEqual(useStoryboardStore.getState().shots.find(({ id }) => id === legacyBId).videoProductionEvidence, firstHydratedEvidence);
+  assert.notEqual(useStoryboardStore.getState().shots.find(({ id }) => id === legacyBId).videoProductionEvidence, firstHydratedEvidence);
   useStoryboardStore.getState().shotStrokes[legacyBId][0].points[0].x = 99;
   useStoryboardStore.getState().shotHistory[legacyBId].past[0][0].points[0].y = 88;
   assert.deepEqual(useStoryboardStore.getState().shotStrokes[legacyAId][0].points[0], { x: 1, y: 2 });
