@@ -108,6 +108,42 @@ assert.deepEqual(resolveShotTransitionBoundary({
   approvalStatus: "approved"
 }, "legacy shot boundary fields are allowed only when the exact sequence edge is absent");
 
+const collidingTransitionA = {
+  ...transitionFor("sequence\u0000left", "continuous"),
+  id: "collision-a",
+  fromShotId: "from",
+  toShotId: "to",
+  actionContinuity: "collision-a-guidance"
+};
+const collidingTransitionB = {
+  ...transitionFor("sequence", "match_cut"),
+  id: "collision-b",
+  fromShotId: "left\u0000from",
+  toShotId: "to",
+  frameDependency: "shared_frame",
+  sharedFramePath: "frames/collision-b.png",
+  actionContinuity: "collision-b-guidance"
+};
+for (const transitions of [
+  [collidingTransitionA, collidingTransitionB],
+  [collidingTransitionB, collidingTransitionA]
+]) {
+  assert.equal(resolveShotTransitionBoundary({
+    sequenceId: "sequence\u0000left",
+    fromShot: { id: "from" },
+    toShot: { id: "to" },
+    transitions
+  }).actionContinuity, "collision-a-guidance",
+  "tuple A must not collide with tuple B when ids contain the old delimiter");
+  assert.equal(resolveShotTransitionBoundary({
+    sequenceId: "sequence",
+    fromShot: { id: "left\u0000from" },
+    toShot: { id: "to" },
+    transitions
+  }).actionContinuity, "collision-b-guidance",
+  "tuple B must not collide with tuple A when ids contain the old delimiter");
+}
+
 assert.deepEqual(planVideoContinuity(), {
   segments: [],
   boundaries: [],
@@ -720,6 +756,27 @@ async function assertPanelTransitionWiring() {
     toShot: "shots[index + 1]",
     transitions: "transitions"
   }, "buildContexts must pass the exact sequence and adjacent pair to the pure resolver");
+  const boundariesDeclaration = buildContexts.body.statements
+    .filter(ts.isVariableStatement)
+    .flatMap((statement) => [...statement.declarationList.declarations])
+    .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "boundaries");
+  assert.ok(boundariesDeclaration?.initializer && ts.isCallExpression(boundariesDeclaration.initializer),
+    "buildContexts must initialize boundaries from an executable mapping");
+  const boundaryMapCallback = boundariesDeclaration.initializer.arguments[0];
+  assert.ok(ts.isArrowFunction(boundaryMapCallback) && ts.isCallExpression(boundaryMapCallback.body),
+    "boundaries must be the direct result of mapping adjacent shots through a call");
+  assert.equal(textOf(boundaryMapCallback.body.expression), "resolveShotTransitionBoundary",
+    "the boundaries initializer must directly return the resolver result, preventing a dead resolver call");
+
+  const plannerCalls = buildDescendants.filter((node) =>
+    ts.isCallExpression(node) && textOf(node.expression) === "planVideoContinuity"
+  );
+  assert.equal(plannerCalls.length, 1, "buildContexts must create exactly one continuity plan");
+  const plannerInput = plannerCalls[0].arguments[0];
+  assert.ok(ts.isObjectLiteralExpression(plannerInput), "continuity planner input must be explicit");
+  assert.ok(plannerInput.properties.some((property) =>
+    ts.isShorthandPropertyAssignment(property) && property.name.text === "boundaries"
+  ), "the resolver-backed boundaries variable must flow into planVideoContinuity");
   assert.ok(!buildSource.includes("transitionByPair"),
     "Panel must not retain the unscoped pair-only transition map");
 }

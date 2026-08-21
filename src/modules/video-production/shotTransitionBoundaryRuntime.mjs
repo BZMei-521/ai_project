@@ -1,5 +1,5 @@
 const sequencePairKey = (sequenceId, fromShotId, toShotId) =>
-  `${sequenceId}\u0000${fromShotId}\u0000${toShotId}`;
+  JSON.stringify([sequenceId, fromShotId, toShotId]);
 
 export function resolveShotTransitionBoundary(input = {}) {
   const sequenceId = cleanText(input.sequenceId);
