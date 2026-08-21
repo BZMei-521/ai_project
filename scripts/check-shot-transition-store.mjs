@@ -611,7 +611,7 @@ try {
   assert.equal(validationShots.find(({ id }) => id === "validation-malformed").videoProductionEvidence, undefined);
 
   const adversarialExternalIds = [
-    "a", "b", "NUL", "path/segment", "path\\segment", "..", "colon:id", "percent%id",
+    "a", "A", "b", "NUL", "path/segment", "path\\segment", "..", "colon:id", "percent%id",
     "界".repeat(120), "CON", "x".repeat(81)
   ];
   useStoryboardStore.setState({
@@ -633,15 +633,22 @@ try {
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
   const codecBIds = useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-codec-b").sort((a, b) => a.order - b.order).map(({ id }) => id);
   assert.equal(codecAIds[0], "a");
-  assert.equal(codecAIds[1], "b");
+  assert.notEqual(codecAIds[1], "A");
+  assert.equal(codecAIds[2], "b");
   for (const [index, id] of [...codecAIds, ...codecBIds].entries()) assertSafeComponent(id, `codec shot ${index}`);
   assert.equal(codecAIds.every((id) => !codecBIds.includes(id)), true);
+  assert.equal(new Set([...codecAIds, ...codecBIds].map((id) => id.toLowerCase())).size, codecAIds.length + codecBIds.length);
   assert.equal(Math.max(...[...codecAIds, ...codecBIds].map((id) => id.length)) <= 80, true);
   for (const [index, layer] of useStoryboardStore.getState().layers.entries()) {
     assertSafeComponent(layer.id, `codec layer ${index}`);
     assertSafeBitmapPath(layer.bitmapPath, `codec bitmap ${index}`);
   }
+  assert.equal(new Set(useStoryboardStore.getState().layers.map(({ id }) => id.toLowerCase())).size, useStoryboardStore.getState().layers.length);
   assert.equal(useStoryboardStore.getState().shotTransitions.some(({ fromShotId, toShotId }) => fromShotId === toShotId), false);
+  useStoryboardStore.getState().updateShotFields(codecBIds[0], { notes: "casefold B only" });
+  assert.equal(useStoryboardStore.getState().shots.find(({ id }) => id === codecAIds[0]).notes, "");
+  useStoryboardStore.getState().deleteShot(codecBIds[1]);
+  assert.equal(useStoryboardStore.getState().shots.some(({ id }) => id === codecAIds[1]), true);
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(codecImport);
   assert.deepEqual(useStoryboardStore.getState().shots.filter(({ sequenceId: id }) => id === "seq-codec-b").sort((a, b) => a.order - b.order).map(({ id }) => id), codecBIds);
   const stableCodecSnapshot = createStoryboardSnapshot(useStoryboardStore.getState());
@@ -661,21 +668,22 @@ try {
   const saltedImport = { shots: [{ id: saltedExternalId, title: "Salted", prompt: "Salted", durationFrames: 48 }], transitions: [] };
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(saltedImport);
   const saltZeroId = useStoryboardStore.getState().selectedShotId;
+  const uppercaseSaltZeroId = saltZeroId.toUpperCase();
   useStoryboardStore.setState({
     sequences: [
       { id: "seq-codec-blocker", projectId: "p", name: "Salt Blocker", order: 1 },
       { id: "seq-codec-salt", projectId: "p", name: "Salt Target", order: 2 }
     ],
     currentSequenceId: "seq-codec-salt",
-    shots: [{ id: saltZeroId, sequenceId: "seq-codec-blocker", order: 1, durationFrames: 48 }],
+    shots: [{ id: uppercaseSaltZeroId, sequenceId: "seq-codec-blocker", order: 1, durationFrames: 48 }],
     shotTransitions: [], selectedShotId: "", selectedShotIds: [],
     layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
   });
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(saltedImport);
   const saltOneId = useStoryboardStore.getState().selectedShotId;
   assertSafeComponent(saltOneId, "salt-one shot");
-  assert.notEqual(saltOneId, saltZeroId);
-  assert.equal(useStoryboardStore.getState().shots.some(({ sequenceId, id }) => sequenceId === "seq-codec-blocker" && id === saltZeroId), true);
+  assert.notEqual(saltOneId.toLowerCase(), saltZeroId.toLowerCase());
+  assert.equal(useStoryboardStore.getState().shots.some(({ sequenceId, id }) => sequenceId === "seq-codec-blocker" && id === uppercaseSaltZeroId), true);
   useStoryboardStore.getState().replaceShotScriptForCurrentSequence(saltedImport);
   assert.equal(useStoryboardStore.getState().selectedShotId, saltOneId);
   const saltedSnapshot = createStoryboardSnapshot(useStoryboardStore.getState());
@@ -836,13 +844,14 @@ try {
     ],
     currentSequenceId: "seq-global-id-b",
     shots: [
-      { id: "shot_001", sequenceId: "seq-global-id-a", order: 1, durationFrames: 24 },
+      { id: "SHOT_001", sequenceId: "seq-global-id-a", order: 1, durationFrames: 24 },
       { id: "shot_001_1", sequenceId: "seq-global-id-a", order: 2, durationFrames: 24 }
     ],
     shotTransitions: [], layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
   });
   useStoryboardStore.getState().addShot();
   assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, 3);
+  assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id.toLowerCase())).size, 3);
   const originalDateNow = Date.now;
   const originalRandom = Math.random;
   try {
@@ -863,8 +872,8 @@ try {
           approvedBoundaryFramePath: "source-boundary.png", generatedImagePath: "source.png", generatedVideoPath: "source.mp4",
           videoQualityStatus: "approved"
         },
-        { id: "shot_1234_7", sequenceId: "seq_1234_7", order: 1, durationFrames: 24 },
-        { id: "shot_1234_0_7", sequenceId: "seq_1234_7", order: 2, durationFrames: 24 }
+        { id: "SHOT_1234_7", sequenceId: "seq_1234_7", order: 1, durationFrames: 24 },
+        { id: "SHOT_1234_0_7", sequenceId: "seq_1234_7", order: 2, durationFrames: 24 }
       ],
       shotTransitions: [], layers: [], shotStrokes: {}, shotHistory: {}, activeLayerByShotId: {}
     });
@@ -876,11 +885,13 @@ try {
     assert.equal(duplicatedShot.videoQualityStatus, "pending");
     assert.equal(useStoryboardStore.getState().shots.find(({ id }) => id === "source-shot").videoProductionEvidence.shotId, "source-shot");
     assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, useStoryboardStore.getState().shots.length);
+    assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id.toLowerCase())).size, useStoryboardStore.getState().shots.length);
     useStoryboardStore.getState().duplicateSequence("seq-generator-source");
     const duplicatedSequenceShots = useStoryboardStore.getState().shots.filter(({ sequenceId }) => sequenceId === useStoryboardStore.getState().currentSequenceId);
     assert.equal(duplicatedSequenceShots.every((shot) => shot.videoProductionEvidence === undefined && shot.videoGenerationReceipt === undefined && shot.generatedVideoPath === undefined), true);
     assert.equal(new Set(useStoryboardStore.getState().sequences.map(({ id }) => id)).size, useStoryboardStore.getState().sequences.length);
     assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id)).size, useStoryboardStore.getState().shots.length);
+    assert.equal(new Set(useStoryboardStore.getState().shots.map(({ id }) => id.toLowerCase())).size, useStoryboardStore.getState().shots.length);
     const duplicateSnapshot = createStoryboardSnapshot(useStoryboardStore.getState());
     const expectedDuplicateSelection = [...duplicateSnapshot.selectedShotIds];
     useStoryboardStore.getState().resetForNewProject("Duplicate restore sentinel");
