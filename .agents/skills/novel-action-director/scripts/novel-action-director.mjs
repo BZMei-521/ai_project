@@ -1,3 +1,6 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
 export const PHYSICS_PROFILES = ['realistic', 'wuxia', 'xianxia', 'stylized'];
 export const ACTION_KINDS = ['performance', 'interaction', 'combat', 'prop-operation', 'locomotion'];
 export const DEFAULT_PARAMS = Object.freeze({
@@ -19,6 +22,38 @@ function clone(value) {
   return structuredClone(value);
 }
 
+function normalizeBeat(beat, beatIndex) {
+  if (typeof beat?.line === 'string') {
+    return {
+      n: beatIndex + 1,
+      kind: 'line',
+      speaker: beat.speaker,
+      delivery: beat.delivery ?? '',
+      text: beat.line,
+      ...(beat.seconds != null ? { seconds: beat.seconds } : {}),
+    };
+  }
+  return {
+    n: beat.n ?? beat.index ?? beatIndex + 1,
+    ...clone(beat),
+    kind: beat.kind ?? 'action',
+    text: beat.text ?? beat.action ?? '',
+  };
+}
+
+function normalizeScene(scene, sceneIndex) {
+  const rawBeats = scene.beats ?? scene.flow ?? [];
+  return {
+    ...clone(scene),
+    sceneIndex: scene.sceneIndex ?? scene.index ?? sceneIndex + 1,
+    sceneId: scene.sceneId ?? `S${String(sceneIndex + 1).padStart(2, '0')}`,
+    lighting: scene.lighting ?? '',
+    characters: clone(scene.characters ?? []),
+    props: clone(scene.props ?? []),
+    beats: rawBeats.map(normalizeBeat),
+  };
+}
+
 export function expandScript(script) {
   if (!script || !Array.isArray(script.episodes)) {
     throw new TypeError('script.json 缺少 episodes 数组');
@@ -29,21 +64,28 @@ export function expandScript(script) {
     if (!Number.isInteger(episode.ep)) {
       throw new TypeError('script.json 的 episode.ep 必须是整数');
     }
-    expanded.set(episode.ep, clone(episode));
+    expanded.set(episode.ep, {
+      ...clone(episode),
+      scenes: (episode.scenes ?? []).map(normalizeScene),
+    });
   }
   return expanded;
 }
 
 function seedBeat(beat, beatIndex) {
   return {
-    index: beatIndex + 1,
+    n: beat.n ?? beatIndex + 1,
+    index: beat.n ?? beatIndex + 1,
     ...clone(beat),
   };
 }
 
 function seedScene(scene, sceneIndex) {
   return {
-    index: scene.index ?? sceneIndex + 1,
+    sceneIndex: scene.sceneIndex ?? scene.index ?? sceneIndex + 1,
+    index: scene.sceneIndex ?? scene.index ?? sceneIndex + 1,
+    sceneId: scene.sceneId,
+    lighting: scene.lighting ?? '',
     characters: clone(scene.characters ?? []),
     props: clone(scene.props ?? []),
     beats: (scene.beats ?? []).map(seedBeat),
@@ -100,12 +142,11 @@ function actionEntries(doc) {
 
 function scriptFacts(script) {
   const facts = new Map();
-  for (const episode of script?.episodes ?? []) {
-    for (const [sceneOffset, scene] of (episode.scenes ?? []).entries()) {
-      const sceneIndex = scene.index ?? sceneOffset + 1;
-      for (const [beatOffset, beat] of (scene.beats ?? []).entries()) {
-        const beatIndex = beat.index ?? beatOffset + 1;
-        facts.set(actionKey(episode.ep, sceneIndex, beatIndex), { episode, scene, beat, beatIndex });
+  if (!script) return facts;
+  for (const [ep, episode] of expandScript(script)) {
+    for (const scene of episode.scenes ?? []) {
+      for (const beat of scene.beats ?? []) {
+        facts.set(actionKey(ep, scene.sceneIndex, beat.n), { episode, scene, beat, beatIndex: beat.n });
       }
     }
   }
@@ -164,7 +205,7 @@ function sourceFidelity(doc, ctx) {
     const expected = facts.get(key)?.beat;
     if (!expected) continue;
     const claimed = action.sourceBeat;
-    const fields = ['kind', 'text', 'speaker', 'line'];
+    const fields = ['kind', 'text', 'speaker', 'delivery'];
     if (!claimed || claimed.ep !== episode.ep || claimed.sceneIndex !== action.sceneIndex || claimed.beat !== action.beat || fields.some((field) => (expected[field] ?? null) !== (claimed[field] ?? null))) {
       problems.push(`${action.id ?? key} 的 sourceBeat 与剧本不一致`);
     }
@@ -270,7 +311,7 @@ function physicsProfile(doc) {
   if (!PHYSICS_PROFILES.includes(profile)) return `未知 physicsProfile：${profile}`;
   for (const { action } of actionEntries(doc)) {
     const displacement = action.displacement ?? {};
-    if (profile === 'realistic' && (displacement.airborne || displacement.supernatural || Number(displacement.distanceMeters ?? 0) > 2)) {
+    if (profile === 'realistic' && (displacement.airborne || displacement.supernatural || Number(displacement.impactDisplacementMeters ?? 0) > 2)) {
       problems.push(`${action.id} 超出 realistic 位移上限`);
     }
     if (profile === 'stylized' && !doc?.params?.stylizedLimits) {
@@ -402,4 +443,182 @@ export function buildStoryboardSummary(doc, script) {
     };
   }
   return { version: 1, source: doc.source, physicsProfile: doc.physicsProfile, actions };
+}
+
+function json(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function totalScriptBeats(script) {
+  return scriptFacts(script).size;
+}
+
+function timelineLines(doc) {
+  const lines = [];
+  for (const { episode, action } of actionEntries(doc)) {
+    const title = `${action.id} · ${action.kind} · ${action.intent}`;
+    lines.push(`### ${title}`);
+    lines.push('');
+    lines.push(`- 来源：E${episode.ep} / S${action.sceneIndex} / B${action.beat}`);
+    lines.push(`- 参与者：${(action.participants ?? []).join('、') || '无'}`);
+    lines.push(`- 道具：${(action.propRefs ?? []).join('、') || '无'}`);
+    lines.push(`- 首态：\`${JSON.stringify(action.startState)}\``);
+    for (const phase of action.phases ?? []) {
+      const details = Object.entries(phase)
+        .filter(([key, value]) => key !== 'phase' && value != null)
+        .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
+        .join('；');
+      lines.push(`  - ${phase.phase}${details ? `：${details}` : ''}`);
+    }
+    lines.push(`- 末态：\`${JSON.stringify(action.endState)}\``);
+    lines.push(`- 镜头信息需求：${(action.cameraIntent?.mustShow ?? []).join('、') || '无'}`);
+    lines.push(`- 生成风险：${(action.generationRisk ?? []).join('、') || '无'}`);
+    lines.push('');
+  }
+  return lines;
+}
+
+export function renderMarkdown(doc, ctx = {}) {
+  const report = gateReport(doc, ctx);
+  const actions = actionEntries(doc);
+  const totalBeats = totalScriptBeats(ctx.script);
+  const selected = new Set(actions.map(({ episode, action }) => actionKey(episode.ep, action.sceneIndex, action.beat))).size;
+  const ordinary = Math.max(0, totalBeats - selected);
+  let summary = null;
+  if (report.every((gate) => gate.ok)) summary = buildStoryboardSummary(doc, ctx.script);
+
+  const lines = [
+    `# ${doc.source || '未命名项目'} · 动作导演报告`,
+    '',
+    '## KPI',
+    '',
+    `- physicsProfile：\`${doc.physicsProfile}\``,
+    `- 深化动作：${actions.length}`,
+    `- 已选关键节拍：${selected}`,
+    `- 普通剧本节拍：${ordinary}`,
+    `- 门禁通过：${report.filter((gate) => gate.ok).length}/${report.length}`,
+    '',
+    '## 动作时间线',
+    '',
+    ...timelineLines(doc),
+    '## 质量门',
+    '',
+    ...report.map((gate) => `- ${gate.ok ? 'PASS' : 'FAIL'} · ${gate.label}：${gate.detail}`),
+    '',
+  ];
+
+  if (summary) {
+    lines.push('## Storyboard 动作摘要', '', '```json', json(summary), '```', '');
+  }
+  return lines.join('\n');
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+export function renderHtml(doc, ctx = {}) {
+  const markdown = renderMarkdown(doc, ctx);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${escapeHtml(doc.source || '动作导演报告')}</title>
+  <style>
+    :root{color-scheme:light;background:#f4f1ea;color:#17202a;font-family:system-ui,"Microsoft YaHei",sans-serif}
+    body{max-width:1120px;margin:0 auto;padding:32px}main{background:#fff;padding:32px;border-radius:18px;box-shadow:0 12px 40px #18202a18}
+    .profile{display:inline-block;padding:6px 10px;border-radius:999px;background:#183153;color:#fff}pre{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+  </style>
+</head>
+<body><main><p class="profile">physicsProfile: ${escapeHtml(doc.physicsProfile)}</p><pre>${escapeHtml(markdown)}</pre></main></body>
+</html>`;
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+function optionValue(args, name) {
+  const index = args.indexOf(name);
+  if (index < 0) return null;
+  if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`${name} 缺少参数值`);
+  return args[index + 1];
+}
+
+function requireOption(args, name) {
+  const value = optionValue(args, name);
+  if (!value) throw new Error(`必须提供 ${name}`);
+  return value;
+}
+
+function outputText(text, outPath) {
+  if (outPath) writeFileSync(outPath, text, 'utf8');
+  else process.stdout.write(`${text}\n`);
+}
+
+function usage() {
+  return [
+    'novel-action-director seed <script.json> [--eps 1-3] [--physics realistic|wuxia|xianxia|stylized]',
+    'novel-action-director validate <action.json> --script <script.json> [--cast <cast.json>] [--art <art.json>]',
+    'novel-action-director render <action.json> --script <script.json> [--html|--md] [--out <report>]',
+    'novel-action-director export <action.json> --script <script.json> [--out <summary.json>]',
+  ].join('\n');
+}
+
+export function runCli(argv = process.argv.slice(2)) {
+  const [command, input, ...args] = argv;
+  if (!command || !input) throw new Error(usage());
+
+  if (command === 'seed') {
+    const script = readJson(input);
+    const physics = optionValue(args, '--physics') ?? 'realistic';
+    if (!PHYSICS_PROFILES.includes(physics)) throw new Error(`未知 physicsProfile：${physics}`);
+    const doc = seedFromScript(script, parseEpisodeRange(optionValue(args, '--eps')));
+    doc.physicsProfile = physics;
+    outputText(json(doc), optionValue(args, '--out'));
+    return 0;
+  }
+
+  const script = readJson(requireOption(args, '--script'));
+  const doc = readJson(input);
+  const ctx = {
+    script,
+    cast: optionValue(args, '--cast') ? readJson(optionValue(args, '--cast')) : null,
+    art: optionValue(args, '--art') ? readJson(optionValue(args, '--art')) : null,
+  };
+
+  if (command === 'validate') {
+    const problems = validateAction(doc, ctx);
+    if (problems.length) {
+      process.stderr.write(`${problems.join('\n')}\n`);
+      return 1;
+    }
+    process.stdout.write(`PASS · 18/18 门禁通过 · ${actionEntries(doc).length} 个动作计划\n`);
+    return 0;
+  }
+  if (command === 'render') {
+    const text = args.includes('--html') ? renderHtml(doc, ctx) : renderMarkdown(doc, ctx);
+    outputText(text, optionValue(args, '--out'));
+    return 0;
+  }
+  if (command === 'export') {
+    outputText(json(buildStoryboardSummary(doc, script)), optionValue(args, '--out'));
+    return 0;
+  }
+  throw new Error(`未知命令：${command}\n${usage()}`);
+}
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  try {
+    process.exitCode = runCli();
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
 }

@@ -1,0 +1,199 @@
+{
+  "source": "渡口",
+  "version": 1,
+  "physicsProfile": "realistic",
+  "params": {
+    "maxMajorActionsPerBeat": 1,
+    "requireRecoveryPose": true
+  },
+  "ordinaryBeatsPreserved": true,
+  "episodes": [
+    {
+      "ep": 1,
+      "actions": [
+        {
+          "id": "E01-S01-B01-A01",
+          "sceneIndex": 1,
+          "beat": 1,
+          "kind": "locomotion",
+          "intent": "沈知微抱紧旧皮箱跑向雾中的栈桥",
+          "participants": ["C01"],
+          "propRefs": ["P01"],
+          "environmentRefs": ["S02-river-road"],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 1,
+            "kind": "action",
+            "text": "冷开场：一个年轻女人抱着旧皮箱，在雾里的河岸土路上跑，鞋底踏得水洼直响，箱子搂得死紧。雾把她的背影吞掉。"
+          },
+          "startState": {
+            "characters": {"C01": {"position": "river-road", "support": "right-foot", "gaze": "fog-ahead", "hands": {"left": "under-P01", "right": "around-P01"}}},
+            "props": {"P01": {"state": "closed", "holder": "C01", "position": "against-chest"}}
+          },
+          "displacement": {
+            "support": "alternating-feet",
+            "path": "straight river-road toward hidden pier",
+            "landing": "three steps before the pier",
+            "distanceMeters": 8,
+            "obstacle": "shallow puddles"
+          },
+          "phases": [
+            {"phase": "setup", "support": "right-foot", "weightShift": "forward"},
+            {"phase": "anticipation", "gaze": "fog-ahead", "breath": "short"},
+            {"phase": "action", "support": "alternating-feet", "path": "straight-forward", "landing": "pier-approach", "secondaryMotion": "coat hem and loose hair trail behind"},
+            {"phase": "recovery", "duration": 0.4, "stablePose": "P01 仍贴胸抱紧，双脚在栈桥前三步处收稳"}
+          ],
+          "endState": {
+            "characters": {"C01": {"position": "pier-approach", "support": "both-feet", "gaze": "pier", "hands": {"left": "under-P01", "right": "around-P01"}}},
+            "props": {"P01": {"state": "closed", "holder": "C01", "position": "against-chest"}}
+          },
+          "cameraIntent": {"mustShow": ["皮箱始终贴胸", "鞋底踏过水洼", "栈桥从雾中显出"]},
+          "generationRisk": [],
+          "summaryConsistency": {"contradictions": []}
+        },
+        {
+          "id": "E01-S01-B06-A01",
+          "sceneIndex": 1,
+          "beat": 6,
+          "kind": "interaction",
+          "intent": "老周接住胡二爷卸下的货担并让出上船通道",
+          "participants": ["C03", "C04"],
+          "propRefs": [],
+          "environmentRefs": ["S02-gangplank"],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 6,
+            "kind": "action",
+            "text": "胡二爷挑着担子上船，老周搭手帮他把担子卸进舱里。"
+          },
+          "continuity": {"timeJump": true},
+          "startState": {
+            "characters": {"C03": {"position": "bow", "hands": {"left": "free", "right": "free"}}, "C04": {"position": "gangplank", "balance": "loaded"}},
+            "props": {}
+          },
+          "interaction": {
+            "initiator": {"id": "C04", "action": "先把担杆一端送向船内"},
+            "responder": {"id": "C03", "action": "双手接住近端并向舱内下放"},
+            "contact": "C03 双手与担杆近端",
+            "distanceChange": "一臂外到并肩协作",
+            "initiatorEnd": "双脚踏稳船板后松开担杆",
+            "responderEnd": "担杆落稳后撤手让出通道"
+          },
+          "phases": [
+            {"phase": "setup", "support": "C04 front-foot on boat"},
+            {"phase": "anticipation", "gaze": "both look at the load"},
+            {"phase": "action", "path": "load descends from shoulder to cabin floor"},
+            {"phase": "contact", "contactPoint": "C03 palms/load-near-end"},
+            {"phase": "reaction", "response": "C04 releases shoulder load only after C03 takes weight"},
+            {"phase": "recovery", "duration": 0.4, "stablePose": "货担落稳，C03 与 C04 双脚各自承重"}
+          ],
+          "endState": {
+            "characters": {"C03": {"position": "cabin-entry", "hands": {"left": "free", "right": "free"}}, "C04": {"position": "aboard", "balance": "stable"}},
+            "props": {}
+          },
+          "cameraIntent": {"mustShow": ["交接承重顺序", "两人脚下支撑", "货担落稳结果"]},
+          "generationRisk": [],
+          "summaryConsistency": {"contradictions": []}
+        }
+      ]
+    },
+    {
+      "ep": 4,
+      "actions": [
+        {
+          "id": "E04-S01-B10-A01",
+          "sceneIndex": 1,
+          "beat": 10,
+          "kind": "performance",
+          "intent": "沈知微压住身份暴露的恐惧，只有抱箱的手泄露反应",
+          "participants": ["C01"],
+          "propRefs": ["P01"],
+          "environmentRefs": ["S01-cabin-shadow"],
+          "sourceBeat": {
+            "ep": 4,
+            "sceneIndex": 1,
+            "beat": 10,
+            "kind": "action",
+            "text": "冤案两个字第二次出口的时候，沈知微的指节又掐白了。"
+          },
+          "startState": {
+            "characters": {"C01": {"gaze": "down", "breath": "shallow-even", "hands": {"left": "around-P01", "right": "around-P01"}}},
+            "props": {"P01": {"state": "closed", "holder": "C01"}}
+          },
+          "performance": {
+            "trigger": "C02 再次说出冤案二字",
+            "gazeTarget": "P01",
+            "control": "先固定视线和下颌，不让头部抬起",
+            "channels": ["gaze", "jaw", "breath", "hands"],
+            "leak": "呼吸停半拍，十指同步收紧至指节发白",
+            "release": "右拇指先松开一线，其余手指保持环抱"
+          },
+          "phases": [
+            {"phase": "setup", "gaze": "P01", "breath": "shallow-even"},
+            {"phase": "anticipation", "trigger": "冤案二字", "breath": "held-half-beat"},
+            {"phase": "action", "hands": {"left": "tighten", "right": "tighten"}, "jaw": "locked"},
+            {"phase": "reaction", "response": "knuckles whiten while face remains controlled"},
+            {"phase": "recovery", "duration": 0.5, "stablePose": "视线仍向下，右拇指略松，皮箱继续贴身"}
+          ],
+          "endState": {
+            "characters": {"C01": {"gaze": "down", "breath": "slow-release", "hands": {"left": "tight-around-P01", "right": "slightly-relaxed-around-P01"}}},
+            "props": {"P01": {"state": "closed", "holder": "C01"}}
+          },
+          "cameraIntent": {"mustShow": ["冤案二字后的停顿", "指节发白", "面部仍受控"]},
+          "generationRisk": [],
+          "summaryConsistency": {"contradictions": []}
+        }
+      ]
+    },
+    {
+      "ep": 6,
+      "actions": [
+        {
+          "id": "E06-S01-B01-A01",
+          "sceneIndex": 1,
+          "beat": 1,
+          "kind": "prop-operation",
+          "intent": "沈知微在天光照入时推开皮箱铜扣",
+          "participants": ["C01"],
+          "propRefs": ["P01"],
+          "environmentRefs": ["S01-cabin-center"],
+          "sourceBeat": {
+            "ep": 6,
+            "sceneIndex": 1,
+            "beat": 1,
+            "kind": "action",
+            "text": "冷开场特写：皮箱铜扣被一根拇指推开的一瞬。雾开始散了，舱里第一次照进真正的天光，每个人脸上的影子都藏不住了。"
+          },
+          "startState": {
+            "characters": {"C01": {"hands": {"left": "steadying-P01", "right": "thumb-on-latch"}}},
+            "props": {"P01": {"state": "latched", "position": "cabin-center"}}
+          },
+          "propOperation": {
+            "leftHand": "掌根压住箱盖防止滑动",
+            "rightHand": "拇指向外推开铜扣",
+            "contact": "right-thumb/copper-latch",
+            "stateChange": "latched-to-unlatched"
+          },
+          "phases": [
+            {"phase": "setup", "hands": {"left": "steady", "right": "thumb-loaded"}},
+            {"phase": "anticipation", "gaze": "copper-latch", "breath": "held"},
+            {"phase": "action", "hands": {"left": "steady", "right": "thumb-push"}, "fineFinger": true},
+            {"phase": "contact", "contactPoint": "right-thumb/copper-latch"},
+            {"phase": "reaction", "response": "latch clears catch and lid pressure releases"},
+            {"phase": "recovery", "duration": 0.3, "stablePose": "左手仍稳住箱盖，右拇指离开已弹开的铜扣"}
+          ],
+          "endState": {
+            "characters": {"C01": {"hands": {"left": "steadying-P01", "right": "beside-open-latch"}}},
+            "props": {"P01": {"state": "unlatched", "position": "cabin-center"}}
+          },
+          "cameraIntent": {"mustShow": ["右拇指与铜扣接触", "铜扣从锁定到弹开", "左手持续稳箱"]},
+          "riskFlags": ["fine-finger"],
+          "generationRisk": ["fine-finger"],
+          "summaryConsistency": {"contradictions": []}
+        }
+      ]
+    }
+  ]
+}

@@ -6,6 +6,8 @@ import {
   expandScript,
   gateReport,
   parseEpisodeRange,
+  renderHtml,
+  renderMarkdown,
   seedFromScript,
   validateAction,
 } from './novel-action-director.mjs';
@@ -65,6 +67,26 @@ check(() => assert.deepEqual(seedFromScript(SCRIPT, parseEpisodeRange('2')).epis
 const expanded = expandScript(SCRIPT);
 expanded.get(1).scenes[0].beats[0].text = '被修改';
 check(() => assert.equal(SCRIPT.episodes[0].scenes[0].beats[0].text, '她挡在同伴身前。'));
+
+const FLOW_SCRIPT = {
+  source: '生产格式',
+  episodes: [{
+    ep: 1,
+    scenes: [{
+      sceneId: 'S09',
+      characters: ['C01'],
+      props: ['P01'],
+      flow: [
+        { action: '她抱着箱子跑上跳板。' },
+        { speaker: 'C01', line: '让开。', delivery: '压低声音' },
+      ],
+    }],
+  }],
+};
+check(() => assert.equal(expandScript(FLOW_SCRIPT).get(1).scenes[0].sceneIndex, 1));
+check(() => assert.equal(expandScript(FLOW_SCRIPT).get(1).scenes[0].beats[0].text, '她抱着箱子跑上跳板。'));
+check(() => assert.equal(expandScript(FLOW_SCRIPT).get(1).scenes[0].beats[1].kind, 'line'));
+check(() => assert.equal(seedFromScript(FLOW_SCRIPT).episodes[0].seedScenes[0].beats[1].speaker, 'C01'));
 
 const GATE_SCRIPT = {
   source: '门禁测试剧',
@@ -201,5 +223,9 @@ check(() => assert.equal(summary.physicsProfile, 'realistic'));
 check(() => assert.equal(Object.keys(summary.actions).length, 5));
 check(() => assert.equal(summary.actions['E01-S01-B01'].actionId, 'E01-S01-B01-A01'));
 check(() => assert.deepEqual(summary.actions['E01-S01-B01'].cameraIntent.mustShow, ['前臂接触点', 'C02 后退结果']));
+check(() => assert.match(renderMarkdown(VALID, { script: GATE_SCRIPT }), /动作时间线/));
+check(() => assert.match(renderMarkdown(VALID, { script: GATE_SCRIPT }), /前臂接触点/));
+check(() => assert.match(renderHtml(VALID, { script: GATE_SCRIPT }), /<!doctype html>/i));
+check(() => assert.match(renderHtml(VALID, { script: GATE_SCRIPT }), /physicsProfile/));
 
 console.log(`✓ ${assertions} 项自测全部通过`);
