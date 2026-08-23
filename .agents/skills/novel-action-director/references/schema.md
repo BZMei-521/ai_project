@@ -60,7 +60,28 @@
 
 可用阶段是 `setup`、`anticipation`、`action`、`contact`、`reaction`、`recovery`。战斗必须六段齐全；其他类型可以省略不适用阶段，但必须以含 `stablePose` 的 `recovery` 收尾。
 
-阶段可以记录：`duration`、`subject`、`target`、`support`、`weightShift`、`torso`、`head`、`gaze`、`breath`、`hands`、`path`、`landing`、`contactPoint`、`forceDirection`、`forceResult`、`response`、`secondaryMotion`。
+阶段可以记录：`duration`、`subject`、`target`、`support`、`weightShift`、`torso`、`head`、`gaze`、`breath`、`hands`、`path`、`landing`、`contactPoint`、`forceDirection`、`forceResult`、`response`、`secondaryMotion`。战斗的 `contact.outcome` 只能表达动作结果：`hit`、`block`、`evade` 或 `miss`。
+
+## impactEvidence
+
+当战斗 `contact.outcome` 为 `hit` 或 `block`，或源剧本明确写出命中/格挡时，必须提供：
+
+```json
+{
+  "contactPoint": "blade/left-shoulder-armor",
+  "contactVisible": true,
+  "targetLatency": "左肩停顿半拍",
+  "supportChange": "右脚向后补步",
+  "centerOfMassShift": "重心移向右后方",
+  "forceDirection": "backward-right",
+  "wholeBodyResult": "躯干随肩向右后倾斜后重新站稳"
+}
+```
+
+- `contactPoint` 与 `forceDirection` 必须和 `contact` 阶段一致。
+- `contactVisible` 是布尔值；遮挡接触点时写 `false`，但仍要给出可观察的目标反馈。
+- `targetLatency`、`supportChange`、`centerOfMassShift`、`wholeBodyResult` 描述受力传递，不能只写火花、震屏或动态模糊。
+- 喷血、流血、断裂、折断、肢解或变形只能在源剧本已有相同事实时出现。
 
 ## 类型字段
 
@@ -82,4 +103,4 @@
 
 ## storyboard 摘要
 
-`export` 输出以 `E01-S02-B05` 为键的精简映射，包含动作 ID、类型、意图、参与者、道具引用、首尾状态、阶段摘要、镜头信息需求和生成风险。它不复制知识库，也不生成具体镜头运动。
+`export` 输出以 `E01-S02-B05` 为键的精简映射，包含动作 ID、类型、意图、参与者、道具引用、首尾状态、阶段摘要、镜头信息需求、生成风险，以及存在时的 `impactEvidence`。它不复制知识库，也不生成具体镜头运动。

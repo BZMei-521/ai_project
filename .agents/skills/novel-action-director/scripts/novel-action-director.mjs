@@ -540,6 +540,7 @@ export function buildStoryboardSummary(doc, script) {
       phaseSummary: phaseSummary(action),
       cameraIntent: clone(action.cameraIntent ?? {}),
       generationRisk: clone(action.generationRisk ?? []),
+      impactEvidence: action.impactEvidence ? clone(action.impactEvidence) : undefined,
     };
   }
   return { version: 1, source: doc.source, physicsProfile: doc.physicsProfile, actions };
@@ -570,6 +571,7 @@ function timelineLines(doc) {
         .join('；');
       lines.push(`  - ${phase.phase}${details ? `：${details}` : ''}`);
     }
+    if (action.impactEvidence) lines.push(`- 打击证据：\`${JSON.stringify(action.impactEvidence)}\``);
     lines.push(`- 末态：\`${JSON.stringify(action.endState)}\``);
     lines.push(`- 镜头信息需求：${(action.cameraIntent?.mustShow ?? []).join('、') || '无'}`);
     lines.push(`- 生成风险：${(action.generationRisk ?? []).join('、') || '无'}`);

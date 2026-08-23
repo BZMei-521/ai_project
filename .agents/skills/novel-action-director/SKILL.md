@@ -25,6 +25,7 @@ node scripts/novel-action-director.mjs seed path\script.json --eps 1-3 --physics
 2. 选择关键节拍并填写 `actions`。字段与状态契约见 [schema.md](references/schema.md)，筛选和填表顺序见 [action-pass.md](references/action-pass.md)。
 3. 按动作类型读取一份专项规则：
    - 微表情与情绪泄露：[performance.md](references/performance.md)
+   - 复杂情绪的眼、眉、口、呼吸、肩躯、手与距离通道组合：[performance-channels.md](references/performance-channels.md)
    - 双人接触、救援、爱情互动：[interaction.md](references/interaction.md)
    - 攻防、受力、闪避与恢复：[combat.md](references/combat.md)
    - 现实/武侠/仙侠/风格化尺度：[physics-profiles.md](references/physics-profiles.md)
