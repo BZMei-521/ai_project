@@ -1,0 +1,41 @@
+{
+  "source": "渡口测试分镜",
+  "episodes": [{
+    "ep": 1,
+    "segments": [
+      {
+        "id": "E01-01",
+        "sceneIndex": 1,
+        "cuts": [{
+          "seconds": 2.5,
+          "characters": ["C01"],
+          "cameraDirection": "left-to-right",
+          "startBoundary": {"action": "C01起跑", "asset": "P01", "screenDirection": "left-to-right", "space": "河岸"},
+          "endBoundary": {"action": "C01右脚落地继续前冲", "asset": "P01", "screenDirection": "left-to-right", "space": "河岸"}
+        }]
+      },
+      {
+        "id": "E01-02",
+        "sceneIndex": 1,
+        "cuts": [{
+          "seconds": 2.0,
+          "characters": ["C01"],
+          "cameraDirection": "left-to-right",
+          "startBoundary": {"action": "C01右脚落地继续前冲", "asset": "P01", "screenDirection": "left-to-right", "space": "河岸"},
+          "endBoundary": {"action": "C01停在渡口前", "asset": "P01", "screenDirection": "left-to-right", "space": "渡口"}
+        }]
+      },
+      {
+        "id": "E01-03",
+        "sceneIndex": 2,
+        "cuts": [{
+          "seconds": 3.0,
+          "characters": ["C02"],
+          "cameraDirection": "right-to-left",
+          "startBoundary": {"action": "C02抬头", "asset": "P02", "screenDirection": "right-to-left", "space": "船舱"},
+          "endBoundary": {"action": "C02望向舱门", "asset": "P02", "screenDirection": "right-to-left", "space": "船舱"}
+        }]
+      }
+    ]
+  }]
+}
