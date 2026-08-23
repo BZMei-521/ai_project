@@ -120,6 +120,12 @@ const GATE_DEFINITIONS = [
   ['boundary-complete', '首尾状态完整'],
   ['combat-causality', '战斗攻防与受力链'],
   ['contact-force', '接触点与受力结果'],
+  ['impact-required', '命中或格挡动作提供可观察打击证据'],
+  ['impact-contact-consistency', '打击证据与 contact 阶段接触点一致'],
+  ['impact-target-feedback', '受击方有停顿、支撑、重心或全身反馈'],
+  ['impact-causal-result', '全身结果可由力方向与支撑关系推导'],
+  ['impact-not-vfx-only', '特效不替代身体反馈'],
+  ['impact-content-authority', '血液、断裂与变形有源剧本授权'],
   ['displacement-grounding', '位移支撑、路径与落点'],
   ['interaction-bilateral', '双人互动双方完整'],
   ['prop-hands-state', '左右手与道具状态变化'],
@@ -233,6 +239,20 @@ function phaseOf(action, name) {
   return (action.phases ?? []).find((phase) => phase.phase === name);
 }
 
+const IMPACT_OUTCOMES = new Set(['hit', 'block']);
+const IMPACT_SOURCE = /(命中|击中|打中|砍中|刺中|撞中|格挡|挡住攻击|接下攻击)/;
+const IMPACT_FEEDBACK_FIELDS = ['targetLatency', 'supportChange', 'centerOfMassShift', 'wholeBodyResult'];
+
+function nonEmptyText(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function impactRequired(action) {
+  const contact = phaseOf(action, 'contact');
+  return action.kind === 'combat'
+    && (IMPACT_OUTCOMES.has(contact?.outcome) || IMPACT_SOURCE.test(String(action.sourceBeat?.text ?? '')));
+}
+
 function combatCausality(doc) {
   const required = ['setup', 'anticipation', 'action', 'contact', 'reaction', 'recovery'];
   return fail(actionEntries(doc).map(({ action }) => {
@@ -248,6 +268,80 @@ function contactForce(doc) {
     const contact = phaseOf(action, 'contact');
     const missing = ['contactPoint', 'forceDirection', 'forceResult'].filter((field) => !contact?.[field]);
     return missing.length ? `${action.id} 接触阶段缺少 ${missing.join(', ')}` : '';
+  }));
+}
+
+function impactRequiredEvidence(doc) {
+  return fail(actionEntries(doc).map(({ action }) => {
+    if (!impactRequired(action)) return '';
+    const evidence = action.impactEvidence;
+    if (!isObject(evidence)) return `${action.id} 缺少 impactEvidence`;
+    const textFields = ['contactPoint', 'targetLatency', 'supportChange', 'centerOfMassShift', 'forceDirection', 'wholeBodyResult'];
+    const missing = textFields.filter((field) => !nonEmptyText(evidence[field]));
+    if (typeof evidence.contactVisible !== 'boolean') missing.push('contactVisible');
+    return missing.length ? `${action.id} 的 impactEvidence 缺少 ${missing.join(', ')}` : '';
+  }));
+}
+
+function impactContactConsistency(doc) {
+  return fail(actionEntries(doc).map(({ action }) => {
+    const evidence = action.impactEvidence;
+    if (!isObject(evidence)) return '';
+    const contact = phaseOf(action, 'contact');
+    const mismatches = [];
+    if (evidence.contactPoint !== contact?.contactPoint) mismatches.push('contactPoint');
+    if (nonEmptyText(evidence.forceDirection) && evidence.forceDirection !== contact?.forceDirection) mismatches.push('forceDirection');
+    return mismatches.length ? `${action.id} 的打击证据与 contact 阶段不一致：${mismatches.join(', ')}` : '';
+  }));
+}
+
+function impactTargetFeedback(doc) {
+  return fail(actionEntries(doc).map(({ action }) => {
+    const evidence = action.impactEvidence;
+    if (!isObject(evidence)) return '';
+    return IMPACT_FEEDBACK_FIELDS.some((field) => nonEmptyText(evidence[field]))
+      ? ''
+      : `${action.id} 的受击方没有可观察身体反馈`;
+  }));
+}
+
+function impactCausalResult(doc) {
+  const movementClaim = /(飞|倒|坠|跌|倾|后退|位移|失衡|翻|侧移)/;
+  const impossibleClaim = /(无因|凭空|反方向)/;
+  return fail(actionEntries(doc).map(({ action }) => {
+    const evidence = action.impactEvidence;
+    if (!isObject(evidence)) return '';
+    const result = String(evidence.wholeBodyResult ?? '');
+    if (impossibleClaim.test(result)) return `${action.id} 的全身结果缺少可推导因果`;
+    if (!movementClaim.test(result)) return '';
+    const hasSupportEvidence = nonEmptyText(evidence.supportChange) || nonEmptyText(evidence.centerOfMassShift);
+    return nonEmptyText(evidence.forceDirection) && nonEmptyText(evidence.wholeBodyResult) && hasSupportEvidence
+      ? ''
+      : `${action.id} 的位移/失衡结果缺少力方向或支撑变化`;
+  }));
+}
+
+function impactNotVfxOnly(doc) {
+  return fail(actionEntries(doc).map(({ action }) => {
+    const evidence = action.impactEvidence;
+    if (!isObject(evidence)) return '';
+    return IMPACT_FEEDBACK_FIELDS.some((field) => nonEmptyText(evidence[field]))
+      ? ''
+      : `${action.id} 只有特效或画面结果，没有身体反馈`;
+  }));
+}
+
+function impactContentAuthority(doc) {
+  const concepts = [
+    { label: '血液', evidence: /(喷血|流血|出血)/, source: /(喷血|流血|出血)/ },
+    { label: '断裂', evidence: /(断裂|折断|骨折|肢解)/, source: /(断裂|折断|骨折|肢解)/ },
+    { label: '变形', evidence: /变形/, source: /变形/ },
+  ];
+  return fail(actionEntries(doc).map(({ action }) => {
+    const evidenceText = JSON.stringify(action.impactEvidence ?? {});
+    const sourceText = String(action.sourceBeat?.text ?? '');
+    const unauthorized = concepts.filter((concept) => concept.evidence.test(evidenceText) && !concept.source.test(sourceText));
+    return unauthorized.length ? `${action.id} 的 ${unauthorized.map((concept) => concept.label).join('、')} 未获源剧本授权` : '';
   }));
 }
 
@@ -384,6 +478,12 @@ const GATE_CHECKS = {
   'boundary-complete': boundaryComplete,
   'combat-causality': combatCausality,
   'contact-force': contactForce,
+  'impact-required': impactRequiredEvidence,
+  'impact-contact-consistency': impactContactConsistency,
+  'impact-target-feedback': impactTargetFeedback,
+  'impact-causal-result': impactCausalResult,
+  'impact-not-vfx-only': impactNotVfxOnly,
+  'impact-content-authority': impactContentAuthority,
   'displacement-grounding': displacementGrounding,
   'interaction-bilateral': interactionBilateral,
   'prop-hands-state': propHandsState,
@@ -598,7 +698,7 @@ export function runCli(argv = process.argv.slice(2)) {
       process.stderr.write(`${problems.join('\n')}\n`);
       return 1;
     }
-    process.stdout.write(`PASS · 18/18 门禁通过 · ${actionEntries(doc).length} 个动作计划\n`);
+    process.stdout.write(`PASS · ${GATE_DEFINITIONS.length}/${GATE_DEFINITIONS.length} 门禁通过 · ${actionEntries(doc).length} 个动作计划\n`);
     return 0;
   }
   if (command === 'render') {

@@ -226,7 +226,7 @@ const brokenImpact = (mutate) => {
   return value;
 };
 
-check(() => assert.equal(gateReport(VALID, { script: GATE_SCRIPT }).length, 18));
+check(() => assert.equal(gateReport(VALID, { script: GATE_SCRIPT }).length, 24));
 check(() => assert.ok(gateReport(VALID, { script: GATE_SCRIPT }).every((item) => item.ok)));
 check(() => assert.equal(validateAction(VALID, { script: GATE_SCRIPT }).length, 0));
 
