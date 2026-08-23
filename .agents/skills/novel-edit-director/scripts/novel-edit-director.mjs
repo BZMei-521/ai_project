@@ -1,3 +1,6 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
 export const BOUNDARY_TYPES = ['continuous', 'match_cut', 'hard_cut', 'scene_change'];
 export const EDIT_METHODS = [
   'occlusion-bridge',
@@ -281,4 +284,143 @@ export function validateEdit(edit, storyboard) {
     throw new Error(`edit.json 未通过门禁:\n${detail}`);
   }
   return true;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+export function buildWorkbenchTransitions(edit, storyboard, sequenceId = 'default') {
+  validateEdit(edit, storyboard);
+  return edit.boundaries.map((boundary) => {
+    const extension = {
+      method: boundary.method,
+      outgoingAnchor: boundary.outgoingAnchor,
+      incomingAnchor: boundary.incomingAnchor,
+      execution: boundary.bridge?.execution ?? '',
+      intentionalChange: boundary.intentionalChange ?? [],
+      visualBridge: boundary.bridge?.visual ?? '',
+      audioBridge: boundary.bridge?.audio ?? '',
+    };
+    return {
+      sequenceId,
+      fromShotId: boundary.from,
+      toShotId: boundary.to,
+      type: boundary.type,
+      durationSeconds: boundary.bridge.duration,
+      frameDependency: boundary.frameDependency,
+      actionContinuity: boundary.actionContinuity ?? '',
+      characterPosition: boundary.characterPosition ?? '',
+      cameraDirection: boundary.cameraDirection ?? '',
+      notes: `edit-director:v1 ${JSON.stringify(extension)}`,
+    };
+  });
+}
+
+export function renderMarkdown(edit, storyboard) {
+  validateEdit(edit, storyboard);
+  const report = gateReport(edit, { storyboard });
+  const lines = [
+    '# 剪辑边界计划',
+    '',
+    `来源：${edit.source || storyboard.source || ''}`,
+    '',
+  ];
+  for (const boundary of edit.boundaries) {
+    lines.push(
+      `## ${boundary.from} → ${boundary.to}`,
+      '',
+      `- 目的：${boundary.purpose}`,
+      `- 类型 / 方法：${boundary.type} / ${boundary.method ?? 'none'}`,
+      `- 出/入锚点：${boundary.outgoingAnchor || '无'} → ${boundary.incomingAnchor || '无'}`,
+      `- 视觉桥：${boundary.bridge?.visual || '无'}`,
+      `- 声音桥：${boundary.bridge?.audio || '无'}`,
+      `- 时长 / 执行：${boundary.bridge?.duration ?? 0}s / ${boundary.bridge?.execution || '无'}`,
+      `- 必须匹配：${(boundary.mustMatch ?? []).join('、') || '无'}`,
+      `- 有意变化：${(boundary.intentionalChange ?? []).join('、') || '无'}`,
+      `- 连续性：${boundary.actionContinuity || '无'}；${boundary.characterPosition || '无'}；${boundary.cameraDirection || '无'}`,
+      '',
+    );
+  }
+  lines.push('## 12 项门禁', '');
+  for (const item of report) {
+    lines.push(`- ${item.ok ? 'PASS' : 'FAIL'} ${item.id}${item.details.length ? `：${item.details.join('；')}` : ''}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderHtml(edit, storyboard) {
+  validateEdit(edit, storyboard);
+  const report = gateReport(edit, { storyboard });
+  const sections = edit.boundaries.map((boundary) => `
+    <section>
+      <h2>${escapeHtml(boundary.from)} → ${escapeHtml(boundary.to)}</h2>
+      <dl>
+        <dt>目的</dt><dd>${escapeHtml(boundary.purpose)}</dd>
+        <dt>类型 / 方法</dt><dd>${escapeHtml(boundary.type)} / ${escapeHtml(boundary.method ?? 'none')}</dd>
+        <dt>出/入锚点</dt><dd>${escapeHtml(boundary.outgoingAnchor || '无')} → ${escapeHtml(boundary.incomingAnchor || '无')}</dd>
+        <dt>视觉桥</dt><dd>${escapeHtml(boundary.bridge?.visual || '无')}</dd>
+        <dt>声音桥</dt><dd>${escapeHtml(boundary.bridge?.audio || '无')}</dd>
+        <dt>时长 / 执行</dt><dd>${escapeHtml(boundary.bridge?.duration ?? 0)}s / ${escapeHtml(boundary.bridge?.execution || '无')}</dd>
+        <dt>必须匹配</dt><dd>${escapeHtml((boundary.mustMatch ?? []).join('、') || '无')}</dd>
+        <dt>有意变化</dt><dd>${escapeHtml((boundary.intentionalChange ?? []).join('、') || '无')}</dd>
+      </dl>
+    </section>`).join('');
+  const gates = report.map((item) => `<li class="${item.ok ? 'pass' : 'fail'}">${item.ok ? 'PASS' : 'FAIL'} ${escapeHtml(item.id)}${item.details.length ? `：${escapeHtml(item.details.join('；'))}` : ''}</li>`).join('');
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>剪辑边界计划</title></head><body><main><h1>剪辑边界计划</h1>${sections}<section><h2>12 项门禁</h2><ul>${gates}</ul></section></main></body></html>\n`;
+}
+
+function option(args, name) {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+function readJson(path, io) {
+  if (!path) throw new Error('缺少 JSON 路径');
+  return JSON.parse(io.readFileSync(path, 'utf8'));
+}
+
+export async function runCli(args, io = { readFileSync, writeFileSync, stdout: process.stdout, stderr: process.stderr }) {
+  const out = (text) => io.stdout.write(`${text}\n`);
+  try {
+    const [command, inputPath] = args;
+    if (!command) throw new Error('用法: seed|validate|render|export ...');
+    if (command === 'seed') {
+      out(JSON.stringify(seedFromStoryboard(readJson(inputPath, io)), null, 2));
+    } else if (command === 'validate') {
+      const edit = readJson(inputPath, io);
+      const storyboard = readJson(option(args, '--storyboard'), io);
+      validateEdit(edit, storyboard);
+      out('✓ 通过 12 项剪辑门禁');
+    } else if (command === 'render') {
+      const edit = readJson(inputPath, io);
+      const storyboard = readJson(option(args, '--storyboard'), io);
+      if (!args.includes('--md') && !args.includes('--html')) throw new Error('render 必须指定 --md 或 --html');
+      out(args.includes('--html') ? renderHtml(edit, storyboard) : renderMarkdown(edit, storyboard));
+    } else if (command === 'export') {
+      const edit = readJson(inputPath, io);
+      const storyboard = readJson(option(args, '--storyboard'), io);
+      const sequence = option(args, '--sequence');
+      const outputPath = option(args, '--out');
+      if (!sequence || !outputPath) throw new Error('export 必须指定 --sequence 和 --out');
+      io.writeFileSync(outputPath, `${JSON.stringify(buildWorkbenchTransitions(edit, storyboard, sequence), null, 2)}\n`, 'utf8');
+      out(`✓ 已导出 ${outputPath}`);
+    } else {
+      throw new Error(`未知命令: ${command}`);
+    }
+    return 0;
+  } catch (error) {
+    io.stderr.write(`错误: ${error.message}\n`);
+    return 1;
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const code = await runCli(process.argv.slice(2), { readFileSync, writeFileSync, stdout: process.stdout, stderr: process.stderr });
+  process.exitCode = code;
 }

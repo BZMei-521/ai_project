@@ -1,0 +1,84 @@
+{
+  "source": "渡口测试分镜",
+  "version": 1,
+  "boundaries": [
+    {
+      "from": "E01-01",
+      "to": "E01-02",
+      "purpose": "在右脚落地的动作峰值匹配剪辑",
+      "type": "match_cut",
+      "method": "action-match",
+      "outgoingAnchor": "右脚落地",
+      "incomingAnchor": "右脚落地",
+      "bridge": {
+        "visual": "同向动作峰值衔接",
+        "audio": "脚步声",
+        "audioSource": "storyboard",
+        "duration": 0.18,
+        "execution": "shared-frame-at-contact"
+      },
+      "mustMatch": ["action", "asset", "screenDirection"],
+      "intentionalChange": [],
+      "frameDependency": "shared_frame",
+      "actionContinuity": "右脚落地动作连续",
+      "characterPosition": "C01保持画面左中部",
+      "cameraDirection": "left-to-right",
+      "stableEndpointAssets": [],
+      "outgoingFacts": {
+        "segmentId": "E01-01",
+        "sceneIndex": 1,
+        "duration": 2.5,
+        "characters": ["C01"],
+        "cameraDirection": "left-to-right",
+        "boundary": {"action": "C01右脚落地继续前冲", "asset": "P01", "screenDirection": "left-to-right", "space": "河岸"}
+      },
+      "incomingFacts": {
+        "segmentId": "E01-02",
+        "sceneIndex": 1,
+        "duration": 2,
+        "characters": ["C01"],
+        "cameraDirection": "left-to-right",
+        "boundary": {"action": "C01右脚落地继续前冲", "asset": "P01", "screenDirection": "left-to-right", "space": "河岸"}
+      }
+    },
+    {
+      "from": "E01-02",
+      "to": "E01-03",
+      "purpose": "从渡口切入船舱并明确时空变化",
+      "type": "scene_change",
+      "method": "time-space-jump",
+      "outgoingAnchor": "渡口水面",
+      "incomingAnchor": "船舱水光",
+      "bridge": {
+        "visual": "水面冷光匹配",
+        "audio": "水声",
+        "audioSource": "storyboard",
+        "duration": 0.25,
+        "execution": "hard-cut-on-audio-tail"
+      },
+      "mustMatch": ["color"],
+      "intentionalChange": ["sceneIndex", "characters", "asset", "screenDirection", "space", "action"],
+      "frameDependency": "none",
+      "actionContinuity": "新场景不承接人物动作",
+      "characterPosition": "C01离场，C02入场",
+      "cameraDirection": "intentional reversal",
+      "stableEndpointAssets": ["渡口末帧", "船舱首帧"],
+      "outgoingFacts": {
+        "segmentId": "E01-02",
+        "sceneIndex": 1,
+        "duration": 2,
+        "characters": ["C01"],
+        "cameraDirection": "left-to-right",
+        "boundary": {"action": "C01停在渡口前", "asset": "P01", "screenDirection": "left-to-right", "space": "渡口"}
+      },
+      "incomingFacts": {
+        "segmentId": "E01-03",
+        "sceneIndex": 2,
+        "duration": 3,
+        "characters": ["C02"],
+        "cameraDirection": "right-to-left",
+        "boundary": {"action": "C02抬头", "asset": "P02", "screenDirection": "right-to-left", "space": "船舱"}
+      }
+    }
+  ]
+}
