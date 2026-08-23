@@ -2,163 +2,115 @@
   "characters": [
     {
       "name": "江岚",
-      "description": "2D国漫少女角色，风格接近《一人之下》这类现代国漫，年轻女性，黑色中长发带整齐刘海，圆润清秀但不幼态的脸，浅灰蓝长袖连衣裙，深色腰带，清楚可见的领口、袖口和裙摆层次，平底深色鞋，身形纤细，气质安静克制。标准单人全身正视角色设定图，白底，无道具，无背景，完整穿衣，不能像灰模或人体模板。"
+      "description": "女性角色。长黑发，齐刘海，浅灰蓝连衣裙，黑色平底鞋，体态纤细冷静。"
     },
     {
       "name": "沈砚",
-      "description": "2D国漫青年男性角色，风格接近《一人之下》这类现代国漫，黑色短发，清秀偏瘦的脸，深色长外套或长袍内搭浅色上衣，长裤和深色鞋靴，身形修长，气质沉稳克制。标准单人全身正视角色设定图，白底，无道具，无背景。"
+      "description": "男性角色。短黑发，深蓝长外套，深色长裤与深色鞋，身形修长，气质沉稳。"
     }
   ],
   "shots": [
     {
       "id": "river_continuity_001",
       "title": "河边远景建立",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, 江岚 is a young woman with black medium-long hair, neat straight bangs, a round delicate non-childish face, a light gray-blue long-sleeve dress, a dark waist belt, flat dark shoes, slim body, full body, clearly visible, in the scene, 沈砚 is a young man with black short hair, a slim refined face, a dark long coat over a light inner shirt, dark trousers, dark boots, tall slender body, full body, clearly visible, in the scene, keep both characters exactly the same appearance in every shot, medium wide eye-level shot from the left-front side, dusk riverside stone path near the old stone bridge, 江岚 standing on the left side of the stone path slightly ahead, finishing a small step and turning her head toward the river, right hand lifting slightly to signal 沈砚, calm alert expression, 沈砚 walking on the right side of the same stone path half a step behind, slowing down and turning his head toward 江岚, attentive expression, both characters fully visible from head to toe, both characters grounded with clear foot contact on the stone path, both characters naturally integrated into the riverbank environment, shadow matching environment, contact shadows under both feet, correct perspective, bridge in the mid background, willow trees on the left, open river on the right, no pure scenery frame, no pasted cutout",
-      "negative_prompt": "white border, frame, padding, empty scene, scenery only, no character, one character only, missing character, different hairstyle, changed dress, changed coat, changed shoes, inconsistent face, inconsistent outfit, pasted character, sticker-like character, collage, character sheet, mannequin pose, blank expression, no expression, static standing, cropped body, cut off feet, floating character, detached shadow, wrong perspective, indoor scene, text watermark",
-      "video_prompt": "slow push in, 江岚 finishes a small step and slightly raises her right hand, 沈砚 slows and turns his head toward her, river ripples and willow leaves move lightly",
+      "prompt_mode": "workflow_native",
+      "prompt": "【硬性人数】画面中必须且只能有2人：沈砚、江岚。禁止第三人、禁止重复人像、禁止空场景。傍晚河边远景建立镜头，机位左前方平视。沈砚在画面左前景，男性外观，深蓝长外套，向前迈一步并抬手示意；江岚在画面右后侧，女性外观，浅灰蓝连衣裙，半步跟随并转头看向沈砚。两人都必须完整全身入镜（头到脚可见，脚不被裁切），脚踩石路并有接地阴影。背景保持石桥拱洞、河面反光、岸边石块和右侧石路透视。",
+      "negative_prompt": "空场景, 只有风景, 少于2人, 多于2人, 第三人, 重复人像, 克隆人, 贴纸感, 白边抠图, 半身裁切, 断手断脚, 悬浮, 身份互换, 服装变色, 错误透视, 文字水印",
+      "video_prompt": "缓慢推近，沈砚抬手示意并向前迈一步，江岚半步跟随并看向沈砚。",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "",
-      "notes": "建立镜头必须锁定两人的固定外观，并让动作已经开始发生。两人都要踩在沿河石路上，阴影方向和傍晚环境一致，不能像背景上贴了两张立绘。",
-      "tags": [
-        "河边",
-        "建立镜头",
-        "双人",
-        "远景",
-        "接地"
-      ],
+      "notes": "双人建立镜头。优先保证人物完整和身份稳定，再保证景别。",
+      "tags": ["河边", "远景", "建立镜头", "双人", "全身", "接地"],
       "scene_name": "河边",
-      "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": [
-        "江岚",
-        "沈砚"
-      ]
+      "scene_prompt": "傍晚河边，必须可见石桥、河面、沿河石路、柳树和远岸轮廓。",
+      "character_names": ["沈砚", "江岚"]
     },
     {
       "id": "river_continuity_002",
       "title": "双人中景起话",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, 江岚 is a young woman with black medium-long hair, neat straight bangs, a round delicate non-childish face, a light gray-blue long-sleeve dress, a dark waist belt, flat dark shoes, slim body, full body, clearly visible, in the scene, 沈砚 is a young man with black short hair, a slim refined face, a dark long coat over a light inner shirt, dark trousers, dark boots, tall slender body, full body, clearly visible, in the scene, keep both characters exactly the same appearance in every shot, medium two shot, eye-level, same left-front camera direction as previous shot but slightly closer, 江岚 standing on the left side of the riverside stone path, turning her upper body toward 沈砚 and extending her left hand forward along the path while speaking, slight puzzled expression with gently tightened brows, 沈砚 standing on the right side of the same stone path, leaning a little toward 江岚 and tilting his head, doubtful expression, both characters fully visible from head to toe, both characters grounded with clear foot contact on the stone path, both characters integrated into the same riverside environment, shadow matching environment, bridge visible behind them, river on the right, willow trees remain visible, correct perspective, no pasted cutout, no pure scenery frame",
-      "negative_prompt": "white border, frame, padding, empty scene, no character, one character only, wrong character count, different hairstyle, changed dress, changed coat, inconsistent face, sticker-like character, pasted character, collage, character sheet, mannequin pose, blank expression, no expression, static standing, portrait crop, close-up face only, cropped feet, floating body, detached shadow, wrong perspective, text watermark",
-      "video_prompt": "江岚 turns her torso toward 沈砚 and extends her left hand along the path while speaking, 沈砚 leans in slightly and reacts with a small doubtful head tilt, camera stays steady",
+      "prompt_mode": "workflow_native",
+      "prompt": "【硬性人数】画面中必须且只能有2人：江岚、沈砚。禁止第三人和重复人像。与上镜同轴线双人中景，镜头轻微推近。江岚位于左侧，转身面向沈砚，左手前伸并开口说话；沈砚位于右侧，身体微前倾并轻点头回应。两人都必须完整全身可见（头顶和鞋底完整），脚部接地，阴影连续。环境保持同一石桥和河岸，不得换场景。",
+      "negative_prompt": "单人画面, 少于2人, 多于2人, 第三人, 双重沈砚, 双重江岚, 动作不符脚本, 站桩, 半身裁切, 头脚截断, 悬浮, 贴图感, 服装漂移, 身份漂移, 文本水印",
+      "video_prompt": "镜头轻推，江岚转身说话并伸出左手，沈砚前倾点头回应。",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "江岚：风小下来了。",
-      "notes": "第二镜要延续第一镜的站位和机位，只做小幅推进。动作和表情必须具体，不允许重新退化成双人静态站桩。",
-      "tags": [
-        "河边",
-        "中景",
-        "对话",
-        "续帧",
-        "双人"
-      ],
+      "notes": "对话双人镜头，保证两人同场、动作可读、身份不串。",
+      "tags": ["河边", "中景", "双人", "对话", "全身"],
       "scene_name": "河边",
-      "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": [
-        "江岚",
-        "沈砚"
-      ]
+      "scene_prompt": "傍晚河边，必须可见石桥、河面、沿河石路、柳树和远岸轮廓。",
+      "character_names": ["江岚", "沈砚"]
     },
     {
       "id": "river_continuity_003",
-      "title": "江岚近景说话",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, 江岚 is a young woman with black medium-long hair, neat straight bangs, a round delicate non-childish face, a light gray-blue long-sleeve dress, a dark waist belt, flat dark shoes, slim body, full body, clearly visible, in the scene, 沈砚 is a young man with black short hair, a slim refined face, a dark long coat over a light inner shirt, dark trousers, dark boots, tall slender body, full body, clearly visible, in the scene, keep both characters exactly the same appearance in every shot, medium shot, eye-level, same left-front camera direction, 江岚 is the main subject at center-left on the riverside stone path, taking one small step forward and lifting her left hand toward her chest while turning three quarters toward the bridge, thoughtful suspicious expression, 沈砚 remains visible at screen right on the same stone path slightly behind her, turning his shoulders toward the bridge with a cautious expression, both characters fully visible from head to toe, both characters grounded with clear foot contact, bridge orientation unchanged, river still on the right, both characters naturally integrated with the same riverbank environment, shadow matching environment, correct perspective, not an isolated portrait, no pure scenery frame, no pasted cutout",
-      "negative_prompt": "white border, frame, padding, empty scene, no character, missing secondary character, portrait only, upper body only, cropped legs, cropped feet, floating character, pasted character, sticker-like character, fashion photo, character sheet, duplicate person, changed hairstyle, changed outfit, inconsistent face, blank expression, mannequin pose, indoor background, text watermark",
-      "video_prompt": "江岚 takes a small step forward and lifts her left hand while speaking, her face shifts from calm to suspicious, 沈砚 turns his shoulders toward the bridge and gives a cautious background reaction",
+      "title": "江岚近中景说话",
+      "prompt_mode": "workflow_native",
+      "prompt": "【硬性人数】画面中必须且只能有2人：江岚、沈砚。禁止第三人与重复人像。近中景（不是单人特写），两人全身都要保留。江岚位于中左主位，向前迈一小步，左手抬至胸前，表情由平静转为思索；沈砚位于右后侧，肩线转向石桥方向，保持警觉观察。江岚保持女性长黑发与浅灰蓝连衣裙；沈砚保持男性短黑发与深蓝长外套。两人脚部都必须可见且接地，阴影自然连续。",
+      "negative_prompt": "空场景, 单人画面, 少于2人, 多于2人, 第三人, 重复人像, 头像特写, 半身裁切, 断手断脚, 贴纸感, 白边, 身份互换, 服装变化, 室内背景, 文字水印",
+      "video_prompt": "江岚向前迈步并抬手思索，沈砚在右后侧转肩警戒石桥方向。",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "江岚：先沿着河岸往前走。",
-      "notes": "第三镜可以更靠近江岚，但仍必须保留沈砚和环境。重点是把江岚的表情从平静推进到思索和怀疑，而不是只写“在说话”。",
-      "tags": [
-        "河边",
-        "近中景",
-        "单人主镜头",
-        "续帧",
-        "人物明确存在"
-      ],
+      "notes": "双人近中景。江岚为主动作，沈砚必须清晰可见。",
+      "tags": ["河边", "近中景", "双人", "表情推进", "全身"],
       "scene_name": "河边",
-      "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": [
-        "江岚",
-        "沈砚"
-      ]
+      "scene_prompt": "傍晚河边，必须可见石桥、河面、沿河石路、柳树和远岸轮廓。",
+      "character_names": ["江岚", "沈砚"]
     },
     {
       "id": "river_continuity_004",
       "title": "沈砚回应点头",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, 沈砚 is a young man with black short hair, a slim refined face, a dark long coat over a light inner shirt, dark trousers, dark boots, tall slender body, full body, clearly visible, in the scene, 江岚 is a young woman with black medium-long hair, neat straight bangs, a round delicate non-childish face, a light gray-blue long-sleeve dress, a dark waist belt, flat dark shoes, slim body, full body, clearly visible, in the scene, keep both characters exactly the same appearance in every shot, medium shot, eye-level, camera only shifts slightly toward the right front instead of a hard jump, 沈砚 is the main subject at center-right standing on a flatter stone section near the bridge, stepping half a step forward and raising his right hand slightly to stop 江岚 while turning his head back toward her, alert expression with narrowed eyes, 江岚 remains visible at left midground on the same stone path, slowing her movement and looking at 沈砚, concerned expression, both characters fully visible from head to toe, both characters grounded with clear foot contact, same bridge orientation, same river placement, same willow trees, same dusk lighting, shadow matching environment, correct perspective, no pasted collage, no pure scenery frame",
-      "negative_prompt": "white border, frame, padding, empty scene, no character, one character only, missing foreground character, different hairstyle, changed coat, changed dress, swapped identity, inconsistent face, pasted character, sticker-like character, collage, character sheet, malformed hands, blank expression, no expression, mannequin pose, cropped body, cropped feet, floating stance, detached feet, wrong perspective, text watermark",
-      "video_prompt": "沈砚 steps half a step forward, lifts his right hand to stop 江岚, and turns back with a clearly alert expression, 江岚 slows and looks at him with concern, camera stays almost in the same axis",
+      "prompt_mode": "workflow_native",
+      "prompt": "【硬性人数】画面中必须且只能有2人：沈砚、江岚。禁止第三人与重复人像。轻微右移反打中景，不允许跳轴。沈砚位于中右主位，半步上前，右手抬起示意停下，神情警觉；江岚位于左侧中景，减速后回头看向沈砚，表情担心。沈砚保持男性短黑发和深蓝长外套；江岚保持女性长黑发和浅灰蓝连衣裙。两人完整全身入镜，脚踩石路且阴影方向一致。",
+      "negative_prompt": "空场景, 单人画面, 少于2人, 多于2人, 第三人, 重复人像, 半身裁切, 头脚截断, 悬浮, 手部畸形, 贴纸感, 身份互换, 服装漂移, 透视错误, 文本水印",
+      "video_prompt": "沈砚半步上前抬手示停并警觉回看，江岚减速回头并露出担忧。",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "沈砚：好，桥那边看得更清楚。",
-      "notes": "第四镜不要硬反打跳轴，只允许轻微侧移。主体切到沈砚时，动作必须比上一镜更明确，表情推进到警觉。",
-      "tags": [
-        "河边",
-        "反打",
-        "近景",
-        "续帧",
-        "回应动作"
-      ],
+      "notes": "反打双人镜头。动作主次要明确，不可静止。",
+      "tags": ["河边", "反打", "中景", "双人", "回应动作", "全身"],
       "scene_name": "河边",
-      "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": [
-        "江岚",
-        "沈砚"
-      ]
+      "scene_prompt": "傍晚河边，必须可见石桥、河面、沿河石路、柳树和远岸轮廓。",
+      "character_names": ["沈砚", "江岚"]
     },
     {
       "id": "river_continuity_005",
       "title": "并肩沿河慢走",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, 江岚 is a young woman with black medium-long hair, neat straight bangs, a round delicate non-childish face, a light gray-blue long-sleeve dress, a dark waist belt, flat dark shoes, slim body, full body, clearly visible, in the scene, 沈砚 is a young man with black short hair, a slim refined face, a dark long coat over a light inner shirt, dark trousers, dark boots, tall slender body, full body, clearly visible, in the scene, keep both characters exactly the same appearance in every shot, medium wide tracking shot, eye-level, same riverbank axis, 江岚 walking on the left side of the riverside stone path and quickening her pace, skirt hem moving, determined serious expression, 沈砚 walking on the right side of the same stone path half a step behind, coat hem moving, turning his head briefly toward the river with a wary expression, both characters fully visible from head to toe, both characters show grounded foot contact while walking on the stone path, both characters naturally integrated into the riverbank environment, shadow matching environment, contact shadows under both feet, river on the right, bridge closer in the background, dusk outdoor lighting, correct body scale, correct perspective, no pure scenery frame, no pasted cutout",
-      "negative_prompt": "white border, frame, padding, empty scene, no character, missing one character, standing still, stiff pose, floating feet, detached shadow, sliding character, pasted character, sticker-like character, static lineup, character sheet, fused limbs, duplicate body, changed hairstyle, changed outfit, inconsistent face, blank expression, wrong perspective, text watermark",
-      "video_prompt": "both characters take several grounded steps along the stone path, 江岚 quickens her pace with determined focus, 沈砚 follows half a step behind and glances warily toward the river, camera tracks gently with them",
+      "prompt_mode": "workflow_native",
+      "prompt": "【硬性人数】画面中必须且只能有2人：江岚、沈砚。禁止第三人与重复人像。双人移动中景偏远。江岚在左侧并肩前行，清晰迈步（前脚落地、后脚离地），神态坚定；沈砚在右侧落后半步，行进中头部和视线转向河面保持警戒。两人外观与服装必须与前镜一致，不得互换。必须体现真实步态重心转移、衣摆变化和接地阴影，禁止平移贴图感。",
+      "negative_prompt": "空场景, 单人画面, 少于2人, 多于2人, 第三人, 重复人像, 站桩不走, 动作错位, 浮脚, 不接地, 阴影断裂, 四肢融合, 贴纸感, 身份漂移, 服装漂移, 透视错误, 水印",
+      "video_prompt": "跟拍慢走，江岚左侧加快半步，沈砚右侧落后半步并转头看河面。",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "",
-      "notes": "第五镜是动作连续的关键镜头，必须真正出现迈步、摆臂、衣摆和重心变化。不能只是两张立绘在背景上平移。",
-      "tags": [
-        "河边",
-        "双人",
-        "移动",
-        "续帧",
-        "脚接地"
-      ],
+      "notes": "关键运动镜头，重点是双人步态差异和视线关系。",
+      "tags": ["河边", "双人", "移动", "全身", "步态"],
       "scene_name": "河边",
-      "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": [
-        "江岚",
-        "沈砚"
-      ]
+      "scene_prompt": "傍晚河边，必须可见石桥、河面、沿河石路、柳树和远岸轮廓。",
+      "character_names": ["江岚", "沈砚"]
     },
     {
       "id": "river_continuity_006",
       "title": "桥边停步收尾",
-      "prompt": "cinematic storyboard frame, exact character count is 2 and only 2, 江岚 is a young woman with black medium-long hair, neat straight bangs, a round delicate non-childish face, a light gray-blue long-sleeve dress, a dark waist belt, flat dark shoes, slim body, full body, clearly visible, in the scene, 沈砚 is a young man with black short hair, a slim refined face, a dark long coat over a light inner shirt, dark trousers, dark boots, tall slender body, full body, clearly visible, in the scene, keep both characters exactly the same appearance in every shot, medium two shot, eye-level, same bridge-side axis, 江岚 on the left side of the riverside stone path near the bridge, slowing to a stop and bending slightly toward the water while lowering one hand toward the stone edge, focused suspicious expression, 沈砚 on the right side of the same stone path slightly behind her, planting his feet firmly and turning his upper body to watch the surroundings, protective alert expression, both characters fully visible from head to toe, both characters grounded with clear foot contact, both characters naturally integrated into the bridge-side environment, shadow matching environment, unified dusk light, same stone bridge, same willow trees, same riverbank, correct perspective, no pure scenery frame, no pasted cutout",
-      "negative_prompt": "white border, frame, padding, empty scene, scenery only, no character, missing one character, wrong character count, changed hairstyle, changed outfit, inconsistent face, sticker-like character, pasted character, collage, character sheet, blank expression, no expression, mannequin pose, cropped body, cut off feet, floating character, detached feet, indoor lighting, wrong perspective, text watermark",
-      "video_prompt": "江岚 slows to a stop and bends slightly toward the water while lowering one hand, 沈砚 plants his feet and turns to scan the surroundings with a protective alert reaction, water ripples softly behind them",
+      "prompt_mode": "workflow_native",
+      "prompt": "【硬性人数】画面中必须且只能有2人：江岚、沈砚。禁止第三人与重复人像。收尾双人镜头，仍在同一轴线。江岚位于左侧近水边，停步后微俯身并下探一只手查看水边；沈砚位于右后方，双脚站稳并转动上身观察周围警戒。江岚保持女性长黑发和浅灰蓝连衣裙；沈砚保持男性短黑发和深蓝长外套。两人脚部接地且阴影一致，不得出现贴图融合痕迹。",
+      "negative_prompt": "空场景, 只有环境, 少于2人, 多于2人, 第三人, 重复人像, 双人站桩, 无动作, 头脚裁切, 悬浮, 贴纸感, 身份漂移, 服装漂移, 透视错误, 水印",
+      "video_prompt": "江岚停步俯身查看水边，沈砚在右后方站稳并转身警戒。",
       "video_mode": "auto",
       "duration_sec": 1.0,
       "duration_frames": 24,
       "dialogue": "江岚：就从这里开始看吧。",
-      "notes": "收尾镜头不能只是两个人停在桥边发呆。要有停步后的后续动作，一个向水边探查，一个转身警戒，同时保持统一光影、透视和接地。", 
-      "tags": [
-        "河边",
-        "收尾",
-        "双人",
-        "续帧",
-        "稳定分镜"
-      ],
+      "notes": "收尾镜头必须有停步后的动作延续，不是静态摆拍。",
+      "tags": ["河边", "收尾", "双人", "连续", "动作延续", "全身"],
       "scene_name": "河边",
-      "scene_prompt": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。",
-      "character_names": [
-        "江岚",
-        "沈砚"
-      ]
+      "scene_prompt": "傍晚河边，必须可见石桥、河面、沿河石路、柳树和远岸轮廓。",
+      "character_names": ["江岚", "沈砚"]
     }
   ]
 }

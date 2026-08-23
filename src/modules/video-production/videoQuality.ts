@@ -28,6 +28,7 @@ export interface VideoArtifactBinding {
   assemblyTransactionId?: string;
   assemblySha256?: string;
   assemblyOutputPath?: string;
+  providerArtifact?: VideoProviderArtifact;
 }
 
 export interface VideoOperationIdentity {
@@ -47,6 +48,14 @@ export interface VideoQualityDecisionRecord {
   artifactBinding: VideoArtifactBinding;
 }
 
+export interface VideoProviderArtifact {
+  provider: "local_comfy" | "runninghub";
+  watermarkDisposition?: "not_applicable" | "clean" | "watermark_review_required";
+  receiptDigest?: string;
+  sourcePath?: string;
+  cleanPath?: string;
+}
+
 export interface VideoQualityReport {
   shotId: string;
   status: VideoQualityStatus;
@@ -58,6 +67,7 @@ export interface VideoQualityReport {
   reviewedByUserAt?: string;
   rejectionReason?: string;
   decision?: VideoQualityDecisionRecord;
+  providerArtifact?: VideoProviderArtifact;
 }
 
 export type VideoProductionEvidenceStatus = "pending" | "processing" | "ready" | "failed";
@@ -86,6 +96,7 @@ export interface VideoProductionEvidence {
   qualityReport?: VideoQualityReport;
   decision?: VideoQualityDecisionRecord;
   generationReceipt?: ShotGenerationReceipt;
+  providerArtifact?: VideoProviderArtifact;
   failureReason?: string;
 }
 
@@ -112,6 +123,7 @@ export interface VideoQualityEvaluationInput {
   blackFrameCount?: number;
   freezeDurationSeconds?: number;
   timestampErrors?: number;
+  providerArtifact?: VideoProviderArtifact;
 }
 
 export interface VideoProductionRow {

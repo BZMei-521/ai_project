@@ -5,6 +5,12 @@ import { applyCharacterEvidencePatch } from "./characterEvidenceStoreRuntime.mjs
 import { createEmptySceneStage, normalizeSceneStages } from "../spatial-stage/normalizeStage";
 import { addStage, deleteStage, patchStage } from "../spatial-stage/stageStoreActions";
 import { computeStageSourceDigest } from "../spatial-stage/stageDigest";
+import {
+  createDefaultShotTransition,
+  moveShotInLinearSequence,
+  reconcileLinearTransitions,
+  removeShotFromLinearSequence
+} from "../../features/script-director/shotTransitionModel";
 import type { SceneStage } from "../spatial-stage/types";
 import type { DirectorPlan } from "../../domains/director/types";
 import type { CameraPlan, PoseKeyframe, SpatialObject, SpatialScene } from "../../domains/spatial-scene/types";
@@ -15,6 +21,7 @@ import type {
   Sequence,
   Shot,
   ShotLayer,
+  ShotTransition,
   SkyboxFace,
   SkyboxUpdateEvent,
   StoryboardGenerationTask
@@ -40,6 +47,8 @@ export type ImportedShotScriptItem = {
   videoGenerationReceipt?: Shot["videoGenerationReceipt"];
   videoGenerationContractDigest?: string;
   videoProductionEvidence?: Shot["videoProductionEvidence"];
+  videoProviderArtifact?: Shot["videoProviderArtifact"];
+  runningHubCloud?: Shot["runningHubCloud"];
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
   skyboxFaceWeights?: Partial<Record<SkyboxFace, number>>;
@@ -89,6 +98,17 @@ type CanvasHistoryState = {
   future: Stroke[][];
 };
 
+type ShotSequenceHistoryEntry = {
+  sequenceId: string;
+  orderedShotIds: string[];
+  transitions: ShotTransition[];
+};
+
+type ShotSequenceHistoryState = {
+  past: ShotSequenceHistoryEntry[];
+  future: ShotSequenceHistoryEntry[];
+};
+
 const withVideoProductionDefaults = (shot: Shot): Shot => ({
   ...shot,
   videoWorkflowProfileId: shot.videoWorkflowProfileId ?? "auto",
@@ -96,12 +116,59 @@ const withVideoProductionDefaults = (shot: Shot): Shot => ({
   videoAccelerationMode: shot.videoAccelerationMode ?? "standard",
   videoBoundaryKind: shot.videoBoundaryKind ?? "hard_cut",
   videoQualityStatus: shot.videoQualityStatus ?? "pending",
-  videoProductionEvidence: normalizeVideoProductionEvidence(shot.videoProductionEvidence, shot.id)
+  videoProductionEvidence: normalizeVideoProductionEvidence(shot.videoProductionEvidence, shot.id, shot.sequenceId),
+  videoProviderArtifact: shot.videoProviderArtifact,
+  runningHubCloud: normalizeRunningHubCloud(shot.runningHubCloud)
 });
 
-function normalizeVideoProductionEvidence(value: Shot["videoProductionEvidence"], shotId: string): Shot["videoProductionEvidence"] {
-  if (!value || value.schemaVersion !== 1 || value.shotId !== shotId || !["pending", "processing", "ready", "failed"].includes(value.status)) return undefined;
+function normalizeVideoProductionEvidence(
+  value: Shot["videoProductionEvidence"],
+  shotId: string,
+  sequenceId?: string
+): Shot["videoProductionEvidence"] {
+  if (!value || value.schemaVersion !== 1 || value.shotId !== shotId ||
+      (sequenceId !== undefined && value.sequenceId !== undefined && value.sequenceId !== sequenceId) ||
+      !["pending", "processing", "ready", "failed"].includes(value.status) ||
+      typeof value.sourceVideoPath !== "string" || value.sourceVideoPath.trim().length === 0) return undefined;
+  const route = value.routeDecision;
+  const validProfiles = new Set(["minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_flf2v", "minimax_h3_r2v"]);
+  if (!route || !["selected", "blocked"].includes(route.status) || typeof route.reason !== "string" ||
+      route.reason.trim().length === 0 ||
+      (route.status === "selected" && !validProfiles.has(route.profileId)) ||
+      (route.status === "blocked" && route.profileId !== undefined && !validProfiles.has(route.profileId))) return undefined;
+  const preflight = value.profilePreflight;
+  if (!preflight || !validProfiles.has(preflight.profileId) || typeof preflight.available !== "boolean" ||
+      !Array.isArray(preflight.missingNodes) || !preflight.missingNodes.every((node) => typeof node === "string") ||
+      !Array.isArray(preflight.missingModels) || !preflight.missingModels.every((model) =>
+        model && typeof model.kind === "string" && typeof model.name === "string") ||
+      !Array.isArray(preflight.warnings) || !preflight.warnings.every((warning) => typeof warning === "string")) return undefined;
   return JSON.parse(JSON.stringify(value)) as Shot["videoProductionEvidence"];
+}
+
+function normalizeRunningHubCloud(value: Shot["runningHubCloud"]): Shot["runningHubCloud"] {
+  if (!value || typeof value !== "object" || typeof value.status !== "string") return undefined;
+  return JSON.parse(JSON.stringify(value)) as Shot["runningHubCloud"];
+}
+
+function runningHubArtifactIdentity(value: Shot["runningHubCloud"]): string {
+  if (!value) return "";
+  const imported = value.importedOutput as Record<string, unknown> | undefined;
+  const watermark = value.watermarkReceipt as Record<string, unknown> | undefined;
+  return JSON.stringify({
+    approval: value.approval?.inputDigest,
+    taskId: value.taskId,
+    importedTaskId: imported?.taskId,
+    importedSource: imported?.sourceSha256,
+    importedPath: imported?.importedPath,
+    importedApproval: imported?.approvalInputDigest,
+    repairedOutput: watermark?.outputPath ?? watermark?.repairedPath,
+    repairDigest: watermark?.receiptDigest,
+    repairDisposition: watermark?.disposition,
+    repairCleanPath: watermark?.cleanPath ?? watermark?.outputPath ?? watermark?.repairedPath,
+    repairSource: watermark?.sourceSha256,
+    repairApproval: watermark?.approvalInputDigest,
+    repairTaskId: watermark?.taskId
+  });
 }
 
 export type ExportSettings = {
@@ -125,15 +192,18 @@ type StoryboardState = {
   sequences: Sequence[];
   currentSequenceId: string;
   shots: Shot[];
+  shotTransitions: ShotTransition[];
   layers: ShotLayer[];
   assets: Asset[];
   audioTracks: AudioTrack[];
   selectedShotId: string;
+  selectedShotTransitionId: string | null;
   playback: PlaybackState;
   canvasTool: CanvasToolState;
   exportSettings: ExportSettings;
   shotStrokes: Record<string, Stroke[]>;
   shotHistory: Record<string, CanvasHistoryState>;
+  shotSequenceHistory: ShotSequenceHistoryState;
   activeLayerByShotId: Record<string, string>;
   selectedShotIds: string[];
   shotFilterQuery: string;
@@ -141,7 +211,7 @@ type StoryboardState = {
   generationTasks: StoryboardGenerationTask[];
   spatialStages: SceneStage[];
   completeWorkbenchMigration: () => void;
-  selectShot: (shotId: string) => void;
+  selectShot: (shotId: string | null) => void;
   toggleShotSelection: (shotId: string) => void;
   clearShotSelection: () => void;
   selectAllShots: () => void;
@@ -157,6 +227,8 @@ type StoryboardState = {
   moveShot: (shotId: string, direction: "up" | "down") => void;
   moveShotToIndex: (shotId: string, targetIndex: number) => void;
   moveSelectedShots: (direction: "up" | "down") => void;
+  undoShotSequenceEdit: () => void;
+  redoShotSequenceEdit: () => void;
   addAudioTrack: (filePath: string) => void;
   upsertAudioTrack: (track: AudioTrack) => void;
   updateAudioTrack: (
@@ -242,6 +314,8 @@ type StoryboardState = {
         | "videoGenerationReceipt"
         | "videoGenerationContractDigest"
         | "videoProductionEvidence"
+        | "videoProviderArtifact"
+        | "runningHubCloud"
         | "skyboxFace"
         | "skyboxFaces"
         | "skyboxFaceWeights"
@@ -260,6 +334,27 @@ type StoryboardState = {
     >
   ) => void;
   replaceShotsForCurrentSequence: (items: ImportedShotScriptItem[]) => void;
+  replaceShotScriptForCurrentSequence: (input: {
+    shots: ImportedShotScriptItem[];
+    transitions: ShotTransition[];
+  }) => void;
+  selectShotTransition: (transitionId: string | null) => void;
+  updateShotTransition: (
+    transitionId: string,
+    patch: Partial<
+      Pick<
+        ShotTransition,
+        | "type"
+        | "durationSeconds"
+        | "frameDependency"
+        | "sharedFramePath"
+        | "actionContinuity"
+        | "characterPosition"
+        | "cameraDirection"
+        | "notes"
+      >
+    >
+  ) => void;
   batchSetDurationForSelectedShots: (durationFrames: number) => void;
   batchAddTagForSelectedShots: (tag: string) => void;
   batchRemoveTagForSelectedShots: (tag: string) => void;
@@ -309,7 +404,7 @@ type StoryboardState = {
   setSelectedSpatialObject: (objectId: string | null) => void;
   updateSpatialStage: (id: string, patch: Partial<SceneStage>) => void;
   removeSpatialStage: (id: string) => void;
-  hydrateFromSnapshot: (snapshot: Partial<StoryboardSnapshot>) => void;
+  hydrateFromSnapshot: (snapshot: LegacyStoryboardSnapshotInput) => void;
   resetForNewProject: (name: string) => void;
   addShot: () => void;
   togglePlayback: () => void;
@@ -330,7 +425,10 @@ export type StoryboardSnapshot = Pick<
   | "sequences"
   | "currentSequenceId"
   | "shots"
+  | "shotTransitions"
   | "selectedShotId"
+  | "selectedShotIds"
+  | "selectedShotTransitionId"
   | "audioTracks"
   | "assets"
   | "canvasTool"
@@ -342,6 +440,558 @@ export type StoryboardSnapshot = Pick<
   | "generationTasks"
   | "spatialStages"
 >;
+
+export type LegacyStoryboardSnapshotInput = Partial<StoryboardSnapshot> & {
+  selectedShotIds?: string[];
+};
+
+const linearRefs = (shots: Shot[], fps: number) => shots
+  .slice()
+  .sort((left, right) => left.order - right.order)
+  .map((shot) => ({ id: shot.id, durationSeconds: shot.durationFrames / Math.max(1, fps) }));
+
+const reconcileAllLinearTransitions = (
+  sequences: Sequence[],
+  shots: Shot[],
+  fps: number,
+  existingTransitions: ShotTransition[]
+): ShotTransition[] => {
+  const shotsBySequence = new Map<string, Shot[]>();
+  const transitionsBySequence = new Map<string, ShotTransition[]>();
+  for (const shot of shots) {
+    const scoped = shotsBySequence.get(shot.sequenceId) ?? [];
+    scoped.push(shot);
+    shotsBySequence.set(shot.sequenceId, scoped);
+  }
+  for (const transition of existingTransitions) {
+    const scoped = transitionsBySequence.get(transition.sequenceId) ?? [];
+    scoped.push(transition);
+    transitionsBySequence.set(transition.sequenceId, scoped);
+  }
+  return sequences
+    .slice()
+    .sort((left, right) => left.order - right.order)
+    .flatMap((sequence) => reconcileLinearTransitions({
+      sequenceId: sequence.id,
+      orderedShots: linearRefs(shotsBySequence.get(sequence.id) ?? [], fps),
+      existingTransitions: transitionsBySequence.get(sequence.id) ?? []
+    }));
+};
+
+const EXTERNAL_TRANSITION_ID_PREFIX = "shot-transition-external:";
+const SAFE_INTERNAL_ID = /^[A-Za-z0-9_-]{1,80}$/;
+const WINDOWS_RESERVED_ID = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+const shotIdentityKey = (sequenceId: string, shotId: string): string =>
+  JSON.stringify([sequenceId, shotId]);
+
+const isSafeInternalId = (value: string): boolean =>
+  SAFE_INTERNAL_ID.test(value) && !WINDOWS_RESERVED_ID.test(value);
+
+const stableHashWord = (value: string, seed: number): string => {
+  let hash = seed >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+};
+
+const stableIdHash = (value: string): string =>
+  `${stableHashWord(value, 0x811c9dc5)}${stableHashWord(value, 0x9e3779b9)}`;
+
+const safeIdPrefix = (value: string): string => {
+  const prefix = value.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+  return prefix || "id";
+};
+
+const canonicalSafeId = (kind: "shot" | "layer", ownerId: string, externalId: string, salt: number): string =>
+  `${kind}x_${safeIdPrefix(externalId)}_${stableIdHash(JSON.stringify([kind, ownerId, externalId, salt]))}`;
+
+const allocateSafeId = (
+  kind: "shot" | "layer",
+  ownerId: string,
+  externalId: string,
+  usedIds: Set<string>
+): string => {
+  const usedKeys = new Set([...usedIds].map((id) => id.toLowerCase()));
+  if (isSafeInternalId(externalId) && !usedKeys.has(externalId.toLowerCase())) {
+    usedIds.add(externalId);
+    return externalId;
+  }
+  let salt = 0;
+  let candidate = canonicalSafeId(kind, ownerId, externalId, salt);
+  while (usedKeys.has(candidate.toLowerCase())) candidate = canonicalSafeId(kind, ownerId, externalId, ++salt);
+  usedIds.add(candidate);
+  return candidate;
+};
+
+const uniqueId = (candidate: string, usedIds: Set<string>): string => {
+  let next = candidate;
+  let suffix = 1;
+  while (usedIds.has(next)) next = `${candidate}_${suffix++}`;
+  usedIds.add(next);
+  return next;
+};
+
+const canonicalizeIncomingShotIds = (
+  sequenceId: string,
+  items: ImportedShotScriptItem[],
+  existingShots: Shot[]
+): { items: ImportedShotScriptItem[]; idMap: Map<string, string> } => {
+  const usedIds = new Set(existingShots.filter((shot) => shot.sequenceId !== sequenceId).map((shot) => shot.id));
+  const idMap = new Map<string, string>();
+  const normalizedItems = items.map((item, index) => {
+    const externalId = item.id?.trim() || `shot_${Date.now()}_${index + 1}_${Math.floor(Math.random() * 1000)}`;
+    const internalId = allocateSafeId("shot", sequenceId, externalId, usedIds);
+    if (!idMap.has(externalId)) idMap.set(externalId, internalId);
+    const evidence = normalizeVideoProductionEvidence(item.videoProductionEvidence, externalId, sequenceId);
+    if (evidence) {
+      evidence.shotId = internalId;
+      if (evidence.sequenceId !== undefined) evidence.sequenceId = sequenceId;
+    }
+    return { ...item, id: internalId, videoProductionEvidence: evidence };
+  });
+  return { items: normalizedItems, idMap };
+};
+
+const normalizeHydratedShotIdentities = (input: {
+  shots: Shot[];
+  transitions: ShotTransition[];
+  currentSequenceId: string;
+  selectedShotId: string;
+  selectedShotIds: string[];
+  layers: ShotLayer[];
+  shotStrokes: Record<string, Stroke[]>;
+  shotHistory: Record<string, CanvasHistoryState>;
+  activeLayerByShotId: Record<string, string>;
+  generationTasks: StoryboardGenerationTask[];
+}) => {
+  const usedShotIds = new Set<string>();
+  const remapBySequenceAndId = new Map<string, string>();
+  const targetsByLegacyId = new Map<string, Array<{ sequenceId: string; shotId: string }>>();
+  const shots = input.shots.map((shot) => {
+    const validatedEvidence = normalizeVideoProductionEvidence(
+      shot.videoProductionEvidence,
+      shot.id,
+      shot.sequenceId
+    );
+    const nextId = allocateSafeId("shot", shot.sequenceId, shot.id, usedShotIds);
+    remapBySequenceAndId.set(shotIdentityKey(shot.sequenceId, shot.id), nextId);
+    const targets = targetsByLegacyId.get(shot.id) ?? [];
+    targets.push({ sequenceId: shot.sequenceId, shotId: nextId });
+    targetsByLegacyId.set(shot.id, targets);
+    const videoProductionEvidence = validatedEvidence
+      ? {
+          ...validatedEvidence,
+          shotId: nextId,
+          ...(validatedEvidence.sequenceId !== undefined ? { sequenceId: shot.sequenceId } : {})
+        }
+      : undefined;
+    return { ...shot, id: nextId, videoProductionEvidence };
+  });
+  const remapShotId = (sequenceId: string, shotId: string): string =>
+    remapBySequenceAndId.get(shotIdentityKey(sequenceId, shotId)) ?? shotId;
+  const selectionTarget = (shotId: string): string => {
+    const targets = targetsByLegacyId.get(shotId) ?? [];
+    return targets.find((target) => target.sequenceId === input.currentSequenceId)?.shotId ?? targets[0]?.shotId ?? shotId;
+  };
+
+  const usedLayerIds = new Set<string>();
+  const layerRemap = new Map<string, string>();
+  const layers: ShotLayer[] = [];
+  for (const layer of input.layers) {
+    const targets = targetsByLegacyId.get(layer.shotId) ?? [{ sequenceId: "", shotId: layer.shotId }];
+    for (const target of targets) {
+      const nextLayerId = allocateSafeId("layer", target.shotId, layer.id, usedLayerIds);
+      layerRemap.set(shotIdentityKey(target.shotId, layer.id), nextLayerId);
+      layers.push({
+        ...layer,
+        id: nextLayerId,
+        shotId: target.shotId,
+        bitmapPath: layer.bitmapPath.startsWith("shots/")
+          ? `shots/${target.shotId}/${nextLayerId}.png`
+          : layer.bitmapPath
+      });
+    }
+  }
+  const remapLayerId = (shotId: string, layerId: string | undefined): string | undefined =>
+    layerId ? layerRemap.get(shotIdentityKey(shotId, layerId)) ?? layerId : undefined;
+  const cloneStrokes = (strokes: Stroke[], shotId: string): Stroke[] => strokes.map((stroke) => ({
+    ...stroke,
+    points: stroke.points.map((point) => ({ ...point })),
+    layerId: remapLayerId(shotId, stroke.layerId)
+  }));
+  const shotStrokes: Record<string, Stroke[]> = {};
+  const shotHistory: Record<string, CanvasHistoryState> = {};
+  const activeLayerByShotId: Record<string, string> = {};
+  for (const [legacyShotId, targets] of targetsByLegacyId) {
+    for (const target of targets) {
+      if (input.shotStrokes[legacyShotId]) {
+        shotStrokes[target.shotId] = cloneStrokes(input.shotStrokes[legacyShotId], target.shotId);
+      }
+      const history = input.shotHistory[legacyShotId];
+      if (history) {
+        shotHistory[target.shotId] = {
+          past: history.past.map((entry) => cloneStrokes(entry, target.shotId)),
+          future: history.future.map((entry) => cloneStrokes(entry, target.shotId))
+        };
+      }
+      const activeLayerId = input.activeLayerByShotId[legacyShotId];
+      if (activeLayerId) activeLayerByShotId[target.shotId] = remapLayerId(target.shotId, activeLayerId) ?? activeLayerId;
+    }
+  }
+
+  return {
+    shots,
+    transitions: input.transitions.map((transition) => ({
+      ...transition,
+      fromShotId: remapShotId(transition.sequenceId, transition.fromShotId),
+      toShotId: remapShotId(transition.sequenceId, transition.toShotId)
+    })),
+    selectedShotId: selectionTarget(input.selectedShotId),
+    selectedShotIds: input.selectedShotIds.map(selectionTarget).filter((id, index, ids) => ids.indexOf(id) === index),
+    layers,
+    shotStrokes,
+    shotHistory,
+    activeLayerByShotId,
+    generationTasks: input.generationTasks.map((task) => ({ ...task, shotId: selectionTarget(task.shotId) }))
+  };
+};
+
+const withoutShotBoundOutputs = (shot: Shot): Shot => ({
+  ...shot,
+  videoProductionEvidence: undefined,
+  videoGenerationReceipt: undefined,
+  videoGenerationContractDigest: undefined,
+  videoProviderArtifact: undefined,
+  runningHubCloud: undefined,
+  approvedBoundaryFramePath: undefined,
+  videoRouteReason: undefined,
+  generatedImagePath: undefined,
+  generatedVideoPath: undefined,
+  videoQualityStatus: "pending"
+});
+
+const externalTransitionId = (transition: ShotTransition): string =>
+  `${EXTERNAL_TRANSITION_ID_PREFIX}${encodeURIComponent(JSON.stringify([
+    "external",
+    transition.sequenceId,
+    transition.id,
+    transition.fromShotId,
+    transition.toShotId
+  ]))}`;
+
+const hasCanonicalExternalTransitionId = (transition: ShotTransition): boolean => {
+  if (!transition.id.startsWith(EXTERNAL_TRANSITION_ID_PREFIX)) return false;
+  try {
+    const tuple = JSON.parse(decodeURIComponent(transition.id.slice(EXTERNAL_TRANSITION_ID_PREFIX.length)));
+    return Array.isArray(tuple) &&
+      tuple.length === 5 &&
+      tuple[0] === "external" &&
+      tuple[1] === transition.sequenceId &&
+      tuple[3] === transition.fromShotId &&
+      tuple[4] === transition.toShotId;
+  } catch {
+    return false;
+  }
+};
+
+const normalizeBoundaryTransitionIdentities = (
+  transitions: ShotTransition[],
+  selectedTransitionId: string | null,
+  preserveCurrentDefaults: boolean
+): { transitions: ShotTransition[]; selectedTransitionId: string | null } => {
+  const selectedMatches = selectedTransitionId
+    ? transitions.reduce<number[]>((matches, transition, index) => {
+        if (transition.id === selectedTransitionId) matches.push(index);
+        return matches;
+      }, [])
+    : [];
+  const normalized = transitions.map((transition) => {
+    const isCurrentDefault = preserveCurrentDefaults &&
+      transition.id === createDefaultShotTransition(
+        transition.sequenceId,
+        transition.fromShotId,
+        transition.toShotId
+      ).id;
+    return hasCanonicalExternalTransitionId(transition) || isCurrentDefault
+      ? transition
+      : { ...transition, id: externalTransitionId(transition) };
+  });
+  return {
+    transitions: normalized,
+    selectedTransitionId: selectedMatches.length === 1
+      ? normalized[selectedMatches[0]].id
+      : null
+  };
+};
+
+const reconcileTransitionSequences = (
+  transitions: ShotTransition[],
+  shots: Shot[],
+  fps: number,
+  sequenceIds: Iterable<string>
+): ShotTransition[] => {
+  let nextTransitions = transitions;
+  for (const sequenceId of new Set(sequenceIds)) {
+    const reconciled = reconcileLinearTransitions({
+      sequenceId,
+      orderedShots: linearRefs(shots.filter((shot) => shot.sequenceId === sequenceId), fps),
+      existingTransitions: nextTransitions
+    });
+    nextTransitions = [
+      ...nextTransitions.filter((item) => item.sequenceId !== sequenceId),
+      ...reconciled
+    ];
+  }
+  return nextTransitions;
+};
+
+const findUniqueTransitionById = (
+  transitions: ShotTransition[],
+  transitionId: string | null
+): ShotTransition | null => {
+  if (!transitionId) return null;
+  const matches = transitions.filter((item) => item.id === transitionId);
+  return matches.length === 1 ? matches[0] : null;
+};
+
+const captureShotSequenceHistoryEntry = (
+  state: StoryboardState,
+  sequenceId: string
+): ShotSequenceHistoryEntry => ({
+  sequenceId,
+  orderedShotIds: state.shots
+    .filter((shot) => shot.sequenceId === sequenceId)
+    .sort((left, right) => left.order - right.order)
+    .map((shot) => shot.id),
+  transitions: state.shotTransitions
+    .filter((transition) => transition.sequenceId === sequenceId)
+    .map((transition) => ({ ...transition }))
+});
+
+const buildShotSequenceOrderUpdate = (
+  state: StoryboardState,
+  sequenceId: string,
+  orderedShotIds: string[],
+  recordHistory: boolean
+): Partial<StoryboardState> => {
+  const scoped = state.shots.filter((shot) => shot.sequenceId === sequenceId);
+  const shotById = new Map(scoped.map((shot) => [shot.id, shot]));
+  const normalizedScoped = orderedShotIds
+    .map((shotId) => shotById.get(shotId))
+    .filter((shot): shot is Shot => Boolean(shot))
+    .map((shot, index) => ({ ...shot, order: index + 1 }));
+  const normalizedById = new Map(normalizedScoped.map((shot) => [shot.id, shot]));
+  const nextTransitions = reconcileLinearTransitions({
+    sequenceId,
+    orderedShots: linearRefs(normalizedScoped, state.project.fps),
+    existingTransitions: state.shotTransitions
+  });
+  const shotTransitions = [
+    ...state.shotTransitions.filter((item) => item.sequenceId !== sequenceId),
+    ...nextTransitions
+  ];
+
+  return {
+    shots: state.shots.map((shot) => normalizedById.get(shot.id) ?? shot),
+    shotTransitions,
+    selectedShotTransitionId: shotTransitions.some((item) => item.id === state.selectedShotTransitionId)
+      ? state.selectedShotTransitionId
+      : null,
+    ...(recordHistory
+      ? {
+          shotSequenceHistory: {
+            past: [...state.shotSequenceHistory.past, captureShotSequenceHistoryEntry(state, sequenceId)],
+            future: []
+          }
+        }
+      : {})
+  };
+};
+
+const restoreShotSequenceHistoryEntry = (
+  state: StoryboardState,
+  entry: ShotSequenceHistoryEntry
+): Partial<StoryboardState> => {
+  const scoped = state.shots
+    .filter((shot) => shot.sequenceId === entry.sequenceId)
+    .sort((left, right) => left.order - right.order);
+  const currentIds = new Set(scoped.map((shot) => shot.id));
+  const restoredIds = entry.orderedShotIds.filter((shotId) => currentIds.has(shotId));
+  const restoredIdSet = new Set(restoredIds);
+  restoredIds.push(...scoped.filter((shot) => !restoredIdSet.has(shot.id)).map((shot) => shot.id));
+  const orderById = new Map(restoredIds.map((shotId, index) => [shotId, index + 1]));
+  const restoredScoped = restoredIds
+    .map((shotId) => scoped.find((shot) => shot.id === shotId))
+    .filter((shot): shot is Shot => Boolean(shot))
+    .map((shot, index) => ({ ...shot, order: index + 1 }));
+  const nextTransitions = reconcileLinearTransitions({
+    sequenceId: entry.sequenceId,
+    orderedShots: linearRefs(restoredScoped, state.project.fps),
+    existingTransitions: entry.transitions
+  });
+  const shotTransitions = [
+    ...state.shotTransitions.filter((item) => item.sequenceId !== entry.sequenceId),
+    ...nextTransitions
+  ];
+  return {
+    shots: state.shots.map((shot) =>
+      shot.sequenceId === entry.sequenceId
+        ? { ...shot, order: orderById.get(shot.id) ?? shot.order }
+        : shot
+    ),
+    shotTransitions,
+    selectedShotTransitionId: shotTransitions.some((item) => item.id === state.selectedShotTransitionId)
+      ? state.selectedShotTransitionId
+      : null
+  };
+};
+
+const buildShotReplacement = (
+  state: StoryboardState,
+  items: ImportedShotScriptItem[],
+  importedTransitions?: ShotTransition[]
+): Partial<StoryboardState> | null => {
+  const sequenceId = state.currentSequenceId || state.sequences[0]?.id;
+  if (!sequenceId) return null;
+  const filteredItems = items.filter((item) => item.title.trim().length > 0 && item.prompt.trim().length > 0);
+  if (filteredItems.length === 0) return null;
+  const normalizedIncoming = canonicalizeIncomingShotIds(sequenceId, filteredItems, state.shots);
+  const safeItems = normalizedIncoming.items;
+
+  const removedShotIds = new Set(
+    state.shots.filter((shot) => shot.sequenceId === sequenceId).map((shot) => shot.id)
+  );
+  const baseShots = state.shots.filter((shot) => shot.sequenceId !== sequenceId);
+  const baseLayers = state.layers.filter((layer) => !removedShotIds.has(layer.shotId));
+  const nextShotStrokes: Record<string, Stroke[]> = {};
+  const nextShotHistory: Record<string, CanvasHistoryState> = {};
+  const nextActiveLayerByShotId: Record<string, string> = {};
+
+  for (const [shotId, strokes] of Object.entries(state.shotStrokes)) {
+    if (!removedShotIds.has(shotId)) nextShotStrokes[shotId] = strokes;
+  }
+  for (const [shotId, history] of Object.entries(state.shotHistory)) {
+    if (!removedShotIds.has(shotId)) nextShotHistory[shotId] = history;
+  }
+  for (const [shotId, layerId] of Object.entries(state.activeLayerByShotId)) {
+    if (!removedShotIds.has(shotId)) nextActiveLayerByShotId[shotId] = layerId;
+  }
+
+  const nextShots: Shot[] = [];
+  const nextLayers: ShotLayer[] = [];
+  const usedLayerIds = new Set(baseLayers.map((layer) => layer.id));
+  const fps = Math.max(1, state.project.fps);
+
+  safeItems.forEach((item, index) => {
+    const shotId = item.id?.trim() || `shot_${Date.now()}_${index + 1}_${Math.floor(Math.random() * 1000)}`;
+    const durationFrames = item.durationFrames && Number.isFinite(item.durationFrames)
+      ? Math.max(1, Math.round(item.durationFrames))
+      : Math.max(1, Math.round((item.durationSec ?? 2) * fps));
+    const layerId = allocateSafeId("layer", shotId, `layer_${shotId}_1`, usedLayerIds);
+
+    nextShots.push({
+      id: shotId,
+      sequenceId,
+      order: index + 1,
+      title: item.title.trim(),
+      durationFrames,
+      dialogue: item.dialogue?.trim() ?? "",
+      notes: item.notes?.trim() ?? "",
+      tags: item.tags?.filter((tag) => tag.trim().length > 0).map((tag) => tag.trim()) ?? [],
+      storyPrompt: item.prompt.trim(),
+      negativePrompt: item.negativePrompt?.trim() ?? "",
+      videoPrompt: item.videoPrompt?.trim() ?? "",
+      videoMode: item.videoMode ?? "auto",
+      videoStartFramePath: item.videoStartFramePath?.trim() ?? "",
+      videoEndFramePath: item.videoEndFramePath?.trim() ?? "",
+      videoWorkflowProfileId: item.videoWorkflowProfileId ?? "auto",
+      videoQualityTier: item.videoQualityTier ?? "production",
+      videoAccelerationMode: item.videoAccelerationMode ?? "standard",
+      continuitySegmentId: item.continuitySegmentId,
+      videoBoundaryKind: item.videoBoundaryKind ?? "hard_cut",
+      approvedBoundaryFramePath: item.approvedBoundaryFramePath,
+      videoRouteReason: item.videoRouteReason,
+      videoQualityStatus: item.videoQualityStatus ?? "pending",
+      videoGenerationReceipt: item.videoGenerationReceipt,
+      videoGenerationContractDigest: item.videoGenerationContractDigest,
+      videoProductionEvidence: normalizeVideoProductionEvidence(item.videoProductionEvidence, shotId, sequenceId),
+      videoProviderArtifact: item.videoProviderArtifact,
+      runningHubCloud: normalizeRunningHubCloud(item.runningHubCloud),
+      skyboxFace: item.skyboxFace ?? "auto",
+      skyboxFaces: (item.skyboxFaces ?? []).filter((face): face is SkyboxFace =>
+        face === "front" ||
+        face === "right" ||
+        face === "back" ||
+        face === "left" ||
+        face === "up" ||
+        face === "down"
+      ),
+      skyboxFaceWeights: item.skyboxFaceWeights ?? {},
+      cameraYaw: typeof item.cameraYaw === "number" && Number.isFinite(item.cameraYaw) ? item.cameraYaw : undefined,
+      cameraPitch:
+        typeof item.cameraPitch === "number" && Number.isFinite(item.cameraPitch) ? item.cameraPitch : undefined,
+      cameraFov: typeof item.cameraFov === "number" && Number.isFinite(item.cameraFov) ? item.cameraFov : undefined,
+      seed: item.seed,
+      characterRefs: item.characterRefs ?? [],
+      sceneRefId: item.sceneRefId ?? "",
+      sourceCharacterNames: item.sourceCharacterNames ?? [],
+      sourceSceneName: item.sourceSceneName ?? "",
+      sourceScenePrompt: item.sourceScenePrompt ?? "",
+      generatedImagePath: item.generatedImagePath?.trim() ?? "",
+      generatedVideoPath: item.generatedVideoPath?.trim() ?? ""
+    });
+
+    nextLayers.push({
+      id: layerId,
+      shotId,
+      name: "图层 1",
+      visible: true,
+      locked: false,
+      zIndex: 1,
+      bitmapPath: `shots/${shotId}/${layerId}.png`
+    });
+    nextActiveLayerByShotId[shotId] = layerId;
+    nextShotStrokes[shotId] = [];
+    nextShotHistory[shotId] = { past: [], future: [] };
+  });
+
+  const remappedImportedTransitions = importedTransitions?.map((transition) => ({
+    ...transition,
+    sequenceId,
+    fromShotId: normalizedIncoming.idMap.get(transition.fromShotId) ?? transition.fromShotId,
+    toShotId: normalizedIncoming.idMap.get(transition.toShotId) ?? transition.toShotId
+  }));
+  const transitionSeed = remappedImportedTransitions === undefined
+    ? state.shotTransitions
+    : normalizeBoundaryTransitionIdentities(remappedImportedTransitions, null, false).transitions;
+  const nextTransitions = reconcileLinearTransitions({
+    sequenceId,
+    orderedShots: linearRefs(nextShots, fps),
+    existingTransitions: transitionSeed
+  });
+  const shotTransitions = [
+    ...state.shotTransitions.filter((item) => item.sequenceId !== sequenceId),
+    ...nextTransitions
+  ];
+
+  return {
+    shots: [...baseShots, ...nextShots],
+    shotTransitions,
+    layers: [...baseLayers, ...nextLayers],
+    shotStrokes: nextShotStrokes,
+    shotHistory: nextShotHistory,
+    shotSequenceHistory: { past: [], future: [] },
+    activeLayerByShotId: nextActiveLayerByShotId,
+    selectedShotId: nextShots[0]?.id ?? "",
+    selectedShotTransitionId: shotTransitions.some((item) => item.id === state.selectedShotTransitionId)
+      ? state.selectedShotTransitionId
+      : null,
+    selectedShotIds: nextShots[0]?.id ? [nextShots[0].id] : []
+  };
+};
 
 export function createStoryboardSnapshot(state: StoryboardState): StoryboardSnapshot {
   return {
@@ -358,10 +1008,13 @@ export function createStoryboardSnapshot(state: StoryboardState): StoryboardSnap
     sequences: state.sequences,
     currentSequenceId: state.currentSequenceId,
     shots: state.shots,
+    shotTransitions: state.shotTransitions,
     layers: state.layers,
     assets: state.assets,
     audioTracks: state.audioTracks,
     selectedShotId: state.selectedShotId,
+    selectedShotIds: state.selectedShotIds,
+    selectedShotTransitionId: state.selectedShotTransitionId,
     activeLayerByShotId: state.activeLayerByShotId,
     canvasTool: state.canvasTool,
     exportSettings: state.exportSettings,
@@ -386,10 +1039,12 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
   sequences,
   currentSequenceId: sequences[0]?.id ?? "",
   shots,
+  shotTransitions: [],
   layers,
   assets,
   audioTracks,
   selectedShotId: shots[0]?.id ?? "",
+  selectedShotTransitionId: null,
   playback: { currentFrame: 0, playing: false },
   canvasTool: {
     mode: "draw",
@@ -406,6 +1061,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
   },
   shotStrokes: {},
   shotHistory: {},
+  shotSequenceHistory: { past: [], future: [] },
   activeLayerByShotId: {},
   selectedShotIds: [],
   shotFilterQuery: "",
@@ -416,12 +1072,14 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
   completeWorkbenchMigration: () => set({ migrationBackupPending: false, migrationBackupSource: null }),
 
   selectShot: (shotId) =>
-    set((state) => ({
-      selectedShotId: shotId,
-      selectedShotIds: state.selectedShotIds.includes(shotId)
-        ? state.selectedShotIds
-        : [...state.selectedShotIds, shotId]
-    })),
+    set((state) => shotId === null
+      ? { selectedShotId: "", selectedShotIds: [] }
+      : {
+          selectedShotId: shotId,
+          selectedShotIds: state.selectedShotIds.includes(shotId)
+            ? state.selectedShotIds
+            : [...state.selectedShotIds, shotId]
+        }),
 
   toggleShotSelection: (shotId) =>
     set((state) => {
@@ -464,9 +1122,16 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => {
       if (!state.sequences.some((sequence) => sequence.id === sequenceId)) return state;
       const firstShot = state.shots.find((shot) => shot.sequenceId === sequenceId);
+      const selectedTransition = findUniqueTransitionById(
+        state.shotTransitions,
+        state.selectedShotTransitionId
+      );
       return {
         currentSequenceId: sequenceId,
         selectedShotId: firstShot?.id ?? "",
+        selectedShotTransitionId: selectedTransition?.sequenceId === sequenceId
+          ? selectedTransition.id
+          : null,
         selectedShotIds: firstShot ? [firstShot.id] : []
       };
     }),
@@ -506,23 +1171,38 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         .filter((shot) => shot.sequenceId === sequenceId)
         .sort((a, b) => a.order - b.order);
       const shotIdMap = new Map<string, string>();
-      const duplicatedSequenceId = `seq_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const duplicatedSequenceId = uniqueId(
+        `seq_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        new Set(state.sequences.map((sequence) => sequence.id))
+      );
+      const usedShotIds = new Set(state.shots.map((shot) => shot.id));
       const duplicatedShots: Shot[] = scopedShots.map((shot, index) => {
-        const newShotId = `shot_${Date.now()}_${index}_${Math.floor(Math.random() * 1000)}`;
+        const newShotId = allocateSafeId(
+          "shot",
+          duplicatedSequenceId,
+          `shot_${Date.now()}_${index}_${Math.floor(Math.random() * 1000)}`,
+          usedShotIds
+        );
         shotIdMap.set(shot.id, newShotId);
-        return {
+        return withoutShotBoundOutputs({
           ...shot,
           id: newShotId,
           sequenceId: duplicatedSequenceId
-        };
+        });
       });
 
       const layerIdMap = new Map<string, string>();
+      const usedLayerIds = new Set(state.layers.map((layer) => layer.id));
       const duplicatedLayers: ShotLayer[] = state.layers
         .filter((layer) => shotIdMap.has(layer.shotId))
         .map((layer, index) => {
           const mappedShotId = shotIdMap.get(layer.shotId) ?? layer.shotId;
-          const newLayerId = `layer_${mappedShotId}_${index + 1}`;
+          const newLayerId = allocateSafeId(
+            "layer",
+            mappedShotId,
+            `layer_${mappedShotId}_${index + 1}`,
+            usedLayerIds
+          );
           layerIdMap.set(layer.id, newLayerId);
           return {
             ...layer,
@@ -567,11 +1247,17 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       }));
 
       const firstDuplicatedShot = duplicatedShots[0]?.id ?? "";
+      const duplicatedTransitions = reconcileLinearTransitions({
+        sequenceId: duplicatedSequenceId,
+        orderedShots: linearRefs(duplicatedShots, state.project.fps),
+        existingTransitions: []
+      });
 
       return {
         sequences: normalizedSequences,
         currentSequenceId: duplicatedSequenceId,
         shots: [...state.shots, ...duplicatedShots],
+        shotTransitions: [...state.shotTransitions, ...duplicatedTransitions],
         layers: [...state.layers, ...duplicatedLayers],
         shotStrokes: {
           ...state.shotStrokes,
@@ -586,6 +1272,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           ...duplicatedActiveLayerByShotId
         },
         selectedShotId: firstDuplicatedShot,
+        selectedShotTransitionId: null,
         selectedShotIds: firstDuplicatedShot ? [firstDuplicatedShot] : []
       };
     }),
@@ -632,16 +1319,25 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       for (const [shotId, layerId] of Object.entries(state.activeLayerByShotId)) {
         if (!removedShotIds.has(shotId)) nextActiveLayerByShotId[shotId] = layerId;
       }
+      const shotTransitions = state.shotTransitions.filter((item) => item.sequenceId !== sequenceId);
 
       return {
         sequences: nextSequences,
         currentSequenceId: nextCurrentSequenceId,
         shots: nextShots,
+        shotTransitions,
         layers: nextLayers,
         shotStrokes: nextShotStrokes,
         shotHistory: nextShotHistory,
         activeLayerByShotId: nextActiveLayerByShotId,
         selectedShotId: nextSelectedShotId,
+        selectedShotTransitionId: shotTransitions.some((item) => item.id === state.selectedShotTransitionId)
+          ? state.selectedShotTransitionId
+          : null,
+        shotSequenceHistory: {
+          past: state.shotSequenceHistory.past.filter((entry) => entry.sequenceId !== sequenceId),
+          future: state.shotSequenceHistory.future.filter((entry) => entry.sequenceId !== sequenceId)
+        },
         selectedShotIds: nextSelectedShotIds
       };
     }),
@@ -667,50 +1363,53 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
 
   moveShot: (shotId, direction) =>
     set((state) => {
+      const sequenceId = state.currentSequenceId;
       const scoped = state.shots
-        .filter((shot) => shot.sequenceId === state.currentSequenceId)
+        .filter((shot) => shot.sequenceId === sequenceId)
         .sort((a, b) => a.order - b.order);
       const index = scoped.findIndex((shot) => shot.id === shotId);
       if (index < 0) return state;
       const targetIndex = direction === "up" ? index - 1 : index + 1;
       if (targetIndex < 0 || targetIndex >= scoped.length) return state;
-
-      const nextShots = [...scoped];
-      const [moved] = nextShots.splice(index, 1);
-      nextShots.splice(targetIndex, 0, moved);
-      const normalizedScoped = nextShots.map((shot, orderIndex) => ({
-        ...shot,
-        order: orderIndex + 1
-      }));
-      const normalizedById = new Map(normalizedScoped.map((shot) => [shot.id, shot]));
-
-      return {
-        shots: state.shots.map((shot) => normalizedById.get(shot.id) ?? shot)
-      };
+      const moved = moveShotInLinearSequence({
+        sequenceId,
+        orderedShots: linearRefs(scoped, state.project.fps),
+        transitions: state.shotTransitions,
+        shotId,
+        targetIndex
+      });
+      return buildShotSequenceOrderUpdate(
+        state,
+        sequenceId,
+        moved.orderedShots.map((shot) => shot.id),
+        true
+      );
     }),
 
   moveShotToIndex: (shotId, targetIndex) =>
     set((state) => {
+      const sequenceId = state.currentSequenceId;
       const scoped = state.shots
-        .filter((shot) => shot.sequenceId === state.currentSequenceId)
+        .filter((shot) => shot.sequenceId === sequenceId)
         .sort((a, b) => a.order - b.order);
       const sourceIndex = scoped.findIndex((shot) => shot.id === shotId);
       if (sourceIndex < 0) return state;
       const boundedTarget = Math.max(0, Math.min(targetIndex, scoped.length - 1));
       if (sourceIndex === boundedTarget) return state;
 
-      const nextShots = [...scoped];
-      const [moved] = nextShots.splice(sourceIndex, 1);
-      nextShots.splice(boundedTarget, 0, moved);
-      const normalizedScoped = nextShots.map((shot, orderIndex) => ({
-        ...shot,
-        order: orderIndex + 1
-      }));
-      const normalizedById = new Map(normalizedScoped.map((shot) => [shot.id, shot]));
-
-      return {
-        shots: state.shots.map((shot) => normalizedById.get(shot.id) ?? shot)
-      };
+      const moved = moveShotInLinearSequence({
+        sequenceId,
+        orderedShots: linearRefs(scoped, state.project.fps),
+        transitions: state.shotTransitions,
+        shotId,
+        targetIndex: boundedTarget
+      });
+      return buildShotSequenceOrderUpdate(
+        state,
+        sequenceId,
+        moved.orderedShots.map((shot) => shot.id),
+        true
+      );
     }),
 
   moveSelectedShots: (direction) =>
@@ -746,10 +1445,40 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         ...shot,
         order: orderIndex + 1
       }));
-      const normalizedById = new Map(normalizedScoped.map((shot) => [shot.id, shot]));
+      if (normalizedScoped.every((shot, index) => shot.id === scoped[index]?.id)) return state;
+      return buildShotSequenceOrderUpdate(
+        state,
+        state.currentSequenceId,
+        normalizedScoped.map((shot) => shot.id),
+        true
+      );
+    }),
 
+  undoShotSequenceEdit: () =>
+    set((state) => {
+      const entry = state.shotSequenceHistory.past[state.shotSequenceHistory.past.length - 1];
+      if (!entry) return state;
+      const current = captureShotSequenceHistoryEntry(state, entry.sequenceId);
       return {
-        shots: state.shots.map((shot) => normalizedById.get(shot.id) ?? shot)
+        ...restoreShotSequenceHistoryEntry(state, entry),
+        shotSequenceHistory: {
+          past: state.shotSequenceHistory.past.slice(0, -1),
+          future: [...state.shotSequenceHistory.future, current]
+        }
+      };
+    }),
+
+  redoShotSequenceEdit: () =>
+    set((state) => {
+      const entry = state.shotSequenceHistory.future[state.shotSequenceHistory.future.length - 1];
+      if (!entry) return state;
+      const current = captureShotSequenceHistoryEntry(state, entry.sequenceId);
+      return {
+        ...restoreShotSequenceHistoryEntry(state, entry),
+        shotSequenceHistory: {
+          past: [...state.shotSequenceHistory.past, current],
+          future: state.shotSequenceHistory.future.slice(0, -1)
+        }
       };
     }),
 
@@ -941,7 +1670,8 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       assets: state.assets.filter((asset) => asset.id !== assetId),
       shots: state.shots.map((shot) => ({
         ...shot,
-        characterRefs: (shot.characterRefs ?? []).filter((item) => item !== assetId)
+        characterRefs: (shot.characterRefs ?? []).filter((item) => item !== assetId),
+        runningHubCloud: (shot.characterRefs ?? []).includes(assetId) ? undefined : shot.runningHubCloud
       }))
     })),
 
@@ -953,7 +1683,8 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         const exists = refs.includes(characterAssetId);
         return {
           ...shot,
-          characterRefs: exists ? refs.filter((item) => item !== characterAssetId) : [...refs, characterAssetId]
+          characterRefs: exists ? refs.filter((item) => item !== characterAssetId) : [...refs, characterAssetId],
+          runningHubCloud: undefined
         };
       })
     })),
@@ -966,6 +1697,12 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                const profileChanged = patch.videoWorkflowProfileId !== undefined && patch.videoWorkflowProfileId !== shot.videoWorkflowProfileId;
                const receiptChanged = patch.videoGenerationReceipt !== undefined && JSON.stringify(patch.videoGenerationReceipt) !== JSON.stringify(shot.videoGenerationReceipt);
                const mediaChanged = patch.generatedVideoPath !== undefined && patch.generatedVideoPath !== shot.generatedVideoPath;
+               const cloudInputChanged =
+                 (patch.storyPrompt !== undefined && patch.storyPrompt !== shot.storyPrompt) ||
+                 (patch.videoPrompt !== undefined && patch.videoPrompt !== shot.videoPrompt) ||
+                 (patch.characterRefs !== undefined && JSON.stringify(patch.characterRefs) !== JSON.stringify(shot.characterRefs)) ||
+                 (patch.generatedImagePath !== undefined && patch.generatedImagePath !== shot.generatedImagePath) ||
+                 profileChanged || mediaChanged;
                const generationContractChanged =
                  (patch.title !== undefined && patch.title !== shot.title) ||
                  (patch.storyPrompt !== undefined && patch.storyPrompt !== shot.storyPrompt) ||
@@ -984,10 +1721,11 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                  (patch.continuitySegmentId !== undefined && patch.continuitySegmentId !== shot.continuitySegmentId) ||
                  (patch.videoBoundaryKind !== undefined && patch.videoBoundaryKind !== shot.videoBoundaryKind) ||
                  (patch.approvedBoundaryFramePath !== undefined && patch.approvedBoundaryFramePath !== shot.approvedBoundaryFramePath);
-                const invalidatesProduction = profileChanged || receiptChanged || mediaChanged || generationContractChanged;
+                const cloudArtifactChanged = patch.runningHubCloud !== undefined && runningHubArtifactIdentity(patch.runningHubCloud) !== runningHubArtifactIdentity(shot.runningHubCloud);
+                const invalidatesProduction = profileChanged || receiptChanged || mediaChanged || generationContractChanged || cloudArtifactChanged;
                 const carriesReplacementEvidence = patch.videoProductionEvidence !== undefined;
                 const clearsProduction = invalidatesProduction && !carriesReplacementEvidence;
-                const clearsGeneratedMedia = (profileChanged || generationContractChanged) && patch.generatedVideoPath === undefined;
+                const clearsGeneratedMedia = (profileChanged || generationContractChanged || cloudArtifactChanged) && patch.generatedVideoPath === undefined;
               const next: Shot = {
               ...shot,
               title: patch.title ?? shot.title,
@@ -1022,10 +1760,20 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                     ? undefined
                     : shot.videoGenerationContractDigest,
               videoProductionEvidence: patch.videoProductionEvidence !== undefined
-                   ? normalizeVideoProductionEvidence(patch.videoProductionEvidence, shot.id)
+                   ? normalizeVideoProductionEvidence(patch.videoProductionEvidence, shot.id, shot.sequenceId)
                   : clearsProduction
                     ? undefined
                     : shot.videoProductionEvidence,
+              videoProviderArtifact: patch.videoProviderArtifact !== undefined
+                ? patch.videoProviderArtifact
+                : clearsProduction
+                  ? undefined
+                  : shot.videoProviderArtifact,
+              runningHubCloud: cloudInputChanged
+                ? undefined
+                : patch.runningHubCloud !== undefined
+                  ? normalizeRunningHubCloud(patch.runningHubCloud)
+                  : shot.runningHubCloud,
               skyboxFace: patch.skyboxFace ?? shot.skyboxFace,
               skyboxFaces: patch.skyboxFaces ?? shot.skyboxFaces,
               skyboxFaceWeights: patch.skyboxFaceWeights ?? shot.skyboxFaceWeights,
@@ -1054,114 +1802,48 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     })),
 
   replaceShotsForCurrentSequence: (items) =>
+    set((state) => buildShotReplacement(state, items) ?? state),
+
+  replaceShotScriptForCurrentSequence: ({ shots: scriptShots, transitions }) =>
+    set((state) => buildShotReplacement(state, scriptShots, transitions) ?? state),
+
+  selectShotTransition: (transitionId) =>
+    set((state) => ({
+      selectedShotTransitionId: findUniqueTransitionById(state.shotTransitions, transitionId)?.id ?? null
+    })),
+
+  updateShotTransition: (transitionId, patch) =>
     set((state) => {
-      const sequenceId = state.currentSequenceId || state.sequences[0]?.id;
-      if (!sequenceId) return state;
-      const safeItems = items.filter((item) => item.title.trim().length > 0 && item.prompt.trim().length > 0);
-      if (safeItems.length === 0) return state;
-
-      const removedShotIds = new Set(
-        state.shots.filter((shot) => shot.sequenceId === sequenceId).map((shot) => shot.id)
+      const current = findUniqueTransitionById(state.shotTransitions, transitionId);
+      if (!current) return state;
+      const fromShot = state.shots.find((shot) =>
+        shot.sequenceId === current.sequenceId && shot.id === current.fromShotId
       );
-      const baseShots = state.shots.filter((shot) => shot.sequenceId !== sequenceId);
-      const baseLayers = state.layers.filter((layer) => !removedShotIds.has(layer.shotId));
-      const nextShotStrokes: Record<string, Stroke[]> = {};
-      const nextShotHistory: Record<string, CanvasHistoryState> = {};
-      const nextActiveLayerByShotId: Record<string, string> = {};
-
-      for (const [shotId, strokes] of Object.entries(state.shotStrokes)) {
-        if (!removedShotIds.has(shotId)) nextShotStrokes[shotId] = strokes;
-      }
-      for (const [shotId, history] of Object.entries(state.shotHistory)) {
-        if (!removedShotIds.has(shotId)) nextShotHistory[shotId] = history;
-      }
-      for (const [shotId, layerId] of Object.entries(state.activeLayerByShotId)) {
-        if (!removedShotIds.has(shotId)) nextActiveLayerByShotId[shotId] = layerId;
-      }
-
-      const nextShots: Shot[] = [];
-      const nextLayers: ShotLayer[] = [];
-      const fps = Math.max(1, state.project.fps);
-
-      safeItems.forEach((item, index) => {
-        const shotId = item.id?.trim() || `shot_${Date.now()}_${index + 1}_${Math.floor(Math.random() * 1000)}`;
-        const durationFrames = item.durationFrames && Number.isFinite(item.durationFrames)
-          ? Math.max(1, Math.round(item.durationFrames))
-          : Math.max(1, Math.round((item.durationSec ?? 2) * fps));
-        const layerId = `layer_${shotId}_1`;
-
-        nextShots.push({
-          id: shotId,
-          sequenceId,
-          order: index + 1,
-          title: item.title.trim(),
-          durationFrames,
-          dialogue: item.dialogue?.trim() ?? "",
-          notes: item.notes?.trim() ?? "",
-          tags: item.tags?.filter((tag) => tag.trim().length > 0).map((tag) => tag.trim()) ?? [],
-          storyPrompt: item.prompt.trim(),
-          negativePrompt: item.negativePrompt?.trim() ?? "",
-          videoPrompt: item.videoPrompt?.trim() ?? "",
-          videoMode: item.videoMode ?? "auto",
-          videoStartFramePath: item.videoStartFramePath?.trim() ?? "",
-          videoEndFramePath: item.videoEndFramePath?.trim() ?? "",
-          videoWorkflowProfileId: item.videoWorkflowProfileId ?? "auto",
-          videoQualityTier: item.videoQualityTier ?? "production",
-          videoAccelerationMode: item.videoAccelerationMode ?? "standard",
-          continuitySegmentId: item.continuitySegmentId,
-          videoBoundaryKind: item.videoBoundaryKind ?? "hard_cut",
-          approvedBoundaryFramePath: item.approvedBoundaryFramePath,
-          videoRouteReason: item.videoRouteReason,
-          videoQualityStatus: item.videoQualityStatus ?? "pending",
-          videoGenerationReceipt: item.videoGenerationReceipt,
-          videoGenerationContractDigest: item.videoGenerationContractDigest,
-          videoProductionEvidence: normalizeVideoProductionEvidence(item.videoProductionEvidence, shotId),
-          skyboxFace: item.skyboxFace ?? "auto",
-          skyboxFaces: (item.skyboxFaces ?? []).filter((face): face is SkyboxFace =>
-            face === "front" ||
-            face === "right" ||
-            face === "back" ||
-            face === "left" ||
-            face === "up" ||
-            face === "down"
-          ),
-          skyboxFaceWeights: item.skyboxFaceWeights ?? {},
-          cameraYaw: typeof item.cameraYaw === "number" && Number.isFinite(item.cameraYaw) ? item.cameraYaw : undefined,
-          cameraPitch:
-            typeof item.cameraPitch === "number" && Number.isFinite(item.cameraPitch) ? item.cameraPitch : undefined,
-          cameraFov: typeof item.cameraFov === "number" && Number.isFinite(item.cameraFov) ? item.cameraFov : undefined,
-          seed: item.seed,
-          characterRefs: item.characterRefs ?? [],
-          sceneRefId: item.sceneRefId ?? "",
-          sourceCharacterNames: item.sourceCharacterNames ?? [],
-          sourceSceneName: item.sourceSceneName ?? "",
-          sourceScenePrompt: item.sourceScenePrompt ?? "",
-          generatedImagePath: item.generatedImagePath?.trim() ?? "",
-          generatedVideoPath: item.generatedVideoPath?.trim() ?? ""
-        });
-
-        nextLayers.push({
-          id: layerId,
-          shotId,
-          name: "图层 1",
-          visible: true,
-          locked: false,
-          zIndex: 1,
-          bitmapPath: `shots/${shotId}/${layerId}.png`
-        });
-        nextActiveLayerByShotId[shotId] = layerId;
-        nextShotStrokes[shotId] = [];
-        nextShotHistory[shotId] = { past: [], future: [] };
-      });
-
+      const toShot = state.shots.find((shot) =>
+        shot.sequenceId === current.sequenceId && shot.id === current.toShotId
+      );
+      if (!fromShot || !toShot) return state;
+      const type = patch.type ?? current.type;
+      const ceiling = Math.min(fromShot.durationFrames, toShot.durationFrames) / Math.max(1, state.project.fps);
+      const requestedDuration = patch.durationSeconds ?? current.durationSeconds;
+      const durationSeconds = type === "hard_cut"
+        ? 0
+        : Math.min(Math.max(0, Number.isFinite(requestedDuration) ? requestedDuration : 0), ceiling);
+      const frameDependency =
+        patch.frameDependency ?? (patch.type === "continuous" ? "previous_tail" : current.frameDependency);
+      const next: ShotTransition = {
+        ...current,
+        type,
+        durationSeconds,
+        frameDependency,
+        sharedFramePath: patch.sharedFramePath ?? current.sharedFramePath,
+        actionContinuity: patch.actionContinuity ?? current.actionContinuity,
+        characterPosition: patch.characterPosition ?? current.characterPosition,
+        cameraDirection: patch.cameraDirection ?? current.cameraDirection,
+        notes: patch.notes ?? current.notes
+      };
       return {
-        shots: [...baseShots, ...nextShots],
-        layers: [...baseLayers, ...nextLayers],
-        shotStrokes: nextShotStrokes,
-        shotHistory: nextShotHistory,
-        activeLayerByShotId: nextActiveLayerByShotId,
-        selectedShotId: nextShots[0]?.id ?? "",
-        selectedShotIds: nextShots[0]?.id ? [nextShots[0].id] : []
+        shotTransitions: state.shotTransitions.map((item) => item === current ? next : item)
       };
     }),
 
@@ -1170,10 +1852,37 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const selected = new Set(state.selectedShotIds);
       if (selected.size === 0) return state;
       const safeDuration = Math.max(1, Math.round(durationFrames));
+      const nextShots = state.shots.map((shot) =>
+        selected.has(shot.id) && shot.durationFrames !== safeDuration
+          ? {
+              ...shot,
+              durationFrames: safeDuration,
+              generatedVideoPath: undefined,
+              videoGenerationReceipt: undefined,
+              videoGenerationContractDigest: undefined,
+              videoProductionEvidence: undefined,
+              videoProviderArtifact: undefined,
+              runningHubCloud: undefined,
+              videoQualityStatus: "pending" as const
+            }
+          : shot
+      );
+      const affectedSequenceIds = state.shots
+        .filter((shot) => selected.has(shot.id))
+        .map((shot) => shot.sequenceId);
+      const shotTransitions = reconcileTransitionSequences(
+        state.shotTransitions,
+        nextShots,
+        state.project.fps,
+        affectedSequenceIds
+      );
       return {
-        shots: state.shots.map((shot) =>
-          selected.has(shot.id) ? { ...shot, durationFrames: safeDuration } : shot
-        )
+        shots: nextShots,
+        shotTransitions,
+        selectedShotTransitionId: findUniqueTransitionById(
+          shotTransitions,
+          state.selectedShotTransitionId
+        )?.id ?? null
       };
     }),
 
@@ -1222,6 +1931,24 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const nextWidth = settings.width ? Math.max(320, Math.round(settings.width)) : state.project.width;
       const nextHeight = settings.height ? Math.max(240, Math.round(settings.height)) : state.project.height;
       const normalizationChanged = nextFps !== state.project.fps || nextWidth !== state.project.width || nextHeight !== state.project.height;
+      const nextShots = normalizationChanged ? state.shots.map((shot) => ({
+        ...shot,
+        generatedVideoPath: undefined,
+        videoGenerationReceipt: undefined,
+        videoGenerationContractDigest: undefined,
+        videoProductionEvidence: undefined,
+        videoProviderArtifact: undefined,
+        runningHubCloud: undefined,
+        videoQualityStatus: "pending" as const
+      })) : state.shots;
+      const shotTransitions = nextFps !== state.project.fps
+        ? reconcileAllLinearTransitions(
+            state.sequences,
+            nextShots,
+            nextFps,
+            state.shotTransitions
+          )
+        : state.shotTransitions;
       return {
         project: {
           ...state.project,
@@ -1231,20 +1958,18 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
           height: nextHeight,
           updatedAt: now
         },
-        shots: normalizationChanged ? state.shots.map((shot) => ({
-          ...shot,
-          generatedVideoPath: undefined,
-          videoGenerationReceipt: undefined,
-          videoGenerationContractDigest: undefined,
-          videoProductionEvidence: undefined,
-          videoQualityStatus: "pending" as const
-        })) : state.shots
+        shots: nextShots,
+        shotTransitions,
+        selectedShotTransitionId: findUniqueTransitionById(
+          shotTransitions,
+          state.selectedShotTransitionId
+        )?.id ?? null
       };
     }),
 
   setShotDuration: (shotId, durationFrames) =>
-    set((state) => ({
-      shots: state.shots.map((shot) =>
+    set((state) => {
+      const nextShots = state.shots.map((shot) =>
         shot.id === shotId
           ? (() => {
               const nextDuration = Math.max(1, durationFrames);
@@ -1256,12 +1981,31 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
                 videoGenerationReceipt: undefined,
                 videoGenerationContractDigest: undefined,
                 videoProductionEvidence: undefined,
+                videoProviderArtifact: undefined,
+                runningHubCloud: undefined,
                 videoQualityStatus: "pending" as const
               };
             })()
           : shot
-      )
-    })),
+      );
+      const affectedSequenceIds = state.shots
+        .filter((shot) => shot.id === shotId)
+        .map((shot) => shot.sequenceId);
+      const shotTransitions = reconcileTransitionSequences(
+        state.shotTransitions,
+        nextShots,
+        state.project.fps,
+        affectedSequenceIds
+      );
+      return {
+        shots: nextShots,
+        shotTransitions,
+        selectedShotTransitionId: findUniqueTransitionById(
+          shotTransitions,
+          state.selectedShotTransitionId
+        )?.id ?? null
+      };
+    }),
 
   setCurrentFrame: (frame) =>
     set((state) => ({
@@ -1411,7 +2155,12 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => {
       const shotLayers = state.layers.filter((layer) => layer.shotId === shotId);
       const nextIndex = shotLayers.length + 1;
-      const newLayerId = `layer_${Date.now()}`;
+      const newLayerId = allocateSafeId(
+        "layer",
+        shotId,
+        `layer_${Date.now()}`,
+        new Set(state.layers.map((layer) => layer.id))
+      );
       const zIndex = shotLayers.reduce((max, layer) => Math.max(max, layer.zIndex), 0) + 1;
       const newLayer: ShotLayer = {
         id: newLayerId,
@@ -1510,12 +2259,17 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const sourceIndex = scoped.findIndex((shot) => shot.id === shotId);
       if (sourceIndex < 0) return state;
 
-      const newShotId = `shot_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const duplicate: Shot = {
+      const newShotId = allocateSafeId(
+        "shot",
+        source.sequenceId,
+        `shot_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        new Set(state.shots.map((shot) => shot.id))
+      );
+      const duplicate: Shot = withoutShotBoundOutputs({
         ...source,
         id: newShotId,
         title: `${source.title} Copy`
-      };
+      });
 
       const nextShots = [...scoped];
       nextShots.splice(sourceIndex + 1, 0, duplicate);
@@ -1529,8 +2283,14 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         .filter((layer) => layer.shotId === shotId)
         .sort((a, b) => a.zIndex - b.zIndex);
       const layerIdMap = new Map<string, string>();
+      const usedLayerIds = new Set(state.layers.map((layer) => layer.id));
       const copiedLayers: ShotLayer[] = sourceLayers.map((layer, index) => {
-        const newLayerId = `layer_${newShotId}_${index + 1}`;
+        const newLayerId = allocateSafeId(
+          "layer",
+          newShotId,
+          `layer_${newShotId}_${index + 1}`,
+          usedLayerIds
+        );
         layerIdMap.set(layer.id, newLayerId);
         return {
           ...layer,
@@ -1595,6 +2355,16 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         .filter((shot) => shot.sequenceId !== source.sequenceId)
         .concat(normalizedScoped)
         .map((shot) => normalizedById.get(shot.id) ?? shot);
+      const nextTransitions = removeShotFromLinearSequence({
+        sequenceId: source.sequenceId,
+        orderedShots: linearRefs(scoped, state.project.fps),
+        transitions: state.shotTransitions,
+        shotId
+      }).transitions;
+      const shotTransitions = [
+        ...state.shotTransitions.filter((item) => item.sequenceId !== source.sequenceId),
+        ...nextTransitions
+      ];
 
       const nextLayers = state.layers.filter((layer) => layer.shotId !== shotId);
       const nextSelectedShotIds = state.selectedShotIds.filter((id) => id !== shotId);
@@ -1609,11 +2379,15 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
 
       return {
         shots: mergedShots,
+        shotTransitions,
         layers: nextLayers,
         shotStrokes: nextShotStrokes,
         shotHistory: nextShotHistory,
         activeLayerByShotId: nextActiveLayerByShotId,
         selectedShotId: nextSelectedShotId,
+        selectedShotTransitionId: shotTransitions.some((item) => item.id === state.selectedShotTransitionId)
+          ? state.selectedShotTransitionId
+          : null,
         selectedShotIds: nextSelectedShotIds
       };
     }),
@@ -1642,6 +2416,15 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         .filter((shot) => shot.sequenceId !== state.currentSequenceId)
         .concat(normalizedScoped)
         .map((shot) => normalizedById.get(shot.id) ?? shot);
+      const nextTransitions = reconcileLinearTransitions({
+        sequenceId: state.currentSequenceId,
+        orderedShots: linearRefs(normalizedScoped, state.project.fps),
+        existingTransitions: state.shotTransitions
+      });
+      const shotTransitions = [
+        ...state.shotTransitions.filter((item) => item.sequenceId !== state.currentSequenceId),
+        ...nextTransitions
+      ];
 
       const nextLayers = state.layers.filter((layer) => !removed.has(layer.shotId));
       const nextShotStrokes: Record<string, Stroke[]> = {};
@@ -1665,11 +2448,15 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
 
       return {
         shots: mergedShots,
+        shotTransitions,
         layers: nextLayers,
         shotStrokes: nextShotStrokes,
         shotHistory: nextShotHistory,
         activeLayerByShotId: nextActiveLayerByShotId,
         selectedShotId: nextSelectedShotId,
+        selectedShotTransitionId: shotTransitions.some((item) => item.id === state.selectedShotTransitionId)
+          ? state.selectedShotTransitionId
+          : null,
         selectedShotIds: []
       };
     }),
@@ -1896,6 +2683,35 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const safeCurrentSequenceId = nextSequences.some((seq) => seq.id === preferredSequenceId)
         ? preferredSequenceId
         : nextSequences[0]?.id ?? "";
+      const nextProject = snapshot.project ?? state.project;
+      const rawTransitionSeed = snapshot.shotTransitions ?? (snapshot.shots ? [] : state.shotTransitions);
+      const normalizedShots = normalizeHydratedShotIdentities({
+        shots: snapshot.shots ?? state.shots,
+        transitions: rawTransitionSeed,
+        currentSequenceId: safeCurrentSequenceId,
+        selectedShotId: snapshot.selectedShotId ?? state.selectedShotId,
+        selectedShotIds: snapshot.selectedShotIds ?? state.selectedShotIds,
+        layers: snapshot.layers ?? state.layers,
+        shotStrokes: snapshot.shotStrokes ?? state.shotStrokes,
+        shotHistory: snapshot.shotHistory ?? state.shotHistory,
+        activeLayerByShotId: snapshot.activeLayerByShotId ?? state.activeLayerByShotId,
+        generationTasks: snapshot.generationTasks ?? state.generationTasks
+      });
+      const nextShots = normalizedShots.shots.map(withVideoProductionDefaults);
+      const preferredShotTransitionId = snapshot.selectedShotTransitionId === undefined
+        ? (snapshot.shots ? null : state.selectedShotTransitionId)
+        : snapshot.selectedShotTransitionId;
+      const normalizedBoundary = normalizeBoundaryTransitionIdentities(
+        normalizedShots.transitions,
+        preferredShotTransitionId,
+        true
+      );
+      const nextShotTransitions = reconcileAllLinearTransitions(
+        nextSequences,
+        nextShots,
+        nextProject.fps,
+        normalizedBoundary.transitions
+      );
 
       return {
         ...state,
@@ -1912,20 +2728,27 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         spatialObjects: snapshot.spatialObjects ?? state.spatialObjects,
         poseKeyframes: snapshot.poseKeyframes ?? state.poseKeyframes,
         cameraPlans: snapshot.cameraPlans ?? state.cameraPlans,
-        project: snapshot.project ?? state.project,
+        project: nextProject,
         sequences: nextSequences,
         currentSequenceId: safeCurrentSequenceId,
-        shots: snapshot.shots ? snapshot.shots.map(withVideoProductionDefaults) : state.shots,
-        selectedShotId: snapshot.selectedShotId ?? state.selectedShotId,
+        shots: nextShots,
+        shotTransitions: nextShotTransitions,
+        selectedShotId: normalizedShots.selectedShotId,
+        selectedShotIds: normalizedShots.selectedShotIds,
+        selectedShotTransitionId: findUniqueTransitionById(
+          nextShotTransitions,
+          normalizedBoundary.selectedTransitionId
+        )?.id ?? null,
         audioTracks: snapshot.audioTracks ?? state.audioTracks,
         assets: snapshot.assets ?? state.assets,
         canvasTool: snapshot.canvasTool ?? state.canvasTool,
-        layers: snapshot.layers ?? state.layers,
-        activeLayerByShotId: snapshot.activeLayerByShotId ?? state.activeLayerByShotId,
+        layers: normalizedShots.layers,
+        activeLayerByShotId: normalizedShots.activeLayerByShotId,
         exportSettings: snapshot.exportSettings ?? state.exportSettings,
-        shotStrokes: snapshot.shotStrokes ?? state.shotStrokes,
-        shotHistory: snapshot.shotHistory ?? state.shotHistory,
-        generationTasks: snapshot.generationTasks ?? state.generationTasks,
+        shotStrokes: normalizedShots.shotStrokes,
+        shotHistory: normalizedShots.shotHistory,
+        shotSequenceHistory: { past: [], future: [] },
+        generationTasks: normalizedShots.generationTasks,
         spatialStages: snapshot.spatialStages == null
           ? state.spatialStages
           : normalizeSceneStages(snapshot.spatialStages)
@@ -1967,7 +2790,9 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         ],
         currentSequenceId: sequenceId,
         shots: [],
+        shotTransitions: [],
         selectedShotId: "",
+        selectedShotTransitionId: null,
         selectedShotIds: [],
         audioTracks: [],
         assets: [],
@@ -1985,6 +2810,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         },
         shotStrokes: {},
         shotHistory: {},
+        shotSequenceHistory: { past: [], future: [] },
         generationTasks: [],
         spatialStages: []
       };
@@ -1995,10 +2821,18 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       const sequenceId = state.currentSequenceId || state.sequences[0]?.id;
       if (!sequenceId) return state;
 
-      const scopedCount = state.shots.filter((shot) => shot.sequenceId === sequenceId).length;
+      const scopedShots = state.shots.filter((shot) => shot.sequenceId === sequenceId);
+      const scopedCount = scopedShots.length;
       const nextOrder = scopedCount + 1;
+      const projectShotIds = new Set(state.shots.map((shot) => shot.id));
+      const newShotId = allocateSafeId(
+        "shot",
+        sequenceId,
+        `shot_${String(nextOrder).padStart(3, "0")}`,
+        projectShotIds
+      );
       const newShot: Shot = {
-        id: `shot_${String(nextOrder).padStart(3, "0")}`,
+        id: newShotId,
         sequenceId,
         order: nextOrder,
         title: `镜头 ${nextOrder}`,
@@ -2008,7 +2842,12 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         tags: []
       };
 
-      const defaultLayerId = `layer_${newShot.id}_1`;
+      const defaultLayerId = allocateSafeId(
+        "layer",
+        newShot.id,
+        `layer_${newShot.id}_1`,
+        new Set(state.layers.map((layer) => layer.id))
+      );
       const defaultLayer: ShotLayer = {
         id: defaultLayerId,
         shotId: newShot.id,
@@ -2018,15 +2857,27 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
         zIndex: 1,
         bitmapPath: `shots/${newShot.id}/${defaultLayerId}.png`
       };
+      const nextShots = [...state.shots, newShot];
+      const shotTransitions = reconcileTransitionSequences(
+        state.shotTransitions,
+        nextShots,
+        state.project.fps,
+        [sequenceId]
+      );
 
       return {
-        shots: [...state.shots, newShot],
+        shots: nextShots,
+        shotTransitions,
         layers: [...state.layers, defaultLayer],
         activeLayerByShotId: {
           ...state.activeLayerByShotId,
           [newShot.id]: defaultLayerId
         },
         selectedShotId: newShot.id,
+        selectedShotTransitionId: findUniqueTransitionById(
+          shotTransitions,
+          state.selectedShotTransitionId
+        )?.id ?? null,
         selectedShotIds: [newShot.id]
       };
     }),

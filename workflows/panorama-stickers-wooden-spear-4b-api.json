@@ -1,0 +1,236 @@
+{
+  "6": {
+    "inputs": {
+      "text": "Fill the green spaces according to the image. Outpaint as a seamless 360 equirectangular panorama (2:1). Keep the horizon level. Match left and right edges. Continue the same prehistoric primeval forest clearing, massive ancient trees, mossy rocks and cool misty cinematic semi-realistic 3D donghua style. No people, no text, no buildings.",
+      "clip": [
+        "44",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "31",
+        0
+      ],
+      "vae": [
+        "43",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "31": {
+    "inputs": {
+      "seed": 12345,
+      "steps": 20,
+      "cfg": 5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "63",
+        0
+      ],
+      "positive": [
+        "49",
+        0
+      ],
+      "negative": [
+        "55",
+        0
+      ],
+      "latent_image": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "33": {
+    "inputs": {
+      "text": "text, worst quality, blurry, ugly",
+      "clip": [
+        "44",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "43": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "44": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "48": {
+    "inputs": {
+      "unet_name": "flux-2-klein-base-4b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "49": {
+    "inputs": {
+      "conditioning": [
+        "6",
+        0
+      ],
+      "latent": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "52": {
+    "inputs": {
+      "pixels": [
+        "70",
+        0
+      ],
+      "vae": [
+        "43",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE编码"
+    }
+  },
+  "55": {
+    "inputs": {
+      "conditioning": [
+        "33",
+        0
+      ],
+      "latent": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "58": {
+    "inputs": {
+      "coverage": "360",
+      "fps": 24,
+      "erp_image": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "PanoramaPreview",
+    "_meta": {
+      "title": "Panorama Preview"
+    }
+  },
+  "60": {
+    "inputs": {
+      "images": [
+        "70",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "预览图像"
+    }
+  },
+  "63": {
+    "inputs": {
+      "lora_name": "flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors",
+      "strength_model": 0.9,
+      "model": [
+        "48",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA加载器（仅模型）"
+    }
+  },
+  "66": {
+    "inputs": {
+      "filename_prefix": "Storyboard/wooden_spear_panorama_stickers_4b_environment",
+      "images": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  },
+  "70": {
+    "inputs": {
+      "output_preset": "2048",
+      "coverage": "360",
+      "bg_color": "#00ff00",
+      "state_json": "{\"version\":1,\"projection_model\":\"pinhole_rectilinear\",\"alpha_mode\":\"straight\",\"coverage\":360,\"bg_color\":\"#00ff00\",\"output_preset\":\"2048\",\"assets\":{\"asset_wooden_spear_environment\":{\"type\":\"comfy_image\",\"filename\":\"panorama_validation_yaw090_00001_.png\",\"subfolder\":\"\",\"storage\":\"input\",\"name\":\"panorama_validation_yaw090_00001_.png\"}},\"stickers\":[{\"id\":\"st_wooden_spear_environment\",\"asset_id\":\"asset_wooden_spear_environment\",\"yaw_deg\":0,\"pitch_deg\":0,\"hFOV_deg\":90,\"vFOV_deg\":58.72,\"rot_deg\":0,\"z_index\":0}],\"shots\":[]}",
+      "fps": 24,
+      "Open Stickers Editor": null
+    },
+    "class_type": "PanoramaStickers",
+    "_meta": {
+      "title": "Panorama Stickers"
+    }
+  },
+  "71": {
+    "inputs": {
+      "coverage": "360",
+      "state_json": "{\"version\":1,\"projection_model\":\"pinhole_rectilinear\",\"alpha_mode\":\"straight\",\"coverage\":360,\"bg_color\":\"#00ff00\",\"output_preset\":2048,\"assets\":{},\"stickers\":[],\"shots\":[],\"painting\":{\"version\":1,\"groups\":[],\"paint\":{\"strokes\":[]},\"mask\":{\"strokes\":[]},\"raster_objects\":[]},\"painting_layer\":null,\"ui_settings\":{\"invert_view_x\":false,\"invert_view_y\":false,\"preview_quality\":\"balanced\"},\"active\":{\"selected_sticker_id\":null,\"selected_shot_id\":null}}",
+      "output_megapixels": 1,
+      "fps": 24,
+      "Open Cutout Editor": null,
+      "erp_image": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "PanoramaCutout",
+    "_meta": {
+      "title": "Panorama Cutout"
+    }
+  }
+}

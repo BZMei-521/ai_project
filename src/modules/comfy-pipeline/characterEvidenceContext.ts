@@ -1,6 +1,6 @@
 // @ts-ignore Browser-safe evidence context runtime is intentionally plain ESM.
 import * as runtime from "./characterEvidenceContextRuntime.mjs";
-import { toDesktopMediaSource } from "../platform/desktopBridge";
+import { readTrustedCharacterReference } from "../platform/desktopBridge";
 import type {
   Asset,
   CharacterGenerationEvidence,
@@ -54,20 +54,39 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export async function loadCharacterIdentityReferenceSourceHashes(
   identity: CharacterIdentityPack,
   loadBytes: (path: string) => Promise<Uint8Array> = async (path) => {
-    const source = toDesktopMediaSource(path);
-    if (!source) throw new Error("reference_path_missing");
-    const response = await fetch(source, { cache: "no-store" });
-    if (!response.ok) throw new Error("reference_read_failed");
-    const declaredSize = Number(response.headers.get("content-length") ?? "0");
-    if (Number.isFinite(declaredSize) && declaredSize > MAX_REFERENCE_BYTES) throw new Error("reference_too_large");
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const result = await readTrustedCharacterReference(path);
+    if (!Number.isInteger(result.byteLength) || result.byteLength <= 0 || result.byteLength > MAX_REFERENCE_BYTES) throw new Error("reference_too_large");
+    const binary = atob(result.base64Data);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    if (bytes.length !== result.byteLength) throw new Error("reference_read_failed");
+    if (!bytes.length || bytes.length > MAX_REFERENCE_BYTES || !bytesMatchImageFormat(bytes)) throw new Error("reference_image_invalid");
+    return bytes;
+  }
+): Promise<Record<string, string>> {
+  return loadCharacterReferencePathHashes(
+    Object.fromEntries(Object.entries(IDENTITY_REFERENCE_PATHS).flatMap(([slot, field]) => {
+      const path = identity[field]?.trim();
+      return path ? [[slot, path]] : [];
+    })),
+    loadBytes
+  );
+}
+
+export async function loadCharacterReferencePathHashes(
+  referencePaths: Record<string, string>,
+  loadBytes: (path: string) => Promise<Uint8Array> = async (path) => {
+    const result = await readTrustedCharacterReference(path);
+    if (!Number.isInteger(result.byteLength) || result.byteLength <= 0 || result.byteLength > MAX_REFERENCE_BYTES) throw new Error("reference_too_large");
+    const binary = atob(result.base64Data);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    if (bytes.length !== result.byteLength) throw new Error("reference_read_failed");
     if (!bytes.length || bytes.length > MAX_REFERENCE_BYTES || !bytesMatchImageFormat(bytes)) throw new Error("reference_image_invalid");
     return bytes;
   }
 ): Promise<Record<string, string>> {
   const hashes: Record<string, string> = {};
-  for (const [slot, field] of Object.entries(IDENTITY_REFERENCE_PATHS)) {
-    const path = identity[field]?.trim();
+  for (const [slot, value] of Object.entries(referencePaths)) {
+    const path = value?.trim();
     if (!path) continue;
     hashes[slot] = await sha256Hex(await loadBytes(path));
   }
@@ -87,6 +106,34 @@ export const buildTrustedCharacterGenerationEvidenceContext = runtime.buildTrust
   input: TrustedContextInput
 ) => { ok: true; context: CharacterGenerationEvidenceContext } | { ok: false; reason: string };
 
+export type ImmutableCharacterReferenceSnapshot = {
+  stagedIdentity: CharacterIdentityPack;
+  sourceHashes: Record<string, string>;
+  pathBySource: Record<string, string>;
+  slotPaths: Record<string, string>;
+  supplementalPaths: Record<string, string>;
+  supplementalHashes: Record<string, string>;
+};
+
+export const stageImmutableCharacterReferenceSnapshot = runtime.stageImmutableCharacterReferenceSnapshot as (input: {
+  identity: CharacterIdentityPack;
+  stageReference: (input: { slot: string; field: string; sourcePath: string }) => Promise<string>;
+  hashIdentity: (identity: CharacterIdentityPack) => Promise<Record<string, string>>;
+  supplementalReferences?: Record<string, string>;
+  hashReferencePaths?: (paths: Record<string, string>) => Promise<Record<string, string>>;
+}) => Promise<ImmutableCharacterReferenceSnapshot>;
+
+export const verifyImmutableCharacterReferenceSnapshot = runtime.verifyImmutableCharacterReferenceSnapshot as (
+  snapshot: ImmutableCharacterReferenceSnapshot,
+  hashIdentity: (identity: CharacterIdentityPack) => Promise<Record<string, string>>,
+  hashReferencePaths?: (paths: Record<string, string>) => Promise<Record<string, string>>
+) => Promise<{ valid: true; reason: "ok" } | { valid: false; reason: string }>;
+
+export const verifyCompiledCharacterReferenceBindings = runtime.verifyCompiledCharacterReferenceBindings as (
+  compiledWorkflow: Record<string, unknown>,
+  expectedInputNames: string[]
+) => { valid: true; reason: "ok" } | { valid: false; reason: string };
+
 export const applyCharacterGenerationEvidenceImport = runtime.applyCharacterGenerationEvidenceImport as (input: {
   asset: Asset;
   mode: CharacterGenerationMode;
@@ -94,6 +141,7 @@ export const applyCharacterGenerationEvidenceImport = runtime.applyCharacterGene
   context: CharacterGenerationEvidenceContext;
   reportLabel?: string;
   now?: () => string;
+  trustedReceiptVerification?: { valid: boolean; receiptId?: string; claimsDigest?: string };
 }) =>
   | { valid: true; reason: "ok"; evidence: CharacterGenerationEvidence; patch: Partial<Asset> }
   | { valid: false; reason: string; patch: null };

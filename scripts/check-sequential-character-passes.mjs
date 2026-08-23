@@ -17,12 +17,14 @@ import {
   releaseSequentialControllerOwner,
   resolveAppliedCharacterLora,
   resolveCharacterGenerationTrack,
+  verifyFreshCharacterEvidenceReceipts,
   resolveSequentialProviderWorkflow,
   registerSequentialArtifact,
   validateSequentialProviderWorkflow,
   validateSequentialCharacterCount
 } from "../src/modules/comfy-pipeline/sequentialCharacterPassRuntime.mjs";
 import { recomputeStoredCharacterBenchmarkEvidenceDigest } from "../src/modules/asset-manager/characterIdentityUiRuntime.mjs";
+import { selectCharacterProvider } from "../src/modules/comfy-pipeline/characterProviderRegistryRuntime.mjs";
 
 const workflowProof = {
   workflowDigest: "b".repeat(64),
@@ -72,28 +74,54 @@ const resolveReadyLora = (overrides = {}) => resolveAppliedCharacterLora({
   lora: readyQwenLora,
   providerId: "qwen_image_edit_2511",
   workflowProof,
+  currentLoraContext: {
+    generationMode: "lora_augmented",
+    characterAssetId: "asset_hero",
+    identityPackVersion: "identity-v3",
+    provider: "qwen_image_edit_2511",
+    modelName: "qwen_image_edit_2511_bf16.safetensors",
+    loraName: "hero-v3.safetensors",
+    loraVersion: "v3",
+    loraStrength: 0.85,
+    candidateStatus: "dataset_ready",
+    fixtureDigest: benchmarkEvidence.fixtureDigest,
+    workflowProof
+  },
   ...overrides
 });
-assert.deepEqual(
+assert.equal(
   resolveReadyLora(),
-  { loraName: "hero-v3.safetensors", strength: 0.85, version: "v3" },
-  "a benchmark-evidenced LoRA may apply to the exact matching generation context"
+  null,
+  "legacy LoRA evidence without an authenticated receipt is audit-only"
 );
-assert.deepEqual(
+assert.equal(
   resolveCharacterGenerationTrack({
     characterAssetId: "asset_hero",
     identityPackVersion: "identity-v3",
     lora: readyQwenLora,
     providerId: "qwen_image_edit_2511",
-    workflowProof
+    workflowProof,
+    currentLoraContext: {
+      generationMode: "lora_augmented",
+      characterAssetId: "asset_hero",
+      identityPackVersion: "identity-v3",
+      provider: "qwen_image_edit_2511",
+      modelName: "qwen_image_edit_2511_bf16.safetensors",
+      loraName: "hero-v3.safetensors",
+      loraVersion: "v3",
+      loraStrength: 0.85,
+      candidateStatus: "dataset_ready",
+      fixtureDigest: benchmarkEvidence.fixtureDigest,
+      workflowProof
+    }
   }),
-  {
-    mode: "lora_augmented",
-    providerId: "qwen_image_edit_2511",
-    modelName: "qwen_image_edit_2511_bf16.safetensors",
-    appliedLora: { loraName: "hero-v3.safetensors", strength: 0.85, version: "v3" }
-  },
-  "the generic resolver preserves legacy stored LoRA compatibility"
+  null,
+  "the generic resolver rejects legacy unauthenticated LoRA evidence"
+);
+assert.equal(
+  resolveAppliedCharacterLora({ characterAssetId: "asset_hero", identityPackVersion: "identity-v3", lora: readyQwenLora, providerId: "qwen_image_edit_2511", workflowProof }),
+  null,
+  "legacy stored LoRA evidence without a current fixture proof fails closed"
 );
 assert.equal(resolveReadyLora({ providerId: "flux2_klein_4b" }), null);
 assert.equal(resolveReadyLora({ identityPackVersion: "identity-v4" }), null);
@@ -110,10 +138,62 @@ for (const invalidStrength of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
   );
 }
 
+let receiptRegistryPresent = true;
+let receiptVerificationCalls = 0;
+const evidenceForFreshVerification = { trustedReceipt: { receiptId: "a".repeat(64) } };
+const verifyFromMutableRegistry = async () => {
+  receiptVerificationCalls += 1;
+  return receiptRegistryPresent
+    ? { valid: true, receiptId: "a".repeat(64), claimsDigest: "b".repeat(64) }
+    : { valid: false, reason: "trusted_receipt_registry_missing" };
+};
+assert.equal(
+  (await verifyFreshCharacterEvidenceReceipts({ characterZeroShotEvidence: evidenceForFreshVerification }, verifyFromMutableRegistry)).trustedZeroReceiptVerification.valid,
+  true,
+  "the first queue may use a receipt that still exists"
+);
+receiptRegistryPresent = false;
+assert.equal(
+  (await verifyFreshCharacterEvidenceReceipts({ characterZeroShotEvidence: evidenceForFreshVerification }, verifyFromMutableRegistry)).trustedZeroReceiptVerification.valid,
+  false,
+  "deleting the registry record must reject the next queue instead of reusing cached valid"
+);
+assert.equal(receiptVerificationCalls, 2, "every queue gate must call the receipt backend again");
+
 const service = readFileSync(new URL("../src/modules/comfy-pipeline/comfyService.ts", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../src/modules/comfy-pipeline/ComfyPipelinePanel.tsx", import.meta.url), "utf8");
 const registryTypes = readFileSync(new URL("../src/modules/comfy-pipeline/workflowRegistry.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
+// The configured provider is a preference, not an eligibility override. This
+// models a Qwen preference on a machine where only the commercial Klein path
+// and its workflow prerequisites are available.
+const unavailableConfiguredProviderFallback = selectCharacterProvider({
+  commercialRequired: true,
+  models: ["flux-2-klein-4b-fp8.safetensors"],
+  nodes: ["ReferenceLatent", "CFGGuider", "Flux2Scheduler"]
+});
+assert.equal(
+  unavailableConfiguredProviderFallback.selected?.id,
+  "flux2_klein_4b",
+  "an unavailable configured Qwen provider must fall back to the ready eligible commercial provider"
+);
+const noEligibleCommercialProvider = selectCharacterProvider({
+  commercialRequired: true,
+  models: [],
+  nodes: []
+});
+assert.equal(noEligibleCommercialProvider.selected, undefined, "no eligible provider must remain unselected");
+assert.match(
+  service,
+  /selectCharacterProvider\(providerEnvironment\)/,
+  "sequential preflight must consume Task 3 provider selection instead of hard-selecting settings"
+);
+assert.match(
+  service,
+  /character_provider_unavailable:no_eligible_commercial_provider/,
+  "no eligible provider must expose the exact fail-closed reason"
+);
 
 const between = (source, start, end, label) => {
   const startIndex = source.indexOf(start);
@@ -133,6 +213,11 @@ const generateShotAsset = between(
   "export async function generateShotAsset(",
   "export async function generateShotAssetOutputs(",
   "generateShotAsset"
+);
+assert.doesNotMatch(
+  stagedGeneration,
+  /settings\.characterGenerationProvider\s*===/,
+  "sequential pass planning must not hard-select the configured provider before live eligibility selection"
 );
 
 const firstRunId = createSequentialRunId({ now: () => 1700000000000, randomToken: () => "alpha001" });
@@ -403,6 +488,22 @@ const emptyBuiltGraph = compileExactTokens(tokenBoundLoraTemplate, emptyLockedTo
 assert.equal(emptyBuiltGraph[4].inputs.lora_name, "");
 assert.equal(emptyBuiltGraph[4].inputs.strength_model, 0);
 assert.equal(proveCompiledCharacterLoraBinding({ providerId: "qwen_image_edit_2511", workflowTemplate: tokenBoundLoraTemplate, compiledWorkflow: emptyBuiltGraph, appliedLora: null }).ok, true, "unverified insertion compiles to an inert LoRA binding");
+const thirdPartyInjectedGraph = structuredClone(emptyBuiltGraph);
+thirdPartyInjectedGraph[9] = { class_type: "ThirdPartyLoRAInjector", inputs: { model: ["1", 0], lora_name: "evil.safetensors", strength_model: 1 } };
+thirdPartyInjectedGraph[2].inputs.model = ["9", 0];
+assert.equal(
+  proveCompiledCharacterLoraBinding({ providerId: "qwen_image_edit_2511", workflowTemplate: tokenBoundLoraTemplate, compiledWorkflow: thirdPartyInjectedGraph, appliedLora: null }).ok,
+  false,
+  "zero-shot MODEL paths fail closed on an unknown third-party LoRA producer"
+);
+const staticLoraInjectedGraph = structuredClone(emptyBuiltGraph);
+staticLoraInjectedGraph[9] = { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "evil.safetensors", strength_model: 1 } };
+staticLoraInjectedGraph[2].inputs.model = ["9", 0];
+assert.equal(
+  proveCompiledCharacterLoraBinding({ providerId: "qwen_image_edit_2511", workflowTemplate: tokenBoundLoraTemplate, compiledWorkflow: staticLoraInjectedGraph, appliedLora: null }).ok,
+  false,
+  "zero-shot rejects an active supported static LoRA on a terminal MODEL path even when it is not token-bound"
+);
 
 const samplerBindingGraph = (samplerModel) => ({
   1: { class_type: "UNETLoader", inputs: { unet_name: "qwen_image_edit_2511_bf16.safetensors" } },
@@ -757,7 +858,7 @@ assert.match(
 );
 const stopGenerationAction = between(panel, "const onStopStoryboardGeneration", "const upsertProvisionPreview", "stop generation action");
 assert.doesNotMatch(stopGenerationAction, /storyboardGenerationAbortControllerRef\.current\s*=\s*null/, "stop must not clear controller ownership before unwind");
-assert.match(stagedGeneration, /trackArtifactTarget\(targetPath\);\s*const localPath\s*=\s*await stageSourceFileToComfyInput/, "staged references must enter the ledger before copying");
+assert.match(stagedGeneration, /kind:\s*"canonical_reference"[\s\S]*?trackTransientPath\(targetPath\)[\s\S]*?stageSourceFileToComfyInput/, "snapshot references must enter the ledger before copying");
 assert.match(service, /onArtifactCreated\?\.\(filePath\);\s*const result\s*=\s*await invokeDesktopCommand[^]*?"write_base64_file"/, "mask targets must enter the ledger before writing");
 const rawOutputTargetIndex = generateShotAsset.indexOf("options.sequentialCharacterPass.onArtifactTarget(");
 const promptQueueIndex = generateShotAsset.indexOf("queueComfyPrompt(", rawOutputTargetIndex);
@@ -766,7 +867,7 @@ const compiledProofIndex = generateShotAsset.indexOf("proveCompiledCharacterLora
 assert.ok(compiledProofIndex >= 0 && compiledProofIndex < promptQueueIndex, "compiled provider and LoRA proof must pass immediately before any queue mutation");
 assert.match(generateShotAsset, /terminalOutputNode:\s*compiledProviderProof\?\.terminalOutputNode/, "history polling must select only the proven terminal output node");
 assert.match(generateShotAsset, /providerProof:\s*compiledProviderProof/, "generation output must carry the exact compiled workflow proof");
-assert.match(generateShotAsset, /proveCompiledCharacterLoraBinding\([\s\S]*?workflowTemplate:\s*rewrittenWorkflow[\s\S]*?compiledWorkflow:\s*built[\s\S]*?appliedLora:\s*options\.sequentialCharacterPass\.appliedLora/, "compiled terminal MODEL-path LoRA proof must run on the exact queued graph");
+assert.match(generateShotAsset, /proveCompiledCharacterLoraBinding\([\s\S]*?workflowTemplate:\s*rewrittenWorkflow[\s\S]*?compiledWorkflow:\s*built[\s\S]*?appliedLora:\s*compiledTrack\?\.appliedLora\s*\?\?\s*options\.sequentialCharacterPass\.appliedLora/, "compiled terminal MODEL-path LoRA proof must run on the exact queued graph and verified track");
 const compiledLoraProofIndex = generateShotAsset.indexOf("proveCompiledCharacterLoraBinding(");
 const queueAfterLoraProofIndex = generateShotAsset.indexOf("queueComfyPrompt(", compiledLoraProofIndex);
 assert.ok(compiledLoraProofIndex >= 0 && queueAfterLoraProofIndex > compiledLoraProofIndex, "LoRA binding mismatch must be detected before queue");
@@ -789,8 +890,8 @@ assert.match(service, /inspectCharacterGenerationPreflight/, "generation must co
 assert.match(stagedGeneration, /const\s+characterPasses\s*=\s*buildCharacterPassPlan\(/, "consistency branch must build characterPasses");
 assert.match(stagedGeneration, /resolvePreviousCharacterContinuityPaths\(\{[\s\S]*?currentShotIndex:\s*index[\s\S]*?allShots/, "continuity lookup must use prior storyboard shot order");
 assert.match(stagedGeneration, /continuityPathsByCharacterId/, "character-scoped continuity must be passed to the planner");
-assert.match(stagedGeneration, /for\s*\(const\s+pass\s+of\s+characterPasses\)/, "character passes must run sequentially in input order");
-assert.match(stagedGeneration, /pass\.references\.slice\(0,\s*3\)/, "each pass must stage at most three active-character references");
+assert.match(stagedGeneration, /for\s*\(const\s+plannedPass\s+of\s+characterPasses\)/, "character passes must run sequentially in input order");
+assert.match(stagedGeneration, /pass\.references\.slice\(0,\s*3\)/, "each pass must bind at most three active-character references");
 assert.match(stagedGeneration, /let\s+acceptedFramePath\s*=\s*cleanScenePath/, "sequential generation must begin from the accepted clean scene");
 assert.match(stagedGeneration, /validateAndAcceptCharacterPass\([\s\S]*?acceptedFramePath\s*=/, "a pass must validate before replacing the accepted frame");
 assert.match(stagedGeneration, /protectedMaskPaths/, "later passes must carry every earlier accepted mask");
@@ -831,13 +932,29 @@ assert.match(
 );
 assert.match(
   stagedGeneration,
+  /runHeadHairRefinement\(\{[\s\S]*?trackInput:\s*acceptedAttempt\.trackInput/,
+  "head refinement must carry the accepted immutable reference/evidence binding into its own queue gate"
+);
+assert.match(
+  stagedGeneration,
+  /const\s+runHeadHairRefinement[\s\S]*?sequentialCharacterPass:\s*\{[\s\S]*?trackInput:\s*\{[\s\S]*?\.\.\.args\.trackInput,[\s\S]*?expectedReferenceInputNames:\s*refinementReferences\.map/,
+  "head refinement must rehash the same immutable snapshot and bind only its actual reference inputs before queueing"
+);
+assert.match(
+  stagedGeneration,
   /const\s+acceptedMaskPath\s*=\s*acceptedArtifacts\.maskPath[\s\S]*?buildAcceptedCharacterArtifacts\(\{[\s\S]*?maskPath:\s*acceptedMaskPath[\s\S]*?protectedMaskPaths\.push\(acceptedArtifacts\.maskPath\)[\s\S]*?artifacts:\s*acceptedArtifacts/,
   "successful refinement must preserve the accepted retry mask through rebuild, later protection, and final layer persistence"
 );
 assert.match(stagedGeneration, /generateShotAsset\(\{\s*\.\.\.settings,\s*characterGenerationProvider:\s*args\.provider\s*\}/, "refinement must use its proven provider settings");
+assert.match(stagedGeneration, /const\s+runHeadHairRefinement[\s\S]*?providerId:\s*args\.provider/, "refinement queue proof must use the accepted attempt provider");
 assert.match(stagedGeneration, /refinementValidation[\s\S]*?acceptedValidation\s*=/, "accepted layer metadata must use final refinement validation metrics");
-assert.match(stagedGeneration, /const\s+attemptLora\s*=\s*attemptWorkflowProof\.ok[\s\S]*?resolveAppliedCharacterLora\(\{[\s\S]*?providerId:\s*activeProvider/, "LoRA eligibility must be recomputed for every actual attempt provider");
-assert.match(stagedGeneration, /resolveAppliedCharacterLora\(\{[\s\S]*?characterAssetId:\s*activeAsset\.id[\s\S]*?identityPackVersion:\s*activeAsset\.characterIdentityPack\.version[\s\S]*?providerId:\s*activeProvider[\s\S]*?workflowProof:/, "generation must gate LoRA application on exact subject and terminal workflow evidence");
+assert.match(stagedGeneration, /const\s+generationTrack\s*=\s*attemptWorkflowProof\.ok[\s\S]*?resolveCharacterGenerationTrack\(\{[\s\S]*?providerId:\s*activeProvider/, "production generation must resolve one verified track for every actual attempt provider");
+assert.match(stagedGeneration, /stageImmutableCharacterReferenceSnapshot\(\{[\s\S]*?identity:\s*activeAsset\.characterIdentityPack[\s\S]*?hashIdentity:\s*loadCharacterIdentityReferenceSourceHashes[\s\S]*?currentReferenceSourceHashes\s*=\s*immutableReferenceSnapshot\.sourceHashes[\s\S]*?resolveCharacterGenerationTrack\(\{[\s\S]*?characterAssetId:\s*activeAsset\.id[\s\S]*?characterZeroShotEvidence:\s*activeAsset\.characterZeroShotEvidence[\s\S]*?currentZeroContext:\s*trustedZeroContext[\s\S]*?currentLoraContext:\s*trustedLoraContext[\s\S]*?compiledWorkflow:\s*activeWorkflowJson/, "production resolution must stage canonical bytes before hashing them into the current evidence contexts");
+assert.match(stagedGeneration, /references:\s*plannedPass\.references\.map\([\s\S]*?path:\s*immutableReferenceSnapshot\.pathBySource\[reference\.path\]/, "all later pass reference reads must be redirected to the run-owned immutable snapshot");
+assert.doesNotMatch(stagedGeneration, /kind:\s*"staged_reference"/, "identity references must not be copied after the immutable snapshot hash");
+assert.match(stagedGeneration, /slotPaths[\s\S]*?extractLocalInputName/, "queue-bound reference names must resolve directly from canonical_reference snapshot files");
+assert.match(generateShotAsset, /verifyImmutableCharacterReferenceSnapshot\([\s\S]*?verifyCompiledCharacterReferenceBindings\([\s\S]*?verifyFreshCharacterEvidenceReceipts\([\s\S]*?resolveCharacterGenerationTrack\(\{\s*\.\.\.trackInput,[\s\S]*?compiledWorkflow:\s*built\s*\}\)[\s\S]*?queueComfyPrompt\(settings\.baseUrl,\s*built/, "every queue must rehash exact workflow inputs, freshly verify receipts, and then revalidate the compiled generation track");
+assert.doesNotMatch(stagedGeneration, /const\s+trusted(?:Zero|Lora)ReceiptVerification\s*=\s*activeAsset/, "receipt verification must not be cached for a whole character pass");
 assert.match(stagedGeneration, /expectedLoraBlocked[\s\S]*character_lora_evidence_blocked[\s\S]*status=needs_review/, "configured but unverified LoRA must surface an explicit needs-review diagnostic");
 assert.match(stagedGeneration, /expectedLoraBlocked[\s\S]*lora_benchmark_evidence_required[\s\S]*appliedLora:\s*null/, "unverified LoRA must omit metadata and force a review outcome");
 assert.match(stagedGeneration, /sequentialCharacterPass:\s*\{[\s\S]*?appliedLora:\s*attemptLora[\s\S]*?protectedIdentityTokens:/, "only resolver output and protected identity tokens may enter locked generation");

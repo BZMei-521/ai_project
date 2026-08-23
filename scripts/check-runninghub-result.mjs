@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRunningHubApprovalSnapshot } from "../src/modules/video-production/runningHubApprovalRuntime.mjs";
+import { classifyRunningHubResult, createRunningHubResultImporter, recordRunningHubSubmission, RIFE_ERROR_SIGNATURE } from "../src/modules/video-production/runningHubResult.mjs";
+
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "runninghub-result-"));
+const approval = createRunningHubApprovalSnapshot({ shotId: "shot_01", workflowId: "2090035427871903746", workflowUrl: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace", references: [path.join(root, "a.png"), path.join(root, "b.png")], prompt: "3D donghua", width: 1344, height: 768, durationSeconds: 8, createdAt: new Date().toISOString() });
+const source = path.join(root, "cloud.mp4"); fs.writeFileSync(source, Buffer.from("fixture mp4"));
+const probe = { width: 1344, height: 768, fpsNum: 24, fpsDen: 1, durationSeconds: 8, videoCodec: "h264", pixelFormat: "yuv420p", audioSampleRate: null, audioChannels: null, hasMonotonicTimestamps: true, hasConstantFrameTimestamps: true, decodedFrameCount: 192 };
+const importRunningHubResult = createRunningHubResultImporter({ probeMedia: () => probe });
+const submission = { status: "submitted", taskId: "123", approvalInputDigest: approval.inputDigest };
+assert.equal(recordRunningHubSubmission({ approval, taskId: "123" }).status, "submitted");
+assert.deepEqual(classifyRunningHubResult({ taskStatus: "failed", validMp4: true, downstreamError: RIFE_ERROR_SIGNATURE }).status, "recovered_primary_output");
+assert.equal(importRunningHubResult({ projectAssetsDir: root, shotId: "shot_01", approval, taskId: "123", sourcePath: source, reportedTaskStatus: "failed", downstreamError: "RIFE: Tensor type unknown to einops <class 'tuple'>", submission }).receipt.status, "recovered_primary_output");
+assert.throws(() => importRunningHubResult({ projectAssetsDir: root, shotId: "shot_01", approval, taskId: "../escape", sourcePath: source, submission }), /task_id_invalid/);
+assert.throws(() => importRunningHubResult({ projectAssetsDir: root, shotId: "shot_01", approval, taskId: "123", sourcePath: source, submission }), /already_exists/);
+assert.throws(() => importRunningHubResult({ projectAssetsDir: root, shotId: "shot_01", approval, taskId: "124", sourcePath: source, submission: { ...submission, taskId: "124", approvalInputDigest: "0".repeat(64) } }), /submission_mismatch/);
+const bridgeSource = fs.readFileSync("src/modules/platform/desktopBridge.ts", "utf8");
+const panelSource = fs.readFileSync("src/modules/video-production/VideoProductionPanel.tsx", "utf8");
+const nativeSource = fs.readFileSync("src-tauri/src/video_continuity.rs", "utf8");
+assert.match(bridgeSource, /importRunningHubResultPacket/);
+assert.match(panelSource, /recordRunningHubSubmission/);
+assert.match(panelSource, /importRunningHubResultPacket/);
+assert.match(nativeSource, /pub fn import_runninghub_result/);
+assert.match(nativeSource, /runninghub_result_media_contract_invalid/);
+console.log("runninghub result checks passed");

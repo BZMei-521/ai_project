@@ -1,4 +1,11 @@
+import {
+  CINEMATIC_3D_DONGHUA_CONTRACT,
+  computeCharacterStyleContractDigest
+} from "./characterStyleContractRuntime.mjs";
+
 const plain = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const CHARACTER_SPECIES_IDS = Object.freeze(["human", "beastfolk", "catfolk", "foxfolk", "wolffolk"]);
+const CANONICAL_STYLE_CONTRACT_DIGEST = computeCharacterStyleContractDigest(CINEMATIC_3D_DONGHUA_CONTRACT);
 
 function stable(value) {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -36,6 +43,13 @@ const normalizeText = (value) => typeof value === "string"
   ? value.normalize("NFKC").trim().replace(/\s+/g, " ")
   : "";
 
+export const CHARACTER_IDENTITY_METADATA_LIMITS = Object.freeze({
+  triggerWord: 120,
+  listItems: 20,
+  listItem: 240,
+  speciesTraits: 8
+});
+
 function normalizeIdentityList(value) {
   if (!Array.isArray(value)) return null;
   const normalized = [...new Set(value.map(normalizeText).filter(Boolean))];
@@ -44,12 +58,46 @@ function normalizeIdentityList(value) {
 }
 
 export function buildCharacterIdentityMetadataPayload(identity) {
-  if (!plain(identity)) return null;
+  const validated = validateAndCanonicalizeCharacterIdentityMetadata(identity);
+  return validated.ok ? validated.value : null;
+}
+
+export function validateAndCanonicalizeCharacterIdentityMetadata(identity) {
+  if (!plain(identity)) return { ok: false, reason: "identity_metadata_invalid" };
   const triggerWord = normalizeText(identity.triggerWord);
+  if (!triggerWord || triggerWord.length > CHARACTER_IDENTITY_METADATA_LIMITS.triggerWord) return { ok: false, reason: "identity_trigger_word_invalid" };
+  for (const [field, source] of [["immutableTraits", identity.immutableTraits], ["forbiddenChanges", identity.forbiddenChanges]]) {
+    if (!Array.isArray(source) || source.length === 0 || source.length > CHARACTER_IDENTITY_METADATA_LIMITS.listItems) return { ok: false, reason: `identity_${field}_invalid` };
+    if (source.some((item) => typeof item !== "string" || !normalizeText(item) || normalizeText(item).length > CHARACTER_IDENTITY_METADATA_LIMITS.listItem)) return { ok: false, reason: `identity_${field}_invalid` };
+  }
   const immutableTraits = normalizeIdentityList(identity.immutableTraits);
   const forbiddenChanges = normalizeIdentityList(identity.forbiddenChanges);
-  if (!triggerWord || !immutableTraits?.length || !forbiddenChanges?.length) return null;
-  return { triggerWord, immutableTraits, forbiddenChanges };
+  if (!immutableTraits?.length || !forbiddenChanges?.length) return { ok: false, reason: "identity_metadata_invalid" };
+  const species = normalizeText(identity.species).toLowerCase();
+  if (!CHARACTER_SPECIES_IDS.includes(species)) return { ok: false, reason: "identity_species_invalid" };
+  if (!Array.isArray(identity.speciesTraits)) return { ok: false, reason: "identity_species_traits_invalid" };
+  if (species === "human" && identity.speciesTraits.length !== 0) return { ok: false, reason: "identity_species_traits_invalid" };
+  if (species !== "human" && (identity.speciesTraits.length < 1 || identity.speciesTraits.length > CHARACTER_IDENTITY_METADATA_LIMITS.speciesTraits)) return { ok: false, reason: "identity_species_traits_invalid" };
+  if (identity.speciesTraits.some((item) => typeof item !== "string" || !normalizeText(item) || normalizeText(item).length > CHARACTER_IDENTITY_METADATA_LIMITS.listItem)) return { ok: false, reason: "identity_species_traits_invalid" };
+  const normalizedSpeciesTraits = normalizeIdentityList(identity.speciesTraits);
+  if (!normalizedSpeciesTraits || (species !== "human" && (normalizedSpeciesTraits.length < 1 || normalizedSpeciesTraits.length > CHARACTER_IDENTITY_METADATA_LIMITS.speciesTraits))) return { ok: false, reason: "identity_species_traits_invalid" };
+  const styleContractId = normalizeText(identity.styleContractId);
+  const styleContractVersion = normalizeText(identity.styleContractVersion);
+  const styleContractDigest = normalizeText(identity.styleContractDigest).toLowerCase();
+  if (styleContractId !== CINEMATIC_3D_DONGHUA_CONTRACT.id || styleContractVersion !== CINEMATIC_3D_DONGHUA_CONTRACT.version || styleContractDigest !== CANONICAL_STYLE_CONTRACT_DIGEST) return { ok: false, reason: "style_contract_mismatch" };
+  return {
+    ok: true,
+    value: {
+      triggerWord,
+      immutableTraits,
+      forbiddenChanges,
+      species,
+      speciesTraits: normalizedSpeciesTraits,
+      styleContractId,
+      styleContractVersion,
+      styleContractDigest
+    }
+  };
 }
 
 export function computeCharacterIdentityMetadataDigest(identity) {

@@ -514,6 +514,25 @@ const productionEvidence = Object.freeze({
   artifactBinding: Object.freeze({ schemaVersion: 1, receiptId: "a".repeat(64), normalizedPath: "C:/project/assets/video-normalized/shot.mp4", sha256: "b".repeat(64), byteLength: 123, modifiedUnixMillis: 1787000000000, width: 1280, height: 720, durationFrames: 48, decodedFrameCount: 48, reviewFramesDigest: "c".repeat(64) }),
   decision: Object.freeze({ decision: "approved", reviewedAt: "2026-08-18T01:00:00.000Z", artifactBinding: Object.freeze({ schemaVersion: 1, receiptId: "a".repeat(64), normalizedPath: "C:/project/assets/video-normalized/shot.mp4", sha256: "b".repeat(64), byteLength: 123, modifiedUnixMillis: 1787000000000, width: 1280, height: 720, durationFrames: 48, decodedFrameCount: 48, reviewFramesDigest: "c".repeat(64) }) })
 });
+const runningHubCloud = Object.freeze({
+  status: "accepted",
+  approval: Object.freeze({
+    schemaVersion: 1,
+    shotId: "script_video_plan",
+    workflowId: "2090035427871903746",
+    workflowUrl: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace",
+    references: Object.freeze(["C:/project/characters/lin-yue.png", "C:/project/characters/lan.png"]),
+    prompt: "A continuous tracking shot",
+    width: 1344,
+    height: 768,
+    durationSeconds: 8,
+    createdAt: "2026-08-20T00:00:00.000Z",
+    inputDigest: "d".repeat(64)
+  }),
+  importedOutput: Object.freeze({ taskId: "123", sourcePath: "C:/project/assets/runninghub-results/123/source.mp4" }),
+  watermarkReceipt: Object.freeze({ disposition: "clean" }),
+  acceptedAt: "2026-08-20T01:00:00.000Z"
+});
 
 const initialState = useStoryboardStore.getState();
 const legacyShot = Object.freeze({
@@ -552,8 +571,10 @@ try {
     approvedBoundaryFramePath: "frames/imported-boundary.png",
     videoRouteReason: "Manual FLF2V override",
     videoQualityStatus: "checking",
-    videoGenerationReceipt: Object.freeze({ ...receipt })
-    ,videoProductionEvidence: productionEvidence
+  videoGenerationReceipt: Object.freeze({ ...receipt })
+    ,videoProductionEvidence: productionEvidence,
+    videoProviderArtifact: Object.freeze({ provider: "runninghub", watermarkDisposition: "clean", receiptDigest: "e".repeat(64) }),
+    runningHubCloud
   });
   const scriptSourceBeforeImport = JSON.stringify(importedScriptItem);
   useStoryboardStore.getState().replaceShotsForCurrentSequence([importedScriptItem]);
@@ -569,11 +590,14 @@ try {
     "videoRouteReason",
     "videoQualityStatus",
     "videoGenerationReceipt"
-    ,"videoProductionEvidence"
+    ,"videoProductionEvidence",
+    "videoProviderArtifact",
+    "runningHubCloud"
   ]) {
     assert.deepEqual(importedScriptShot[field], importedScriptItem[field], `shot-script import should preserve ${field}`);
   }
   assert.equal(JSON.stringify(importedScriptItem), scriptSourceBeforeImport, "shot-script input must not be mutated");
+  assert.notStrictEqual(importedScriptShot.runningHubCloud, runningHubCloud, "cloud state must be deep-cloned on shot-script import");
 
   const updatedReceipt = {
     ...receipt,
@@ -634,6 +658,82 @@ try {
   assert.equal(reroutedShot.videoProductionEvidence, undefined, "profile override must invalidate production evidence");
   assert.equal(reroutedShot.videoGenerationReceipt, undefined, "profile override must invalidate generation receipt");
   assert.equal(reroutedShot.generatedVideoPath, undefined, "profile override must invalidate generated media");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, {
+    runningHubCloud,
+    generatedVideoPath: "C:/project/assets/runninghub-watermark/123/clean.mp4",
+    videoProviderArtifact: { provider: "runninghub", watermarkDisposition: "clean", receiptDigest: "e".repeat(64) },
+    videoProductionEvidence: productionEvidence
+  });
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, {
+    runningHubCloud: { ...runningHubCloud, importedOutput: { ...runningHubCloud.importedOutput, sourceSha256: "f".repeat(64) } }
+  });
+  const replacedRunningHubSource = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(replacedRunningHubSource.generatedVideoPath, undefined, "RunningHub source replacement must invalidate generated media");
+  assert.equal(replacedRunningHubSource.videoProductionEvidence, undefined, "RunningHub source replacement must invalidate the quality decision");
+  assert.equal(replacedRunningHubSource.videoProviderArtifact, undefined, "RunningHub source replacement must clear watermark provenance");
+
+  for (const [label, changedCloud] of [
+    ["disposition", { ...runningHubCloud, watermarkReceipt: { ...runningHubCloud.watermarkReceipt, disposition: "watermark_review_required" } }],
+    ["receipt digest", { ...runningHubCloud, watermarkReceipt: { ...runningHubCloud.watermarkReceipt, receiptDigest: "f".repeat(64) } }],
+    ["repaired path", { ...runningHubCloud, watermarkReceipt: { ...runningHubCloud.watermarkReceipt, repairedPath: "C:/project/assets/runninghub-watermark/123/replaced.mp4" } }],
+    ["source path", { ...runningHubCloud, importedOutput: { ...runningHubCloud.importedOutput, importedPath: "C:/project/assets/runninghub-results/123/replaced-source.mp4" } }]
+  ]) {
+    useStoryboardStore.setState((state) => ({ shots: state.shots.map((shot) => shot.id === importedScriptItem.id ? {
+      ...shot,
+      runningHubCloud,
+      generatedVideoPath: "C:/project/assets/runninghub-watermark/123/clean.mp4",
+      videoProviderArtifact: { provider: "runninghub", watermarkDisposition: "clean", receiptDigest: "e".repeat(64) },
+      videoProductionEvidence: productionEvidence
+    } : shot) }));
+    assert.equal(useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id).generatedVideoPath, "C:/project/assets/runninghub-watermark/123/clean.mp4", `RunningHub ${label} baseline must publish the clean media before invalidation`);
+    useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { runningHubCloud: changedCloud });
+    const invalidatedCloudShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+    assert.equal(invalidatedCloudShot.generatedVideoPath, undefined, `RunningHub ${label} change must invalidate generated media`);
+    assert.equal(invalidatedCloudShot.videoProductionEvidence, undefined, `RunningHub ${label} change must invalidate quality evidence`);
+    assert.equal(invalidatedCloudShot.videoProviderArtifact, undefined, `RunningHub ${label} change must invalidate watermark provenance`);
+  }
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { runningHubCloud });
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { videoPrompt: "A changed prompt" });
+  const stalePromptShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(stalePromptShot.runningHubCloud, undefined, "prompt changes must clear stale cloud approval and result evidence");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { runningHubCloud });
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { characterRefs: ["lin-yue-v2", "lan"] });
+  const staleReferenceShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(staleReferenceShot.runningHubCloud, undefined, "reference identity changes must clear stale cloud evidence");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { runningHubCloud });
+  useStoryboardStore.getState().setShotDuration(importedScriptItem.id, 192);
+  const staleDurationShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(staleDurationShot.runningHubCloud, undefined, "duration changes must clear stale cloud evidence");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { runningHubCloud });
+  useStoryboardStore.getState().updateProjectSettings({ width: useStoryboardStore.getState().project.width + 2 });
+  const staleDimensionsShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(staleDimensionsShot.runningHubCloud, undefined, "dimension changes must clear stale cloud evidence");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, {
+    runningHubCloud,
+    generatedVideoPath: "C:/project/raw/batch-duration.mp4",
+    videoGenerationReceipt: receipt,
+    videoGenerationContractDigest: "batch-duration-contract",
+    videoProductionEvidence: productionEvidence
+  });
+  useStoryboardStore.getState().selectShot(importedScriptItem.id);
+  useStoryboardStore.getState().batchSetDurationForSelectedShots(240);
+  const batchDurationShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(batchDurationShot.runningHubCloud, undefined, "batch duration changes must clear stale cloud evidence");
+  assert.equal(batchDurationShot.generatedVideoPath, undefined, "batch duration changes must clear generated video");
+  assert.equal(batchDurationShot.videoGenerationReceipt, undefined, "batch duration changes must clear generation receipt");
+  assert.equal(batchDurationShot.videoGenerationContractDigest, undefined, "batch duration changes must clear generation contract");
+  assert.equal(batchDurationShot.videoProductionEvidence, undefined, "batch duration changes must clear production evidence");
+
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { runningHubCloud });
+  useStoryboardStore.getState().updateShotFields(importedScriptItem.id, { generatedImagePath: "C:/project/images/new-keyframe.png" });
+  const staleImageShot = useStoryboardStore.getState().shots.find((shot) => shot.id === importedScriptItem.id);
+  assert.equal(staleImageShot.runningHubCloud, undefined, "generated image changes must clear stale cloud evidence");
 } finally {
   useStoryboardStore.setState(initialState, true);
 }

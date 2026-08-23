@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComfySettings } from "../comfy-pipeline/comfyService";
-import { toDesktopMediaSource } from "../platform/desktopBridge";
+import { importRunningHubResultPacket, recordRunningHubSubmissionPacket, toDesktopMediaSource } from "../platform/desktopBridge";
 import { useStoryboardStore } from "../storyboard-core/store";
-import type { Asset, Shot } from "../storyboard-core/types";
+import type { Asset, Shot, ShotTransition } from "../storyboard-core/types";
 import { planVideoContinuity, type VideoBoundaryPlan } from "./continuityPlanner";
+import { createShotTransitionBoundaryResolver } from "./shotTransitionBoundary";
 import { createControllerInputFromShot, createVideoProductionController } from "./videoProductionController";
 import { MINIMAX_H3_PROFILES, preflightVideoProfile } from "./workflowProfiles";
 import { routeVideoWorkflow } from "./videoRouter";
 import { createRoutedVideoProductionGenerator } from "./videoRoutedGeneration";
 import { registerVideoProductionGateway } from "./videoProductionEntry";
-export { generateQualityGatedVideoBatch, generateQualityGatedVideoShot, registerVideoProductionGateway } from "./videoProductionEntry";
+export { declineRunningHubCloudShot, generateQualityGatedVideoBatch, generateQualityGatedVideoShot, prepareRunningHubCloudHandoff, recommendRunningHubCloudShot, registerVideoProductionGateway } from "./videoProductionEntry";
+import { RunningHubApprovalPanel } from "./RunningHubApprovalPanel";
+import { recommendRunningHub, type CloudShotRecommendation } from "./cloudShotRouting";
+import { createRunningHubApprovalSnapshot, transitionRunningHubState } from "./runningHubApproval";
+import { prepareRunningHubHandoff } from "./runningHubHandoff";
+import { recordRunningHubSubmission } from "./runningHubResultBrowser";
 import type { VideoProfilePreflightReport, VideoRouteDecision, VideoWorkflowProfileId } from "./types";
 import {
   applyVideoQualityDecision,
@@ -78,15 +84,47 @@ export function VideoProductionPanelView(props: VideoProductionPanelViewProps) {
 export interface VideoProductionPanelServices {
   routedGenerator?: ReturnType<typeof createRoutedVideoProductionGenerator>;
   controllerFactory?: typeof createVideoProductionController;
+  projectAssetsDir?: string;
+}
+
+type RunningHubImportFormValue = { taskId: string; sourcePath: string; taskStatus: string; downstreamError: string; error?: string };
+type RunningHubCleanArtifact = { providerArtifact: { provider: "runninghub"; watermarkDisposition: "clean"; receiptDigest: string; sourcePath: string; cleanPath: string }; sourcePath: string; cleanPath: string; taskId: string; approvalInputDigest: string };
+
+function emptyCloudImport(): RunningHubImportFormValue { return { taskId: "", sourcePath: "", taskStatus: "completed", downstreamError: "" }; }
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : "runninghub_result_import_failed"; }
+
+function runningHubCleanArtifact(shot: Shot): RunningHubCleanArtifact | undefined {
+  const cloud = shot.runningHubCloud;
+  const imported = cloud?.importedOutput as Record<string, unknown> | undefined;
+  const receipt = cloud?.watermarkReceipt as Record<string, unknown> | undefined;
+  const digest = typeof receipt?.receiptDigest === "string" ? receipt.receiptDigest : "";
+  const cleanPath = typeof receipt?.outputPath === "string" ? receipt.outputPath : typeof receipt?.repairedPath === "string" ? receipt.repairedPath : "";
+  const sourcePath = typeof imported?.importedPath === "string" ? imported.importedPath : "";
+  const taskId = typeof imported?.taskId === "string" ? imported.taskId : "";
+  const approvalInputDigest = cloud?.approval?.inputDigest ?? "";
+  if (!(["output_collected", "recovered_primary_output", "watermark_checked", "quality_review"] as const).includes(cloud?.status as "output_collected" | "recovered_primary_output" | "watermark_checked" | "quality_review") || receipt?.disposition !== "clean" || !/^[a-f0-9]{64}$/.test(digest) || !isAbsolutePath(cleanPath) || !isAbsolutePath(sourcePath) || !/^\d{1,40}$/.test(taskId) || imported?.approvalInputDigest !== approvalInputDigest || receipt?.taskId !== taskId || receipt?.approvalInputDigest !== approvalInputDigest || receipt?.sourceSha256 !== imported?.sourceSha256) return undefined;
+  return { providerArtifact: { provider: "runninghub", watermarkDisposition: "clean", receiptDigest: digest, sourcePath, cleanPath }, sourcePath, cleanPath, taskId, approvalInputDigest };
+}
+
+function isAbsolutePath(value: string): boolean { return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("/"); }
+
+function RunningHubResultImportForm({ value, submitted, onChange, onSubmit, onImport }: { value: RunningHubImportFormValue; submitted: boolean; onChange: (patch: Partial<RunningHubImportFormValue>) => void; onSubmit: () => void; onImport: () => void }) {
+  return <div className="runninghub-result-import">
+    <label><span>RunningHub 任务号</span><input value={value.taskId} inputMode="numeric" onChange={(event) => onChange({ taskId: event.target.value })} /></label>
+    {submitted ? <><label><span>下载的 MP4 完整路径</span><input value={value.sourcePath} onChange={(event) => onChange({ sourcePath: event.target.value })} /></label><label><span>任务状态</span><select value={value.taskStatus} onChange={(event) => onChange({ taskStatus: event.target.value })}><option value="completed">已完成</option><option value="failed">失败（仅可恢复 RIFE 主输出）</option></select></label>{value.taskStatus === "failed" && <label><span>下游错误信息</span><input value={value.downstreamError} onChange={(event) => onChange({ downstreamError: event.target.value })} /></label>}<button className="btn-primary" type="button" onClick={onImport}>验证并导入 MP4</button></> : <button className="btn-primary" type="button" onClick={onSubmit}>记录手动提交任务</button>}
+    {value.error && <p className="runninghub-approval-panel__error">{value.error}</p>}
+  </div>;
 }
 
 export function VideoProductionPanel({ settings, services }: { settings: ComfySettings; services?: VideoProductionPanelServices }) {
   const project = useStoryboardStore((state) => state.project);
   const shots = useStoryboardStore((state) => state.shots);
   const assets = useStoryboardStore((state) => state.assets);
+  const shotTransitions = useStoryboardStore((state) => state.shotTransitions);
   const currentSequenceId = useStoryboardStore((state) => state.currentSequenceId);
   const updateShotFields = useStoryboardStore((state) => state.updateShotFields);
   const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [cloudImports, setCloudImports] = useState<Record<string, { taskId: string; sourcePath: string; taskStatus: string; downstreamError: string; error?: string }>>({});
   const processing = useRef(new Set<string>());
   const stagedOperations = useRef(new Map<string, StagedOperation>());
   const attemptEpochs = useRef(new Map<string, ProcessingAttempt>());
@@ -94,7 +132,8 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
   const settingsIdentity = videoProcessingSettingsIdentity(settings);
   const lastComfySettingsIdentity = useRef(settingsIdentity);
   const scopedShots = useMemo(() => shots.filter((shot) => shot.sequenceId === currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id)), [currentSequenceId, shots]);
-  const contexts = useMemo(() => buildContexts(scopedShots, assets), [assets, scopedShots]);
+  const scopedTransitions = useMemo(() => shotTransitions.filter((item) => item.sequenceId === currentSequenceId), [currentSequenceId, shotTransitions]);
+  const contexts = useMemo(() => buildContexts(currentSequenceId, scopedShots, assets, scopedTransitions), [assets, currentSequenceId, scopedShots, scopedTransitions]);
   const routedGenerator = useMemo(() => services?.routedGenerator ?? createRoutedVideoProductionGenerator({
     settings,
     readSnapshot: (shotId) => {
@@ -102,7 +141,7 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
       const allShots = state.shots.filter((item) => item.sequenceId === state.currentSequenceId).slice().sort((a, b) => a.order - b.order || compare(a.id, b.id));
       const shot = allShots.find((item) => item.id === shotId);
       if (!shot) throw new Error("video_generation_shot_missing");
-      const context = buildContexts(allShots, state.assets).get(shotId);
+      const context = buildContexts(state.currentSequenceId, allShots, state.assets, state.shotTransitions).get(shotId);
       return { sequenceId: state.currentSequenceId, shot, index: allShots.indexOf(shot), allShots, assets: state.assets, project: state.project, incomingBoundary: context?.incomingBoundary, outgoingBoundary: context?.outgoingBoundary };
     }
   }), [services?.routedGenerator, settings]);
@@ -121,6 +160,7 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
     persistBatchCAS: (items: any[]) => persistEvidenceBatchCAS(items, stagedOperations.current)
   }), [routedGenerator, services?.controllerFactory, updateShotFields]);
   const rows = useMemo(() => buildRows(scopedShots, assets, contexts), [assets, contexts, scopedShots]);
+  const cloudRecommendations = useMemo(() => new Map(scopedShots.map((shot) => [shot.id, recommendCloudForShot(shot, assets)])), [assets, scopedShots]);
 
   const executeGeneration = async (shotIds: string[], reason: string) => {
     const request = { kind: shotIds.length > 1 ? "batch" as const : "shot" as const, shotIds, reason };
@@ -143,10 +183,124 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
     }
   };
 
+  const recommendCloud = (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    if (!shot) return false;
+    const recommendation = recommendCloudForShot(shot, state.assets);
+    if (recommendation.status !== "cloud_recommended") {
+      updateShotFields(shotId, { runningHubCloud: { status: "local_default" } });
+      return false;
+    }
+    try {
+      const approval = createApprovalForShot(shot, state.assets);
+      const recommended = transitionRunningHubState({ status: "local_default" }, { type: "RECOMMEND_CLOUD" });
+      const awaiting = transitionRunningHubState(recommended, { type: "REQUEST_APPROVAL" });
+      updateShotFields(shotId, { runningHubCloud: { ...awaiting, approval } });
+      return true;
+    } catch {
+      updateShotFields(shotId, { runningHubCloud: { status: "cloud_recommended" } });
+      return false;
+    }
+  };
+
+  const prepareCloudHandoff = async (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    const approval = shot?.runningHubCloud?.approval;
+    const projectAssetsDir = services?.projectAssetsDir ?? shot?.videoProductionEvidence?.projectAssetsDir;
+    if (!shot || !approval || shot.runningHubCloud?.status !== "awaiting_approval") return false;
+    await prepareRunningHubHandoff({ projectAssetsDir: projectAssetsDir ?? "", approval });
+    const latest = useStoryboardStore.getState().shots.find((item) => item.id === shotId && item.sequenceId === shot.sequenceId);
+    if (!latest || latest.runningHubCloud?.approval?.inputDigest !== approval.inputDigest || latest.runningHubCloud.status !== "awaiting_approval") return false;
+    updateShotFields(shotId, { runningHubCloud: { ...transitionRunningHubState(latest.runningHubCloud, { type: "APPROVE" }), approval } });
+    return true;
+  };
+
+  const declineCloud = (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    if (!shot?.runningHubCloud || !["cloud_recommended", "awaiting_approval"].includes(shot.runningHubCloud.status)) return;
+    updateShotFields(shotId, { runningHubCloud: { ...transitionRunningHubState(shot.runningHubCloud, { type: "DECLINE" }) } });
+  };
+
+  const cancelCloud = (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    if (!shot?.runningHubCloud || shot.runningHubCloud.status !== "awaiting_approval") return;
+    updateShotFields(shotId, { runningHubCloud: { ...transitionRunningHubState(shot.runningHubCloud, { type: "CANCEL" }) } });
+  };
+
+  const submitCloudTask = async (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    const taskId = cloudImports[shotId]?.taskId ?? "";
+    if (!shot?.runningHubCloud?.approval || shot.runningHubCloud.status !== "approved") return;
+    try {
+      const submitted = recordRunningHubSubmission({ approval: shot.runningHubCloud.approval, taskId, state: shot.runningHubCloud }) as { status: "submitted"; taskId: string; submittedAt: string };
+      const persisted = await recordRunningHubSubmissionPacket({ projectAssetsDir: services?.projectAssetsDir ?? "", approval: shot.runningHubCloud.approval, taskId: submitted.taskId });
+      if (persisted.taskId !== submitted.taskId || persisted.approvalInputDigest !== shot.runningHubCloud.approval.inputDigest) throw new Error("runninghub_submission_receipt_mismatch");
+      updateShotFields(shotId, { runningHubCloud: { ...shot.runningHubCloud, ...submitted, approval: shot.runningHubCloud.approval } });
+      setCloudImports((previous) => ({ ...previous, [shotId]: { ...(previous[shotId] ?? emptyCloudImport()), taskId: submitted.taskId, error: undefined } }));
+    } catch (error) { setCloudImports((previous) => ({ ...previous, [shotId]: { ...(previous[shotId] ?? emptyCloudImport()), error: errorMessage(error) } })); }
+  };
+
+  const importCloudResult = async (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    const form = cloudImports[shotId] ?? emptyCloudImport();
+    const approval = shot?.runningHubCloud?.approval;
+    if (!shot || !approval || shot.runningHubCloud?.status !== "submitted" || shot.runningHubCloud.taskId !== form.taskId) return;
+    try {
+      const receipt = await importRunningHubResultPacket({ projectAssetsDir: services?.projectAssetsDir ?? "", approval, taskId: form.taskId, sourcePath: form.sourcePath, reportedTaskStatus: form.taskStatus, submission: { status: "submitted", taskId: shot.runningHubCloud.taskId, approvalInputDigest: approval.inputDigest }, ...(form.downstreamError.trim() ? { downstreamError: form.downstreamError.trim() } : {}) });
+      const latest = useStoryboardStore.getState().shots.find((item) => item.id === shotId && item.sequenceId === shot.sequenceId);
+      if (!latest || latest.runningHubCloud?.status !== "submitted" || latest.runningHubCloud.taskId !== receipt.taskId || latest.runningHubCloud.approval?.inputDigest !== receipt.approvalInputDigest) return;
+      const event = receipt.status === "recovered_primary_output" ? { type: "RECOVER_PRIMARY_OUTPUT" } : { type: "COLLECT_OUTPUT" };
+      updateShotFields(shotId, { runningHubCloud: { ...transitionRunningHubState(latest.runningHubCloud, event), approval, taskId: receipt.taskId, importedOutput: receipt } });
+      setCloudImports((previous) => ({ ...previous, [shotId]: { ...form, error: undefined } }));
+    } catch (error) { setCloudImports((previous) => ({ ...previous, [shotId]: { ...form, error: errorMessage(error) } })); }
+  };
+
+  const useCleanRunningHubResult = (shotId: string) => {
+    const state = useStoryboardStore.getState();
+    const shot = state.shots.find((item) => item.id === shotId && item.sequenceId === state.currentSequenceId);
+    if (!shot) return;
+    const clean = runningHubCleanArtifact(shot);
+    if (!clean) {
+      setCloudImports((previous) => ({ ...previous, [shotId]: { ...(previous[shotId] ?? emptyCloudImport()), error: "runninghub_watermark_not_clean" } }));
+      return;
+    }
+    if (shot.generatedVideoPath && shot.videoQualityStatus === "approved") {
+      setCloudImports((previous) => ({ ...previous, [shotId]: { ...(previous[shotId] ?? emptyCloudImport()), error: "runninghub_local_approval_preserved" } }));
+      return;
+    }
+    const watermarkChecked = shot.runningHubCloud!.status === "watermark_checked"
+      ? shot.runningHubCloud!
+      : transitionRunningHubState(shot.runningHubCloud!, { type: "CHECK_WATERMARK" });
+    const qualityReview = transitionRunningHubState(watermarkChecked, { type: "BEGIN_QUALITY_REVIEW" });
+    const routeDecision = routeForShot(shot, state.assets);
+    const profilePreflight = preflightForRoute(shot, routeDecision);
+    if (routeDecision.status !== "selected" || !routeDecision.profileId) return;
+    const operationToken = `runninghub:${clean.taskId}:${clean.providerArtifact.receiptDigest}`;
+    updateShotFields(shotId, {
+      generatedVideoPath: clean.cleanPath,
+      videoProviderArtifact: clean.providerArtifact,
+      videoGenerationContractDigest: clean.approvalInputDigest,
+      videoGenerationReceipt: { profileId: routeDecision.profileId, accelerationMode: shot.videoAccelerationMode ?? "standard", workflowDigest: clean.providerArtifact.receiptDigest, inputDigest: clean.approvalInputDigest, promptId: `runninghub-${clean.taskId}`, normalizedPath: clean.cleanPath, contractDigest: clean.approvalInputDigest, operationToken, generatedAt: new Date().toISOString() },
+      videoProductionEvidence: undefined,
+      videoQualityStatus: "pending",
+      runningHubCloud: { ...qualityReview, approval: shot.runningHubCloud!.approval, taskId: clean.taskId, importedOutput: shot.runningHubCloud!.importedOutput, watermarkReceipt: shot.runningHubCloud!.watermarkReceipt }
+    });
+    setCloudImports((previous) => ({ ...previous, [shotId]: { ...(previous[shotId] ?? emptyCloudImport()), error: undefined } }));
+  };
+
   useEffect(() => registerVideoProductionGateway({
     generateShot: (shotId) => executeGeneration([shotId], "manual_generation"),
-    generateBatch: (shotIds) => executeGeneration(shotIds, "bulk_generation")
-  }), [controller, currentSequenceId]);
+    generateBatch: (shotIds) => executeGeneration(shotIds, "bulk_generation"),
+    recommendCloud,
+    prepareCloudHandoff,
+    declineCloud
+  }), [controller, currentSequenceId, services?.projectAssetsDir]);
 
   const processShot = async (shotId: string) => {
     const shot = useStoryboardStore.getState().shots.find((item) => item.id === shotId);
@@ -173,6 +327,18 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
     stagedOperations.current.set(shotId, preparationOperation);
     try {
       if (!attemptIsCurrent()) return;
+      const cloudArtifact = runningHubCleanArtifact(shot);
+      if (cloudArtifact) {
+        const context = contexts.get(shotId);
+        if (!context || !shot.videoGenerationReceipt?.operationToken) throw new Error("runninghub_quality_context_missing");
+        const evidence = await controller.processGeneratedShot({
+          ...createControllerInputFromShot({ shot, project, routeDecision: context.routeDecision, profilePreflight: context.profilePreflight, boundary: context.outgoingBoundary, operation: { sequenceId: shot.sequenceId, shotId, contractDigest: cloudArtifact.approvalInputDigest, sourceVideoPath: shot.generatedVideoPath, boundaryIdentity: boundaryIdentity(context.outgoingBoundary), operationToken: shot.videoGenerationReceipt.operationToken, settingsIdentity: settings.baseUrl }, generationReceipt: shot.videoGenerationReceipt }),
+          contractDigest: cloudArtifact.approvalInputDigest,
+          providerArtifact: cloudArtifact.providerArtifact
+        });
+        if (attemptIsCurrent()) updateShotFields(shotId, { videoProviderArtifact: cloudArtifact.providerArtifact, videoProductionEvidence: evidence });
+        return;
+      }
       const prepared = await routedGenerator.prepare(shotId, { operationToken: preparationOperation.token });
       if (!attemptIsCurrent()) return;
       routedGenerator.verifyReceipt(shot.videoGenerationReceipt, prepared, shot.generatedVideoPath);
@@ -214,7 +380,40 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
     setReasons((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) => active.has(key))));
   }, [currentSequenceId, rows.map((row) => row.artifactKey).join("|")]);
 
-  return <VideoProductionPanelView
+  return <><section className="runninghub-approval-list" aria-label="RunningHub 复杂镜头建议">
+    {scopedShots.map((shot) => {
+      const recommendation = cloudRecommendations.get(shot.id)!;
+      const cloud = shot.runningHubCloud;
+      if (recommendation.status !== "cloud_recommended" && !cloud) return null;
+      const approval = cloud?.approval;
+      return <div className="runninghub-approval-list__item" key={`runninghub:${shot.id}`}>
+        {!approval ? <div className="runninghub-approval-list__recommendation"><strong>{shot.order}. {shot.title}</strong><span>{recommendation.reasons.join("、") || "等待参考图与提示词完整后审批"}</span><button className="btn-ghost" onClick={() => recommendCloud(shot.id)} type="button">准备 RunningHub 审批</button></div> : <RunningHubApprovalPanel
+          approval={approval}
+          confirmed={cloud?.status === "approved"}
+          recommendationReasons={recommendation.reasons}
+          onPrepare={async () => { if (!(await prepareCloudHandoff(shot.id))) throw new Error("runninghub_handoff_not_available"); }}
+          onContinueLocal={() => declineCloud(shot.id)}
+          onCancel={() => cancelCloud(shot.id)}
+        />}{approval && ["approved", "submitted"].includes(cloud?.status ?? "") && <RunningHubResultImportForm
+          value={cloudImports[shot.id] ?? emptyCloudImport()} submitted={cloud?.status === "submitted"}
+          onChange={(patch) => setCloudImports((previous) => ({ ...previous, [shot.id]: { ...(previous[shot.id] ?? emptyCloudImport()), ...patch } }))}
+          onSubmit={() => submitCloudTask(shot.id)} onImport={() => void importCloudResult(shot.id)}
+        />}{(() => {
+          const imported = cloud?.importedOutput as Record<string, unknown> | undefined;
+          const repair = cloud?.watermarkReceipt as Record<string, unknown> | undefined;
+          const clean = runningHubCleanArtifact(shot);
+          const source = typeof imported?.importedPath === "string" ? imported.importedPath : "";
+          const repaired = typeof repair?.outputPath === "string" ? repair.outputPath : typeof repair?.repairedPath === "string" ? repair.repairedPath : "";
+          if (!source && !repaired) return null;
+          return <div className="runninghub-watermark-preview" aria-label="RunningHub 水印处置">
+            {source && <figure><figcaption>RunningHub 原始导入</figcaption><video controls src={toDesktopMediaSource(source)} /></figure>}
+            {repaired && <figure><figcaption>水印修复/源文件清洁版本</figcaption><video controls src={toDesktopMediaSource(repaired)} /></figure>}
+            {clean ? <button className="btn-primary" type="button" onClick={() => useCleanRunningHubResult(shot.id)}>使用已验证清洁版本进入质量审查</button> : <p>水印证据尚未验证为 clean；不会进入质量门。</p>}
+          </div>;
+        })()}
+      </div>;
+    })}
+  </section><VideoProductionPanelView
     rows={rows} rejectionReasons={reasons}
     onReasonChange={(key, reason) => setReasons((previous) => ({ ...previous, [key]: reason }))}
     onManualProfileChange={(shotId, profileId) => updateShotFields(shotId, { videoWorkflowProfileId: profileId })}
@@ -257,27 +456,26 @@ export function VideoProductionPanel({ settings, services }: { settings: ComfySe
       persistRebuildFailureCAS(failedRequest.shotIds, stagedOperations.current, rebuildGuards.current, error);
       failedRequest.shotIds.forEach((id) => { stagedOperations.current.delete(id); rebuildGuards.current.delete(id); });
     })}
-  />;
+  /></>;
 }
 
-function buildContexts(shots: Shot[], assets: Asset[]) {
-  const boundaries = shots.slice(0, -1).map((shot, index) => ({
-    fromShotId: shot.id, toShotId: shots[index + 1].id, kind: shot.videoBoundaryKind ?? "hard_cut",
-    sharedFramePath: shot.approvedBoundaryFramePath,
-    sharedFrameSource: shot.approvedBoundaryFramePath ? "independent" as const : undefined,
-    approvalStatus: shot.approvedBoundaryFramePath ? "approved" as const : "pending" as const
-  }));
+function buildContexts(sequenceId: string, shots: Shot[], assets: Asset[], transitions: ShotTransition[]) {
+  const resolveBoundary = createShotTransitionBoundaryResolver({
+    sequenceId,
+    transitions
+  });
+  const boundaries = shots.slice(0, -1).map((shot, index) => resolveBoundary(shot, shots[index + 1]));
   const plan = planVideoContinuity({ shots: shots.map((shot) => ({ id: shot.id, order: shot.order, videoBoundaryKind: shot.videoBoundaryKind, approvedTailFramePath: shot.approvedBoundaryFramePath, tailFrameApprovalStatus: shot.approvedBoundaryFramePath ? "approved" : "pending" })), boundaries });
   return new Map(shots.map((shot) => {
-    const routeDecision = shot.videoProductionEvidence?.routeDecision ?? routeForShot(shot, assets);
-    const profilePreflight = shot.videoProductionEvidence?.profilePreflight ?? preflightForRoute(shot, routeDecision);
     const incomingBoundary = plan.boundaries.find((item) => item.toShotId === shot.id);
     const outgoingBoundary = plan.boundaries.find((item) => item.fromShotId === shot.id);
+    const routeDecision = shot.videoProductionEvidence?.routeDecision ?? routeForShot(shot, assets, outgoingBoundary?.kind);
+    const profilePreflight = shot.videoProductionEvidence?.profilePreflight ?? preflightForRoute(shot, routeDecision);
     return [shot.id, { routeDecision, profilePreflight, incomingBoundary, outgoingBoundary, boundary: outgoingBoundary }] as const;
   }));
 }
 
-function routeForShot(shot: Shot, assets: Asset[]): VideoRouteDecision {
+function routeForShot(shot: Shot, assets: Asset[], boundaryKind = shot.videoBoundaryKind ?? "hard_cut"): VideoRouteDecision {
   const refs = (shot.characterRefs ?? []).filter((id) => assets.some((asset) => asset.id === id));
   return routeVideoWorkflow({
     manualProfileId: shot.videoWorkflowProfileId ?? "auto", qualityTier: shot.videoQualityTier ?? "production",
@@ -286,7 +484,42 @@ function routeForShot(shot: Shot, assets: Asset[]): VideoRouteDecision {
     extraReferenceCount: shot.sceneRefId ? 1 : 0, hasSceneContinuity: Boolean(shot.sceneRefId),
     hasStoryboardFrame: Boolean(shot.generatedImagePath), hasFirstFrame: Boolean(shot.videoStartFramePath || shot.generatedImagePath),
     hasLastFrame: Boolean(shot.videoEndFramePath), hasApprovedBoundaryFrame: Boolean(shot.approvedBoundaryFramePath),
-    hasDialogue: Boolean(shot.dialogue.trim()), boundaryKind: shot.videoBoundaryKind ?? "hard_cut"
+    hasDialogue: Boolean(shot.dialogue.trim()), boundaryKind
+  });
+}
+
+function recommendCloudForShot(shot: Shot, assets: Asset[]): CloudShotRecommendation {
+  const tags = new Set((shot.tags ?? []).map((tag) => tag.trim().toLowerCase()));
+  const tagIncludes = (...needles: string[]) => [...tags].some((tag) => needles.some((needle) => tag.includes(needle)));
+  const knownReferences = (shot.characterRefs ?? []).filter((id) => assets.some((asset) => asset.id === id));
+  const localFailures = shot.videoProductionEvidence?.status === "failed" ? 1 : 0;
+  return recommendRunningHub({
+    namedCharacterCount: Math.max(knownReferences.length, shot.sourceCharacterNames?.length ?? 0),
+    hasCharacterContact: tagIncludes("contact", "interaction", "接触", "对打", "拥抱"),
+    hasOcclusionExchange: tagIncludes("occlusion", "遮挡"),
+    hasPropTransfer: tagIncludes("transfer", "交接", "递交"),
+    orderedActionBeatCount: tagIncludes("action", "动作", "追逐", "打斗") ? 2 : 0,
+    hasCharacterMotion: tagIncludes("motion", "movement", "运动", "移动", "动作"),
+    hasCameraMotion: tagIncludes("camera", "运镜", "推镜", "摇镜"),
+    hasCrowdAction: tagIncludes("crowd", "群像", "人群"),
+    localQualityFailureCount: localFailures,
+    localRetryLimit: 2
+  });
+}
+
+function createApprovalForShot(shot: Shot, assets: Asset[]) {
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const references = (shot.characterRefs ?? []).map((id) => assetById.get(id)?.characterFaceRefPath ?? assetById.get(id)?.characterFrontPath ?? assetById.get(id)?.filePath).filter((path): path is string => Boolean(path));
+  return createRunningHubApprovalSnapshot({
+    shotId: shot.id,
+    workflowId: "2090035427871903746",
+    workflowUrl: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace",
+    references: references as [string, string],
+    prompt: shot.videoPrompt?.trim() || shot.storyPrompt?.trim() || shot.notes.trim(),
+    width: 1344,
+    height: 768,
+    durationSeconds: 8,
+    createdAt: new Date().toISOString()
   });
 }
 
@@ -304,7 +537,7 @@ function buildRows(shots: Shot[], assets: Asset[], contexts: Map<string, { route
     const evidence = shot.videoProductionEvidence;
     let report: VideoQualityReport;
     if (evidence?.status === "ready" && evidence.normalizationCredential && evidence.inspection && evidence.reviewFrames) {
-      const fresh = createVideoQualityReport(shot.id, { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: evidence.inspection, reviewFrames: evidence.reviewFrames, reviewRecord: evidence.reviewRecord, assemblyReceipt: evidence.assemblyReceipt, boundaryFrame: context.boundary?.sharedFramePath });
+      const fresh = createVideoQualityReport(shot.id, { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: evidence.inspection, reviewFrames: evidence.reviewFrames, reviewRecord: evidence.reviewRecord, assemblyReceipt: evidence.assemblyReceipt, boundaryFrame: context.boundary?.sharedFramePath, providerArtifact: evidence.providerArtifact ?? shot.videoProviderArtifact ?? (shot.runningHubCloud ? { provider: "runninghub" } : undefined) });
       report = resolvePersistedVideoDecision(fresh, evidence.decision);
     } else report = { shotId: shot.id, status: "rejected", structuralIssues: [evidence?.failureReason || "video_production_evidence_missing"], semanticReviewItems: ["character_identity", "scene_anchor", "costume_prop", "motion_boundary", "color_continuity"], reviewFrames: { first: "", middle: "", last: "" } };
     const characters = (shot.characterRefs ?? []).flatMap((id) => { const asset = assetById.get(id); return asset ? unique([asset.characterIdentityPack?.faceMasterPath, asset.characterIdentityPack?.bodyFrontPath, asset.characterFaceRefPath, asset.characterFrontPath, asset.filePath]).slice(0, 2) : []; });

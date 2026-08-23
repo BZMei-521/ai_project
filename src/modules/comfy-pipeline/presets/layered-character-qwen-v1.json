@@ -1,0 +1,16 @@
+{
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors", "weight_dtype": "default" } },
+  "2": { "class_type": "LoraLoaderModelOnly", "inputs": { "model": ["1", 0], "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1.0 } },
+  "3": { "class_type": "ModelSamplingAuraFlow", "inputs": { "model": ["2", 0], "shift": 3.1 } },
+  "4": { "class_type": "CLIPLoader", "inputs": { "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default" } },
+  "5": { "class_type": "VAELoader", "inputs": { "vae_name": "qwen_image_vae.safetensors" } },
+  "6": { "class_type": "LoadImage", "inputs": { "image": "{{FACE_MASTER}}" } },
+  "7": { "class_type": "LoadImage", "inputs": { "image": "{{BODY_FRONT}}" } },
+  "8": { "class_type": "LoadImage", "inputs": { "image": "{{STRUCTURE_FRONT}}" } },
+  "24": { "class_type": "TextEncodeQwenImageEditPlus", "inputs": { "clip": ["4", 0], "vae": ["5", 0], "image1": ["6", 0], "image2": ["7", 0], "image3": ["8", 0], "prompt": "{{PROMPT}}" } },
+  "25": { "class_type": "ConditioningZeroOut", "inputs": { "conditioning": ["24", 0] } },
+  "26": { "class_type": "EmptySD3LatentImage", "inputs": { "width": 1152, "height": 640, "batch_size": 1 } },
+  "27": { "class_type": "KSampler", "inputs": { "model": ["3", 0], "positive": ["24", 0], "negative": ["25", 0], "latent_image": ["26", 0], "seed": "{{SEED}}", "steps": 4, "cfg": 1.0, "sampler_name": "euler", "scheduler": "beta", "denoise": 1.0 } },
+  "28": { "class_type": "VAEDecode", "inputs": { "samples": ["27", 0], "vae": ["5", 0] } },
+  "30": { "class_type": "SaveImage", "inputs": { "images": ["28", 0], "filename_prefix": "{{FILENAME_PREFIX}}" } }
+}

@@ -7,15 +7,15 @@ import {
 
 const readyEnvironment = {
   commercialRequired: true,
-  models: ["qwen_image_edit_2511_bf16.safetensors", "flux2_klein_4b_fp8.safetensors"],
-  nodes: ["TextEncodeQwenImageEdit", "ReferenceLatent", "FluxGuidance"]
+  models: ["qwen_image_edit_2511_bf16.safetensors", "flux-2-klein-4b-fp8.safetensors"],
+  nodes: ["TextEncodeQwenImageEdit", "ReferenceLatent", "CFGGuider", "Flux2Scheduler"]
 };
 
 assert.equal(selectCharacterProvider(readyEnvironment).selected?.id, "qwen_image_edit_2511");
 assert.equal(selectCharacterProvider({
   ...readyEnvironment,
-  models: ["flux2_klein_4b_fp8.safetensors"],
-  nodes: ["ReferenceLatent", "FluxGuidance"]
+  models: ["flux-2-klein-4b-fp8.safetensors"],
+  nodes: ["ReferenceLatent", "CFGGuider", "Flux2Scheduler"]
 }).selected?.id, "flux2_klein_4b");
 
 const licenseBlocked = inspectCharacterProvider(

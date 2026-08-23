@@ -343,8 +343,8 @@ Assert that `qwen_image_edit_2511` ranks first when both providers are available
 ```js
 const environment = {
   commercialRequired: true,
-  models: ["qwen_image_edit_2511_bf16.safetensors", "flux2_klein_4b_fp8.safetensors"],
-  nodes: ["TextEncodeQwenImageEdit", "ReferenceLatent", "FluxGuidance"]
+  models: ["qwen_image_edit_2511_bf16.safetensors", "flux-2-klein-4b-fp8.safetensors"],
+  nodes: ["TextEncodeQwenImageEdit", "ReferenceLatent", "CFGGuider", "Flux2Scheduler"]
 };
 assert.equal(selectCharacterProvider(environment).selected?.id, "qwen_image_edit_2511");
 assert.equal(inspectCharacterProvider({ ...CHARACTER_GENERATION_PROVIDERS[0], commercialUse: false }, environment).available, false);
@@ -822,7 +822,7 @@ Start ComfyUI Desktop, then run the app's environment inspection. Expected resul
 - [ ] **Step 3: Run Qwen benchmark**
 
 ```powershell
-npm run benchmark:characters -- --character asset_1774017261433_390 --provider qwen_image_edit_2511 --base-url http://127.0.0.1:8188 --output logs/qwen-2511-character-benchmark.json
+npm run benchmark:characters -- --project examples/river-dialogue-5s/river_dialogue_5s_project_backup.json --character asset_1774017261433_390 --provider qwen_image_edit_2511 --base-url http://127.0.0.1:8188 --workflow path/to/qwen-2511-character-workflow.json --evaluator-module path/to/trusted-character-evaluator.mjs --output logs/qwen-2511-character-benchmark.json
 ```
 
 Expected: report contains eight shots. If models are not installed, record the exact preflight diagnostics and do not claim visual verification.
@@ -830,7 +830,7 @@ Expected: report contains eight shots. If models are not installed, record the e
 - [ ] **Step 4: Run Klein benchmark when installed**
 
 ```powershell
-npm run benchmark:characters -- --character asset_1774017261433_390 --provider flux2_klein_4b --base-url http://127.0.0.1:8188 --output logs/klein-4b-character-benchmark.json
+npm run benchmark:characters -- --project examples/river-dialogue-5s/river_dialogue_5s_project_backup.json --character asset_1774017261433_390 --provider flux2_klein_4b --base-url http://127.0.0.1:8188 --workflow path/to/klein-4b-character-workflow.json --evaluator-module path/to/trusted-character-evaluator.mjs --output logs/klein-4b-character-benchmark.json
 ```
 
 Expected: report contains eight shots. Keep Qwen as default unless Klein passes every hard gate and has the higher weighted score or materially lower time at no more than a 0.03 score deficit.

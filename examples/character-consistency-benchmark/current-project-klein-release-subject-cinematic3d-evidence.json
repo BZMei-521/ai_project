@@ -1,0 +1,400 @@
+{
+  "snapshot": {
+    "assets": [
+      {
+        "id": "asset_1774017261433_390",
+        "projectId": "proj_001",
+        "type": "character",
+        "name": "沈砚",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterSidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+        "characterBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+        "characterFaceRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterDetailRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+        "characterIdentityPack": {
+          "version": "shen-yan-hybrid-v5",
+          "triggerWord": "char_shen_yan_v1",
+          "species": "human",
+          "speciesTraits": [],
+          "styleContractId": "cinematic_3d_donghua_v1",
+          "styleContractVersion": "1.0.0",
+          "styleContractDigest": "27db8be0b246c9b931217e24caffc9606c0959b035f7a0d9714ed0c058828b88",
+          "faceMasterPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "faceLeftPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "faceRightPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "hairBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+          "bodyFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "bodySidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "bodyBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+          "neutralExpressionPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "immutableTraits": [
+            "refined adult Chinese male face, age 24 to 28",
+            "natural-sized clear blue almond-shaped eyes",
+            "short dark brown side-swept layered hair",
+            "teal long-sleeve tunic",
+            "dark navy sleeveless long coat",
+            "brown leather belt and knee-high brown leather boots"
+          ],
+          "forbiddenChanges": [
+            "preserve recognizable facial identity and blue eye color",
+            "preserve hair color, length, fringe, and silhouette",
+            "preserve the teal tunic, navy long coat, brown belt, and brown boots",
+            "preserve mature adult male proportions",
+            "no beard, moustache, stubble, or facial hair shadow",
+            "human ears only, no animal ears, tail, horns, or muzzle"
+          ],
+          "approvedHeroFramePaths": [
+            "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png"
+          ],
+          "updatedAt": "2026-08-09T22:28:59.6576505+08:00"
+        },
+        "characterZeroShotEvidence": {
+          "reportLabel": "character-consistency-benchmark-klein-cinematic3d-zero-shot-quality-v4.json",
+          "evidenceDigest": "b1c4620823a79c339b98cbf4962d3f2fcb573a1deda01e9135340f76a928bf79",
+          "generationMode": "zero_shot_multi_reference",
+          "benchmarkVersion": "1",
+          "promptTemplateVersion": "klein-character-v2",
+          "fixtureDigest": "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
+          "generationParametersDigest": "7c15b5fab4b5827c14589c3b684422177c12c52f637f4f2178e08e9db2d849d1",
+          "characterAssetId": "asset_1774017261433_390",
+          "provider": "flux2_klein_4b",
+          "identityPackVersion": "shen-yan-hybrid-v5",
+          "identityMetadataDigest": "3a8b30f0d73b5b7842a158ebc9e3cff0b7c4e84946c0403ac54991afec5c7f56",
+          "referenceManifestDigest": "e49d062b6688deabdf0b5567e43c1a8b0191985d15ca693faba2d7412e761289",
+          "references": [
+            {
+              "shotId": "front_close",
+              "slot": "body_front",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "front_close",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "three_quarter_medium",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "three_quarter_medium",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "left_profile",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "left_profile",
+              "slot": "face_left",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "d880f29f8cd440016671ecb4313a5cf59ba62b0a2dc43fe4940caa0bb7704e2c",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "right_profile",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "right_profile",
+              "slot": "face_right",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "d880f29f8cd440016671ecb4313a5cf59ba62b0a2dc43fe4940caa0bb7704e2c",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "back_view",
+              "slot": "body_back",
+              "sourceSha256": "2abafd0d96d0beb77441760a37872f367f4f3af0fcea4721176a313bd0a76195",
+              "transformedSha256": "9a533fc7694f3f18d097e313f6ef0ba527502ba42ab4f626e6d4a20285e0e758",
+              "transform": "none"
+            },
+            {
+              "shotId": "back_view",
+              "slot": "hair_back",
+              "sourceSha256": "2abafd0d96d0beb77441760a37872f367f4f3af0fcea4721176a313bd0a76195",
+              "transformedSha256": "9a533fc7694f3f18d097e313f6ef0ba527502ba42ab4f626e6d4a20285e0e758",
+              "transform": "none"
+            },
+            {
+              "shotId": "full_body_action",
+              "slot": "body_front",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "full_body_action",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "strong_expression",
+              "slot": "expression_neutral",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "strong_expression",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "different_lighting",
+              "slot": "body_front",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "different_lighting",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            }
+          ],
+          "modelName": "flux-2-klein-4b-fp8.safetensors",
+          "workflowDigest": "e820879e1050ce1151c20a19a3dddaabefa9b2d15b9a6c6994528633af710ab3",
+          "terminalOutputNode": "19",
+          "terminalModel": "flux-2-klein-4b-fp8.safetensors",
+          "evaluatorId": "siglip2-character-consistency",
+          "evaluatorVersion": "1.0.0",
+          "evaluatorImplementationHash": "928799e00d8f1af139caa01be76fe750416c710711c432940a151c2f7072571e",
+          "evaluatorPolicyHash": "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+          "dimensionThreshold": 0.72,
+          "shots": [
+            {
+              "id": "front_close",
+              "outputSha256": "72f6f6fc19906c2dcbb5303be0ca4aa7df10f7c493981625b2eb56e63a036050",
+              "score": 0.944065,
+              "dimensionScores": {
+                "face": 0.94795,
+                "hair": 0.940977,
+                "outfit": 0.939103,
+                "body": 0.939103,
+                "quality": 0.943114
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "three_quarter_medium",
+              "outputSha256": "00abc3b02d098e038a472bbe7aa96c04a2704a9a5aaae1f670d5c8c570c70dd6",
+              "score": 0.963745,
+              "dimensionScores": {
+                "face": 0.972641,
+                "hair": 0.967692,
+                "outfit": 0.966511,
+                "body": 0.966511,
+                "quality": 0.936725
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "left_profile",
+              "outputSha256": "658fbb578d0ad9350ed01a71379bbe01d7c6dad3b0a2110eab7f9cdef003ddb2",
+              "score": 0.93112,
+              "dimensionScores": {
+                "face": 0.93164,
+                "hair": 0.931344,
+                "outfit": 0.928716,
+                "body": 0.928716,
+                "quality": 0.934682
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "right_profile",
+              "outputSha256": "5eb22c64bbb178e620ae09ab2361c831c67893ce7ed25ff8d6ffd8dbbb5d0376",
+              "score": 0.920146,
+              "dimensionScores": {
+                "face": 0.940457,
+                "hair": 0.938166,
+                "outfit": 0.935184,
+                "body": 0.935184,
+                "quality": 0.827497
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "back_view",
+              "outputSha256": "1219edbad39228c02b7adf15efe9ddab6ae56323600aa10b2281ec7b8cc1022c",
+              "score": 0.947817,
+              "dimensionScores": {
+                "face": 0.962467,
+                "hair": 0.971642,
+                "outfit": 0.974025,
+                "body": 0.974025,
+                "quality": 0.834029
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "full_body_action",
+              "outputSha256": "d56c8538e43c3c29efe479ed43aa71f3c00d802994f6793641b085a717fc17d6",
+              "score": 0.96976,
+              "dimensionScores": {
+                "face": 0.985007,
+                "hair": 0.978938,
+                "outfit": 0.975407,
+                "body": 0.975407,
+                "quality": 0.935845
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "strong_expression",
+              "outputSha256": "933dffee64741741ce25dd7365814a7269be40225852e7f3f9f344ec483e429f",
+              "score": 0.945439,
+              "dimensionScores": {
+                "face": 0.948621,
+                "hair": 0.941138,
+                "outfit": 0.939516,
+                "body": 0.939516,
+                "quality": 0.948654
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "different_lighting",
+              "outputSha256": "593687ef7b2f0724e36b099d6b6eee181bfbfe265307df748e9219683f2a3692",
+              "score": 0.964286,
+              "dimensionScores": {
+                "face": 0.977632,
+                "hair": 0.968661,
+                "outfit": 0.965252,
+                "body": 0.965252,
+                "quality": 0.932435
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            }
+          ],
+          "aggregateScore": 0.948297,
+          "acceptedShots": 8,
+          "verifiedAt": "2026-08-09T15:13:55.741Z",
+          "importedAt": "2026-08-09T15:13:55.741Z",
+          "sourceReportDigest": "72e97696826412ccc8b5bfa5ac7d6e274ae59909b83e17144f64addb5660408c",
+          "trustedReceipt": {
+            "schemaVersion": 1,
+            "issuer": "storyboard-desktop-character-evidence-v1",
+            "receiptId": "921fe6bb5dcc8db5e9a273cf0f021334275533b7eae89245ffd52ee558f5903b",
+            "reportDigest": "72e97696826412ccc8b5bfa5ac7d6e274ae59909b83e17144f64addb5660408c",
+            "generationMode": "zero_shot_multi_reference",
+            "characterAssetId": "asset_1774017261433_390",
+            "identityPackVersion": "shen-yan-hybrid-v5",
+            "identityMetadataDigest": "3a8b30f0d73b5b7842a158ebc9e3cff0b7c4e84946c0403ac54991afec5c7f56",
+            "fixtureDigest": "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
+            "evaluatorImplementationHash": "928799e00d8f1af139caa01be76fe750416c710711c432940a151c2f7072571e",
+            "evaluatorPolicyHash": "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+            "outputHashesDigest": "9a421156e23d6a7306ba24c2a4399778a654fb7d75953f68b512915c7d70266a",
+            "referenceBindingDigest": "4620c7c383a2ce2392f00ed7e5ea220d78780043fb4ae553774b95ce34e8f92f",
+            "claimsDigest": "38904582fdbcae3d159efd24f57e605100d241490a1b27ed57ae95ff5019da23"
+          }
+        },
+        "currentZeroContext": {
+          "generationMode": "zero_shot_multi_reference",
+          "benchmarkVersion": "1",
+          "promptTemplateVersion": "klein-character-v2",
+          "characterAssetId": "asset_1774017261433_390",
+          "identityPackVersion": "shen-yan-hybrid-v5",
+          "identityMetadataDigest": "3a8b30f0d73b5b7842a158ebc9e3cff0b7c4e84946c0403ac54991afec5c7f56",
+          "triggerWord": "char_shen_yan_v1",
+          "immutableTraits": [
+            "brown leather belt and knee-high brown leather boots",
+            "dark navy sleeveless long coat",
+            "natural-sized clear blue almond-shaped eyes",
+            "refined adult Chinese male face, age 24 to 28",
+            "short dark brown side-swept layered hair",
+            "teal long-sleeve tunic"
+          ],
+          "forbiddenChanges": [
+            "human ears only, no animal ears, tail, horns, or muzzle",
+            "no beard, moustache, stubble, or facial hair shadow",
+            "preserve hair color, length, fringe, and silhouette",
+            "preserve mature adult male proportions",
+            "preserve recognizable facial identity and blue eye color",
+            "preserve the teal tunic, navy long coat, brown belt, and brown boots"
+          ],
+          "species": "human",
+          "speciesTraits": [],
+          "styleContractId": "cinematic_3d_donghua_v1",
+          "styleContractVersion": "1.0.0",
+          "styleContractDigest": "27db8be0b246c9b931217e24caffc9606c0959b035f7a0d9714ed0c058828b88",
+          "provider": "flux2_klein_4b",
+          "modelName": "flux-2-klein-4b-fp8.safetensors",
+          "fixtureDigest": "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
+          "referenceManifestDigest": "e49d062b6688deabdf0b5567e43c1a8b0191985d15ca693faba2d7412e761289",
+          "evaluatorId": "siglip2-character-consistency",
+          "evaluatorVersion": "1.0.0",
+          "evaluatorImplementationHash": "928799e00d8f1af139caa01be76fe750416c710711c432940a151c2f7072571e",
+          "evaluatorPolicyHash": "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+          "dimensionThreshold": 0.72,
+          "workflowProof": {
+            "workflowDigest": "e820879e1050ce1151c20a19a3dddaabefa9b2d15b9a6c6994528633af710ab3",
+            "terminalOutputNode": "19",
+            "authoritativeModelBindings": [
+              {
+                "model": "flux-2-klein-4b-fp8.safetensors"
+              }
+            ],
+            "authoritativeLoraBindings": []
+          }
+        }
+      }
+    ]
+  }
+}

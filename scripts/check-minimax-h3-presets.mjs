@@ -142,9 +142,10 @@ try {
   });
   assert.equal(generated.status, 0, `preset builder failed: ${generated.stderr}`);
   for (const [name] of cases) {
+    const normalizeNewlines = (source) => source.replace(/\r\n/g, "\n");
     assert.equal(
-      fs.readFileSync(path.join(generatedDirectory, name), "utf8"),
-      fs.readFileSync(path.join(presetsDirectory, name), "utf8"),
+      normalizeNewlines(fs.readFileSync(path.join(generatedDirectory, name), "utf8")),
+      normalizeNewlines(fs.readFileSync(path.join(presetsDirectory, name), "utf8")),
       `${name}: checked-in preset drifted from deterministic builder output`
     );
   }

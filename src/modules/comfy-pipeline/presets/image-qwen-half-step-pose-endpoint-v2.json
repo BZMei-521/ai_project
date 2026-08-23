@@ -1,0 +1,26 @@
+{
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors", "weight_dtype": "default" } },
+  "2": { "class_type": "LoraLoaderModelOnly", "inputs": { "model": ["1", 0], "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1.0 } },
+  "3": { "class_type": "ModelSamplingAuraFlow", "inputs": { "model": ["2", 0], "shift": 3.1 } },
+  "4": { "class_type": "CLIPLoader", "inputs": { "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default" } },
+  "5": { "class_type": "VAELoader", "inputs": { "vae_name": "qwen_image_vae.safetensors" } },
+  "6": { "class_type": "LoadImage", "inputs": { "image": "{{START_FRAME_PATH}}" } },
+  "7": { "class_type": "LoadImage", "inputs": { "image": "{{SHEN_YAN_PRIMARY_PATH}}" } },
+  "9": { "class_type": "LoadImage", "inputs": { "image": "{{POSE_GUIDE_PATH}}" } },
+  "14": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["4", 0],
+      "vae": ["5", 0],
+      "image1": ["6", 0],
+      "image2": ["7", 0],
+      "image3": ["9", 0],
+      "prompt": "Picture 1 is the immutable main frame and controls composition, geography, lighting, and all locked pixels. Picture 2 is only Shen Yan's identity, body, costume, and material reference. Picture 3 is the authoritative target body-pose guide and controls pose only, never identity, color, texture, or lighting. Exactly two human characters remain visible: Shen Yan and Jiang Lan. Edit only Shen Yan's approved screen-left lower leg so he takes one short grounded half-step; use Picture 3 for the exact hip, knee, ankle, and foot placement. Jiang Lan must remain unchanged in identity, pose, position, costume, and every pixel outside the editable region. Preserve Shen Yan's face, hair, upper body, coat construction, body proportions, planted screen-right leg, and grounded contact. Do not create a lunge, split, crossed legs, floating foot, or extra limb. {{RIVER_SHOT_PROMPT}}"
+    }
+  },
+  "15": { "class_type": "ConditioningZeroOut", "inputs": { "conditioning": ["14", 0] } },
+  "18": { "class_type": "VAEEncode", "inputs": { "pixels": ["6", 0], "vae": ["5", 0] } },
+  "16": { "class_type": "KSampler", "inputs": { "model": ["3", 0], "positive": ["14", 0], "negative": ["15", 0], "latent_image": ["18", 0], "seed": "{{SEED}}", "steps": 4, "cfg": 1, "sampler_name": "euler", "scheduler": "beta", "denoise": 1 } },
+  "17": { "class_type": "VAEDecode", "inputs": { "samples": ["16", 0], "vae": ["5", 0] } },
+  "20": { "class_type": "SaveImage", "inputs": { "images": ["17", 0], "filename_prefix": "FLF2V/pose_endpoint_candidate_{{CANDIDATE_PADDED}}_raw_edit" } }
+}

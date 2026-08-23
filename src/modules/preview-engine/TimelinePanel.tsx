@@ -936,10 +936,17 @@ export function TimelinePanel() {
 
   useEffect(() => {
     if (!selectedShotId) return;
-    timelineShotRefs.current[selectedShotId]?.scrollIntoView({
-      inline: "nearest",
-      behavior: "smooth"
-    });
+    const shotNode = timelineShotRefs.current[selectedShotId];
+    const scrollContainer = shotNode?.closest<HTMLElement>(".timeline-scroll");
+    if (!shotNode || !scrollContainer) return;
+    const shotLeft = shotNode.offsetLeft;
+    const shotRight = shotLeft + shotNode.offsetWidth;
+    const viewportLeft = scrollContainer.scrollLeft;
+    const viewportRight = viewportLeft + scrollContainer.clientWidth;
+    if (shotLeft < viewportLeft) scrollContainer.scrollTo({ left: shotLeft, behavior: "smooth" });
+    else if (shotRight > viewportRight) {
+      scrollContainer.scrollTo({ left: shotRight - scrollContainer.clientWidth, behavior: "smooth" });
+    }
   }, [selectedShotId]);
 
   useEffect(() => {

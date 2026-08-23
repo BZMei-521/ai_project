@@ -1,0 +1,16 @@
+{
+  "1": {"class_type":"UNETLoader","inputs":{"unet_name":"Wan2_1-I2V-ATI-14B_fp8_e4m3fn.safetensors","weight_dtype":"fp8_e4m3fn"}},
+  "2": {"class_type":"ModelSamplingSD3","inputs":{"model":["1",0],"shift":8.0}},
+  "3": {"class_type":"CLIPLoader","inputs":{"clip_name":"umt5_xxl_fp8_e4m3fn_scaled.safetensors","type":"wan","device":"cpu"}},
+  "4": {"class_type":"VAELoader","inputs":{"vae_name":"wan_2.1_vae.safetensors"}},
+  "5": {"class_type":"CLIPVisionLoader","inputs":{"clip_name":"clip_vision_h.safetensors"}},
+  "6": {"class_type":"LoadImage","inputs":{"image":"{{FRAME_IMAGE_PATH}}"}},
+  "7": {"class_type":"CLIPVisionEncode","inputs":{"clip_vision":["5",0],"image":["6",0],"crop":"none"}},
+  "8": {"class_type":"CLIPTextEncode","inputs":{"text":"{{VIDEO_PROMPT}}\nPreserve the exact identities, faces, hairstyles, clothing construction, clothing colors, body proportions and species from the first frame. One instance of each scripted character only. Subtle natural breathing, blinking and small body motion. Stable cinematic camera, coherent anatomy and temporal consistency.","clip":["3",0]}},
+  "9": {"class_type":"CLIPTextEncode","inputs":{"text":"{{NEGATIVE_PROMPT}}, identity drift, face morphing, hairstyle change, clothing change, duplicated person, missing person, extra limbs, deformed hands, warped body, flicker, temporal jitter, sudden camera movement, fast zoom, scene cut, flat 2D cel animation","clip":["3",0]}},
+  "10": {"class_type":"WanImageToVideo","inputs":{"positive":["8",0],"negative":["9",0],"vae":["4",0],"clip_vision_output":["7",0],"start_image":["6",0],"width":832,"height":480,"length":"{{WAN_FRAME_COUNT}}","batch_size":1}},
+  "11": {"class_type":"KSampler","inputs":{"model":["2",0],"seed":"{{SEED}}","steps":20,"cfg":5.0,"sampler_name":"uni_pc","scheduler":"normal","positive":["10",0],"negative":["10",1],"latent_image":["10",2],"denoise":1.0}},
+  "12": {"class_type":"VAEDecode","inputs":{"samples":["11",0],"vae":["4",0]}},
+  "13": {"class_type":"CreateVideo","inputs":{"images":["12",0],"fps":16.0,"bit_depth":8}},
+  "14": {"class_type":"SaveVideo","inputs":{"video":["13",0],"filename_prefix":"Video/{{SHOT_TITLE}}_wan21_i2v","format":"mp4","codec":"h264"}}
+}

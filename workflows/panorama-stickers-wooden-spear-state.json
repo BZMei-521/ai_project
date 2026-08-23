@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "projection_model": "pinhole_rectilinear",
+  "alpha_mode": "straight",
+  "coverage": 360,
+  "bg_color": "#00ff00",
+  "output_preset": "2048",
+  "assets": {
+    "asset_wooden_spear_environment": {
+      "type": "comfy_image",
+      "filename": "panorama_validation_yaw090_00001_.png",
+      "subfolder": "",
+      "storage": "input",
+      "name": "panorama_validation_yaw090_00001_.png"
+    }
+  },
+  "stickers": [
+    {
+      "id": "st_wooden_spear_environment",
+      "asset_id": "asset_wooden_spear_environment",
+      "yaw_deg": 0,
+      "pitch_deg": 0,
+      "hFOV_deg": 90,
+      "vFOV_deg": 58.72,
+      "rot_deg": 0,
+      "z_index": 0
+    }
+  ],
+  "shots": []
+}

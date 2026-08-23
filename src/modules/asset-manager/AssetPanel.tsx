@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_TOKEN_MAPPING,
   deleteGeneratedFileFamilies,
@@ -14,12 +14,36 @@ import CHARACTER_KONTEXT_THREEVIEW_WORKFLOW_OBJECT from "../comfy-pipeline/prese
 import CHARACTER_THREEVIEW_LAYOUT_REF_BASE64 from "../comfy-pipeline/presets/assets/character-threeview-layout-ref.base64";
 import SKYBOX_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-default.json";
 import SKYBOX_PANORAMA_WORKFLOW_OBJECT from "../comfy-pipeline/presets/asset-skybox-panorama-default.json";
-import { invokeDesktopCommand, toDesktopMediaSource } from "../platform/desktopBridge";
+import { attestCharacterGenerationReport, invokeDesktopCommand, toDesktopMediaSource, verifyCharacterEvidenceReceipt } from "../platform/desktopBridge";
 import { safeStorageGetItem } from "../platform/safeStorage";
 import { useStoryboardStore } from "../storyboard-core/store";
-import type { AssetType, Shot, SkyboxFace } from "../storyboard-core/types";
+import type { Asset, AssetType, CharacterGenerationMode, CharacterIdentityPack, CharacterLoraProfile, Shot, SkyboxFace } from "../storyboard-core/types";
+import type { CharacterSpeciesId } from "../comfy-pipeline/characterStyleContract";
+import { validateSequentialProviderWorkflow } from "../comfy-pipeline/sequentialCharacterPassRuntime";
 import { confirmDialog } from "../ui/dialogStore";
 import { pushToast } from "../ui/toastStore";
+import {
+  CHARACTER_IDENTITY_STYLE_CONTRACT,
+  CHARACTER_LORA_PROVIDER_OPTIONS,
+  CHARACTER_SPECIES_OPTIONS,
+  clampCharacterLoraStrength,
+  countCharacterIdentityCompleteness,
+  invalidateCharacterGenerationEvidence,
+  invalidateCharacterLoraEvidence,
+  inferCharacterLoraEvidenceInvalidationReason,
+  normalizeCharacterTriggerWord,
+  parseCharacterIdentityList,
+  recomputeCharacterWorkflowDigest,
+  resolveCharacterLoraProvider,
+  validateStoredCharacterGenerationEvidence,
+  type CharacterLoraProviderId
+} from "./characterIdentityUi";
+import {
+  TRUSTED_CHARACTER_EVIDENCE_METADATA,
+  applyCharacterGenerationEvidenceImport,
+  buildTrustedCharacterGenerationEvidenceContext,
+  loadCharacterIdentityReferenceSourceHashes
+} from "../comfy-pipeline/characterEvidenceContext";
 
 const SETTINGS_KEY = "storyboard-pro/comfy-settings/v1";
 const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
@@ -31,10 +55,110 @@ const DEFAULT_CHARACTER_ADVANCED_VAE = "ae.safetensors";
 const CHARACTER_THREEVIEW_LAYOUT_INPUT_FILENAME = "storyboard_character_threeview_layout_ref.png";
 const CHARACTER_THREEVIEW_LAYOUT_TOKEN = "THREEVIEW_LAYOUT_IMAGE_PATH";
 const CHARACTER_THREEVIEW_OUTPUT_PREFIX = "Storyboard/character_orthoview_{{SHOT_ID}}";
+const MAX_CHARACTER_EVIDENCE_REPORT_BYTES = 8 * 1024 * 1024;
 const CHARACTER_ANCHOR_OUTPUT_PREFIX = "Storyboard/character_anchor_{{SHOT_ID}}";
 const DEFAULT_SKYBOX_LORA = "View360.safetensors";
 const DEFAULT_CHARACTER_NEGATIVE_PROMPT =
   "multiple people, two people, extra person, crowd, group shot, scene background, fighting pose, weapon action, cut off body, half body, close-up crop, props blocking body, multiple angles, two angles, multi view, multiview, turnaround sheet, character sheet, contact sheet, split screen, diptych, triptych, collage, duplicated body, mirrored body, deformed anatomy, bad anatomy, bad proportions, warped body, twisted torso, extra limbs, malformed hands, fused fingers, long neck, asymmetrical eyes";
+
+const CHARACTER_LORA_STATUSES: Array<{ value: CharacterLoraProfile["status"]; label: string }> = [
+  { value: "unconfigured", label: "未配置" },
+  { value: "dataset_ready", label: "数据集就绪" },
+  { value: "training", label: "训练中" },
+  { value: "failed", label: "失败" }
+];
+
+function createCharacterIdentityPack(name: string, frontPath: string, sidePath: string, backPath: string): CharacterIdentityPack {
+  const front = frontPath.trim();
+  const side = sidePath.trim();
+  const back = backPath.trim();
+  return {
+    version: "v1",
+    triggerWord: normalizeCharacterTriggerWord(name),
+    species: "human",
+    speciesTraits: [],
+    styleContractId: CHARACTER_IDENTITY_STYLE_CONTRACT.id,
+    styleContractVersion: CHARACTER_IDENTITY_STYLE_CONTRACT.version,
+    styleContractDigest: CHARACTER_IDENTITY_STYLE_CONTRACT.digest,
+    faceMasterPath: front,
+    faceLeftPath: side || undefined,
+    faceRightPath: side || undefined,
+    hairBackPath: back || undefined,
+    bodyFrontPath: front,
+    bodySidePath: side || undefined,
+    bodyBackPath: back || undefined,
+    immutableTraits: [],
+    forbiddenChanges: [],
+    approvedHeroFramePaths: [],
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function createCharacterLora(provider?: string): CharacterLoraProfile {
+  const resolvedProvider = resolveCharacterLoraProvider(provider);
+  return {
+    provider: resolvedProvider.value,
+    modelName: resolvedProvider.modelName,
+    loraName: "",
+    strength: 1,
+    version: "v1",
+    status: "unconfigured"
+  };
+}
+
+function formatCharacterVersion(version: string): string {
+  return version.startsWith("v") ? version : `v${version}`;
+}
+
+function benchmarkEvidenceErrorMessage(reason: string): string {
+  const messages: Record<string, string> = {
+    evidence_missing: "未找到可验证的基准证据。",
+    evidence_digest_mismatch: "证据摘要校验失败，文件可能已被修改。",
+    report_not_evidence_eligible: "该报告未通过 8 镜头证据资格检查。",
+    report_digest_mismatch: "报告摘要校验失败，文件可能已被修改。",
+    character_mismatch: "报告中的角色与当前角色不一致。",
+    provider_mismatch: "报告提供方与当前角色生成提供方不一致。",
+    identity_version_mismatch: "报告身份版本与当前身份包不一致。",
+    identity_metadata_mismatch: "角色触发词、发型或其他固定身份特征已变化（identity_metadata_mismatch）。",
+    lora_name_mismatch: "报告 LoRA 文件与当前配置不一致。",
+    lora_version_mismatch: "报告 LoRA 版本与当前配置不一致。",
+    model_mismatch: "报告模型与当前配置不一致。",
+    strength_mismatch: "报告 LoRA 强度与当前配置不一致。",
+    candidate_status_invalid: "仅数据集就绪或训练中的 LoRA 候选可导入基准证据。",
+    candidate_status_mismatch: "报告候选状态与当前 LoRA 训练状态不一致。",
+    workflow_digest_mismatch: "报告工作流与当前提供方工作流不一致。",
+    workflow_terminal_mismatch: "报告终端输出节点与当前工作流不一致。",
+    workflow_model_mismatch: "报告终端模型与当前工作流不一致。",
+    evidence_shape_invalid: "证据缺少终端 LoRA、评估器或 8 镜头证明。",
+    workflow_missing: "当前提供方尚未配置角色生成工作流。",
+    workflow_invalid: "当前角色生成工作流未通过终端绑定检查。",
+    generation_mode_mismatch: "报告轨道与所选导入槽不一致（generation_mode_mismatch）。",
+    benchmark_version_mismatch: "当前基准版本与证据不一致（benchmark_version_mismatch）。",
+    prompt_template_version_mismatch: "当前提示词模板版本与证据不一致（prompt_template_version_mismatch）。",
+    dimension_threshold_mismatch: "当前评估阈值与证据不一致（dimension_threshold_mismatch）。",
+    fixture_digest_mismatch: "基准夹具已变化（fixture_digest_mismatch）。",
+    reference_manifest_mismatch: "身份参考图已变化（reference_manifest_mismatch）。",
+    evaluator_id_mismatch: "评估器标识已变化（evaluator_id_mismatch）。",
+    evaluator_version_mismatch: "评估器版本已变化（evaluator_version_mismatch）。",
+    evaluator_implementation_mismatch: "评估器实现已变化（evaluator_implementation_mismatch）。",
+    evaluator_policy_mismatch: "评估器策略已变化（evaluator_policy_mismatch）。",
+    reference_manifest_incomplete: "当前身份包缺少八镜头所需参考图。",
+    reference_hash_missing: "无法读取并校验当前身份参考图。",
+    reference_read_failed: "无法读取当前身份参考图。",
+    reference_image_invalid: "身份参考图不是受支持的 PNG、JPEG 或 WebP。",
+    identity_context_incomplete: "当前身份包信息不完整。",
+    evidence_context_incomplete: "当前证据上下文不完整。",
+    json_invalid: "所选文件不是有效的 JSON 报告。",
+    file_read_failed: "无法读取所选基准报告文件。",
+    report_file_size_invalid: "基准报告必须是不超过 8 MiB 的非空 JSON 文件。",
+    reference_revalidation_pending: "正在重新读取当前参考图字节，证据暂不可用。"
+  };
+  return messages[reason] ?? `基准证据无效：${reason}`;
+}
+
+function identityControlId(asset: Asset, field: string): string {
+  return `character-${asset.id}-${field}`;
+}
 
 type CharacterAssetWorkflowMode = "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
@@ -861,6 +985,23 @@ function loadComfySettingsFromLocalStorage(): ComfySettings | null {
       parsedCharacterWorkflowJson.trim() && !workflowHasKnownBrokenCharacterAdvancedDefaults(parsedCharacterWorkflowJson)
         ? parsedCharacterWorkflowJson
         : buildCharacterAdvancedWorkflowTemplateJson(characterRenderPreset);
+    const characterGenerationProvider =
+      parsed.characterGenerationProvider === "flux2_klein_4b" || parsed.characterGenerationProvider === "qwen_image_edit_2511"
+        ? parsed.characterGenerationProvider
+        : "qwen_image_edit_2511";
+    const rawCharacterWorkflowMap = parsed.characterGenerationWorkflowJsonByProvider ?? {};
+    const characterGenerationWorkflowJsonByProvider = {
+      qwen_image_edit_2511:
+        typeof rawCharacterWorkflowMap.qwen_image_edit_2511 === "string" ? rawCharacterWorkflowMap.qwen_image_edit_2511 : "",
+      flux2_klein_4b:
+        typeof rawCharacterWorkflowMap.flux2_klein_4b === "string" ? rawCharacterWorkflowMap.flux2_klein_4b : ""
+    };
+    if (
+      !characterGenerationWorkflowJsonByProvider[characterGenerationProvider].trim() &&
+      typeof parsed.characterGenerationWorkflowJson === "string"
+    ) {
+      characterGenerationWorkflowJsonByProvider[characterGenerationProvider] = parsed.characterGenerationWorkflowJson;
+    }
     const skyboxWorkflowJson =
       typeof parsed.skyboxWorkflowJson === "string" && parsed.skyboxWorkflowJson.trim()
         ? parsed.skyboxWorkflowJson
@@ -874,11 +1015,17 @@ function loadComfySettingsFromLocalStorage(): ComfySettings | null {
       comfyRootDir: parsed.comfyRootDir ?? "",
       imageWorkflowJson: parsed.imageWorkflowJson ?? "",
       storyboardImageWorkflowMode:
-        parsed.storyboardImageWorkflowMode === "builtin_qwen" || parsed.storyboardImageWorkflowMode === "mature_asset_guided"
+        parsed.storyboardImageWorkflowMode === "builtin_klein_reference" ||
+        parsed.storyboardImageWorkflowMode === "builtin_zimage" ||
+        parsed.storyboardImageWorkflowMode === "builtin_qwen" ||
+        parsed.storyboardImageWorkflowMode === "mature_asset_guided"
           ? parsed.storyboardImageWorkflowMode
-          : "mature_asset_guided",
+          : "builtin_klein_reference",
       storyboardImageModelName: parsed.storyboardImageModelName ?? DEFAULT_CHARACTER_ASSET_MODEL,
       videoWorkflowJson: parsed.videoWorkflowJson ?? parsed.imageWorkflowJson ?? "",
+      characterGenerationProvider,
+      characterGenerationWorkflowJson: characterGenerationWorkflowJsonByProvider[characterGenerationProvider],
+      characterGenerationWorkflowJsonByProvider,
       characterWorkflowJson,
       skyboxWorkflowJson,
       characterAssetWorkflowMode,
@@ -939,6 +1086,16 @@ export function AssetPanel() {
   const updateAsset = useStoryboardStore((state) => state.updateAsset);
   const removeAsset = useStoryboardStore((state) => state.removeAsset);
   const currentSequenceId = useStoryboardStore((state) => state.currentSequenceId);
+  const savedCharacterProvider = resolveCharacterLoraProvider(
+    loadComfySettingsFromLocalStorage()?.characterGenerationProvider
+  ).value;
+  const evidenceConfigFingerprint = JSON.stringify((() => {
+    const settings = loadComfySettingsFromLocalStorage();
+    return {
+      provider: settings?.characterGenerationProvider ?? "",
+      workflows: settings?.characterGenerationWorkflowJsonByProvider ?? {}
+    };
+  })());
   const [tab, setTab] = useState<AssetType>("character");
   const [name, setName] = useState("");
   const [filePath, setFilePath] = useState("");
@@ -952,12 +1109,20 @@ export function AssetPanel() {
   const [skyboxFacePaths, setSkyboxFacePaths] = useState<Partial<Record<SkyboxFace, string>>>({});
   const [eventFaceByAsset, setEventFaceByAsset] = useState<Record<string, SkyboxFace>>({});
   const [eventPromptByAsset, setEventPromptByAsset] = useState<Record<string, string>>({});
+  const [benchmarkEvidenceErrorByAsset, setBenchmarkEvidenceErrorByAsset] = useState<Record<string, string>>({});
+  const [evidenceBadgeChecks, setEvidenceBadgeChecks] = useState<Record<string, { state: "loading" | "valid" | "invalid"; reason: string }>>({});
+  const [evidenceRevalidationEpoch, setEvidenceRevalidationEpoch] = useState(0);
   const [busy, setBusy] = useState(false);
 
   const scopedAssets = useMemo(
     () => assets.filter((asset) => asset.type === tab),
     [assets, tab]
   );
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setEvidenceRevalidationEpoch((value) => value + 1), 15_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const onAdd = () => {
     const savedComfySettings = loadComfySettingsFromLocalStorage();
@@ -973,6 +1138,9 @@ export function AssetPanel() {
       characterFrontPath: tab === "character" ? frontPath : undefined,
       characterSidePath: tab === "character" ? sidePath : undefined,
       characterBackPath: tab === "character" ? backPath : undefined,
+      characterIdentityPack:
+        tab === "character" ? createCharacterIdentityPack(name, frontPath, sidePath, backPath) : undefined,
+      characterLora: tab === "character" ? createCharacterLora(savedComfySettings?.characterGenerationProvider) : undefined,
       characterAnchorModelName:
         tab === "character" && savedComfySettings
           ? resolveCharacterAnchorModelForContext(savedComfySettings, characterDescription.trim() || name.trim())
@@ -1191,6 +1359,214 @@ export function AssetPanel() {
     }
   };
 
+  const resolveCharacterEvidenceWorkflow = (
+    asset: Asset,
+    mode: CharacterGenerationMode,
+    identity: CharacterIdentityPack,
+    lora: CharacterLoraProfile
+  ) => {
+    const settings = loadComfySettingsFromLocalStorage();
+    const actualProvider = resolveCharacterLoraProvider(settings?.characterGenerationProvider).value;
+    if (mode === "lora_augmented" && lora.provider !== actualProvider) return { ok: false as const, reason: "provider_mismatch" };
+    const workflowJson = settings?.characterGenerationWorkflowJsonByProvider?.[actualProvider]?.trim() ?? "";
+    if (!workflowJson) return { ok: false as const, reason: "workflow_missing" };
+    const workflowProof = validateSequentialProviderWorkflow(actualProvider, workflowJson);
+    const workflowDigest = recomputeCharacterWorkflowDigest(workflowJson);
+    if (!workflowProof.ok || !workflowDigest) return { ok: false as const, reason: "workflow_invalid" };
+    return {
+      ok: true as const,
+      asset: { ...asset, characterIdentityPack: identity, characterLora: lora },
+      mode,
+      providerId: actualProvider,
+      modelName: resolveCharacterLoraProvider(actualProvider).modelName,
+      workflowProof: {
+        ...workflowProof,
+        workflowDigest
+      }
+    };
+  };
+
+  const resolveEvidenceContext = async (
+    asset: Asset,
+    mode: CharacterGenerationMode,
+    identity: CharacterIdentityPack,
+    lora: CharacterLoraProfile
+  ) => {
+    const workflow = resolveCharacterEvidenceWorkflow(asset, mode, identity, lora);
+    if (!workflow.ok) return workflow;
+    try {
+      const referenceSourceHashes = await loadCharacterIdentityReferenceSourceHashes(identity);
+      return buildTrustedCharacterGenerationEvidenceContext({ ...workflow, referenceSourceHashes });
+    } catch (error) {
+      return { ok: false as const, reason: error instanceof Error ? error.message : "reference_read_failed" };
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const characterAssets = assets.filter((asset) => asset.type === "character" && (asset.characterZeroShotEvidence || asset.characterLora?.benchmarkEvidence));
+    const loading = Object.fromEntries(characterAssets.flatMap((asset) => [
+      ...(asset.characterZeroShotEvidence ? [[`${asset.id}:zero_shot_multi_reference`, { state: "loading", reason: "reference_revalidation_pending" }]] : []),
+      ...(asset.characterLora?.benchmarkEvidence ? [[`${asset.id}:lora_augmented`, { state: "loading", reason: "reference_revalidation_pending" }]] : [])
+    ])) as Record<string, { state: "loading" | "valid" | "invalid"; reason: string }>;
+    setEvidenceBadgeChecks(loading);
+    void Promise.all(characterAssets.map(async (asset) => {
+      const identity = asset.characterIdentityPack ?? createCharacterIdentityPack(asset.name, asset.characterFrontPath ?? asset.filePath, asset.characterSidePath ?? "", asset.characterBackPath ?? "");
+      const lora = asset.characterLora ?? createCharacterLora(savedCharacterProvider);
+      const entries: Array<[string, { state: "valid" | "invalid"; reason: string }]> = [];
+      for (const mode of ["zero_shot_multi_reference", "lora_augmented"] as const) {
+        const evidence = mode === "zero_shot_multi_reference" ? asset.characterZeroShotEvidence : lora.benchmarkEvidence;
+        if (!evidence) continue;
+        const contextResult = await resolveEvidenceContext(asset, mode, identity, lora);
+        if (!contextResult.ok) {
+          entries.push([`${asset.id}:${mode}`, { state: "invalid", reason: contextResult.reason }]);
+          continue;
+        }
+        const trustedReceiptVerification = await verifyCharacterEvidenceReceipt(evidence, loadComfySettingsFromLocalStorage()?.comfyRootDir ?? "");
+        const validation = validateStoredCharacterGenerationEvidence(evidence, contextResult.context, { trustedReceiptVerification });
+        entries.push([`${asset.id}:${mode}`, { state: validation.valid ? "valid" : "invalid", reason: validation.reason }]);
+      }
+      return entries;
+    })).then((allEntries) => {
+      if (!cancelled) setEvidenceBadgeChecks(Object.fromEntries(allEntries.flat()));
+    }).catch(() => {
+      if (!cancelled) setEvidenceBadgeChecks(Object.fromEntries(characterAssets.flatMap((asset) => [
+        ...(asset.characterZeroShotEvidence ? [[`${asset.id}:zero_shot_multi_reference`, { state: "invalid", reason: "reference_read_failed" }]] : []),
+        ...(asset.characterLora?.benchmarkEvidence ? [[`${asset.id}:lora_augmented`, { state: "invalid", reason: "reference_read_failed" }]] : [])
+      ])));
+    });
+    return () => { cancelled = true; };
+  }, [assets, savedCharacterProvider, evidenceConfigFingerprint, evidenceRevalidationEpoch]);
+
+  const persistCharacterIdentity = (asset: Asset, patch: Partial<CharacterIdentityPack>) => {
+    const current =
+      asset.characterIdentityPack ??
+      createCharacterIdentityPack(
+        asset.name,
+        asset.characterFrontPath ?? asset.filePath,
+        asset.characterSidePath ?? "",
+        asset.characterBackPath ?? ""
+      );
+    const requestedSpecies = patch.species ?? current.species;
+    const nextSpecies = CHARACTER_SPECIES_OPTIONS.some((option) => option.value === requestedSpecies) ? requestedSpecies : "human";
+    const nextIdentity = {
+      ...current,
+      ...patch,
+      triggerWord: patch.triggerWord ?? current.triggerWord,
+      immutableTraits: patch.immutableTraits ?? current.immutableTraits,
+      forbiddenChanges: patch.forbiddenChanges ?? current.forbiddenChanges,
+      species: nextSpecies,
+      speciesTraits: nextSpecies === "human" ? [] : patch.speciesTraits ?? current.speciesTraits ?? [],
+      styleContractId: CHARACTER_IDENTITY_STYLE_CONTRACT.id,
+      styleContractVersion: CHARACTER_IDENTITY_STYLE_CONTRACT.version,
+      styleContractDigest: CHARACTER_IDENTITY_STYLE_CONTRACT.digest,
+      approvedHeroFramePaths: patch.approvedHeroFramePaths ?? current.approvedHeroFramePaths,
+      updatedAt: new Date().toISOString()
+    };
+    const referenceChanged = [
+      "faceMasterPath", "faceLeftPath", "faceRightPath", "hairBackPath",
+      "bodyFrontPath", "bodySidePath", "bodyBackPath", "neutralExpressionPath"
+    ].some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    const invalidated = invalidateCharacterGenerationEvidence({
+      ...asset,
+      characterIdentityPack: nextIdentity,
+      characterLora: asset.characterLora ?? createCharacterLora(savedCharacterProvider)
+    }, referenceChanged ? "reference" : "identity");
+    updateAsset(asset.id, {
+      characterIdentityPack: nextIdentity,
+      characterLora: invalidated.characterLora,
+      characterZeroShotEvidence: invalidated.characterZeroShotEvidence,
+      currentZeroContext: invalidated.currentZeroContext,
+      currentLoraContext: invalidated.currentLoraContext
+    });
+    setBenchmarkEvidenceErrorByAsset((previous) => ({
+      ...previous,
+      [`${asset.id}:zero_shot_multi_reference`]: referenceChanged ? "reference_manifest_mismatch" : Object.prototype.hasOwnProperty.call(patch, "version") ? "identity_version_mismatch" : "identity_metadata_mismatch",
+      [`${asset.id}:lora_augmented`]: referenceChanged ? "reference_manifest_mismatch" : Object.prototype.hasOwnProperty.call(patch, "version") ? "identity_version_mismatch" : "identity_metadata_mismatch"
+    }));
+  };
+
+  const persistCharacterLora = (asset: Asset, patch: Partial<CharacterLoraProfile>) => {
+    const current = asset.characterLora ?? createCharacterLora(savedCharacterProvider);
+    const resolvedProvider = resolveCharacterLoraProvider(patch.provider ?? current.provider);
+    const nextProfile: CharacterLoraProfile = {
+        ...current,
+        ...patch,
+        provider: resolvedProvider.value,
+        modelName: resolvedProvider.modelName,
+        strength: clampCharacterLoraStrength(patch.strength ?? current.strength)
+    };
+    const invalidated = invalidateCharacterGenerationEvidence({ ...asset, characterLora: nextProfile }, "lora");
+    const invalidatedProfile = invalidated.characterLora ?? invalidateCharacterLoraEvidence(nextProfile);
+    if (patch.status && patch.status !== "ready") invalidatedProfile.status = patch.status;
+    updateAsset(asset.id, {
+      characterLora: invalidatedProfile,
+      characterZeroShotEvidence: invalidated.characterZeroShotEvidence,
+      currentZeroContext: invalidated.currentZeroContext,
+      currentLoraContext: invalidated.currentLoraContext
+    });
+    const invalidationReason = inferCharacterLoraEvidenceInvalidationReason(patch);
+    setBenchmarkEvidenceErrorByAsset((previous) => ({ ...previous, [`${asset.id}:lora_augmented`]: invalidationReason }));
+  };
+
+  const onImportCharacterGenerationEvidence = async (
+    asset: Asset,
+    mode: CharacterGenerationMode,
+    file?: File
+  ) => {
+    if (!file) return;
+    if (!Number.isFinite(file.size) || file.size <= 0 || file.size > MAX_CHARACTER_EVIDENCE_REPORT_BYTES) {
+      setBenchmarkEvidenceErrorByAsset((previous) => ({ ...previous, [`${asset.id}:${mode}`]: "report_file_size_invalid" }));
+      return;
+    }
+    const identity =
+      asset.characterIdentityPack ??
+      createCharacterIdentityPack(
+        asset.name,
+        asset.characterFrontPath ?? asset.filePath,
+        asset.characterSidePath ?? "",
+        asset.characterBackPath ?? ""
+      );
+    const lora = asset.characterLora ?? createCharacterLora(savedCharacterProvider);
+    const contextResult = await resolveEvidenceContext(asset, mode, identity, lora);
+    if (!contextResult.ok) {
+      setBenchmarkEvidenceErrorByAsset((previous) => ({
+        ...previous,
+        [`${asset.id}:${mode}`]: contextResult.reason
+      }));
+      return;
+    }
+    try {
+      const report = JSON.parse(await file.text()) as Record<string, unknown>;
+      const comfyRootDir = loadComfySettingsFromLocalStorage()?.comfyRootDir ?? "";
+      const trustedReceipt = await attestCharacterGenerationReport(report, comfyRootDir);
+      report.trustedReceipt = trustedReceipt;
+      const trustedReceiptVerification = await verifyCharacterEvidenceReceipt({ ...report, trustedReceipt }, comfyRootDir);
+      const imported = applyCharacterGenerationEvidenceImport({
+        asset: { ...asset, characterIdentityPack: identity, characterLora: lora },
+        mode,
+        report,
+        context: contextResult.context,
+        reportLabel: file.name,
+        trustedReceiptVerification
+      });
+      if (!imported.valid || !imported.patch) {
+        setBenchmarkEvidenceErrorByAsset((previous) => ({
+          ...previous,
+          [`${asset.id}:${mode}`]: imported.reason
+        }));
+        return;
+      }
+      updateAsset(asset.id, imported.patch);
+      setBenchmarkEvidenceErrorByAsset((previous) => ({ ...previous, [`${asset.id}:${mode}`]: "" }));
+    } catch (error) {
+      setBenchmarkEvidenceErrorByAsset((previous) => ({
+        ...previous,
+        [`${asset.id}:${mode}`]: error instanceof SyntaxError ? "json_invalid" : error instanceof Error && /^[a-z][a-z0-9_]{2,80}$/i.test(error.message) ? error.message : "file_read_failed"
+      }));
+    }
+  };
+
   const onDelete = async (assetId: string) => {
     const ok = await confirmDialog({
       title: "删除人物",
@@ -1331,7 +1707,7 @@ export function AssetPanel() {
       </div>
       <ul className="asset-list">
         {scopedAssets.map((asset) => (
-          <li key={asset.id}>
+          <li className={asset.type === "character" ? "asset-card asset-card-character" : "asset-card"} key={asset.id}>
             <div>
               <strong>{asset.name}</strong>
               <small>
@@ -1353,6 +1729,279 @@ export function AssetPanel() {
                 />
               </label>
             )}
+            {asset.type === "character" && (() => {
+              const identity =
+                asset.characterIdentityPack ??
+                createCharacterIdentityPack(
+                  asset.name,
+                  asset.characterFrontPath ?? asset.filePath,
+                  asset.characterSidePath ?? "",
+                  asset.characterBackPath ?? ""
+                );
+              const lora = asset.characterLora ?? createCharacterLora(savedCharacterProvider);
+              const displaySpecies = CHARACTER_SPECIES_OPTIONS.some((option) => option.value === identity.species) ? identity.species : "human";
+              const identityCompleteness = countCharacterIdentityCompleteness(identity);
+              const regressionScore = asset.characterConsistencyBaseline?.lastRegressionScore;
+              const zeroBadgeCheck = evidenceBadgeChecks[`${asset.id}:zero_shot_multi_reference`];
+              const loraBadgeCheck = evidenceBadgeChecks[`${asset.id}:lora_augmented`];
+              const zeroEvidenceValidation = { valid: zeroBadgeCheck?.state === "valid", reason: zeroBadgeCheck?.reason ?? (asset.characterZeroShotEvidence ? "reference_revalidation_pending" : "evidence_missing") };
+              const loraEvidenceValidation = { valid: loraBadgeCheck?.state === "valid", reason: loraBadgeCheck?.reason ?? (lora.benchmarkEvidence ? "reference_revalidation_pending" : "evidence_missing") };
+              const evidenceReady = lora.status === "ready" && loraEvidenceValidation.valid;
+              const manualStatus = lora.status === "ready"
+                ? (lora.loraName.trim() ? "dataset_ready" : "unconfigured")
+                : lora.status;
+              const displayTrainingStatus = evidenceReady
+                ? "可用"
+                : CHARACTER_LORA_STATUSES.find((item) => item.value === manualStatus)?.label ?? manualStatus;
+              return (
+                <section
+                  aria-label={`${asset.name} 的角色身份与 LoRA`}
+                  data-invalidation-reasons="reference_manifest_mismatch evaluator_implementation_mismatch"
+                  className="character-identity-editor">
+                  <div className="character-identity-heading">
+                    <strong>角色身份与 LoRA</strong>
+                    <span className="character-identity-status-chip" role="status">
+                      已完成 {identityCompleteness}/7 · 身份 {formatCharacterVersion(identity.version)} · LoRA {formatCharacterVersion(lora.version)} · 供应商：{lora.provider} · 训练：{displayTrainingStatus} · 回归分：{typeof regressionScore === "number" ? regressionScore.toFixed(2) : "未评估"}
+                    </span>
+                  </div>
+                  <div className="character-identity-grid">
+                    <label htmlFor={identityControlId(asset, "identity-version")}>
+                      身份版本
+                      <input
+                        id={identityControlId(asset, "identity-version")}
+                        onChange={(event) => persistCharacterIdentity(asset, { version: event.target.value })}
+                        type="text"
+                        value={identity.version}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-trigger-word")}>
+                      触发词
+                      <input
+                        id={identityControlId(asset, "identity-trigger-word")}
+                        onChange={(event) => persistCharacterIdentity(asset, { triggerWord: event.target.value })}
+                        placeholder="例如：char_shenyan"
+                        type="text"
+                        value={identity.triggerWord}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-species")}>
+                      species
+                      <select
+                        id={identityControlId(asset, "identity-species")}
+                        onChange={(event) => {
+                          const species = event.target.value as CharacterSpeciesId;
+                          persistCharacterIdentity(asset, { species, speciesTraits: species === "human" ? [] : identity.speciesTraits ?? [] });
+                        }}
+                        value={displaySpecies}
+                      >
+                        {CHARACTER_SPECIES_OPTIONS.map((species) => (
+                          <option key={species.value} value={species.value}>{species.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {displaySpecies !== "human" && (
+                      <label className="character-identity-wide" htmlFor={identityControlId(asset, "identity-species-traits")}>
+                        species traits
+                        <textarea
+                          defaultValue={(identity.speciesTraits ?? []).join("\n")}
+                          id={identityControlId(asset, "identity-species-traits")}
+                          onBlur={(event) => persistCharacterIdentity(asset, { speciesTraits: parseCharacterIdentityList(event.target.value) })}
+                          placeholder="one explicit species trait per line"
+                          rows={2}
+                        />
+                      </label>
+                    )}
+                    <small className="character-identity-wide" role="status">
+                      Style: {identity.styleContractId ?? "not persisted"} · {identity.styleContractVersion ?? "not persisted"} · {(identity.styleContractDigest ?? "not persisted").slice(0, 12)}
+                    </small>
+                    <label htmlFor={identityControlId(asset, "identity-face-master")}>
+                      主脸参考
+                      <input
+                        id={identityControlId(asset, "identity-face-master")}
+                        onChange={(event) => persistCharacterIdentity(asset, { faceMasterPath: event.target.value })}
+                        type="text"
+                        value={identity.faceMasterPath}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-face-left")}>
+                      左脸参考
+                      <input
+                        id={identityControlId(asset, "identity-face-left")}
+                        onChange={(event) => persistCharacterIdentity(asset, { faceLeftPath: event.target.value || undefined })}
+                        type="text"
+                        value={identity.faceLeftPath ?? ""}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-face-right")}>
+                      右脸参考
+                      <input
+                        id={identityControlId(asset, "identity-face-right")}
+                        onChange={(event) => persistCharacterIdentity(asset, { faceRightPath: event.target.value || undefined })}
+                        type="text"
+                        value={identity.faceRightPath ?? ""}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-hair-back")}>
+                      后发参考
+                      <input
+                        id={identityControlId(asset, "identity-hair-back")}
+                        onChange={(event) => persistCharacterIdentity(asset, { hairBackPath: event.target.value || undefined })}
+                        type="text"
+                        value={identity.hairBackPath ?? ""}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-body-front")}>
+                      正面身体路径
+                      <input
+                        id={identityControlId(asset, "identity-body-front")}
+                        onChange={(event) => persistCharacterIdentity(asset, { bodyFrontPath: event.target.value })}
+                        type="text"
+                        value={identity.bodyFrontPath}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-body-side")}>
+                      侧面身体路径
+                      <input
+                        id={identityControlId(asset, "identity-body-side")}
+                        onChange={(event) => persistCharacterIdentity(asset, { bodySidePath: event.target.value || undefined })}
+                        type="text"
+                        value={identity.bodySidePath ?? ""}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-body-back")}>
+                      背面身体路径
+                      <input
+                        id={identityControlId(asset, "identity-body-back")}
+                        onChange={(event) => persistCharacterIdentity(asset, { bodyBackPath: event.target.value || undefined })}
+                        type="text"
+                        value={identity.bodyBackPath ?? ""}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "identity-expression-neutral")}>
+                      中性表情参考
+                      <input
+                        id={identityControlId(asset, "identity-expression-neutral")}
+                        onChange={(event) => persistCharacterIdentity(asset, { neutralExpressionPath: event.target.value || undefined })}
+                        type="text"
+                        value={identity.neutralExpressionPath ?? ""}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "character-lora-file")}>
+                      LoRA 文件
+                      <input
+                        id={identityControlId(asset, "character-lora-file")}
+                        onChange={(event) => persistCharacterLora(asset, { loraName: event.target.value })}
+                        placeholder="character-v1.safetensors"
+                        type="text"
+                        value={lora.loraName}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "character-lora-strength")}>
+                      LoRA 强度
+                      <input
+                        id={identityControlId(asset, "character-lora-strength")}
+                        max="1.5"
+                        min="0"
+                        onChange={(event) => persistCharacterLora(asset, { strength: clampCharacterLoraStrength(Number(event.target.value)) })}
+                        step="0.05"
+                        type="number"
+                        value={lora.strength}
+                      />
+                    </label>
+                    <label htmlFor={identityControlId(asset, "character-lora-provider")}>
+                      供应商
+                      <select
+                        id={identityControlId(asset, "character-lora-provider")}
+                        onChange={(event) => persistCharacterLora(asset, { provider: event.target.value as CharacterLoraProviderId })}
+                        value={lora.provider}
+                      >
+                        {CHARACTER_LORA_PROVIDER_OPTIONS.map((provider) => (
+                          <option key={provider.value} value={provider.value}>{provider.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label htmlFor={identityControlId(asset, "character-lora-status")}>
+                      训练状态
+                      <select
+                        id={identityControlId(asset, "character-lora-status")}
+                        onChange={(event) => persistCharacterLora(asset, { status: event.target.value as CharacterLoraProfile["status"] })}
+                        value={manualStatus}
+                      >
+                        {CHARACTER_LORA_STATUSES.map((status) => (
+                          <option key={status.value} value={status.value}>{status.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="character-identity-wide" htmlFor={identityControlId(asset, "character-zero-shot-evidence")}>
+                      导入零样本基准证据（JSON）
+                      <input
+                        accept=".json,application/json"
+                        id={identityControlId(asset, "character-zero-shot-evidence")}
+                        onChange={(event) => void onImportCharacterGenerationEvidence(asset, "zero_shot_multi_reference", event.target.files?.[0])}
+                        type="file"
+                      />
+                    </label>
+                    <small className={`character-identity-wide character-evidence-badge ${zeroEvidenceValidation.valid ? "is-verified" : asset.characterZeroShotEvidence && zeroBadgeCheck?.state !== "loading" ? "is-stale" : "is-pending"}`} role="status">
+                      {asset.characterZeroShotEvidence && (!zeroBadgeCheck || zeroBadgeCheck.state === "loading")
+                        ? "待复核 · 正在重新读取当前参考图字节。"
+                        : zeroEvidenceValidation.valid
+                        ? `零样本已验证 · ${asset.characterZeroShotEvidence?.reportLabel ?? "已导入报告"} · ${asset.characterZeroShotEvidence?.generationMode} · ${asset.characterZeroShotEvidence?.modelName} · 身份 ${asset.characterZeroShotEvidence?.identityPackVersion} · 评估器 ${asset.characterZeroShotEvidence?.evaluatorVersion} · ${asset.characterZeroShotEvidence?.verifiedAt}`
+                        : asset.characterZeroShotEvidence
+                          ? `证据已失效 · ${zeroEvidenceValidation.reason} · ${benchmarkEvidenceErrorMessage(zeroEvidenceValidation.reason)}`
+                          : "待复核 · 尚未导入零样本八镜头证据。"}
+                    </small>
+                    {benchmarkEvidenceErrorByAsset[`${asset.id}:zero_shot_multi_reference`] && (
+                      <small className="character-identity-wide character-evidence-error" role="alert">
+                        {benchmarkEvidenceErrorMessage(benchmarkEvidenceErrorByAsset[`${asset.id}:zero_shot_multi_reference`])}
+                      </small>
+                    )}
+                    <label className="character-identity-wide" htmlFor={identityControlId(asset, "character-lora-evidence")}>
+                      导入 LoRA 基准证据（JSON）
+                      <input
+                        accept=".json,application/json"
+                        id={identityControlId(asset, "character-lora-evidence")}
+                        onChange={(event) => void onImportCharacterGenerationEvidence(asset, "lora_augmented", event.target.files?.[0])}
+                        type="file"
+                      />
+                    </label>
+                    <small className={`character-identity-wide character-evidence-badge ${loraEvidenceValidation.valid && evidenceReady ? "is-verified" : lora.benchmarkEvidence && loraBadgeCheck?.state !== "loading" ? "is-stale" : "is-pending"}`} role="status">
+                      {lora.benchmarkEvidence && (!loraBadgeCheck || loraBadgeCheck.state === "loading")
+                        ? "待复核 · 正在重新读取当前参考图字节。"
+                        : loraEvidenceValidation.valid && evidenceReady
+                        ? `LoRA 已验证 · ${lora.benchmarkEvidence?.reportLabel ?? "已导入报告"} · ${lora.benchmarkEvidence?.generationMode} · ${lora.benchmarkEvidence?.modelName} · 身份 ${lora.benchmarkEvidence?.identityPackVersion} · 评估器 ${lora.benchmarkEvidence?.evaluatorVersion} · ${lora.benchmarkEvidence?.verifiedAt}`
+                        : lora.benchmarkEvidence
+                          ? `证据已失效 · ${loraEvidenceValidation.reason} · ${benchmarkEvidenceErrorMessage(loraEvidenceValidation.reason)}`
+                          : "待复核 · 尚未导入 LoRA 八镜头证据。"}
+                    </small>
+                    {benchmarkEvidenceErrorByAsset[`${asset.id}:lora_augmented`] && (
+                      <small className="character-identity-wide character-evidence-error" role="alert">
+                        {benchmarkEvidenceErrorMessage(benchmarkEvidenceErrorByAsset[`${asset.id}:lora_augmented`])}
+                      </small>
+                    )}
+                    <label className="character-identity-wide" htmlFor={identityControlId(asset, "identity-immutable-traits")}>
+                      不可变特征
+                      <textarea
+                        defaultValue={identity.immutableTraits.join("\n")}
+                        id={identityControlId(asset, "identity-immutable-traits")}
+                        onBlur={(event) => persistCharacterIdentity(asset, { immutableTraits: parseCharacterIdentityList(event.target.value) })}
+                        placeholder="每行一项，例如：黑色短发"
+                        rows={2}
+                      />
+                    </label>
+                    <label className="character-identity-wide" htmlFor={identityControlId(asset, "identity-forbidden-changes")}>
+                      禁止改变
+                      <textarea
+                        defaultValue={identity.forbiddenChanges.join("\n")}
+                        id={identityControlId(asset, "identity-forbidden-changes")}
+                        onBlur={(event) => persistCharacterIdentity(asset, { forbiddenChanges: parseCharacterIdentityList(event.target.value) })}
+                        placeholder="每行一项，例如：不得改变瞳色"
+                        rows={2}
+                      />
+                    </label>
+                  </div>
+                </section>
+              );
+            })()}
             {asset.type === "skybox" && (
               <div className="shot-batch-grid">
                 <small>

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-07T08:36:35.070Z",
+  "comfyRoot": "C:\\Users\\Administrator\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Shared\\models",
+  "baseUrl": "http://127.0.0.1:8188",
+  "scanner": {
+    "online": true,
+    "missingPaths": ["models/ipadapter"],
+    "installedCustomNodePackages": [],
+    "endpointDiagnostics": ["/system_stats", "/object_info", "/queue"]
+  },
+  "dependencies": [
+    {"workflowId":"storyboard-zimage-turbo","modelFilename":"z_image_turbo_bf16.safetensors","nodePackage":null,"expectedPath":"models/diffusion_models/z_image_turbo_bf16.safetensors","installed":true,"sourceUrl":"https://huggingface.co/Comfy-Org/z_image_turbo","sha256":null},
+    {"workflowId":"storyboard-zimage-turbo","modelFilename":"qwen_3_4b.safetensors","nodePackage":null,"expectedPath":"models/text_encoders/qwen_3_4b.safetensors","installed":true,"sourceUrl":"https://huggingface.co/Comfy-Org/z_image_turbo","sha256":null},
+    {"workflowId":"storyboard-zimage-turbo","modelFilename":"ae.safetensors","nodePackage":null,"expectedPath":"models/vae/ae.safetensors","installed":true,"sourceUrl":"https://huggingface.co/Comfy-Org/z_image_turbo","sha256":null},
+    {"workflowId":"storyboard-qwen-stageA","modelFilename":"qwen_image_edit_2511_fp8mixed.safetensors","nodePackage":null,"expectedPath":"models/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageA","modelFilename":"Qwen-Image-Lightning-4steps-V1.0.safetensors","nodePackage":null,"expectedPath":"models/loras/Qwen-Image-Lightning-4steps-V1.0.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageA","modelFilename":"qwen_2.5_vl_7b_fp8_scaled.safetensors","nodePackage":null,"expectedPath":"models/clip/qwen_2.5_vl_7b_fp8_scaled.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageA","modelFilename":"qwen_image_vae.safetensors","nodePackage":null,"expectedPath":"models/vae/qwen_image_vae.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageA","modelFilename":null,"nodePackage":"TextEncodeQwenImageEditPlusCustom_lrzjason","expectedPath":"custom_nodes","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageB","modelFilename":"qwen_image_edit_2511_fp8mixed.safetensors","nodePackage":null,"expectedPath":"models/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageB","modelFilename":"Qwen-Image-Lightning-4steps-V1.0.safetensors","nodePackage":null,"expectedPath":"models/loras/Qwen-Image-Lightning-4steps-V1.0.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageB","modelFilename":"qwen_2.5_vl_7b_fp8_scaled.safetensors","nodePackage":null,"expectedPath":"models/clip/qwen_2.5_vl_7b_fp8_scaled.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageB","modelFilename":"qwen_image_vae.safetensors","nodePackage":null,"expectedPath":"models/vae/qwen_image_vae.safetensors","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-qwen-stageB","modelFilename":null,"nodePackage":"TextEncodeQwenImageEditPlusCustom_lrzjason","expectedPath":"custom_nodes","installed":false,"sourceUrl":null,"sha256":null},
+    {"workflowId":"storyboard-single-pass-fallback","modelFilename":null,"nodePackage":"StoryboardSceneNode, StoryboardTurnaroundCharacterNode, StoryboardPoseNode, StoryboardCompositeNode, StoryboardLayoutAssistNode","expectedPath":"custom_nodes","installed":false,"sourceUrl":null,"sha256":null}
+  ],
+  "downloadAttempted": false,
+  "liveSmokeTest": {"status":"passed","workflowId":"storyboard-zimage-turbo","promptId":"09255eaa-8015-48b0-b525-a07f0f571f46","output":"Storyboard/河边远景开场_zimage_00005_.png","dimensions":"1152x648","style":"mature semi-realistic 3D Chinese anime drama"}
+}

@@ -6,6 +6,9 @@ const CONTINUITY_KINDS = new Set(["continuous", "match_cut"]);
 
 export function evaluateVideoQuality(input = {}) {
   const source = record(input);
+  if (runningHubWatermarkBlocked(source.providerArtifact)) {
+    return { status: "rejected", structuralIssues: ["runninghub_watermark_not_clean"], semanticReviewItems: [...SEMANTIC_REVIEW_ITEMS] };
+  }
   const issues = [];
   if (source.normalized !== true) issues.push("segment_not_normalized");
   const credential = validateCredential(source.normalizationCredential, issues);
@@ -30,6 +33,7 @@ export function evaluateVideoQuality(input = {}) {
 export function createVideoArtifactBinding(input = {}) {
   const issues = [];
   const source = record(input);
+  if (runningHubWatermarkBlocked(source.providerArtifact)) throw new Error("artifact_binding_invalid:runninghub_watermark_not_clean");
   const credential = validateCredential(source.normalizationCredential, issues);
   const inspection = validateInspection(source.inspection, issues);
   const frames = validateReviewFrames(source.reviewFrames, issues);
@@ -37,6 +41,8 @@ export function createVideoArtifactBinding(input = {}) {
   const assembly = source.assemblyReceipt === undefined ? null : validateAssemblyReceipt(source.assemblyReceipt, issues);
   if (credential && inspection && stable(credential.probe) !== stable(inspection.probe)) issues.push("credential_inspection_mismatch");
   if (issues.length || !credential || !inspection || !frames || !reviewRecord) throw new Error(`artifact_binding_invalid:${sortedUnique(issues).join(",")}`);
+  const providerArtifact = canonicalProviderArtifact(source.providerArtifact);
+  if (source.providerArtifact !== undefined && !providerArtifact) throw new Error("artifact_binding_invalid:provider_artifact_invalid");
   return {
     schemaVersion: 1,
     receiptId: credential.receiptId,
@@ -50,6 +56,7 @@ export function createVideoArtifactBinding(input = {}) {
     decodedFrameCount: credential.probe.decodedFrameCount,
     reviewFramesDigest: digest64(stable(reviewRecord)),
     reviewRecordMac: reviewRecord.mac,
+    ...(providerArtifact ? { providerArtifact } : {}),
     ...(assembly ? {
       assemblyTransactionId: assembly.transactionId,
       assemblySha256: assembly.sha256,
@@ -73,6 +80,8 @@ export function createVideoQualityReport(shotId, input = {}) {
       last: text(rawFrames.last ?? rawFrames.lastFramePath)
     }
   };
+  const providerArtifact = canonicalProviderArtifact(source.providerArtifact);
+  if (providerArtifact) report.providerArtifact = providerArtifact;
   if (!evaluation.structuralIssues.length) report.artifactBinding = createVideoArtifactBinding(source);
   const boundaryFrame = text(source.boundaryFrame);
   if (boundaryFrame) report.boundaryFrame = boundaryFrame;
@@ -127,7 +136,7 @@ export function planVideoRebuildRequest(input = {}) {
   if (!CONTINUITY_KINDS.has(boundary.kind)) return single;
   const from = text(boundary.fromShotId), to = text(boundary.toShotId);
   if (!text(boundary.id) || boundary.requiresApproval !== true || boundary.approvalStatus !== "approved") throw new Error("boundary_not_approved");
-  if (!text(boundary.sharedFramePath)) throw new Error("boundary_frame_missing");
+  if (boundary.kind === "match_cut" && !text(boundary.sharedFramePath)) throw new Error("boundary_frame_missing");
   if (from !== shotId) throw new Error("boundary_direction_invalid");
   const fromIndex = ids.indexOf(from), toIndex = ids.indexOf(to);
   if (fromIndex < 0 || toIndex !== fromIndex + 1) throw new Error("boundary_shots_not_adjacent");
@@ -197,9 +206,25 @@ function validateAssemblyReceipt(value, issues) {
 function validateMetric(source, key, issues) {
   if (source[key] !== undefined && !finiteNonnegative(source[key])) issues.push(`invalid_metric:${key}`);
 }
+function runningHubWatermarkBlocked(value) {
+  const artifact = record(value);
+  if (artifact.provider !== "runninghub") return false;
+  return artifact.watermarkDisposition !== "clean" || !HEX64.test(text(artifact.receiptDigest));
+}
+function canonicalProviderArtifact(value) {
+  const artifact = record(value);
+  if (!artifact.provider) return undefined;
+  if (artifact.provider === "local_comfy" && artifact.watermarkDisposition === "not_applicable") return { provider: "local_comfy", watermarkDisposition: "not_applicable" };
+  if (artifact.provider === "runninghub" && artifact.watermarkDisposition === "clean" && HEX64.test(text(artifact.receiptDigest))) {
+    const sourcePath = text(artifact.sourcePath), cleanPath = text(artifact.cleanPath);
+    if ((sourcePath && !absolute(sourcePath)) || (cleanPath && !absolute(cleanPath))) return undefined;
+    return { provider: "runninghub", watermarkDisposition: "clean", receiptDigest: text(artifact.receiptDigest), ...(sourcePath ? { sourcePath } : {}), ...(cleanPath ? { cleanPath } : {}) };
+  }
+  return undefined;
+}
 function validateInterval(value) { const item = record(value); return item && finiteNonnegative(item.startSeconds) && finiteNonnegative(item.endSeconds) && finiteNonnegative(item.durationSeconds) && item.endSeconds >= item.startSeconds && Math.abs((item.endSeconds - item.startSeconds) - item.durationSeconds) < 0.01; }
-function normalizeReport(value) { const item = record(value); return { shotId: text(item.shotId), status: ["rejected", "needs_review", "approved"].includes(item.status) ? item.status : "rejected", structuralIssues: sortedUnique(Array.isArray(item.structuralIssues) ? item.structuralIssues.map(text).filter(Boolean) : ["report_invalid"]), semanticReviewItems: [...SEMANTIC_REVIEW_ITEMS], reviewFrames: { first: text(item.reviewFrames?.first), middle: text(item.reviewFrames?.middle), last: text(item.reviewFrames?.last) }, ...(validBinding(item.artifactBinding) ? { artifactBinding: clone(item.artifactBinding) } : {}), ...(text(item.boundaryFrame) ? { boundaryFrame: text(item.boundaryFrame) } : {}) }; }
-function validBinding(value) { const item = record(value); const hasAssembly = item.assemblyTransactionId !== undefined || item.assemblySha256 !== undefined || item.assemblyOutputPath !== undefined; return item?.schemaVersion === 1 && HEX64.test(text(item.receiptId)) && absolute(item.normalizedPath) && HEX64.test(text(item.sha256)) && positiveInt(item.byteLength) && positiveInt(item.modifiedUnixMillis) && positiveInt(item.width) && positiveInt(item.height) && positiveInt(item.durationFrames) && item.decodedFrameCount === item.durationFrames && HEX64.test(text(item.reviewFramesDigest)) && HEX64.test(text(item.reviewRecordMac)) && (!hasAssembly || (HEX64.test(text(item.assemblyTransactionId)) && HEX64.test(text(item.assemblySha256)) && absolute(item.assemblyOutputPath))); }
+function normalizeReport(value) { const item = record(value); const providerArtifact = canonicalProviderArtifact(item.providerArtifact); return { shotId: text(item.shotId), status: ["rejected", "needs_review", "approved"].includes(item.status) ? item.status : "rejected", structuralIssues: sortedUnique(Array.isArray(item.structuralIssues) ? item.structuralIssues.map(text).filter(Boolean) : ["report_invalid"]), semanticReviewItems: [...SEMANTIC_REVIEW_ITEMS], reviewFrames: { first: text(item.reviewFrames?.first), middle: text(item.reviewFrames?.middle), last: text(item.reviewFrames?.last) }, ...(validBinding(item.artifactBinding) ? { artifactBinding: clone(item.artifactBinding) } : {}), ...(providerArtifact ? { providerArtifact } : {}), ...(text(item.boundaryFrame) ? { boundaryFrame: text(item.boundaryFrame) } : {}) }; }
+function validBinding(value) { const item = record(value); const hasAssembly = item.assemblyTransactionId !== undefined || item.assemblySha256 !== undefined || item.assemblyOutputPath !== undefined; try { return item?.schemaVersion === 1 && HEX64.test(text(item.receiptId)) && absolute(item.normalizedPath) && HEX64.test(text(item.sha256)) && positiveInt(item.byteLength) && positiveInt(item.modifiedUnixMillis) && positiveInt(item.width) && positiveInt(item.height) && positiveInt(item.durationFrames) && item.decodedFrameCount === item.durationFrames && HEX64.test(text(item.reviewFramesDigest)) && HEX64.test(text(item.reviewRecordMac)) && (item.providerArtifact === undefined || Boolean(canonicalProviderArtifact(item.providerArtifact))) && (!hasAssembly || (HEX64.test(text(item.assemblyTransactionId)) && HEX64.test(text(item.assemblySha256)) && absolute(item.assemblyOutputPath))); } catch { return false; } }
 function validDecision(value) { const item = record(value); return (item.decision === "approved" || (item.decision === "rejected" && text(item.reason))) && Number.isFinite(Date.parse(text(item.reviewedAt))) && validBinding(item.artifactBinding); }
 function digest64(value) { const seeds = [1469598103934665603n, 1099511628211n, 7809847782465536322n, 9650029242287828579n]; return seeds.map((seed) => { let hash = seed; for (const ch of value) hash = BigInt.asUintN(64, (hash ^ BigInt(ch.codePointAt(0))) * 1099511628211n); return hash.toString(16).padStart(16, "0"); }).join(""); }
 function timestamp(value) { const raw = text(value) || new Date().toISOString(); if (!Number.isFinite(Date.parse(raw))) throw new Error("review_timestamp_invalid"); return new Date(raw).toISOString(); }

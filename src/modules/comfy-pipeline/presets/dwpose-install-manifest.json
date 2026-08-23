@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+  "commit": "59b027e088c1c8facf7258f6e392d16d204b4d27",
+  "nodeClass": "DWPreprocessor",
+  "models": [
+    {
+      "file": "yolox_l.torchscript.pt",
+      "relativePath": "hr16/yolox-onnx/yolox_l.torchscript.pt",
+      "url": "https://huggingface.co/hr16/yolox-onnx/resolve/main/yolox_l.torchscript.pt?download=true",
+      "sha256": "80bc14b13c260c24b3014cd42c02994bf52296ab8fa2d80a60b6afe08c93ef42"
+    },
+    {
+      "file": "dw-ll_ucoco_384_bs5.torchscript.pt",
+      "relativePath": "hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt",
+      "url": "https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt?download=true",
+      "sha256": "d86a0b2b59fddc0901a7076e9f59c9f8602602133ed72511c693fd11eea23d91"
+    }
+  ]
+}

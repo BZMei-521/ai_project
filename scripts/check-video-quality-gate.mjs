@@ -208,6 +208,14 @@ assert.equal((await routedExecutor.prepare("s2")).request.firstFramePath, "C:/st
 assert.equal((await routedExecutor.prepare("s3")).request.firstFramePath, "C:/story/last.png", "scene transition last shot must use its own storyboard frame");
 
 assert.equal(evaluateVideoQuality(cleanInput).status, "needs_review");
+assert.deepEqual(evaluateVideoQuality({
+  normalized: true,
+  providerArtifact: { provider: "runninghub", watermarkDisposition: "watermark_review_required" }
+}).structuralIssues, ["runninghub_watermark_not_clean"]);
+assert.equal(evaluateVideoQuality({
+  normalized: true,
+  providerArtifact: { provider: "runninghub", watermarkDisposition: "clean", receiptDigest: "a".repeat(64) }
+}).structuralIssues.includes("runninghub_watermark_not_clean"), false);
 for (const invalid of [
   {},
   { ...cleanInput, normalized: false },
@@ -259,13 +267,13 @@ const orderedShotIds = ["s1", "s2", "s3", "s4"];
 assert.deepEqual(planVideoRebuildRequest({ shotId: "s2", orderedShotIds, reason: "scene_anchor" }), { kind: "shot", shotIds: ["s2"], reason: "scene_anchor" });
 assert.deepEqual(planVideoRebuildRequest({
   shotId: "s2", orderedShotIds, reason: "motion_boundary",
-  boundary: { id: "b23", kind: "continuous", fromShotId: "s2", toShotId: "s3", requiresApproval: true, approvalStatus: "approved", sharedFramePath: "C:/boundary.png" }
+  boundary: { id: "b23", kind: "continuous", fromShotId: "s2", toShotId: "s3", requiresApproval: true, approvalStatus: "approved" }
 }), { kind: "adjacent_pair", shotIds: ["s2", "s3"], reason: "motion_boundary" });
 for (const boundary of [
   { id: "b23", kind: "continuous", fromShotId: "s2", toShotId: "s3", requiresApproval: true, approvalStatus: "pending", sharedFramePath: "C:/boundary.png" },
   { id: "b23", kind: "match_cut", fromShotId: "s3", toShotId: "s2", requiresApproval: true, approvalStatus: "approved", sharedFramePath: "C:/boundary.png" },
   { id: "b14", kind: "continuous", fromShotId: "s1", toShotId: "s4", requiresApproval: true, approvalStatus: "approved", sharedFramePath: "C:/boundary.png" },
-  { id: "b23", kind: "continuous", fromShotId: "s2", toShotId: "s3", requiresApproval: true, approvalStatus: "approved" }
+  { id: "b23", kind: "match_cut", fromShotId: "s2", toShotId: "s3", requiresApproval: true, approvalStatus: "approved" }
 ]) assert.throws(() => planVideoRebuildRequest({ shotId: "s2", orderedShotIds, reason: "motion_boundary", boundary }), /boundary_/);
 assert.deepEqual(planVideoRebuildRequest({
   shotId: "s2", orderedShotIds, reason: "motion_boundary",
@@ -324,6 +332,30 @@ assert.deepEqual(evidence.profilePreflight, profilePreflight);
 assert.deepEqual(evidence.boundary, boundary);
 assert.equal(evidence.qualityReport.status, "needs_review");
 assert.equal(persisted.at(-1)[0], "s1");
+
+const runningHubProviderArtifact = Object.freeze({ provider: "runninghub", watermarkDisposition: "clean", receiptDigest: hex("f"), sourcePath: "C:/project/assets/runninghub-results/123/source.mp4", cleanPath: "C:/project/assets/runninghub-watermark/123/clean.mp4" });
+const runningHubOperation = createVideoOperationIdentity({
+  sequenceId: "sequence-a", shotId: "runninghub-s1", contractDigest: generationContractDigest,
+  sourceVideoPath: "C:/project/assets/runninghub-watermark/123/clean.mp4", boundaryIdentity: "runninghub", operationToken: hex("e")
+});
+const runningHubEvidence = await controller.processGeneratedShot({
+  shotId: "runninghub-s1", sequenceId: "sequence-a", operation: runningHubOperation, contractDigest: generationContractDigest,
+  generatedVideoPath: runningHubOperation.sourceVideoPath, durationFrames: 48,
+  projectWidth: 1280, projectHeight: 720, routeDecision, accelerationMode: "standard", profilePreflight, boundary,
+  generationReceipt: generationReceiptFor(runningHubOperation.sourceVideoPath, runningHubOperation), providerArtifact: runningHubProviderArtifact
+});
+assert.deepEqual(persisted.at(-1)[1].providerArtifact, runningHubProviderArtifact, "controller persistence must retain RunningHub watermark provenance");
+assert.deepEqual(runningHubEvidence.artifactBinding.providerArtifact, runningHubProviderArtifact, "quality binding must include RunningHub watermark provenance");
+const runningHubApproved = applyVideoQualityDecision(runningHubEvidence.qualityReport, { decision: "approve", reviewedAt: "2026-08-20T01:02:03.000Z" });
+for (const changedArtifact of [
+  { ...runningHubProviderArtifact, watermarkDisposition: "watermark_review_required" },
+  { ...runningHubProviderArtifact, receiptDigest: hex("d") },
+  { ...runningHubProviderArtifact, cleanPath: "C:/project/assets/runninghub-watermark/123/repaired-replacement.mp4" },
+  { ...runningHubProviderArtifact, sourcePath: "C:/project/assets/runninghub-results/123/replacement-source.mp4" }
+]) {
+  const restored = createVideoQualityReport("runninghub-s1", { ...cleanInput, providerArtifact: changedArtifact });
+  assert.notEqual(resolvePersistedVideoDecision(restored, runningHubApproved.decision).status, "approved", "watermark provenance changes must invalidate restored approval");
+}
 
 calls.length = 0;
 const verifiedReport = await controller.verifyForDecision(evidence);

@@ -1,0 +1,11 @@
+{
+  "1": {"class_type": "LoadImage", "inputs": {"image": "FLUX2-Klein-360-Outpaint-wooden-spear-seam-repaired-1536x768.png"}},
+  "2": {"class_type": "Equirectangular to Perspective", "inputs": {"e_img": ["1", 0], "fov_deg_h": 90.0, "fov_deg_v": 58.0, "h_deg": 0.0, "v_deg": 0.0, "out_h": 720, "out_w": 1280, "in_rot_deg": 0.0, "padding_mode": "bicubic"}},
+  "3": {"class_type": "Equirectangular to Perspective", "inputs": {"e_img": ["1", 0], "fov_deg_h": 90.0, "fov_deg_v": 58.0, "h_deg": 90.0, "v_deg": 0.0, "out_h": 720, "out_w": 1280, "in_rot_deg": 0.0, "padding_mode": "bicubic"}},
+  "4": {"class_type": "Equirectangular to Perspective", "inputs": {"e_img": ["1", 0], "fov_deg_h": 90.0, "fov_deg_v": 58.0, "h_deg": 180.0, "v_deg": 0.0, "out_h": 720, "out_w": 1280, "in_rot_deg": 0.0, "padding_mode": "bicubic"}},
+  "5": {"class_type": "Equirectangular to Perspective", "inputs": {"e_img": ["1", 0], "fov_deg_h": 90.0, "fov_deg_v": 58.0, "h_deg": 270.0, "v_deg": 0.0, "out_h": 720, "out_w": 1280, "in_rot_deg": 0.0, "padding_mode": "bicubic"}},
+  "6": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "Storyboard/seam_repaired_validation_yaw000"}},
+  "7": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": "Storyboard/seam_repaired_validation_yaw090"}},
+  "8": {"class_type": "SaveImage", "inputs": {"images": ["4", 0], "filename_prefix": "Storyboard/seam_repaired_validation_yaw180"}},
+  "9": {"class_type": "SaveImage", "inputs": {"images": ["5", 0], "filename_prefix": "Storyboard/seam_repaired_validation_yaw270"}}
+}

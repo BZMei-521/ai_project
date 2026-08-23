@@ -17,6 +17,105 @@ const MAX_VIDEO_DIMENSION: u32 = 8192;
 const MAX_SEGMENT_FRAMES: u32 = 24 * 60 * 60;
 const AUTHORITY_DIRECTORY: &str = "video-normalization-authority";
 const AUTHORITY_SECRET_BYTES: usize = 32;
+const RUNNINGHUB_WORKFLOW_ID: &str = "2090035427871903746";
+const RUNNINGHUB_WORKFLOW_URL: &str = "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningHubApprovalInput {
+    pub shot_id: String,
+    pub workflow_id: String,
+    pub workflow_url: String,
+    pub references: Vec<String>,
+    pub prompt: String,
+    pub width: u32,
+    pub height: u32,
+    pub duration_seconds: u32,
+    #[serde(default)]
+    pub created_at: String,
+    pub input_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningHubResultImportRequest {
+    pub project_assets_dir: String,
+    pub approval: RunningHubApprovalInput,
+    pub task_id: String,
+    pub source_path: String,
+    pub reported_task_status: String,
+    #[serde(default)]
+    pub downstream_error: String,
+    pub submission: RunningHubSubmissionBinding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningHubSubmissionBinding {
+    pub status: String,
+    pub task_id: String,
+    pub approval_input_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct RunningHubApprovalReceipt {
+    schema_version: u32,
+    status: String,
+    shot_id: String,
+    input_digest: String,
+    approval: RunningHubApprovalInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct RunningHubSubmissionReceipt {
+    schema_version: u32,
+    status: String,
+    shot_id: String,
+    task_id: String,
+    approval_input_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningHubResultReceipt {
+    pub schema_version: u32,
+    pub shot_id: String,
+    pub task_id: String,
+    pub approval_input_digest: String,
+    pub source_sha256: String,
+    pub imported_path: String,
+    pub probe: VideoProbe,
+    pub status: String,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct RunningHubHandoffPacket {
+    schema_version: u32,
+    provider: String,
+    workflow_id: String,
+    workflow_url: String,
+    input_digest: String,
+    references: Vec<String>,
+    prompt: String,
+    width: u32,
+    height: u32,
+    duration_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningHubHandoffReceipt {
+    pub schema_version: u32,
+    pub status: String,
+    pub handoff_dir: String,
+    pub packet_path: String,
+    pub workflow_url: String,
+    pub input_digest: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1979,6 +2078,14 @@ fn canonical_external_file(raw: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+fn reject_reparse_ancestors(path: &Path, error: &str) -> Result<(), String> {
+    let mut cursor = path;
+    loop {
+        if path_is_reparse(cursor).unwrap_or(true) { return Err(error.to_string()); }
+        match cursor.parent() { Some(parent) if parent != cursor => cursor = parent, _ => return Ok(()) }
+    }
+}
+
 fn path_is_reparse(path: &Path) -> Result<bool, String> {
     let metadata = fs::symlink_metadata(path).map_err(|_| "video_output_path_invalid".to_string())?;
     if metadata.file_type().is_symlink() {
@@ -2474,6 +2581,285 @@ fn valid_segment_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+fn valid_runninghub_reference(value: &str) -> bool {
+    let trimmed = value.trim();
+    let bytes = trimmed.as_bytes();
+    trimmed.starts_with('/') || (bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\'))
+}
+
+fn runninghub_packet_from_approval(approval: &RunningHubApprovalInput) -> Result<RunningHubHandoffPacket, String> {
+    if !valid_segment_id(approval.shot_id.trim())
+        || !valid_receipt_id(approval.input_digest.trim())
+        || approval.workflow_id != RUNNINGHUB_WORKFLOW_ID
+        || approval.workflow_url != RUNNINGHUB_WORKFLOW_URL
+        || approval.references.len() != 2
+        || approval.references[0].trim() == approval.references[1].trim()
+        || approval.references.iter().any(|reference| !valid_runninghub_reference(reference))
+        || approval.prompt.trim().is_empty()
+        || approval.width != 1344
+        || approval.height != 768
+        || approval.duration_seconds != 8
+    {
+        return Err("runninghub_handoff_input_invalid".to_string());
+    }
+    Ok(RunningHubHandoffPacket {
+        schema_version: 1,
+        provider: "runninghub_manual_custom_workflow".to_string(),
+        workflow_id: RUNNINGHUB_WORKFLOW_ID.to_string(),
+        workflow_url: RUNNINGHUB_WORKFLOW_URL.to_string(),
+        input_digest: approval.input_digest.trim().to_string(),
+        references: approval.references.iter().map(|reference| reference.trim().to_string()).collect(),
+        prompt: approval.prompt.trim().to_string(),
+        width: 1344,
+        height: 768,
+        duration_seconds: 8,
+    })
+}
+
+// Mirrors runningHubApprovalRuntime.mjs: JSON keys are sorted before SHA-256.
+fn runninghub_approval_digest(approval: &RunningHubApprovalInput) -> Result<String, String> {
+    if approval.created_at.trim().is_empty() { return Err("runninghub_approval_input_invalid".to_string()); }
+    let canonical = format!(
+        "{{\"createdAt\":{},\"durationSeconds\":{},\"height\":{},\"prompt\":{},\"references\":{},\"shotId\":{},\"width\":{},\"workflowId\":{},\"workflowUrl\":{}}}",
+        // JS normalizeInput preserves createdAt verbatim (it validates but does
+        // not trim it), so the native canonical input must do the same.
+        serde_json::to_string(&approval.created_at).map_err(|_| "runninghub_approval_input_invalid".to_string())?,
+        approval.duration_seconds, approval.height,
+        serde_json::to_string(approval.prompt.trim()).map_err(|_| "runninghub_approval_input_invalid".to_string())?,
+        serde_json::to_string(&approval.references.iter().map(|value| value.trim().to_string()).collect::<Vec<_>>()).map_err(|_| "runninghub_approval_input_invalid".to_string())?,
+        serde_json::to_string(approval.shot_id.trim()).map_err(|_| "runninghub_approval_input_invalid".to_string())?,
+        approval.width,
+        serde_json::to_string(RUNNINGHUB_WORKFLOW_ID).map_err(|_| "runninghub_approval_input_invalid".to_string())?,
+        serde_json::to_string(RUNNINGHUB_WORKFLOW_URL).map_err(|_| "runninghub_approval_input_invalid".to_string())?,
+    );
+    Ok(format!("{:x}", Sha256::digest(canonical.as_bytes())))
+}
+
+fn validated_runninghub_approval(approval: &RunningHubApprovalInput) -> Result<RunningHubHandoffPacket, String> {
+    let packet = runninghub_packet_from_approval(approval)?;
+    if runninghub_approval_digest(approval)? != approval.input_digest.trim() { return Err("runninghub_approval_input_invalid".to_string()); }
+    Ok(packet)
+}
+
+fn runninghub_result_status(reported: &str, downstream_error: &str) -> Result<(String, Option<String>), String> {
+    let status = reported.trim().to_ascii_lowercase();
+    if ["success", "completed", "succeeded", "output_collected"].contains(&status.as_str()) {
+        return Ok(("output_collected".to_string(), None));
+    }
+    // RunningHub can prefix this exact RIFE error with node context; no other failure is recoverable.
+    if ["failed", "error", "failed_postprocess"].contains(&status.as_str())
+        && downstream_error.len() <= 4096
+        && downstream_error.contains("Tensor type unknown to einops <class 'tuple'>") {
+        return Ok(("recovered_primary_output".to_string(), Some("rife_postprocess_failed_primary_output_recovered".to_string())));
+    }
+    Err("runninghub_result_not_recoverable".to_string())
+}
+
+fn secure_runninghub_result_dir(asset_root: &Path, task_id: &str, source_sha256: &str) -> Result<PathBuf, String> {
+    if !task_id.bytes().all(|byte| byte.is_ascii_digit()) || task_id.is_empty() || task_id.len() > 40 || !valid_receipt_id(source_sha256) {
+        return Err("runninghub_result_path_invalid".to_string());
+    }
+    let mut current = asset_root.join("runninghub-results");
+    for component in [task_id, source_sha256] {
+        fs::create_dir_all(&current).map_err(|_| "runninghub_result_path_invalid".to_string())?;
+        if path_is_reparse(&current).unwrap_or(true) { return Err("runninghub_result_path_invalid".to_string()); }
+        if !fs::canonicalize(&current).map_err(|_| "runninghub_result_path_invalid".to_string())?.starts_with(asset_root) { return Err("runninghub_result_path_invalid".to_string()); }
+        current.push(component);
+    }
+    fs::create_dir_all(&current).map_err(|_| "runninghub_result_path_invalid".to_string())?;
+    if path_is_reparse(&current).unwrap_or(true) { return Err("runninghub_result_path_invalid".to_string()); }
+    let canonical = fs::canonicalize(&current).map_err(|_| "runninghub_result_path_invalid".to_string())?;
+    if !canonical.starts_with(asset_root) { return Err("runninghub_result_path_invalid".to_string()); }
+    Ok(canonical)
+}
+
+fn import_runninghub_result_at_roots(project_root: &Path, asset_root: &Path, request: RunningHubResultImportRequest) -> Result<RunningHubResultReceipt, String> {
+    let (_, canonical_assets) = runninghub_handoff_roots(project_root, asset_root)?;
+    validated_runninghub_approval(&request.approval)?;
+    load_runninghub_approval_receipt(&canonical_assets, &request.approval)?;
+    let task_id = request.task_id.trim();
+    load_runninghub_submission_receipt(&canonical_assets, &request.approval, task_id)?;
+    let source_raw = absolute_path(&request.source_path, "runninghub_source_path_missing")?;
+    reject_reparse_ancestors(&source_raw, "runninghub_source_reparse_forbidden")?;
+    let source = canonical_external_file(&request.source_path)?;
+    if source.extension().and_then(|value| value.to_str()).map(|value| value.eq_ignore_ascii_case("mp4")) != Some(true) {
+        return Err("runninghub_source_mp4_invalid".to_string());
+    }
+    let probe = probe_path(&source).map_err(|_| "runninghub_result_media_contract_invalid".to_string())?;
+    if probe.width == 0 || probe.height == 0 || probe.width % 2 != 0 || probe.height % 2 != 0
+        || probe.width != request.approval.width || probe.height != request.approval.height
+        || probe.fps_num == 0 || probe.fps_den == 0 || !probe.duration_seconds.is_finite()
+        || !probe.has_monotonic_timestamps || probe.decoded_frame_count == 0
+        || (probe.duration_seconds - request.approval.duration_seconds as f64).abs() > 1.0 {
+        return Err("runninghub_result_media_contract_invalid".to_string());
+    }
+    let (status, warning) = runninghub_result_status(&request.reported_task_status, &request.downstream_error)?;
+    let (source_sha256, _, _) = file_binding(&source)?;
+    let result_dir = secure_runninghub_result_dir(&canonical_assets, task_id, &source_sha256)?;
+    let destination = result_dir.join("source.mp4");
+    secure_copy_create_new(&source, &destination, &canonical_assets).map_err(|_| "runninghub_result_already_exists".to_string())?;
+    let canonical_destination = fs::canonicalize(&destination).map_err(|_| "runninghub_result_copy_failed".to_string())?;
+    if file_binding(&canonical_destination).map_err(|_| "runninghub_result_copy_failed".to_string())?.0 != source_sha256 {
+        let _ = fs::remove_file(&canonical_destination);
+        return Err("runninghub_result_copy_failed".to_string());
+    }
+    let receipt = RunningHubResultReceipt {
+        schema_version: 1, shot_id: request.approval.shot_id.trim().to_string(), task_id: task_id.to_string(),
+        approval_input_digest: request.approval.input_digest.trim().to_string(), source_sha256, imported_path: canonical_destination.to_string_lossy().to_string(), probe, status, warning,
+    };
+    let receipt_path = result_dir.join("receipt.json");
+    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| "runninghub_result_receipt_failed".to_string())?;
+    atomic_runninghub_packet_create(&receipt_path, &bytes).map_err(|_| "runninghub_result_receipt_failed".to_string())?;
+    Ok(receipt)
+}
+
+fn runninghub_handoff_roots(project_root: &Path, asset_root: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let canonical_project = fs::canonicalize(project_root).map_err(|_| "runninghub_project_root_invalid".to_string())?;
+    let canonical_assets = fs::canonicalize(asset_root).map_err(|_| "runninghub_assets_root_invalid".to_string())?;
+    if !canonical_project.is_dir() || !canonical_assets.is_dir() || canonical_assets == canonical_project || !canonical_assets.starts_with(&canonical_project) {
+        return Err("runninghub_assets_root_outside_project".to_string());
+    }
+    if path_is_reparse(&canonical_assets).map_err(|_| "runninghub_assets_root_invalid".to_string())? {
+        return Err("runninghub_assets_root_outside_project".to_string());
+    }
+    Ok((canonical_project, canonical_assets))
+}
+
+fn secure_runninghub_handoff_dir(asset_root: &Path, shot_id: &str, input_digest: &str) -> Result<PathBuf, String> {
+    let mut current = asset_root.join("runninghub-handoffs");
+    for component in [None, Some(shot_id), Some(input_digest)] {
+        if let Some(value) = component {
+            current = current.join(value);
+        }
+        fs::create_dir_all(&current).map_err(|_| "runninghub_handoff_path_invalid".to_string())?;
+        ensure_no_reparse_ancestors(asset_root, &current).map_err(|_| "runninghub_handoff_path_invalid".to_string())?;
+        let canonical = fs::canonicalize(&current).map_err(|_| "runninghub_handoff_path_invalid".to_string())?;
+        if !canonical.starts_with(asset_root) {
+            return Err("runninghub_handoff_path_invalid".to_string());
+        }
+        current = canonical;
+    }
+    Ok(current)
+}
+
+fn runninghub_approval_receipt_path(asset_root: &Path, approval: &RunningHubApprovalInput) -> Result<PathBuf, String> {
+    Ok(secure_runninghub_handoff_dir(asset_root, approval.shot_id.trim(), approval.input_digest.trim())?.join("approval.json"))
+}
+
+fn exact_json_matches<T: Serialize>(path: &Path, expected: &T) -> bool {
+    serde_json::to_vec_pretty(expected).ok().is_some_and(|bytes| fs::read(path).is_ok_and(|actual| actual == bytes))
+}
+
+fn persist_runninghub_approval_receipt(asset_root: &Path, approval: &RunningHubApprovalInput) -> Result<(), String> {
+    validated_runninghub_approval(approval)?;
+    let receipt = RunningHubApprovalReceipt { schema_version: 1, status: "approved".to_string(), shot_id: approval.shot_id.trim().to_string(), input_digest: approval.input_digest.trim().to_string(), approval: approval.clone() };
+    let path = runninghub_approval_receipt_path(asset_root, approval)?;
+    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| "runninghub_approval_receipt_failed".to_string())?;
+    if path.exists() {
+        if path_is_reparse(&path).unwrap_or(true) || !exact_json_matches(&path, &receipt) { return Err("runninghub_approval_receipt_mismatch".to_string()); }
+        return Ok(());
+    }
+    atomic_runninghub_packet_create(&path, &bytes).map_err(|_| "runninghub_approval_receipt_failed".to_string())?;
+    if path_is_reparse(&path).unwrap_or(true) || !exact_json_matches(&path, &receipt) { return Err("runninghub_approval_receipt_mismatch".to_string()); }
+    Ok(())
+}
+
+fn load_runninghub_approval_receipt(asset_root: &Path, approval: &RunningHubApprovalInput) -> Result<(), String> {
+    validated_runninghub_approval(approval)?;
+    let path = runninghub_approval_receipt_path(asset_root, approval)?;
+    if path_is_reparse(&path).unwrap_or(true) { return Err("runninghub_approval_receipt_missing".to_string()); }
+    let receipt: RunningHubApprovalReceipt = serde_json::from_slice(&fs::read(&path).map_err(|_| "runninghub_approval_receipt_missing".to_string())?).map_err(|_| "runninghub_approval_receipt_mismatch".to_string())?;
+    if receipt.schema_version != 1 || receipt.status != "approved" || receipt.shot_id != approval.shot_id.trim() || receipt.input_digest != approval.input_digest.trim() || receipt.approval != *approval || !exact_json_matches(&path, &receipt) { return Err("runninghub_approval_receipt_mismatch".to_string()); }
+    Ok(())
+}
+
+fn persist_runninghub_submission_receipt(asset_root: &Path, approval: &RunningHubApprovalInput, task_id: &str) -> Result<RunningHubSubmissionReceipt, String> {
+    load_runninghub_approval_receipt(asset_root, approval)?;
+    if task_id.is_empty() || task_id.len() > 40 || !task_id.bytes().all(|byte| byte.is_ascii_digit()) { return Err("runninghub_task_id_invalid".to_string()); }
+    let receipt = RunningHubSubmissionReceipt { schema_version: 1, status: "submitted".to_string(), shot_id: approval.shot_id.trim().to_string(), task_id: task_id.to_string(), approval_input_digest: approval.input_digest.trim().to_string() };
+    let path = runninghub_approval_receipt_path(asset_root, approval)?.with_file_name("submission.json");
+    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| "runninghub_submission_receipt_failed".to_string())?;
+    if path.exists() {
+        if path_is_reparse(&path).unwrap_or(true) || !exact_json_matches(&path, &receipt) { return Err("runninghub_submission_receipt_mismatch".to_string()); }
+    } else {
+        atomic_runninghub_packet_create(&path, &bytes).map_err(|_| "runninghub_submission_receipt_failed".to_string())?;
+        if path_is_reparse(&path).unwrap_or(true) || !exact_json_matches(&path, &receipt) { return Err("runninghub_submission_receipt_mismatch".to_string()); }
+    }
+    Ok(receipt)
+}
+
+fn load_runninghub_submission_receipt(asset_root: &Path, approval: &RunningHubApprovalInput, task_id: &str) -> Result<(), String> {
+    let expected = RunningHubSubmissionReceipt { schema_version: 1, status: "submitted".to_string(), shot_id: approval.shot_id.trim().to_string(), task_id: task_id.to_string(), approval_input_digest: approval.input_digest.trim().to_string() };
+    let path = runninghub_approval_receipt_path(asset_root, approval)?.with_file_name("submission.json");
+    if path_is_reparse(&path).unwrap_or(true) || !exact_json_matches(&path, &expected) { return Err("runninghub_submission_receipt_mismatch".to_string()); }
+    Ok(())
+}
+
+fn packet_matches(path: &Path, expected: &RunningHubHandoffPacket) -> bool {
+    serde_json::to_vec_pretty(expected)
+        .ok()
+        .is_some_and(|expected_bytes| fs::read(path).is_ok_and(|actual_bytes| actual_bytes == expected_bytes))
+}
+
+fn packet_matches_bytes(path: &Path, expected_bytes: &[u8], expected: &RunningHubHandoffPacket) -> bool {
+    fs::read(path).is_ok_and(|bytes| bytes == expected_bytes) && packet_matches(path, expected)
+}
+
+fn atomic_runninghub_packet_create(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or_else(|| "runninghub_handoff_path_invalid".to_string())?;
+    let temp = parent.join(format!(".runninghub-handoff-{}.tmp", random_hex(12)?));
+    let result = (|| -> Result<(), String> {
+        let mut file = OpenOptions::new().create_new(true).write(true).open(&temp)
+            .map_err(|_| "runninghub_handoff_packet_write_failed".to_string())?;
+        file.write_all(bytes).and_then(|_| file.sync_all())
+            .map_err(|_| "runninghub_handoff_packet_write_failed".to_string())?;
+        fs::hard_link(&temp, path).map_err(|_| "runninghub_handoff_packet_already_exists".to_string())?;
+        fs::remove_file(&temp).map_err(|_| "runninghub_handoff_packet_write_failed".to_string())?;
+        #[cfg(unix)]
+        File::open(parent).and_then(|directory| directory.sync_all())
+            .map_err(|_| "runninghub_handoff_packet_write_failed".to_string())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
+
+fn prepare_runninghub_handoff_at_roots<F>(project_root: &Path, asset_root: &Path, approval: RunningHubApprovalInput, open_url: F) -> Result<RunningHubHandoffReceipt, String>
+where F: FnOnce(&str) -> Result<(), String> {
+    let (_, canonical_assets) = runninghub_handoff_roots(project_root, asset_root)?;
+    let packet = validated_runninghub_approval(&approval)?;
+    let handoff_dir = secure_runninghub_handoff_dir(&canonical_assets, approval.shot_id.trim(), &packet.input_digest)?;
+    let packet_path = handoff_dir.join("handoff.json");
+    let bytes = serde_json::to_vec_pretty(&packet).map_err(|_| "runninghub_handoff_packet_write_failed".to_string())?;
+    if packet_path.exists() {
+        if path_is_reparse(&packet_path).unwrap_or(true) || !packet_matches_bytes(&packet_path, &bytes, &packet) { return Err("runninghub_handoff_packet_mismatch".to_string()); }
+    } else if let Err(error) = atomic_runninghub_packet_create(&packet_path, &bytes) {
+        if error != "runninghub_handoff_packet_already_exists" || !packet_matches(&packet_path, &packet) {
+            return Err(if error == "runninghub_handoff_packet_already_exists" { "runninghub_handoff_packet_mismatch".to_string() } else { error });
+        }
+    }
+    let canonical_packet = fs::canonicalize(&packet_path).map_err(|_| "runninghub_handoff_packet_write_failed".to_string())?;
+    if path_is_reparse(&packet_path).unwrap_or(true) || !canonical_packet.starts_with(&handoff_dir) || !canonical_packet.is_file() || !packet_matches_bytes(&canonical_packet, &bytes, &packet) { return Err("runninghub_handoff_packet_mismatch".to_string()); }
+    persist_runninghub_approval_receipt(&canonical_assets, &approval)?;
+    open_url(RUNNINGHUB_WORKFLOW_URL)?;
+    Ok(RunningHubHandoffReceipt { schema_version: 1, status: "prepared".to_string(), handoff_dir: handoff_dir.to_string_lossy().to_string(), packet_path: canonical_packet.to_string_lossy().to_string(), workflow_url: RUNNINGHUB_WORKFLOW_URL.to_string(), input_digest: packet.input_digest })
+}
+
+fn open_pinned_runninghub_workflow(url: &str) -> Result<(), String> {
+    if url != RUNNINGHUB_WORKFLOW_URL { return Err("runninghub_workflow_not_pinned".to_string()); }
+    #[cfg(target_os = "windows")]
+    let mut command = { let mut command = Command::new("cmd"); command.args(["/C", "start", "", RUNNINGHUB_WORKFLOW_URL]); command };
+    #[cfg(target_os = "macos")]
+    let mut command = { let mut command = Command::new("open"); command.arg(RUNNINGHUB_WORKFLOW_URL); command };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = { let mut command = Command::new("xdg-open"); command.arg(RUNNINGHUB_WORKFLOW_URL); command };
+    let status = command.status().map_err(|_| "runninghub_workflow_open_failed".to_string())?;
+    if !status.success() { return Err("runninghub_workflow_open_failed".to_string()); }
+    Ok(())
 }
 
 fn normalize_at_roots(
@@ -3675,6 +4061,38 @@ pub fn begin_video_assembly_run(
         &registry_root,
         2 * 60 * 60 * 1000,
     )
+}
+
+#[tauri::command]
+pub fn prepare_runninghub_handoff(
+    app: tauri::AppHandle,
+    project_assets_dir: String,
+    approval: RunningHubApprovalInput,
+) -> Result<RunningHubHandoffReceipt, String> {
+    let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
+    prepare_runninghub_handoff_at_roots(&project_root, &asset_root, approval, open_pinned_runninghub_workflow)
+}
+
+#[tauri::command]
+pub fn record_runninghub_submission(
+    app: tauri::AppHandle,
+    project_assets_dir: String,
+    approval: RunningHubApprovalInput,
+    task_id: String,
+) -> Result<RunningHubSubmissionBinding, String> {
+    let (project_root, asset_root) = resolve_roots(&app, &project_assets_dir)?;
+    let (_, canonical_assets) = runninghub_handoff_roots(&project_root, &asset_root)?;
+    let receipt = persist_runninghub_submission_receipt(&canonical_assets, &approval, task_id.trim())?;
+    Ok(RunningHubSubmissionBinding { status: receipt.status, task_id: receipt.task_id, approval_input_digest: receipt.approval_input_digest })
+}
+
+#[tauri::command]
+pub fn import_runninghub_result(
+    app: tauri::AppHandle,
+    request: RunningHubResultImportRequest,
+) -> Result<RunningHubResultReceipt, String> {
+    let (project_root, asset_root) = resolve_roots(&app, &request.project_assets_dir)?;
+    import_runninghub_result_at_roots(&project_root, &asset_root, request)
 }
 
 #[tauri::command]
@@ -5451,5 +5869,169 @@ mod tests {
             })
             .count();
         assert_eq!(visible_outputs, 1, "replay must not publish another output");
+    }
+
+    #[test]
+    fn runninghub_handoff_writes_only_the_pinned_packet_and_url() {
+        let fixture = FixtureDir::new("runninghub-handoff");
+        let mut approval = RunningHubApprovalInput {
+            shot_id: "shot_01".to_string(),
+            workflow_id: "2090035427871903746".to_string(),
+            workflow_url: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace".to_string(),
+            references: vec!["C:/project/lin-yue.png".to_string(), "C:/project/lan.png".to_string()],
+            prompt: "Lin Yue hands Lan the compass while the camera tracks around them.".to_string(),
+            width: 1344,
+            height: 768,
+            duration_seconds: 8,
+            created_at: "2026-08-20T00:00:00.000Z".to_string(),
+            input_digest: String::new(),
+        };
+        approval.input_digest = runninghub_approval_digest(&approval).unwrap();
+        let mut opened = Vec::new();
+        let receipt = prepare_runninghub_handoff_at_roots(
+            fixture.root(), fixture.assets().as_path(), approval, |url| {
+                opened.push(url.to_string());
+                Ok(())
+            },
+        ).unwrap();
+        assert_eq!(opened, vec!["https://www.runninghub.cn/workflow/2090035427871903746?source=workspace"]);
+        assert_eq!(receipt.status, "prepared");
+        let packet: serde_json::Value = serde_json::from_slice(&fs::read(&receipt.packet_path).unwrap()).unwrap();
+        assert_eq!(packet["provider"], "runninghub_manual_custom_workflow");
+        assert_eq!(packet["workflowId"], "2090035427871903746");
+        assert_eq!(packet["width"], 1344);
+        assert_eq!(packet["height"], 768);
+        assert_eq!(packet["durationSeconds"], 8);
+        assert_eq!(packet["references"].as_array().unwrap().len(), 2);
+        assert!(Path::new(&receipt.packet_path).starts_with(fs::canonicalize(fixture.assets().join("runninghub-handoffs/shot_01")).unwrap()));
+    }
+
+    #[test]
+    fn runninghub_digest_preserves_created_at_verbatim() {
+        let mut approval = RunningHubApprovalInput {
+            shot_id: "shot_whitespace".to_string(),
+            workflow_id: RUNNINGHUB_WORKFLOW_ID.to_string(),
+            workflow_url: RUNNINGHUB_WORKFLOW_URL.to_string(),
+            references: vec!["C:/refs/a.png".to_string(), "C:/refs/b.png".to_string()],
+            prompt: "prompt".to_string(), width: 1344, height: 768, duration_seconds: 8,
+            created_at: "2026-08-20T00:00:00.000Z ".to_string(), input_digest: String::new(),
+        };
+        let verbatim = runninghub_approval_digest(&approval).unwrap();
+        approval.input_digest = verbatim.clone();
+        assert_eq!(runninghub_approval_digest(&approval).unwrap(), verbatim);
+        approval.created_at = approval.created_at.trim().to_string();
+        assert_ne!(runninghub_approval_digest(&approval).unwrap(), verbatim);
+    }
+
+    #[test]
+    fn runninghub_handoff_rejects_invalid_roots_paths_and_packet_overwrite() {
+        let fixture = FixtureDir::new("runninghub-handoff-guard");
+        let valid = || {
+            let mut approval = RunningHubApprovalInput {
+            shot_id: "shot_01".to_string(), workflow_id: "2090035427871903746".to_string(),
+            workflow_url: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace".to_string(),
+            references: vec!["C:/project/lin-yue.png".to_string(), "C:/project/lan.png".to_string()],
+            prompt: "full prompt".to_string(), width: 1344, height: 768, duration_seconds: 8, created_at: "2026-08-20T00:00:00.000Z".to_string(), input_digest: String::new(),
+            };
+            approval.input_digest = runninghub_approval_digest(&approval).unwrap();
+            approval
+        };
+        assert_eq!(
+            prepare_runninghub_handoff_at_roots(fixture.root(), fixture.root(), valid(), |_| Ok(())).unwrap_err(),
+            "runninghub_assets_root_outside_project"
+        );
+        let mut traversal = valid();
+        traversal.shot_id = "../escape".to_string();
+        assert_eq!(
+            prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), traversal, |_| Ok(())).unwrap_err(),
+            "runninghub_handoff_input_invalid"
+        );
+        let mut unpinned = valid();
+        unpinned.workflow_url = "https://www.runninghub.cn/workflow/other".to_string();
+        assert_eq!(
+            prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), unpinned, |_| Ok(())).unwrap_err(),
+            "runninghub_handoff_input_invalid"
+        );
+        let receipt = prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), valid(), |_| Ok(())).unwrap();
+        fs::write(&receipt.packet_path, b"tampered").unwrap();
+        assert_eq!(
+            prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), valid(), |_| Ok(())).unwrap_err(),
+            "runninghub_handoff_packet_mismatch"
+        );
+        assert_eq!(fs::read(&receipt.packet_path).unwrap(), b"tampered");
+        let mut extra = serde_json::json!({
+            "schemaVersion": 1,
+            "provider": "runninghub_manual_custom_workflow",
+            "workflowId": RUNNINGHUB_WORKFLOW_ID,
+            "workflowUrl": RUNNINGHUB_WORKFLOW_URL,
+            "inputDigest": "b".repeat(64),
+            "references": ["C:/project/lin-yue.png", "C:/project/lan.png"],
+            "prompt": "full prompt",
+            "width": 1344,
+            "height": 768,
+            "durationSeconds": 8
+        });
+        extra["unexpected"] = serde_json::Value::String("must reject".to_string());
+        fs::write(&receipt.packet_path, serde_json::to_vec_pretty(&extra).unwrap()).unwrap();
+        let mut opened = false;
+        assert_eq!(prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), valid(), |_| { opened = true; Ok(()) }).unwrap_err(), "runninghub_handoff_packet_mismatch");
+        assert!(!opened);
+    }
+
+    #[test]
+    fn runninghub_result_imports_verified_primary_output_and_requires_submission_binding() {
+        let fixture = FixtureDir::new("runninghub-result-import");
+        let source = fixture.assets().join("cloud.mp4");
+        make_fixture(&source, 192, "1344x768", "8", false);
+        let mut approval = RunningHubApprovalInput {
+            shot_id: "shot_01".to_string(), workflow_id: RUNNINGHUB_WORKFLOW_ID.to_string(), workflow_url: RUNNINGHUB_WORKFLOW_URL.to_string(),
+            references: vec!["C:/refs/a.png".to_string(), "C:/refs/b.png".to_string()], prompt: "full prompt".to_string(),
+            width: 1344, height: 768, duration_seconds: 8, created_at: "2026-08-20T00:00:00.000Z".to_string(), input_digest: String::new(),
+        };
+        approval.input_digest = runninghub_approval_digest(&approval).unwrap();
+        let request = RunningHubResultImportRequest {
+            project_assets_dir: fixture.assets().to_string_lossy().to_string(), approval: approval.clone(), task_id: "123".to_string(), source_path: source.to_string_lossy().to_string(),
+            reported_task_status: "failed".to_string(), downstream_error: "RIFE: Tensor type unknown to einops <class 'tuple'>".to_string(),
+            submission: RunningHubSubmissionBinding { status: "submitted".to_string(), task_id: "123".to_string(), approval_input_digest: approval.input_digest.clone() },
+        };
+        prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), approval.clone(), |_| Ok(())).unwrap();
+        let canonical_assets = fs::canonicalize(fixture.assets()).unwrap();
+        persist_runninghub_submission_receipt(&canonical_assets, &approval, "123").unwrap();
+        let receipt = import_runninghub_result_at_roots(fixture.root(), fixture.assets().as_path(), request.clone()).unwrap();
+        assert_eq!(receipt.status, "recovered_primary_output");
+        assert_eq!(receipt.approval_input_digest, approval.input_digest);
+        assert!(Path::new(&receipt.imported_path).starts_with(fs::canonicalize(fixture.assets()).unwrap()));
+        let mut bad = request.clone();
+        bad.task_id = "124".to_string();
+        assert_eq!(import_runninghub_result_at_roots(fixture.root(), fixture.assets().as_path(), bad).unwrap_err(), "runninghub_submission_receipt_mismatch");
+
+        let mut forged_digest = approval.clone();
+        forged_digest.input_digest = "0".repeat(64);
+        let forged_request = RunningHubResultImportRequest { approval: forged_digest, ..request.clone() };
+        assert_eq!(import_runninghub_result_at_roots(fixture.root(), fixture.assets().as_path(), forged_request).unwrap_err(), "runninghub_approval_input_invalid");
+
+        let submission_path = runninghub_approval_receipt_path(&canonical_assets, &approval).unwrap().with_file_name("submission.json");
+        fs::write(&submission_path, b"{\"status\":\"submitted\",\"taskId\":\"999\"}").unwrap();
+        assert_eq!(import_runninghub_result_at_roots(fixture.root(), fixture.assets().as_path(), request).unwrap_err(), "runninghub_submission_receipt_mismatch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runninghub_handoff_rejects_symlink_packet_before_opening_url() {
+        use std::os::unix::fs::symlink;
+        let fixture = FixtureDir::new("runninghub-handoff-symlink");
+        let mut approval = RunningHubApprovalInput {
+            shot_id: "shot_symlink".to_string(), workflow_id: RUNNINGHUB_WORKFLOW_ID.to_string(), workflow_url: RUNNINGHUB_WORKFLOW_URL.to_string(),
+            references: vec!["/project/lin.png".to_string(), "/project/lan.png".to_string()], prompt: "prompt".to_string(), width: 1344, height: 768, duration_seconds: 8, created_at: "2026-08-20T00:00:00.000Z".to_string(), input_digest: String::new(),
+        };
+        approval.input_digest = runninghub_approval_digest(&approval).unwrap();
+        let first = prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), approval.clone(), |_| Ok(())).unwrap();
+        let outside = fixture.root().join("outside.json");
+        fs::write(&outside, b"outside").unwrap();
+        fs::remove_file(&first.packet_path).unwrap();
+        symlink(&outside, &first.packet_path).unwrap();
+        let mut opened = false;
+        assert_eq!(prepare_runninghub_handoff_at_roots(fixture.root(), fixture.assets().as_path(), approval, |_| { opened = true; Ok(()) }).unwrap_err(), "runninghub_handoff_packet_mismatch");
+        assert!(!opened);
     }
 }

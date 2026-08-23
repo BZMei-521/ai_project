@@ -1,18 +1,52 @@
 import { selectSelectedShot, useStoryboardStore } from "../storyboard-core/store";
 import { toDesktopMediaSource } from "../platform/desktopBridge";
 import { inferSkyboxReferencePlan } from "../comfy-pipeline/comfyService";
+import type { ShotLayer } from "../storyboard-core/types";
+import {
+  selectCharacterRedrawReviewPreviews,
+  type CharacterRedrawReviewPreview
+} from "./characterRedrawTaskPreviewRuntime";
+
+type CharacterMetricKey = "face" | "hair" | "outfit" | "body" | "quality";
+type InspectableCharacterMetadata = NonNullable<ShotLayer["characterGenerationMetadata"]> & {
+  consistencyMetrics?: Partial<Record<CharacterMetricKey, number | null>>;
+};
+
+function formatCharacterConsistencyScore(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+    : "—";
+}
+
+function characterLayerStatusLabel(metadata: InspectableCharacterMetadata): string {
+  if (metadata.status === "needs_review") return "需要人工审核";
+  if (metadata.status === "accepted") return "已接受";
+  return "生成中";
+}
+
+function characterRedrawScopeLabel(scope: CharacterRedrawReviewPreview["scope"]): string {
+  if (scope === "face_hair") return "脸和头发";
+  if (scope === "upper_body") return "上半身";
+  return "完整人物";
+}
 
 export function ShotInspectorPanel() {
   const selectedShot = useStoryboardStore(selectSelectedShot);
   const updateShotFields = useStoryboardStore((state) => state.updateShotFields);
   const assets = useStoryboardStore((state) => state.assets);
+  const layers = useStoryboardStore((state) => state.layers);
+  const generationTasks = useStoryboardStore((state) => state.generationTasks);
   const toggleCharacterRefForShot = useStoryboardStore((state) => state.toggleCharacterRefForShot);
   const characterAssets = assets.filter((asset) => asset.type === "character");
   const sceneAssets = assets.filter((asset) => asset.type === "scene" || asset.type === "skybox");
   const selectedSceneAsset = sceneAssets.find((asset) => asset.id === (selectedShot?.sceneRefId ?? ""));
   const selectedSkyboxFaces = selectedShot?.skyboxFaces ?? [];
   const selectedSkyboxFaceWeights = selectedShot?.skyboxFaceWeights ?? {};
-
+  const selectedCharacterLayers = selectedShot
+    ? layers.filter(
+        (layer) => layer.shotId === selectedShot.id && Boolean(layer.characterGenerationMetadata)
+      )
+    : [];
   if (!selectedShot) {
     return (
       <section className="panel inspector-panel">
@@ -113,6 +147,98 @@ export function ShotInspectorPanel() {
           </a>
         ) : (
           <small>当前镜头还没有生成分镜图</small>
+        )}
+      </section>
+      <section className="export-panel character-consistency-inspection" aria-labelledby="character-consistency-heading">
+        <h3 id="character-consistency-heading">人物一致性检查</h3>
+        {selectedCharacterLayers.length === 0 ? (
+          <small>当前镜头还没有逐人物生成记录。</small>
+        ) : (
+          <div className="character-consistency-list">
+            {selectedCharacterLayers.map((layer) => {
+              const metadata = layer.characterGenerationMetadata as InspectableCharacterMetadata;
+              const asset = characterAssets.find((item) => item.id === metadata.characterAssetId);
+              const scopedRedrawReviewPreviews = selectCharacterRedrawReviewPreviews(generationTasks, {
+                shotId: selectedShot.id,
+                characterAssetId: metadata.characterAssetId
+              });
+              const statusLabel = characterLayerStatusLabel(metadata);
+              const reviewPreview = metadata.status === "needs_review"
+                ? toDesktopMediaSource(layer.bitmapPath)
+                : "";
+              return (
+                <article className="character-consistency-card" key={layer.id}>
+                  <header>
+                    <h4>{asset?.name || layer.name || metadata.characterAssetId}</h4>
+                    <span
+                      aria-live="polite"
+                      className={`character-consistency-status status-${metadata.status}`}
+                      role="status"
+                    >
+                      状态：{statusLabel}
+                    </span>
+                  </header>
+                  <dl className="character-consistency-metadata">
+                    <div><dt>人物资产</dt><dd>{metadata.characterAssetId || "—"}</dd></div>
+                    <div><dt>Provider</dt><dd>{metadata.provider || "—"}</dd></div>
+                    <div><dt>身份版本</dt><dd>{metadata.identityPackVersion || "—"}</dd></div>
+                    <div><dt>LoRA 版本</dt><dd>{metadata.loraVersion || "—"}</dd></div>
+                    <div><dt>引用</dt><dd>{metadata.referencePaths.length > 0 ? metadata.referencePaths.join("、") : "—"}</dd></div>
+                    <div><dt>重试次数</dt><dd>{Number.isFinite(metadata.retryCount) ? metadata.retryCount : "—"}</dd></div>
+                    <div><dt>脸部一致性</dt><dd>{formatCharacterConsistencyScore(metadata.consistencyMetrics?.face)}</dd></div>
+                    <div><dt>发型一致性</dt><dd>{formatCharacterConsistencyScore(metadata.consistencyMetrics?.hair)}</dd></div>
+                    <div><dt>服装一致性</dt><dd>{formatCharacterConsistencyScore(metadata.consistencyMetrics?.outfit)}</dd></div>
+                    <div><dt>身体一致性</dt><dd>{formatCharacterConsistencyScore(metadata.consistencyMetrics?.body)}</dd></div>
+                    <div><dt>质量一致性</dt><dd>{formatCharacterConsistencyScore(metadata.consistencyMetrics?.quality)}</dd></div>
+                    <div><dt>总体一致性</dt><dd>{formatCharacterConsistencyScore(metadata.consistencyScore)}</dd></div>
+                  </dl>
+                  {metadata.failureDimensions && metadata.failureDimensions.length > 0 && (
+                    <small>未通过维度：{metadata.failureDimensions.join("、")}</small>
+                  )}
+                  {reviewPreview && (
+                    <a href={reviewPreview} rel="noreferrer" target="_blank">查看最佳审核预览</a>
+                  )}
+                  {scopedRedrawReviewPreviews.map(({ scope, task }) => {
+                    const taskPreview = toDesktopMediaSource(task.bestPreviewPath ?? "");
+                    const scopeLabel = characterRedrawScopeLabel(scope);
+                    return (
+                      <section className="generation-task-review-preview" key={`${scope}-${task.id}`}>
+                        <header>
+                          <h5>人物重绘审核预览 · {scopeLabel}</h5>
+                          <span
+                            aria-live="polite"
+                            className={`character-consistency-status status-${task.status}`}
+                            role="status"
+                          >
+                            状态：{task.status === "needs_review"
+                              ? "需要人工审核"
+                              : task.status === "cancelled"
+                                ? "已取消"
+                                : "失败"}
+                          </span>
+                        </header>
+                        {task.reviewReasons && task.reviewReasons.length > 0 && (
+                          <small>未通过维度：{task.reviewReasons.join("、")}</small>
+                        )}
+                        <a
+                          href={taskPreview}
+                          rel="noreferrer"
+                          target="_blank"
+                          title={`点击查看${scopeLabel}重绘审核预览`}
+                        >
+                          <img
+                            alt={`${asset?.name || metadata.characterAssetId} ${scopeLabel}重绘审核预览`}
+                            loading="lazy"
+                            src={taskPreview}
+                          />
+                        </a>
+                      </section>
+                    );
+                  })}
+                </article>
+              );
+            })}
+          </div>
         )}
       </section>
       <section className="export-panel">

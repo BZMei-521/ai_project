@@ -107,7 +107,7 @@ export function createVideoProductionController(dependencies = {}) {
       await assertCurrent(operation);
       const reviewRecord = await dependencies.verifyReviewRecord({ projectAssetsDir: staged.projectAssetsDir, credential: normalized.credential, reviewFrames });
       await assertCurrent(operation);
-      const qualityInput = { normalized: true, normalizationCredential: normalized.credential, inspection: verified, reviewFrames, reviewRecord, boundaryFrame: input.boundary?.sharedFramePath };
+      const qualityInput = { normalized: true, normalizationCredential: normalized.credential, inspection: verified, reviewFrames, reviewRecord, boundaryFrame: input.boundary?.sharedFramePath, providerArtifact: input.providerArtifact };
       if (stable(normalized.probe) !== stable(verified.probe) || stable(normalized.anomalies) !== stable(verified.anomalies)) throw new Error("credential_verification_mismatch");
       const qualityReport = createVideoQualityReport(input.shotId, qualityInput);
       const evidence = {
@@ -156,7 +156,7 @@ export function createVideoProductionController(dependencies = {}) {
       if (verifiedOutputPath !== evidence.assemblyReceipt.outputPath) throw new Error("assembly_receipt_output_mismatch");
       if (operation) await assertCurrent(operation);
     }
-    const input = { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: verified, reviewFrames: evidence.reviewFrames, reviewRecord, boundaryFrame: evidence.boundary?.sharedFramePath, assemblyReceipt: evidence.assemblyReceipt };
+    const input = { normalized: true, normalizationCredential: evidence.normalizationCredential, inspection: verified, reviewFrames: evidence.reviewFrames, reviewRecord, boundaryFrame: evidence.boundary?.sharedFramePath, assemblyReceipt: evidence.assemblyReceipt, providerArtifact: evidence.providerArtifact };
     const evaluation = evaluateVideoQuality(input);
     if (evaluation.status === "rejected") throw new Error(`credential_structural_recheck_failed:${evaluation.structuralIssues.join(",")}`);
     const binding = createVideoArtifactBinding(input);
@@ -212,7 +212,7 @@ function baseEvidence(input, operation, status) {
     boundaryIdentity: operation.boundaryIdentity, operation: clone(operation),
     routeDecision: clone(input.routeDecision), profilePreflight: clone(input.profilePreflight),
     boundary: input.boundary ? clone(input.boundary) : undefined,
-    generationReceipt: clone(input.generationReceipt), decision: undefined
+    generationReceipt: clone(input.generationReceipt), providerArtifact: clone(input.providerArtifact), decision: undefined
   };
 }
 function assertGenerationReceipt(receipt, input, operation) {

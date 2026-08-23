@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "wan_flf2v_river_half_step_v1",
+  "version": "1.0.0",
+  "references": {
+    "startFrame": { "role": "composition-space-light-lock", "description": "Picture 1 controls composition, river geography, lighting, staging, and all locked pixels." },
+    "shenYanPrimary": { "role": "shen-yan-identity-costume", "description": "Picture 2 controls only Shen Yan's identity, body proportions, costume construction, and materials." },
+    "poseGuide": { "role": "target-body-pose-only", "description": "Picture 3 controls only the approved target skeleton and cannot control identity, texture, color, or light." }
+  },
+  "blocks": {
+    "identity": {
+      "text": "Exactly two human characters remain visible: Shen Yan and Jiang Lan. Shen Yan keeps the approved face, short black hair, body proportions, dark blue long coat, trousers, and boots. Jiang Lan keeps the approved face, long black hair, body proportions, pale grey-blue dress, position, and pose.",
+      "sha256": "c4edb16ac65f9d409887149c2010511beb86e73fd0dc4ad164c190dd8b327edd"
+    },
+    "spatialLayout": {
+      "text": "The stone bridge remains the fixed deep-background landmark, the riverside path remains the shared ground plane, and the waterline remains on the river side of the path. Shen Yan remains screen-left and Jiang Lan remains screen-right. The camera remains on the same riverbank side of the 180-degree axis and does not cross the line between them.",
+      "sha256": "631b53a7d7230dc97dcd1f7194ada0144fbdf6075e3d45caa70a902315550f98"
+    },
+    "lighting": {
+      "text": "One continuous late-afternoon natural-light logic governs the frame. The existing key direction, river reflection, contact shadows, rim highlights, background brightness, and exposure remain inherited exactly from Picture 1.",
+      "sha256": "a07a0b7c40fb9d33f0a5685870df51838658f9009f5fc59de80482457f77a5ce"
+    },
+    "style": {
+      "text": "Approved cinematic 3D donghua style with refined semi-realistic faces, natural skin and fabric texture, stable anatomy, restrained depth, coherent materials, and the existing river-scene color grade.",
+      "sha256": "d2028bf2259e14f3812ae005c670a50d5ce8272ff27d6f3d9922549958d4aa52"
+    },
+    "performance": {
+      "text": "Shen Yan keeps a low grounded center of gravity, level shoulders, economical movement, and weight carried through the whole planted foot. His eyes stay alive and settle toward the path a beat before the small body adjustment. Jiang Lan remains physically still and attentive, with natural breathing but no primary action.",
+      "sha256": "bbe68ba48822839cec86302621749eca42b3579684b8a44b1e0ea1d7b12062bd"
+    }
+  },
+  "sections": {
+    "startFrame": { "text": "The first visible frame already contains both characters in their approved screen positions, at the approved scale, with both sets of feet visibly grounded on the riverside path." },
+    "action": { "primaryAction": "Shen Yan takes one short grounded half-step", "text": "Shen Yan takes one short grounded half-step with only his screen-left leg. Jiang Lan has no primary action and remains in place." },
+    "camera": { "text": "The camera keeps the approved side, height, distance, field of view, and framing; the endpoint image does not invent a new camera move or crop." },
+    "contactPhysics": { "text": "The moving heel stays close to the ground, body weight shifts slightly through the hip and knee, the planted boot keeps full contact, and the body mass settles without sliding, floating, stretching, or changing leg length." },
+    "positiveConstraints": { "text": "The frame contains exactly the approved two people, one readable short half-step, continuous clothing construction, continuous river geography, continuous contact shadows, and unchanged locked pixels." }
+  },
+  "compileOrder": [
+    "ASSET ROLES",
+    "IDENTITY",
+    "SPATIAL LAYOUT",
+    "FIRST FRAME",
+    "ACTION",
+    "CAMERA",
+    "CONTACT PHYSICS",
+    "LIGHTING",
+    "PERFORMANCE",
+    "STYLE",
+    "POSITIVE CONSTRAINTS"
+  ]
+}

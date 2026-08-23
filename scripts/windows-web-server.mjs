@@ -6,7 +6,9 @@ import { createHash } from "node:crypto";
 import fsSync, { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { attestCharacterGenerationReport, verifyCharacterEvidenceReceiptFromRegistry } from "./character-evidence-attestation.mjs";
+import { readLimitedJsonBody } from "./windows-web-request-body.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +19,7 @@ let runtimeBuildInfo = {
   assetFiles: [],
   distDir
 };
+let runtimeBuildInfoRefreshAt = 0;
 
 const cli = parseCliArgs(process.argv.slice(2));
 const host = cli.host || "127.0.0.1";
@@ -31,10 +34,131 @@ const bridgeLogsRoot = path.join(dataRoot, "logs");
 const comfyViewCacheRoot = path.join(dataRoot, "cache", "comfy-view");
 const pipelineRuntimeLogPath = path.join(bridgeLogsRoot, "pipeline-runtime-latest.log");
 const comfyRuntimeConfigPath = path.join(bridgeLogsRoot, "comfy-runtime-config.json");
+const characterEvidenceReceiptRoot = path.join(dataRoot, "character-evidence", "receipts");
 const startupLogPath = path.join(projectRoot, "logs", "windows-web-latest.log");
+const RUNNINGHUB_WORKFLOW_ID = "2090035427871903746";
+const RUNNINGHUB_WORKFLOW_URL = "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".gif"]);
 const AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a", ".opus"]);
+const BRIDGE_COMFY_ORIGIN = `http://${host}:${port}`;
+const TTS_PYTHON_CANDIDATES = [
+  "py",
+  "python",
+  path.join(os.homedir(), "AppData", "Local", "Programs", "Python", "Python313", "python.exe"),
+  path.join(os.homedir(), "AppData", "Local", "Programs", "Python", "Python312", "python.exe"),
+  path.join(os.homedir(), "AppData", "Local", "Programs", "Python", "Python311", "python.exe")
+];
+const EDGE_TTS_INLINE_SCRIPT = `
+import asyncio
+import json
+import sys
+import edge_tts
+
+async def main():
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        request = json.load(handle)
+    text = str(request.get("text", "")).strip()
+    if not text:
+        raise RuntimeError("text is empty")
+    voice = str(request.get("edgeVoice", "")).strip() or ("zh-CN-XiaoxiaoNeural" if str(request.get("language", "")).lower().startswith("zh") else "en-US-JennyNeural")
+    output_path = str(request.get("outputPath", "")).strip()
+    if not output_path:
+        raise RuntimeError("outputPath is empty")
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(output_path)
+    print(json.dumps({"outputPath": output_path, "voice": voice}, ensure_ascii=False))
+
+asyncio.run(main())
+`;
+const GTTS_INLINE_SCRIPT = `
+import json
+import sys
+from gtts import gTTS
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    request = json.load(handle)
+text = str(request.get("text", "")).strip()
+if not text:
+    raise RuntimeError("text is empty")
+output_path = str(request.get("outputPath", "")).strip()
+if not output_path:
+    raise RuntimeError("outputPath is empty")
+language = str(request.get("language", "")).strip() or "zh-CN"
+tts = gTTS(text=text, lang=language)
+tts.save(output_path)
+print(json.dumps({"outputPath": output_path, "voice": language}, ensure_ascii=False))
+`;
+const VOXCPM_INLINE_SCRIPT = `
+import json
+import sys
+from pathlib import Path
+
+def _as_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return default
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    request = json.load(handle)
+
+text = str(request.get("text", "")).strip()
+if not text:
+    raise RuntimeError("text is empty")
+output_path = str(request.get("outputPath", "")).strip()
+if not output_path:
+    raise RuntimeError("outputPath is empty")
+
+repo_dir = str(request.get("voxcpmRepoDir", "")).strip()
+if repo_dir:
+    src_dir = Path(repo_dir) / "src"
+    if src_dir.exists():
+        sys.path.insert(0, str(src_dir))
+
+from voxcpm import VoxCPM
+import soundfile as sf
+
+model_path = str(request.get("voxcpmModelPath", "")).strip()
+hf_model_id = str(request.get("voxcpmModelId", "")).strip() or "openbmb/VoxCPM2"
+cache_dir = str(request.get("voxcpmCacheDir", "")).strip()
+local_files_only = _as_bool(request.get("voxcpmLocalFilesOnly", False), False)
+cfg_value = float(request.get("voxcpmCfgValue", 2.0) or 2.0)
+inference_timesteps = int(request.get("voxcpmInferenceTimesteps", 10) or 10)
+load_denoiser = _as_bool(request.get("voxcpmLoadDenoiser", False), False)
+optimize = _as_bool(request.get("voxcpmOptimize", True), True)
+control = str(request.get("control", "")).strip()
+final_text = f"({control}){text}" if control else text
+
+if model_path:
+    model = VoxCPM(
+        voxcpm_model_path=model_path,
+        enable_denoiser=load_denoiser,
+        optimize=optimize,
+    )
+else:
+    kwargs = {
+        "hf_model_id": hf_model_id,
+        "load_denoiser": load_denoiser,
+        "local_files_only": local_files_only,
+        "optimize": optimize,
+    }
+    if cache_dir:
+        kwargs["cache_dir"] = cache_dir
+    model = VoxCPM.from_pretrained(**kwargs)
+
+audio_array = model.generate(
+    text=final_text,
+    cfg_value=cfg_value,
+    inference_timesteps=inference_timesteps,
+)
+sf.write(output_path, audio_array, model.tts_model.sample_rate)
+print(json.dumps({"outputPath": output_path, "voice": control or "default"}, ensure_ascii=False))
+`;
 
 async function main() {
   await ensureDir(dataRoot);
@@ -42,8 +166,9 @@ async function main() {
   await ensureDir(bridgeLogsRoot);
   await assertDistReady();
   runtimeBuildInfo = await resolveBuildInfo();
+  runtimeBuildInfoRefreshAt = Date.now();
 
-  const server = createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
     try {
       await routeRequest(req, res);
     } catch (error) {
@@ -55,7 +180,7 @@ async function main() {
       } else {
         console.error("[bridge] request failed", error);
       }
-      sendJson(res, 500, {
+      sendJson(res, Number.isInteger(error?.statusCode) ? error.statusCode : 500, {
         error: message
       });
     }
@@ -81,7 +206,8 @@ async function main() {
 
   if (shouldOpen) {
     openUrl(browserUrl).catch((error) => {
-      console.error(`[WARN] Failed to open browser automatically: ${String(error)}`);
+      // Auto-open is best effort and should not be treated as a startup error.
+      console.log(`[INFO] Browser auto-open skipped: ${String(error)}`);
     });
   }
 }
@@ -170,6 +296,7 @@ async function routeRequest(req, res) {
   const requestUrl = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
 
   if (requestUrl.pathname === "/api/health") {
+    await refreshRuntimeBuildInfo();
     return sendJson(res, 200, {
       ok: true,
       runtime: "windows-web-bridge",
@@ -182,6 +309,7 @@ async function routeRequest(req, res) {
   }
 
   if (requestUrl.pathname === "/api/diagnostics") {
+    await refreshRuntimeBuildInfo();
     return serveDiagnostics(res);
   }
 
@@ -237,6 +365,7 @@ async function serveDistAsset(rawPathname, res) {
   }
 
   if (path.basename(finalPath) === "index.html") {
+    await refreshRuntimeBuildInfo();
     let html = await fs.readFile(finalPath, "utf8");
     if (!html.includes("__STORYBOARD_WEB_BRIDGE__")) {
       html = html.replace(
@@ -258,6 +387,21 @@ async function serveDistAsset(rawPathname, res) {
     "Cache-Control": "no-store"
   });
   res.end(data);
+}
+
+async function refreshRuntimeBuildInfo(force = false) {
+  const now = Date.now();
+  if (!force && now - runtimeBuildInfoRefreshAt < 1500) {
+    return runtimeBuildInfo;
+  }
+  try {
+    runtimeBuildInfo = await resolveBuildInfo();
+    runtimeBuildInfoRefreshAt = now;
+  } catch (error) {
+    // Keep serving with last known build info if dist refresh fails momentarily.
+    console.warn(`[bridge] refresh build info failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return runtimeBuildInfo;
 }
 
 async function serveLocalFile(requestUrl, res) {
@@ -574,6 +718,8 @@ async function invokeCommand(cmd, args) {
       return findMissingPaths(args?.paths);
     case "save_current_project":
       return saveCurrentProject(args?.snapshot);
+    case "create_migration_backup":
+      return createMigrationBackup(args?.snapshot, args?.destination);
     case "load_current_project":
       return loadCurrentProject();
     case "list_workspace_projects":
@@ -592,10 +738,20 @@ async function invokeCommand(cmd, args) {
       return clearExportLogs();
     case "open_path_in_os":
       return openPathInOS(args?.path);
+    case "prepare_runninghub_handoff":
+      return prepareRunningHubHandoffWeb(args);
     case "write_base64_file":
       return writeBase64File(args?.filePath, args?.base64Data);
+    case "read_trusted_character_reference":
+      return readTrustedCharacterReference(args?.filePath);
+    case "attest_character_generation_report":
+      return attestCharacterGenerationReport(args?.report, { registryRoot: characterEvidenceReceiptRoot });
+    case "verify_character_evidence_receipt":
+      return verifyCharacterEvidenceReceiptFromRegistry({ receipt: args?.receipt, evidence: args?.evidence }, { registryRoot: characterEvidenceReceiptRoot });
     case "copy_file_to":
       return copyFileTo(args?.sourcePath, args?.targetPath);
+    case "probe_image_dimensions":
+      return probeImageDimensions(args?.path);
     case "delete_generated_file_families":
       return deleteGeneratedFileFamilies(args?.sourcePaths, args?.excludePaths);
     case "split_threeview_sheet":
@@ -622,6 +778,8 @@ async function invokeCommand(cmd, args) {
       return muxVideoWithAudioTracks(args);
     case "mix_audio_tracks":
       return mixAudioTracks(args);
+    case "generate_tts_audio":
+      return generateTtsAudio(args);
     case "generate_local_video_from_images":
       return generateLocalVideoFromImages(args);
     case "comfy_ping":
@@ -630,6 +788,8 @@ async function invokeCommand(cmd, args) {
       return comfyQueuePrompt(args?.baseUrl, args?.prompt, args?.clientId);
     case "comfy_get_history":
       return comfyGetHistory(args?.baseUrl, args?.promptId);
+    case "comfy_maintenance":
+      return comfyMaintenance(args?.baseUrl, args?.path, args?.payload);
     case "comfy_fetch_view_base64":
       return comfyFetchViewBase64(args?.url);
     case "cache_comfy_view_to_local":
@@ -673,9 +833,15 @@ async function saveComfyRuntimeConfig(config) {
     comfyInputDir: String(config?.comfyInputDir || "").trim(),
     outputDir: String(config?.outputDir || "").trim(),
     videoGenerationMode: String(config?.videoGenerationMode || "").trim(),
+    storyboardImageWorkflowMode: String(config?.storyboardImageWorkflowMode || "").trim(),
+    storyboardImageModelName: String(config?.storyboardImageModelName || "").trim(),
     imageWorkflowJson: String(config?.imageWorkflowJson || ""),
     videoWorkflowJson: String(config?.videoWorkflowJson || ""),
     audioWorkflowJson: String(config?.audioWorkflowJson || ""),
+    audioGenerationBackend: String(config?.audioGenerationBackend || "").trim(),
+    localTtsPreferredService: String(config?.localTtsPreferredService || "").trim(),
+    localTtsDialogueVoice: String(config?.localTtsDialogueVoice || "").trim(),
+    localTtsNarrationVoice: String(config?.localTtsNarrationVoice || "").trim(),
     soundWorkflowJson: String(config?.soundWorkflowJson || ""),
     updatedAt: new Date().toISOString()
   };
@@ -728,6 +894,27 @@ async function saveCurrentProject(snapshot) {
   };
   await fs.writeFile(path.join(projectDir, "project.json"), JSON.stringify(projectJson, null, 2), "utf8");
   return { projectPath: projectDir };
+}
+
+async function createMigrationBackup(snapshot, destination) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new Error("migration backup snapshot is required");
+  }
+  if (destination !== "current-project") {
+    throw new Error("migration backup destination must be the current project");
+  }
+  const projectDir = await resolveCurrentProjectDir();
+  const backupDir = path.join(projectDir, "migration-backups");
+  await ensureDir(backupDir);
+  const timestamp = Date.now();
+  const backupPath = path.join(backupDir, `migration-backup-${timestamp}.json`);
+  const payload = {
+    schemaVersion: 1,
+    exportedAtUnixMillis: timestamp,
+    snapshot
+  };
+  await fs.writeFile(backupPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  return { backupPath };
 }
 
 async function loadCurrentProject() {
@@ -845,6 +1032,89 @@ async function openPathInOS(targetPath) {
   return { openedPath: resolved };
 }
 
+export async function prepareRunningHubHandoffWeb(request, open = openUrl) {
+  const approval = request?.approval;
+  const projectAssetsDir = await canonicalWebAssetsRoot(request?.projectAssetsDir);
+  if (!approval || !isSafeWebSegment(approval.shotId) || !/^[a-f0-9]{64}$/.test(String(approval.inputDigest || "")) ||
+      approval.workflowId !== RUNNINGHUB_WORKFLOW_ID || approval.workflowUrl !== RUNNINGHUB_WORKFLOW_URL ||
+      !Array.isArray(approval.references) || approval.references.length !== 2 ||
+      new Set(approval.references.map((value) => String(value).trim())).size !== 2 ||
+      approval.references.some((value) => !isAbsoluteWebPath(value)) || !String(approval.prompt || "").trim() ||
+      Number(approval.width) !== 1344 || Number(approval.height) !== 768 || Number(approval.durationSeconds) !== 8) {
+    throw new Error("runninghub_handoff_input_invalid");
+  }
+  const packet = {
+    schemaVersion: 1,
+    provider: "runninghub_manual_custom_workflow",
+    workflowId: RUNNINGHUB_WORKFLOW_ID,
+    workflowUrl: RUNNINGHUB_WORKFLOW_URL,
+    inputDigest: String(approval.inputDigest),
+    references: approval.references.map((value) => String(value).trim()),
+    prompt: String(approval.prompt).trim(),
+    width: 1344,
+    height: 768,
+    durationSeconds: 8
+  };
+  const handoffDir = path.join(projectAssetsDir, "runninghub-handoffs", approval.shotId, packet.inputDigest);
+  if (!isPathInside(projectAssetsDir, handoffDir)) throw new Error("runninghub_handoff_path_invalid");
+  await ensureDir(handoffDir);
+  const canonicalHandoffDir = await fs.realpath(handoffDir);
+  if (!isPathInside(projectAssetsDir, canonicalHandoffDir)) throw new Error("runninghub_handoff_path_invalid");
+  const packetPath = path.join(canonicalHandoffDir, "handoff.json");
+  const bytes = `${JSON.stringify(packet, null, 2)}\n`;
+  const existing = await safeStat(packetPath);
+  if (existing) {
+    if (!existing.isFile() || (await fs.lstat(packetPath)).isSymbolicLink() || !(await webPacketMatches(packetPath, packet))) throw new Error("runninghub_handoff_packet_mismatch");
+  } else {
+    await atomicWebPacketCreate(packetPath, bytes);
+  }
+  const finalStat = await fs.lstat(packetPath).catch(() => null);
+  const finalRealPath = await fs.realpath(packetPath).catch(() => "");
+  if (!finalStat?.isFile() || finalStat.isSymbolicLink() || !finalRealPath || !isPathInside(canonicalHandoffDir, finalRealPath) || !(await webPacketMatches(finalRealPath, packet))) {
+    throw new Error("runninghub_handoff_packet_mismatch");
+  }
+  await open(RUNNINGHUB_WORKFLOW_URL);
+  return { schemaVersion: 1, status: "prepared", handoffDir: canonicalHandoffDir, packetPath: finalRealPath, workflowUrl: RUNNINGHUB_WORKFLOW_URL, inputDigest: packet.inputDigest };
+}
+
+async function canonicalWebAssetsRoot(raw) {
+  const value = String(raw || "").trim();
+  if (!path.isAbsolute(value)) throw new Error("runninghub_assets_root_invalid");
+  const canonical = await fs.realpath(value).catch(() => "");
+  if (!canonical || !(await dirExists(canonical)) || path.basename(canonical).toLowerCase() !== "assets") throw new Error("runninghub_assets_root_outside_project");
+  const project = path.dirname(canonical);
+  if (!project.toLowerCase().endsWith(".sbproj")) throw new Error("runninghub_assets_root_outside_project");
+  const currentProject = await resolveCurrentProjectDir();
+  const canonicalCurrentProject = await fs.realpath(currentProject).catch(() => "");
+  if (!canonicalCurrentProject || normalizePath(canonicalCurrentProject) !== normalizePath(project)) throw new Error("runninghub_assets_root_outside_current_project");
+  return canonical;
+}
+
+function isSafeWebSegment(value) { return /^[a-zA-Z0-9_-]{1,80}$/.test(String(value || "")); }
+function isAbsoluteWebPath(value) { return path.isAbsolute(String(value || "").trim()); }
+function isPathInside(root, candidate) { const relative = path.relative(path.resolve(root), path.resolve(candidate)); return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)); }
+async function webPacketMatches(filePath, expected) {
+  try { return JSON.stringify(JSON.parse(await fs.readFile(filePath, "utf8"))) === JSON.stringify(expected); } catch { return false; }
+}
+async function atomicWebPacketCreate(target, content) {
+  const temp = path.join(path.dirname(target), `.runninghub-handoff-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`);
+  try {
+    const handle = await fs.open(temp, "wx");
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+    await handle.close();
+    await fs.link(temp, target);
+    await fs.unlink(temp);
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => {});
+    if (await fileExists(target)) {
+      if (await webPacketMatches(target, JSON.parse(content))) return;
+      throw new Error("runninghub_handoff_packet_mismatch");
+    }
+    throw new Error("runninghub_handoff_packet_write_failed");
+  }
+}
+
 async function writeBase64File(filePath, base64Data) {
   const target = path.resolve(String(filePath || ""));
   if (!target) throw new Error("filePath is empty");
@@ -862,6 +1132,134 @@ async function copyFileTo(sourcePath, targetPath) {
   await ensureDir(path.dirname(target));
   await fs.copyFile(source, target);
   return { filePath: target };
+}
+
+async function readTrustedCharacterReference(rawPath) {
+  const value = String(rawPath || "").trim();
+  if (!value) throw new Error("reference_path_missing");
+  let canonical;
+  try {
+    canonical = await fs.realpath(path.resolve(value));
+  } catch {
+    throw new Error("reference_read_failed");
+  }
+  const extension = path.extname(canonical).toLowerCase();
+  if (![".png", ".jpg", ".jpeg", ".webp"].includes(extension)) throw new Error("reference_image_invalid");
+  const stat = await fs.stat(canonical);
+  const maxBytes = 40 * 1024 * 1024;
+  if (!stat.isFile() || stat.size <= 0) throw new Error("reference_image_invalid");
+  if (stat.size > maxBytes) throw new Error("reference_too_large");
+  const bytes = await fs.readFile(canonical);
+  if (!bytes.length || bytes.length > maxBytes) throw new Error(bytes.length ? "reference_too_large" : "reference_image_invalid");
+  const imageFormat = bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    ? "png"
+    : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+      ? "jpeg"
+      : bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP"
+        ? "webp"
+        : null;
+  const expected = extension === ".png" ? "png" : extension === ".webp" ? "webp" : "jpeg";
+  if (imageFormat !== expected) throw new Error("reference_image_invalid");
+  return { base64Data: bytes.toString("base64"), byteLength: bytes.length, imageFormat };
+}
+
+function readPngDimensions(buffer) {
+  if (!buffer || buffer.length < 24) return null;
+  const isPng =
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a;
+  if (!isPng) return null;
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (!(width > 0 && height > 0)) return null;
+  return { width, height };
+}
+
+function readGifDimensions(buffer) {
+  if (!buffer || buffer.length < 10) return null;
+  const isGif =
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38 &&
+    (buffer[4] === 0x37 || buffer[4] === 0x39) &&
+    buffer[5] === 0x61;
+  if (!isGif) return null;
+  const width = buffer.readUInt16LE(6);
+  const height = buffer.readUInt16LE(8);
+  if (!(width > 0 && height > 0)) return null;
+  return { width, height };
+}
+
+function readJpegDimensions(buffer) {
+  if (!buffer || buffer.length < 4) return null;
+  if (!(buffer[0] === 0xff && buffer[1] === 0xd8)) return null;
+  let offset = 2;
+  while (offset + 4 <= buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    let markerOffset = offset + 1;
+    while (markerOffset < buffer.length && buffer[markerOffset] === 0xff) {
+      markerOffset += 1;
+    }
+    if (markerOffset >= buffer.length) break;
+    const marker = buffer[markerOffset];
+    offset = markerOffset + 1;
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01) {
+      continue;
+    }
+    if (offset + 1 >= buffer.length) break;
+    const segmentLength = buffer.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
+    const isStartOfFrame =
+      marker >= 0xc0 &&
+      marker <= 0xcf &&
+      marker !== 0xc4 &&
+      marker !== 0xc8 &&
+      marker !== 0xcc;
+    if (isStartOfFrame) {
+      if (offset + 7 >= buffer.length) break;
+      const height = buffer.readUInt16BE(offset + 3);
+      const width = buffer.readUInt16BE(offset + 5);
+      if (width > 0 && height > 0) {
+        return { width, height };
+      }
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+function readImageDimensions(buffer) {
+  return readPngDimensions(buffer) ?? readGifDimensions(buffer) ?? readJpegDimensions(buffer);
+}
+
+async function probeImageDimensions(imagePath) {
+  const target = path.resolve(String(imagePath || ""));
+  if (!target) {
+    throw new Error("path is empty");
+  }
+  if (!(await fileExists(target))) {
+    throw new Error(`file not found: ${target}`);
+  }
+  const buffer = await fs.readFile(target);
+  const dimensions = readImageDimensions(buffer);
+  if (!dimensions) {
+    throw new Error(`unsupported image format for probe_image_dimensions: ${target}`);
+  }
+  return {
+    filePath: target,
+    width: dimensions.width,
+    height: dimensions.height
+  };
 }
 
 async function deleteGeneratedFileFamilies(sourcePaths, excludePaths) {
@@ -1102,6 +1500,23 @@ async function exportAnimaticFromFrames(args) {
   }
 }
 
+async function probeVideoDurationSeconds(filePath) {
+  const { stdout } = await runCommand("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    filePath
+  ]);
+  const duration = Number(stdout.trim());
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error(`Unable to read video duration: ${filePath}`);
+  }
+  return duration;
+}
+
 async function concatVideoSegments(videoPaths) {
   const paths = Array.isArray(videoPaths) ? videoPaths.map((item) => path.resolve(String(item || ""))) : [];
   const valid = [];
@@ -1111,39 +1526,63 @@ async function concatVideoSegments(videoPaths) {
   if (valid.length === 0) throw new Error("No valid video segments found");
 
   const projectDir = await resolveCurrentProjectDir();
-  const tempDir = await createTempExportDir(projectDir, "concat");
   const outputPath = await nextExportFilePath(projectDir, ".mp4");
-  try {
-    const concatPath = path.join(tempDir, "video-concat.txt");
-    const contents = valid.map((item) => `file '${escapeFfmpegPath(item)}'`).join("\n") + "\n";
-    await fs.writeFile(concatPath, contents, "utf8");
-    await runCommand("ffmpeg", [
-      "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      concatPath,
-      "-c:v",
-      "libx264",
-      "-c:a",
-      "aac",
-      "-pix_fmt",
-      "yuv420p",
-      outputPath
-    ]);
-    await appendExportLog(projectDir, {
-      timestamp: Date.now(),
-      kind: "video-concat",
-      status: "success",
-      message: `Concatenated ${valid.length} video segments`,
-      outputPath
-    });
-    return { outputPath };
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
+  const durations = await Promise.all(valid.map((item) => probeVideoDurationSeconds(item)));
+  const transitionSeconds = Math.min(3 / 16, ...durations.map((duration) => duration / 4));
+  const ffmpegArgs = ["-y"];
+  valid.forEach((item) => ffmpegArgs.push("-i", item));
+
+  const filters = [];
+  valid.forEach((_, index) => {
+    const hold = index < valid.length - 1
+      ? `,tpad=stop_mode=clone:stop_duration=${transitionSeconds.toFixed(6)}`
+      : "";
+    filters.push(
+      `[${index}:v]fps=16,settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p${hold}[v${index}]`
+    );
+  });
+
+  let previous = "v0";
+  let offset = 0;
+  for (let index = 1; index < valid.length; index += 1) {
+    offset += durations[index - 1];
+    const output = `x${index}`;
+    filters.push(
+      `[${previous}][v${index}]xfade=transition=fade:duration=${transitionSeconds.toFixed(6)}:offset=${offset.toFixed(6)}[${output}]`
+    );
+    previous = output;
   }
+  filters.push(
+    `[${previous}]minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,format=yuv420p[outv]`
+  );
+
+  ffmpegArgs.push(
+    "-filter_complex",
+    filters.join(";"),
+    "-map",
+    "[outv]",
+    "-an",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "slow",
+    "-crf",
+    "18",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    outputPath
+  );
+  await runCommand("ffmpeg", ffmpegArgs);
+  await appendExportLog(projectDir, {
+    timestamp: Date.now(),
+    kind: "video-concat",
+    status: "success",
+    message: `Smoothly joined ${valid.length} video segments with ${transitionSeconds.toFixed(3)}s transitions`,
+    outputPath
+  });
+  return { outputPath };
 }
 
 async function muxVideoWithAudioTracks(args) {
@@ -1257,6 +1696,283 @@ async function mixAudioTracks(args) {
   return { outputPath };
 }
 
+function sanitizeTtsFilenameSegment(value, fallback = "tts") {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || fallback;
+}
+
+function clampNumber(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function parseBoolish(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function resolveVoxCpmRepoDir(explicitValue) {
+  const candidates = [
+    String(explicitValue || "").trim(),
+    String(process.env.VOXCPM_REPO_DIR || "").trim(),
+    path.resolve(projectRoot, "..", "VoxCPM"),
+    path.join(os.homedir(), "Desktop", "VoxCPM")
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    if (pathExists(path.join(resolved, "src", "voxcpm"))) {
+      return resolved;
+    }
+  }
+  return "";
+}
+
+function buildVoxCpmControlHint(args) {
+  const voiceProfile = String(args?.voiceProfile || "").trim();
+  const emotion = String(args?.emotion || "").trim();
+  const deliveryStyle = String(args?.deliveryStyle || "").trim();
+  const voiceLabel = String(args?.voiceLabel || "").trim();
+  const speakerName = String(args?.speakerName || "").trim();
+  return [voiceProfile, emotion, deliveryStyle, voiceLabel, speakerName]
+    .filter(Boolean)
+    .join("；");
+}
+
+function resolveTtsServiceOrder(preferredService, language, hasVoxCpmLocalRepo = false) {
+  const preferred = String(preferredService || "auto").trim().toLowerCase();
+  if (preferred === "voxcpm") return ["voxcpm", "edge_tts", "gtts"];
+  if (preferred === "gtts") return ["gtts"];
+  if (preferred === "edge_tts") return ["edge_tts", "gtts"];
+  const normalizedLanguage = String(language || "").trim().toLowerCase();
+  const baseOrder = normalizedLanguage.startsWith("zh") ? ["gtts", "edge_tts"] : ["edge_tts", "gtts"];
+  if (hasVoxCpmLocalRepo || parseBoolish(process.env.VOXCPM_ENABLE_AUTO, false)) {
+    return ["voxcpm", ...baseOrder];
+  }
+  return baseOrder;
+}
+
+async function resolvePythonLauncher() {
+  for (const candidate of TTS_PYTHON_CANDIDATES) {
+    try {
+      await runCommand(candidate, ["--version"]);
+      return candidate;
+    } catch {
+      // try next launcher
+    }
+  }
+  throw new Error("No usable Python runtime found for local TTS");
+}
+
+async function ensurePythonModule(pythonBin, moduleName, packageName) {
+  try {
+    await runCommand(pythonBin, ["-c", `import ${moduleName}`]);
+    return false;
+  } catch {
+    await runCommand(pythonBin, ["-m", "pip", "install", packageName]);
+    return true;
+  }
+}
+
+async function runPythonTtsSnippet(pythonBin, script, request) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "storyboard-tts-"));
+  const requestPath = path.join(tempDir, "request.json");
+  try {
+    await fs.writeFile(requestPath, JSON.stringify(request, null, 2), "utf8");
+    const { stdout } = await runCommand(pythonBin, ["-c", script, requestPath]);
+    const lines = String(stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const payload = lines.length > 0 ? JSON.parse(lines.at(-1)) : {};
+    return payload && typeof payload === "object" ? payload : {};
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function finalizeGeneratedTtsAudio(rawPath, finalPath, rate, pitch, volume) {
+  const normalizedRate = clampNumber(rate, 0.78, 1.35, 1);
+  const normalizedPitch = clampNumber(pitch, 0.82, 1.22, 1);
+  const normalizedVolume = clampNumber(volume, 0.6, 1.6, 1);
+  const rawExt = path.extname(String(rawPath || "")).toLowerCase();
+  const finalExt = path.extname(String(finalPath || "")).toLowerCase();
+  const requiresTranscode = Boolean(rawExt && finalExt && rawExt !== finalExt);
+  const needsTransform =
+    requiresTranscode ||
+    Math.abs(normalizedRate - 1) > 0.02 ||
+    Math.abs(normalizedPitch - 1) > 0.02 ||
+    Math.abs(normalizedVolume - 1) > 0.02;
+  if (!needsTransform) {
+    await fs.rename(rawPath, finalPath);
+    return;
+  }
+  const filters = [];
+  if (Math.abs(normalizedPitch - 1) > 0.02) {
+    filters.push(`rubberband=pitch=${normalizedPitch.toFixed(4)}:tempo=1.0`);
+  }
+  if (Math.abs(normalizedRate - 1) > 0.02) {
+    filters.push(`atempo=${normalizedRate.toFixed(4)}`);
+  }
+  if (Math.abs(normalizedVolume - 1) > 0.02) {
+    filters.push(`volume=${normalizedVolume.toFixed(3)}`);
+  }
+  const ffmpegArgs = ["-y", "-i", rawPath];
+  if (filters.length > 0) {
+    ffmpegArgs.push("-filter:a", filters.join(","));
+  }
+  ffmpegArgs.push("-c:a", "libmp3lame", "-b:a", "128k", finalPath);
+  await runCommand("ffmpeg", ffmpegArgs);
+  await fs.rm(rawPath, { force: true }).catch(() => {});
+}
+
+async function generateTtsAudio(args) {
+  const text = String(args?.text || "").trim();
+  if (!text) {
+    throw new Error("TTS text is empty");
+  }
+  const projectDir = await resolveCurrentProjectDir();
+  const outputDir = path.join(projectDir, "generated-audio");
+  await ensureDir(outputDir);
+  const prefix = sanitizeTtsFilenameSegment(
+    args?.fileNamePrefix || args?.speakerName || args?.shotTitle || args?.voiceLabel || "tts",
+    "tts"
+  );
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const finalPath = path.join(outputDir, `${prefix}_${suffix}.mp3`);
+  const language = String(args?.language || "").trim() || (/[\u4e00-\u9fff]/.test(text) ? "zh-CN" : "en");
+  const edgeVoice = String(args?.edgeVoice || "").trim();
+  const voxcpmRepoDir = resolveVoxCpmRepoDir(args?.voxcpmRepoDir);
+  const voxcpmModelPath = String(args?.voxcpmModelPath || process.env.VOXCPM_MODEL_PATH || "").trim();
+  const voxcpmModelId = String(args?.voxcpmModelId || process.env.VOXCPM_HF_MODEL_ID || "openbmb/VoxCPM2").trim();
+  const voxcpmCacheDir = String(args?.voxcpmCacheDir || process.env.VOXCPM_CACHE_DIR || "").trim();
+  const voxcpmLocalFilesOnly = parseBoolish(
+    args?.voxcpmLocalFilesOnly,
+    parseBoolish(process.env.VOXCPM_LOCAL_FILES_ONLY, false)
+  );
+  const voxcpmLoadDenoiser = parseBoolish(
+    args?.voxcpmLoadDenoiser,
+    parseBoolish(process.env.VOXCPM_LOAD_DENOISER, false)
+  );
+  const voxcpmOptimize = parseBoolish(
+    args?.voxcpmOptimize,
+    !parseBoolish(process.env.VOXCPM_DISABLE_OPTIMIZE, false)
+  );
+  const voxcpmControl = String(args?.control || "").trim() || buildVoxCpmControlHint(args);
+  const voxcpmCfgValue = clampNumber(args?.voxcpmCfgValue, 0.5, 6.0, 2.0);
+  const voxcpmInferenceTimesteps = Math.round(
+    clampNumber(args?.voxcpmInferenceTimesteps, 2, 60, 10)
+  );
+  const services = resolveTtsServiceOrder(args?.preferredService, language, Boolean(voxcpmRepoDir));
+  const pythonBin = await resolvePythonLauncher();
+  let lastError = "unknown";
+
+  for (const service of services) {
+    const extension = service === "voxcpm" ? "wav" : "mp3";
+    const rawPath = path.join(outputDir, `${prefix}_${suffix}.${service}.${extension}`);
+    try {
+      if (service === "voxcpm") {
+        const payload = await runPythonTtsSnippet(pythonBin, VOXCPM_INLINE_SCRIPT, {
+          text,
+          outputPath: rawPath,
+          voxcpmRepoDir,
+          voxcpmModelPath,
+          voxcpmModelId,
+          voxcpmCacheDir,
+          voxcpmLocalFilesOnly,
+          voxcpmCfgValue,
+          voxcpmInferenceTimesteps,
+          voxcpmLoadDenoiser,
+          voxcpmOptimize,
+          control: voxcpmControl
+        });
+        await finalizeGeneratedTtsAudio(rawPath, finalPath, args?.rate, args?.pitch, args?.volume);
+        await appendExportLog(projectDir, {
+          timestamp: Date.now(),
+          kind: "tts",
+          status: "success",
+          message: `Generated local TTS via voxcpm (${String(payload.voice || voxcpmControl || args?.voiceLabel || "default")})`,
+          outputPath: finalPath
+        });
+        return {
+          outputPath: finalPath,
+          backend: "voxcpm",
+          voice: String(payload.voice || voxcpmControl || args?.voiceLabel || "default"),
+          language
+        };
+      }
+
+      if (service === "edge_tts") {
+        await ensurePythonModule(pythonBin, "edge_tts", "edge-tts");
+        const payload = await runPythonTtsSnippet(pythonBin, EDGE_TTS_INLINE_SCRIPT, {
+          text,
+          language,
+          edgeVoice,
+          outputPath: rawPath
+        });
+        await finalizeGeneratedTtsAudio(rawPath, finalPath, args?.rate, args?.pitch, args?.volume);
+        await appendExportLog(projectDir, {
+          timestamp: Date.now(),
+          kind: "tts",
+          status: "success",
+          message: `Generated local TTS via edge_tts (${String(payload.voice || edgeVoice || language)})`,
+          outputPath: finalPath
+        });
+        return {
+          outputPath: finalPath,
+          backend: "edge_tts",
+          voice: String(payload.voice || edgeVoice || language),
+          language
+        };
+      }
+
+      await ensurePythonModule(pythonBin, "gtts", "gTTS");
+      const payload = await runPythonTtsSnippet(pythonBin, GTTS_INLINE_SCRIPT, {
+        text,
+        language,
+        outputPath: rawPath
+      });
+      await finalizeGeneratedTtsAudio(rawPath, finalPath, args?.rate, args?.pitch, args?.volume);
+      await appendExportLog(projectDir, {
+        timestamp: Date.now(),
+        kind: "tts",
+        status: "success",
+        message: `Generated local TTS via gtts (${String(args?.voiceLabel || args?.voiceProfile || payload.voice || language)})`,
+        outputPath: finalPath
+      });
+      return {
+        outputPath: finalPath,
+        backend: "gtts",
+        voice: String(args?.voiceLabel || args?.voiceProfile || payload.voice || language),
+        language
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await fs.rm(rawPath, { force: true }).catch(() => {});
+    }
+  }
+
+  await appendExportLog(projectDir, {
+    timestamp: Date.now(),
+    kind: "tts",
+    status: "failed",
+    message: `Local TTS failed: ${lastError}`,
+    outputPath: null
+  });
+  throw new Error(`Local TTS generation failed: ${lastError}`);
+}
+
 async function generateLocalVideoFromImages(args) {
   const primary = path.resolve(String(args?.primaryImagePath || ""));
   if (!(await fileExists(primary))) {
@@ -1357,14 +2073,14 @@ async function generateLocalVideoFromImages(args) {
 
 async function comfyPing(baseUrl) {
   const base = normalizeBaseUrl(baseUrl);
-  for (const suffix of ["/system_stats", "/queue"]) {
+  for (const suffix of ["/queue", "/object_info"]) {
     try {
       const response = await fetchWithTimeout(`${base}${suffix}`, { method: "GET" }, 6000);
-      if (response.ok) {
+      if (response.ok || response.status === 401 || response.status === 403) {
         return {
           ok: true,
           statusCode: response.status,
-          message: `ComfyUI available: ${base}${suffix}`
+          message: `ComfyUI available: ${base}${suffix} [bridge_queue_first_v2]`
         };
       }
     } catch {
@@ -1372,7 +2088,7 @@ async function comfyPing(baseUrl) {
     }
   }
   try {
-    const response = await fetchWithTimeout(`${base}/system_stats`, { method: "GET" }, 6000);
+    const response = await fetchWithTimeout(`${base}/queue`, { method: "GET" }, 6000);
     return {
       ok: false,
       statusCode: response.status,
@@ -1406,12 +2122,55 @@ async function comfyQueuePrompt(baseUrl, prompt, clientId) {
   return promptId;
 }
 
+async function comfyMaintenance(baseUrl, rawPath, payload) {
+  const pathValue = String(rawPath || "").trim();
+  if (pathValue !== "/interrupt" && pathValue !== "/free") {
+    throw new Error(`Unsupported comfy maintenance path: ${pathValue || "(empty)"}`);
+  }
+  const body =
+    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const response = await fetchWithTimeout(`${normalizeBaseUrl(baseUrl)}${pathValue}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }, 15000);
+  let responseText = "";
+  try {
+    responseText = (await response.text()) || "";
+  } catch {
+    responseText = "";
+  }
+  return {
+    ok: response.ok,
+    statusCode: response.status,
+    message: response.ok
+      ? `HTTP ${response.status}`
+      : `HTTP ${response.status}${responseText ? ` ${responseText}` : ""}`.slice(0, 240)
+  };
+}
+
 function sanitizePromptForKnownOptionalNodes(prompt) {
   if (!prompt || typeof prompt !== "object" || Array.isArray(prompt)) {
     return prompt;
   }
   const cloned = JSON.parse(JSON.stringify(prompt));
   const nodeMap = cloned;
+  if (!looksLikeLegacyOptionalNodePrompt(nodeMap)) {
+    return nodeMap;
+  }
+
+  const legacyOptionalNodeTargets = {
+    "177": "203",
+    "179": "203",
+    "178": "204",
+    "180": "204",
+    "133": "152",
+    "149": "152",
+    "134": "153",
+    "154": "153",
+    "142": "141",
+    "194": "192"
+  };
 
   rewirePromptReferences(nodeMap, {
     "177": ["203", 0],
@@ -1431,15 +2190,46 @@ function sanitizePromptForKnownOptionalNodes(prompt) {
     extractScalarNodeValue(nodeMap["202"]) ??
     extractScalarNodeValue(nodeMap["161"]) ??
     null;
-  if (intScalar !== null) {
+  if (intScalar !== null && Object.prototype.hasOwnProperty.call(nodeMap, "187")) {
     replacePromptNodeReferenceWithScalar(nodeMap, "187", intScalar);
   }
 
-  for (const obsoleteId of ["133", "134", "142", "149", "154", "177", "178", "179", "180", "187", "194"]) {
+  for (const [obsoleteId, targetId] of Object.entries(legacyOptionalNodeTargets)) {
+    if (!Object.prototype.hasOwnProperty.call(nodeMap, obsoleteId)) continue;
+    if (!Object.prototype.hasOwnProperty.call(nodeMap, targetId)) continue;
     delete nodeMap[obsoleteId];
+  }
+  if (intScalar !== null && Object.prototype.hasOwnProperty.call(nodeMap, "187")) {
+    delete nodeMap["187"];
   }
 
   return nodeMap;
+}
+
+function looksLikeLegacyOptionalNodePrompt(nodeMap) {
+  if (!nodeMap || typeof nodeMap !== "object" || Array.isArray(nodeMap)) {
+    return false;
+  }
+  const legacyNodePairs = [
+    ["177", "203"],
+    ["179", "203"],
+    ["178", "204"],
+    ["180", "204"],
+    ["133", "152"],
+    ["149", "152"],
+    ["134", "153"],
+    ["154", "153"],
+    ["142", "141"],
+    ["194", "192"],
+    ["187", "201"],
+    ["187", "202"],
+    ["187", "161"]
+  ];
+  return legacyNodePairs.some(
+    ([sourceId, targetId]) =>
+      Object.prototype.hasOwnProperty.call(nodeMap, sourceId) &&
+      Object.prototype.hasOwnProperty.call(nodeMap, targetId)
+  );
 }
 
 function rewirePromptReferences(nodeMap, mapping) {
@@ -1451,6 +2241,9 @@ function rewirePromptReferences(nodeMap, mapping) {
       if (!Array.isArray(value) || value.length < 2) continue;
       const refId = String(value[0]);
       if (!Object.prototype.hasOwnProperty.call(mapping, refId)) continue;
+      const targetRef = mapping[refId];
+      if (!Array.isArray(targetRef) || targetRef.length < 2) continue;
+      if (!Object.prototype.hasOwnProperty.call(nodeMap, String(targetRef[0]))) continue;
       inputs[key] = mapping[refId];
     }
   }
@@ -1575,6 +2368,8 @@ async function comfyDiscoverEndpoints() {
 async function comfyDiscoverLocalDirs() {
   const home = os.homedir();
   const roots = [
+    // Comfy Desktop keeps runtime IO and models in a shared data directory.
+    path.join(home, "AppData", "Local", "Comfy-Desktop", "ComfyUI-Shared"),
     path.resolve(projectRoot, "..", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "..", "AiProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
     path.resolve(projectRoot, "..", "AIProject", "ComfyUI_JM_windows_portable", "ComfyUI"),
@@ -1595,7 +2390,7 @@ async function comfyDiscoverLocalDirs() {
     const score =
       ((await dirExists(path.join(root, "input"))) ? 3 : 0) +
       ((await dirExists(path.join(root, "output"))) ? 3 : 0) +
-      ((await dirExists(path.join(root, "models"))) ? 1 : 0) +
+      ((await dirExists(path.join(root, "models"))) ? 3 : 0) +
       ((await dirExists(path.join(root, "custom_nodes"))) ? 1 : 0);
     if (score > bestScore) {
       bestScore = score;
@@ -1920,8 +2715,24 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 10000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const normalizedHeaders = new Headers(init?.headers ?? {});
+    const targetUrl = String(url || "");
+    if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\//i.test(targetUrl)) {
+      // Some Comfy builds enforce Host/Origin consistency.
+      // For local Comfy requests, align Origin/Referer to Comfy's own origin instead of
+      // the bridge origin to avoid host-origin mismatch 403 responses.
+      try {
+        const parsed = new URL(targetUrl);
+        const comfyOrigin = `${parsed.protocol}//${parsed.host}`;
+        normalizedHeaders.set("Origin", comfyOrigin);
+        normalizedHeaders.set("Referer", `${comfyOrigin}/`);
+      } catch {
+        // Keep original headers when URL parsing fails.
+      }
+    }
     return await fetch(url, {
       ...init,
+      headers: normalizedHeaders,
       signal: controller.signal
     });
   } catch (error) {
@@ -2058,12 +2869,7 @@ function contentTypeForPath(filePath) {
 }
 
 async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.from(chunk));
-  }
-  if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return readLimitedJsonBody(req);
 }
 
 function sendJson(res, status, payload) {
@@ -2197,7 +3003,9 @@ function escapePowerShellLiteral(value) {
   return String(value || "").replace(/'/g, "''");
 }
 
-main().catch((error) => {
-  console.error("[ERROR]", error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  main().catch((error) => {
+    console.error("[ERROR]", error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

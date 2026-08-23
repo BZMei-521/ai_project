@@ -58,17 +58,31 @@ import {
   useStoryboardStore,
   type StoryboardSnapshot
 } from "../modules/storyboard-core/store";
+import {
+  canCommitConfirmedStageChange,
+  createScriptTransitionPersistenceFingerprint,
+  shouldConfirmScriptStageExit,
+  shouldClearScriptTransitionDirtyAfterSave,
+  shouldMarkRecoveredScriptDirty,
+  shouldReplaceImportedScript
+} from "./scriptTransitionSaveGuard";
 import { LazyAuxPanelContent, preloadAuxPanel } from "./LazyAuxPanelContent";
 import { WorkbenchShell } from "../app-shell/WorkbenchShell";
-import type { WorkbenchStage } from "../app-shell/workbenchRoutes";
+import type { DirectorPrimaryAction } from "../app-shell/DirectorTopBar";
+import { buildDirectorCommands } from "../app-shell/directorDeskCommands";
+import { readLastWorkbenchStage, writeLastWorkbenchStage } from "../app-shell/directorDeskState";
+import { WORKBENCH_STAGES, type WorkbenchStage } from "../app-shell/workbenchRoutes";
 import { ProjectWorkspaceView } from "../features/project/ProjectWorkspaceView";
 import { ScriptDirectorView } from "../features/script-director/ScriptDirectorView";
+import { ScriptTransitionInspector } from "../features/script-director/ScriptTransitionInspector";
+import type { NormalizedShotScript } from "../features/script-director/shotScriptImport";
 import { AssetWorkspaceView } from "../features/assets/AssetWorkspaceView";
 import { PreviewWorkspaceView } from "../features/spatial-preview/PreviewWorkspaceView";
 import { StoryboardWorkspaceView } from "../features/storyboard/StoryboardWorkspaceView";
 import { ProductionWorkspaceView } from "../features/production/ProductionWorkspaceView";
 import { AdvancedPipelinePanel, AdvancedToolsView, preloadAdvancedPipeline } from "../features/advanced-tools/AdvancedToolsView";
 import type { SpatialScene } from "../domains/spatial-scene/types";
+import { DirectedNodeflowWorkspace } from "../features/nodeflow/DirectedNodeflowWorkspace";
 
 type AuxPanelSection = "shots" | "inspector" | "layers" | "audio" | "assets" | "health" | "pipeline";
 type WorkspaceMode = "storyboard" | "spatial_stage";
@@ -121,6 +135,32 @@ function readCurrentStoryboardSnapshot(): StoryboardSnapshot {
   return createStoryboardSnapshot(useStoryboardStore.getState());
 }
 
+type ScriptDeleteFingerprintState = Pick<
+  ReturnType<typeof useStoryboardStore.getState>,
+  "shots" | "shotTransitions"
+>;
+
+export function createScriptDeleteFingerprint(
+  state: ScriptDeleteFingerprintState,
+  sequenceId: string,
+  shotId: string
+): string | null {
+  const orderedShotIds = state.shots
+    .filter((shot) => shot.sequenceId === sequenceId)
+    .slice()
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+    .map((shot) => shot.id);
+  if (!orderedShotIds.includes(shotId)) return null;
+  const affectedTransitions = state.shotTransitions
+    .filter((item) => (
+      item.sequenceId === sequenceId &&
+      (item.fromShotId === shotId || item.toShotId === shotId)
+    ))
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return JSON.stringify({ sequenceId, shotId, orderedShotIds, affectedTransitions });
+}
+
 function loadAuxPanelState(): {
   open: boolean;
   pinned: boolean;
@@ -153,10 +193,13 @@ export function App() {
   const sequences = useStoryboardStore((state) => state.sequences);
   const currentSequenceId = useStoryboardStore((state) => state.currentSequenceId);
   const shots = useStoryboardStore((state) => state.shots);
+  const shotTransitions = useStoryboardStore((state) => state.shotTransitions);
   const layers = useStoryboardStore((state) => state.layers);
   const assets = useStoryboardStore((state) => state.assets);
   const audioTracks = useStoryboardStore((state) => state.audioTracks);
   const selectedShotId = useStoryboardStore((state) => state.selectedShotId);
+  const selectedShotIds = useStoryboardStore((state) => state.selectedShotIds);
+  const selectedShotTransitionId = useStoryboardStore((state) => state.selectedShotTransitionId);
   const playback = useStoryboardStore((state) => state.playback);
   const activeLayerByShotId = useStoryboardStore((state) => state.activeLayerByShotId);
   const canvasTool = useStoryboardStore((state) => state.canvasTool);
@@ -180,12 +223,47 @@ export function App() {
   const togglePlayback = useStoryboardStore((state) => state.togglePlayback);
   const setCurrentFrame = useStoryboardStore((state) => state.setCurrentFrame);
   const addShot = useStoryboardStore((state) => state.addShot);
+  const selectShot = useStoryboardStore((state) => state.selectShot);
+  const selectShotTransition = useStoryboardStore((state) => state.selectShotTransition);
+  const updateShotTransition = useStoryboardStore((state) => state.updateShotTransition);
+  const replaceShotScriptForCurrentSequence = useStoryboardStore((state) => state.replaceShotScriptForCurrentSequence);
+  const moveShotToIndex = useStoryboardStore((state) => state.moveShotToIndex);
+  const deleteShot = useStoryboardStore((state) => state.deleteShot);
+  const undoShotSequenceEdit = useStoryboardStore((state) => state.undoShotSequenceEdit);
+  const redoShotSequenceEdit = useStoryboardStore((state) => state.redoShotSequenceEdit);
+  const shotSequenceHistory = useStoryboardStore((state) => state.shotSequenceHistory);
   const updateSpatialScene = useStoryboardStore((state) => state.updateSpatialScene);
   const setSelectedSpatialObject = useStoryboardStore((state) => state.setSelectedSpatialObject);
   const [projectLocation, setProjectLocation] = useState<string>("网页模式");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("storyboard");
-  const [workbenchStage, setWorkbenchStage] = useState<WorkbenchStage>("storyboard");
+  const [nodeflowMode, setNodeflowMode] = useState(false);
+  const [advancedToolsOpen, setAdvancedToolsOpen] = useState(false);
+  const [workbenchStage, setWorkbenchStage] = useState<WorkbenchStage>(readLastWorkbenchStage);
   const [saveState, setSaveState] = useState<string>("空闲");
+  const [scriptTransitionDirty, setScriptTransitionDirty] = useState(false);
+  const scriptRevisionRef = useRef(0);
+  const scriptTransitionDirtyRef = useRef(false);
+  const stageChangeRequestRef = useRef(0);
+  const setScriptTransitionDirtyValue = (dirty: boolean) => {
+    scriptTransitionDirtyRef.current = dirty;
+    setScriptTransitionDirty(dirty);
+  };
+  const markScriptTransitionDirty = () => {
+    scriptRevisionRef.current += 1;
+    setScriptTransitionDirtyValue(true);
+  };
+  const resetScriptTransitionTracking = () => {
+    scriptRevisionRef.current += 1;
+    setScriptTransitionDirtyValue(false);
+  };
+  const restoreScriptTransitionTracking = (dirty: boolean) => {
+    scriptRevisionRef.current += 1;
+    setScriptTransitionDirtyValue(dirty);
+  };
+
+  useEffect(() => {
+    writeLastWorkbenchStage(workbenchStage);
+  }, [workbenchStage]);
   const mountedRef = useRef(false);
   const desktopSyncStateRef = useRef<DesktopSnapshotSyncState>(
     createDesktopSnapshotSyncState()
@@ -253,6 +331,12 @@ export function App() {
   >([]);
   const [showAllRecoveryVersions, setShowAllRecoveryVersions] = useState(false);
   const importBackupInputRef = useRef<HTMLInputElement | null>(null);
+  const scriptShots = shots
+    .filter((shot) => shot.sequenceId === currentSequenceId)
+    .slice()
+    .sort((a, b) => a.order - b.order);
+  const scriptTransitions = shotTransitions.filter((item) => item.sequenceId === currentSequenceId);
+  const selectedScriptTransition = scriptTransitions.find((item) => item.id === selectedShotTransitionId) ?? null;
   const hasGeneratedImage = shots.some((shot) => shot.generatedImagePath?.trim());
   const onboardingSteps = [
     {
@@ -344,6 +428,8 @@ export function App() {
       const snapshot = loadAutosaveSnapshot();
       if (snapshot) {
         hydrateFromSnapshot(snapshot);
+        markScriptTransitionDirty();
+        setSaveState("已从自动保存恢复，需保存");
       }
     }
 
@@ -366,7 +452,17 @@ export function App() {
         const autosaveSnapshot = loadAutosaveSnapshot();
         const preferredSnapshot = choosePreferredDesktopSnapshot(desktopSnapshot, autosaveSnapshot);
         if (preferredSnapshot) {
+          const desktopFingerprint = desktopSnapshot
+            ? createScriptTransitionPersistenceFingerprint(desktopSnapshot)
+            : null;
+          const recoveredFingerprint = createScriptTransitionPersistenceFingerprint(preferredSnapshot);
           hydrateFromSnapshot(preferredSnapshot);
+          if (shouldMarkRecoveredScriptDirty({ recoveredFingerprint, desktopFingerprint })) {
+            markScriptTransitionDirty();
+            setSaveState("已恢复较新的自动保存，需保存");
+          } else {
+            resetScriptTransitionTracking();
+          }
         }
         setDesktopSyncState(markDesktopSnapshotSynced(
           desktopSyncStateRef.current,
@@ -395,10 +491,13 @@ export function App() {
         sequences,
         currentSequenceId,
         shots,
+        shotTransitions,
         layers,
         assets,
         audioTracks,
         selectedShotId,
+        selectedShotIds,
+        selectedShotTransitionId,
         activeLayerByShotId,
         canvasTool,
         exportSettings,
@@ -433,10 +532,13 @@ export function App() {
     assets,
     project,
     selectedShotId,
+    selectedShotIds,
+    selectedShotTransitionId,
     sequences,
     generationTasks,
     shotHistory,
     shotStrokes,
+    shotTransitions,
     shots
   ]);
 
@@ -505,18 +607,21 @@ export function App() {
     layers,
     project,
     selectedShotId,
+    selectedShotIds,
+    selectedShotTransitionId,
     sequences,
     generationTasks,
     shotHistory,
     shotStrokes,
+    shotTransitions,
     shots
   ]);
 
-  const onSaveDesktop = async () => {
+  const onSaveDesktop = async (): Promise<boolean> => {
     const workspacePath = activeWorkspacePathRef.current;
     if (!canManuallySaveDesktopSnapshot(desktopSyncStateRef.current, workspacePath)) {
       setSaveState("保存已阻止：请先完成或重新加载当前项目");
-      return;
+      return false;
     }
     try {
       setSaveState("保存中...");
@@ -531,28 +636,51 @@ export function App() {
 
       if (result.status === "cancelled") {
         setSaveState("保存已取消：当前项目已变化");
-      } else if (!path) {
-        setSaveState("已跳过（非 Tauri 环境）");
-      } else if (
-        activeWorkspacePathRef.current === result.submission.workspacePath &&
-        desktopSyncStateRef.current.workspaceToken === result.submission.workspaceToken
-      ) {
-        setDesktopSyncState(completeDesktopSnapshotSave(
-          desktopSyncStateRef.current,
-          {
-            workspacePath: result.submission.workspacePath,
-            workspaceToken: result.submission.workspaceToken,
-            submittedSnapshot: result.submission.snapshot
-          }
-        ));
-        setProjectLocation(path);
-        setSaveState("已保存");
-      } else {
-        setSaveState("已保存；当前项目已变化，未推进同步基线");
+        return false;
       }
+      if (!path) {
+        setSaveState("已跳过（非 Tauri 环境）");
+        return false;
+      }
+      if (
+        activeWorkspacePathRef.current !== result.submission.workspacePath ||
+        desktopSyncStateRef.current.workspaceToken !== result.submission.workspaceToken
+      ) {
+        setSaveState("已保存；当前项目已变化，未推进同步基线");
+        return false;
+      }
+      setDesktopSyncState(completeDesktopSnapshotSave(
+        desktopSyncStateRef.current,
+        {
+          workspacePath: result.submission.workspacePath,
+          workspaceToken: result.submission.workspaceToken,
+          submittedSnapshot: result.submission.snapshot
+        }
+      ));
+      setProjectLocation(path);
+      setSaveState("已保存");
+      return true;
     } catch (error) {
       setSaveState(`保存失败：${String(error)}`);
+      return false;
     }
+  };
+
+  const onManualSaveDesktop = async (): Promise<boolean> => {
+    const revisionAtSaveStart = scriptRevisionRef.current;
+    const fingerprintAtSaveStart = createScriptTransitionPersistenceFingerprint(useStoryboardStore.getState());
+    const saved = await onSaveDesktop();
+    const currentFingerprint = createScriptTransitionPersistenceFingerprint(useStoryboardStore.getState());
+    if (shouldClearScriptTransitionDirtyAfterSave({
+      saved,
+      revisionAtSaveStart,
+      currentRevision: scriptRevisionRef.current,
+      fingerprintAtSaveStart,
+      currentFingerprint
+    })) {
+      setScriptTransitionDirtyValue(false);
+    }
+    return saved;
   };
 
   const onLoadDesktop = async () => {
@@ -571,6 +699,7 @@ export function App() {
       }
 
       hydrateFromSnapshot(snapshot);
+      resetScriptTransitionTracking();
       setDesktopSyncState(markDesktopSnapshotSynced(
         desktopSyncStateRef.current,
         activeWorkspacePath,
@@ -597,14 +726,17 @@ export function App() {
     if (!name) return;
     const previousStoreState = useStoryboardStore.getState();
     const previousSyncState = desktopSyncStateRef.current;
+    const previousScriptTransitionDirty = scriptTransitionDirtyRef.current;
     let createdPath = "";
 
     try {
       setDesktopSyncState(beginDesktopSnapshotSyncTransition(previousSyncState));
       resetForNewProject(name);
+      resetScriptTransitionTracking();
       const path = await createWorkspaceProject(name);
       if (!path) {
         useStoryboardStore.setState(previousStoreState, true);
+        restoreScriptTransitionTracking(previousScriptTransitionDirty);
         setDesktopSyncState(restoreDesktopSnapshotSyncState(
           desktopSyncStateRef.current,
           previousSyncState
@@ -659,6 +791,7 @@ export function App() {
         }
       } else {
         useStoryboardStore.setState(previousStoreState, true);
+        restoreScriptTransitionTracking(previousScriptTransitionDirty);
         setDesktopSyncState(restoreDesktopSnapshotSyncState(
           desktopSyncStateRef.current,
           previousSyncState
@@ -702,6 +835,7 @@ export function App() {
         return;
       }
       hydrateFromSnapshot(snapshot);
+      resetScriptTransitionTracking();
       setDesktopSyncState(completeDesktopSnapshotLoad(
         desktopSyncStateRef.current,
         selected,
@@ -811,6 +945,7 @@ export function App() {
           return;
         }
         hydrateFromSnapshot(snapshot);
+        resetScriptTransitionTracking();
         setDesktopSyncState(completeDesktopSnapshotLoad(
           desktopSyncStateRef.current,
           selected.path,
@@ -888,8 +1023,9 @@ export function App() {
       return;
     }
     hydrateFromSnapshot(snapshot);
+    markScriptTransitionDirty();
     setShowRecoveryPanel(false);
-    setSaveState("已从自动保存恢复");
+    setSaveState("已从自动保存恢复，需保存");
   };
 
   const removeAutosaveVersion = async (id: string) => {
@@ -956,6 +1092,7 @@ export function App() {
       const text = await file.text();
       const snapshot = parseSnapshotBackup(text);
       hydrateFromSnapshot(snapshot);
+      resetScriptTransitionTracking();
       setSaveState("备份已导入");
     } catch (error) {
       setSaveState(`备份导入失败：${String(error)}`);
@@ -1117,12 +1254,13 @@ export function App() {
       if ((event.key === "n" || event.key === "N") && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         addShot();
+        if (workbenchStage === "script") markScriptTransitionDirty();
         return;
       }
 
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && (event.key === "s" || event.key === "S")) {
         event.preventDefault();
-        void onSaveDesktop();
+        void onManualSaveDesktop();
         return;
       }
 
@@ -1173,7 +1311,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [addShot, onSaveDesktop, playback.currentFrame, setCurrentFrame, togglePlayback]);
+  }, [addShot, onManualSaveDesktop, playback.currentFrame, setCurrentFrame, togglePlayback, workbenchStage]);
 
   const onTimelineSplitMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     const column = centerColumnRef.current;
@@ -1187,11 +1325,156 @@ export function App() {
     document.body.classList.add("is-resizing-timeline");
   };
 
-  const onWorkbenchStageChange = (nextStage: WorkbenchStage) => {
+  const onWorkbenchStageChange = async (nextStage: WorkbenchStage): Promise<boolean> => {
+    const requestId = ++stageChangeRequestRef.current;
+    let confirmationAccepted = true;
+    if (shouldConfirmScriptStageExit({
+      currentStage: workbenchStage,
+      nextStage,
+      dirty: scriptTransitionDirtyRef.current
+    })) {
+      confirmationAccepted = await confirmDialog({
+        title: "未保存转场",
+        message: "转场修改尚未保存。仍要离开剧本阶段吗？未保存状态会保留。",
+        confirmText: "仍要离开"
+      });
+    }
+    if (!canCommitConfirmedStageChange({
+      confirmationAccepted,
+      requestId,
+      latestRequestId: stageChangeRequestRef.current
+    })) return false;
+    setNodeflowMode(false);
     setWorkbenchStage(nextStage);
     if (nextStage === "preview") setWorkspaceMode("spatial_stage");
     if (nextStage === "storyboard") setWorkspaceMode("storyboard");
+    return true;
   };
+
+  const onImportShotScript = async (value: NormalizedShotScript) => {
+    const revisionAtPrompt = scriptRevisionRef.current;
+    const dirtyAtPrompt = scriptTransitionDirtyRef.current;
+    let confirmationAccepted = true;
+    if (scriptTransitionDirtyRef.current) {
+      confirmationAccepted = await confirmDialog({
+        title: "覆盖未保存剧本",
+        message: "当前镜头与转场还有未保存修改。确认用导入文件覆盖吗？",
+        confirmText: "覆盖",
+        danger: true
+      });
+    }
+    if (!shouldReplaceImportedScript({
+      dirty: dirtyAtPrompt,
+      confirmationAccepted,
+      revisionAtPrompt,
+      currentRevision: scriptRevisionRef.current
+    })) {
+      if (confirmationAccepted && scriptRevisionRef.current !== revisionAtPrompt) {
+        setSaveState("剧本已变化，请重新导入");
+      }
+      return;
+    }
+    replaceShotScriptForCurrentSequence({ shots: value.shots, transitions: value.transitions });
+    markScriptTransitionDirty();
+  };
+  const onMoveScriptShot = (shotId: string, targetIndex: number) => {
+    moveShotToIndex(shotId, targetIndex);
+    markScriptTransitionDirty();
+  };
+  const onUpdateScriptTransition = (
+    id: string,
+    patch: Parameters<typeof updateShotTransition>[1]
+  ) => {
+    updateShotTransition(id, patch);
+    markScriptTransitionDirty();
+  };
+  const onDeleteScriptShot = async (shotId: string) => {
+    const stateBeforeConfirmation = useStoryboardStore.getState();
+    const sequenceIdBeforeConfirmation = stateBeforeConfirmation.currentSequenceId;
+    const orderedShotsBeforeConfirmation = stateBeforeConfirmation.shots
+      .filter((item) => item.sequenceId === sequenceIdBeforeConfirmation)
+      .slice()
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    const shot = orderedShotsBeforeConfirmation.find((item) => item.id === shotId);
+    const fingerprintBeforeConfirmation = createScriptDeleteFingerprint(
+      stateBeforeConfirmation,
+      sequenceIdBeforeConfirmation,
+      shotId
+    );
+    if (!shot || !fingerprintBeforeConfirmation) return;
+    const shotIndex = orderedShotsBeforeConfirmation.findIndex((item) => item.id === shotId);
+    const affected = stateBeforeConfirmation.shotTransitions.filter((item) => (
+      item.sequenceId === sequenceIdBeforeConfirmation &&
+      (item.fromShotId === shotId || item.toShotId === shotId)
+    ));
+    const reconnectNotice = shotIndex > 0 && shotIndex < orderedShotsBeforeConfirmation.length - 1
+      ? "，并为新的相邻镜头创建默认连续动作转场"
+      : "";
+    const revisionBeforeConfirmation = scriptRevisionRef.current;
+    const confirmed = await confirmDialog({
+      title: "删除镜头",
+      message: `删除“${shot.title}”将移除 ${affected.length} 条相邻转场${reconnectNotice}。`,
+      confirmText: "删除",
+      danger: true
+    });
+    if (!confirmed) return;
+    const stateAfterConfirmation = useStoryboardStore.getState();
+    const fingerprintAfterConfirmation = createScriptDeleteFingerprint(
+      stateAfterConfirmation,
+      sequenceIdBeforeConfirmation,
+      shotId
+    );
+    if (
+      stateAfterConfirmation.currentSequenceId !== sequenceIdBeforeConfirmation ||
+      fingerprintAfterConfirmation !== fingerprintBeforeConfirmation ||
+      scriptRevisionRef.current !== revisionBeforeConfirmation
+    ) {
+      setSaveState("镜头序列已变化，请重新执行删除操作");
+      return;
+    }
+    deleteShot(shotId);
+    markScriptTransitionDirty();
+  };
+  const onUndoScriptSequence = () => {
+    undoShotSequenceEdit();
+    markScriptTransitionDirty();
+  };
+  const onRedoScriptSequence = () => {
+    redoShotSequenceEdit();
+    markScriptTransitionDirty();
+  };
+
+  const directorCommands = buildDirectorCommands({
+    createProject: onCreateProject,
+    openProject: onOpenProjectPath,
+    renameProject: onRenameProject,
+    deleteProject: onDeleteProject,
+    saveProject: onManualSaveDesktop,
+    loadProject: onLoadDesktop,
+    exportBackup: onExportBackup,
+    importBackup: onImportBackupClick,
+    openSettings: onEditProjectSettings,
+    openHelp: () => setShowHelpPanel(true),
+    openNodeflow: () => setNodeflowMode(true),
+    openAdvancedTools: () => setAdvancedToolsOpen(true)
+  });
+  const stagePrimaryAction: DirectorPrimaryAction = {
+    project: project.name
+      ? { label: "继续到剧本", onInvoke: () => onWorkbenchStageChange("script") }
+      : { label: "创建项目", onInvoke: onCreateProject },
+    script: scriptTransitionDirty
+      ? { label: "保存转场", onInvoke: () => void onManualSaveDesktop() }
+      : { label: "继续到资产", onInvoke: () => onWorkbenchStageChange("assets") },
+    assets: { label: "进入预演", onInvoke: () => onWorkbenchStageChange("preview") },
+    preview: { label: "继续到分镜", onInvoke: () => onWorkbenchStageChange("storyboard") },
+    storyboard: { label: "进入成片", onInvoke: () => onWorkbenchStageChange("production") },
+    production: { label: "打开成片工具", onInvoke: () => setAdvancedToolsOpen(true) }
+  }[workbenchStage];
+  const currentStageIndex = WORKBENCH_STAGES.findIndex(({ stage }) => stage === workbenchStage);
+  const completedStages = WORKBENCH_STAGES
+    .slice(0, Math.max(0, currentStageIndex))
+    .map(({ stage }) => stage);
+  const attentionStages = nextOnboardingStep ? [workbenchStage] : [];
 
   const fallbackPreviewScene: SpatialScene = {
     id: "preview-default",
@@ -1215,9 +1498,31 @@ export function App() {
   </>;
   const focusedStageView = (() => {
     switch (workbenchStage) {
-      case "project": return <ProjectWorkspaceView projectName={project.name} onCreateProject={onCreateProject} />;
-      case "script": return <ScriptDirectorView onContinue={() => onWorkbenchStageChange("assets")} />;
-      case "assets": return <AssetWorkspaceView assetCount={assets.length} onContinue={() => onWorkbenchStageChange("preview")} />;
+      case "project": return <ProjectWorkspaceView projectName={project.name} />;
+      case "script": return <ScriptDirectorView
+        shots={scriptShots}
+        transitions={scriptTransitions}
+        fps={project.fps}
+        sequenceId={currentSequenceId}
+        selectedShotId={selectedShotId}
+        selectedTransitionId={selectedShotTransitionId}
+        onSelectionChange={({ shotId, transitionId }) => {
+          if (shotId !== null) {
+            selectShot(shotId);
+            selectShotTransition(null);
+            return;
+          }
+          selectShot(null);
+          selectShotTransition(transitionId);
+        }}
+        onMoveShot={onMoveScriptShot}
+        onImportScript={onImportShotScript}
+        onUndo={onUndoScriptSequence}
+        onRedo={onRedoScriptSequence}
+        canUndo={shotSequenceHistory.past.length > 0}
+        canRedo={shotSequenceHistory.future.length > 0}
+      />;
+      case "assets": return <AssetWorkspaceView assetCount={assets.length} />;
       case "preview": return <PreviewWorkspaceView scene={activePreviewScene} selection={selectedSpatialObjectId} onSceneChange={updateSpatialScene} onSelectionChange={setSelectedSpatialObject} />;
       case "production": return <ProductionWorkspaceView taskLabel={generationTasks.length ? "处理中" : "等待生成"} />;
       case "storyboard":
@@ -1225,13 +1530,25 @@ export function App() {
     }
   })();
 
-  const workbenchInspector = (
-    <div className="workbench-object-inspector">
-      <span className="workbench-inspector-eyebrow">当前对象</span>
-      <strong>{selectedShotId ? (shots.find((shot) => shot.id === selectedShotId)?.title ?? "镜头") : "未选择镜头"}</strong>
-      <small>{project.name || "未命名项目"}</small>
-    </div>
-  );
+  const selectedShot = shots.find((shot) => shot.id === selectedShotId);
+  const selectedSpatialObject = spatialObjects.find((object) => object.id === selectedSpatialObjectId);
+  const inspectorByStage: Record<WorkbenchStage, JSX.Element> = {
+    project: <div className="workbench-object-inspector"><strong>{project.name || "未命名项目"}</strong><small>项目与版本</small></div>,
+    script: <ScriptTransitionInspector
+      fps={project.fps}
+      selectedShot={selectedShot ?? null}
+      selectedTransition={selectedScriptTransition}
+      fromShot={scriptShots.find((shot) => shot.id === selectedScriptTransition?.fromShotId) ?? null}
+      toShot={scriptShots.find((shot) => shot.id === selectedScriptTransition?.toShotId) ?? null}
+      onUpdateTransition={onUpdateScriptTransition}
+      onRequestDeleteShot={(shotId) => void onDeleteScriptShot(shotId)}
+    />,
+    assets: <div className="workbench-object-inspector"><strong>{assets.length} 个资产</strong><small>角色、场景与道具</small></div>,
+    preview: <div className="workbench-object-inspector"><strong>{selectedSpatialObject?.label ?? "未选择对象"}</strong><small>{selectedSpatialObject ? "空间位置与姿态" : "在画布中选择角色或道具"}</small></div>,
+    storyboard: <div className="workbench-object-inspector"><strong>{selectedShot?.title ?? "未选择镜头"}</strong><small>{selectedShot ? project.name : "在时间线中选择镜头"}</small></div>,
+    production: <div className="workbench-object-inspector"><strong>{generationTasks.length ? "处理中" : "等待生成"}</strong><small>视频、声音、质量与导出</small></div>
+  };
+  const workbenchInspector = inspectorByStage[workbenchStage];
 
   const advancedTools = (
     <div className="workbench-legacy-tools">
@@ -1312,11 +1629,41 @@ export function App() {
     </div>
   );
 
+  if (nodeflowMode) {
+    return (
+      <div className="nodeflow-app-root" data-nodeflow-app-root>
+        <DirectedNodeflowWorkspace
+          projectName={project.name}
+          assets={assets}
+          spatialScenes={spatialScenes}
+          shots={shots}
+          generationTasks={generationTasks}
+          onLegacy={() => setNodeflowMode(false)}
+          onRunNode={(nodeId) => {
+            const nextStage = nodeId === "preview" ? "preview" : nodeId === "storyboard" ? "storyboard" : nodeId === "production" ? "production" : nodeId === "assets" ? "assets" : "script";
+            setNodeflowMode(false);
+            onWorkbenchStageChange(nextStage);
+          }}
+        />
+        <AppToastHost />
+        <AppDialogHost />
+      </div>
+    );
+  }
+
   return (
     <WorkbenchShell
       advancedTools={<AdvancedToolsView>{advancedTools}</AdvancedToolsView>}
+      advancedToolsOpen={advancedToolsOpen}
+      attentionStages={attentionStages}
+      commands={directorCommands}
+      completedStages={completedStages}
       inspector={workbenchInspector}
+      onAdvancedToolsOpenChange={setAdvancedToolsOpen}
       onStageChange={onWorkbenchStageChange}
+      primaryAction={stagePrimaryAction}
+      projectName={project.name || "未命名项目"}
+      projectPath={activeWorkspacePath || projectLocation}
       stage={workbenchStage}
       statusSnapshot={{
         saveState,
@@ -1379,95 +1726,7 @@ export function App() {
           </section>
         </section>
       )}
-      <header className="topbar">
-        <div className="topbar-title" data-path={projectLocation}>
-          <div className="topbar-title-head">
-            <h1>{project.name}</h1>
-            <button
-              className="path-chip"
-              title={projectLocation}
-              type="button"
-            >
-              路径
-            </button>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <div className="workspace-mode-switch" role="group" aria-label="工作区模式">
-            <button className={workspaceMode === "storyboard" ? "active" : ""} aria-pressed={workspaceMode === "storyboard"} onClick={() => setWorkspaceMode("storyboard")} type="button">分镜</button>
-            <button className={workspaceMode === "spatial_stage" ? "active" : ""} aria-pressed={workspaceMode === "spatial_stage"} onClick={() => setWorkspaceMode("spatial_stage")} type="button">空间预演</button>
-          </div>
-          <div className="toolbar-group toolbar-project">
-            <button
-              className={`btn-primary ${guideAction === "create-project" ? "guide-focus" : ""}`}
-              onClick={onCreateProject}
-              type="button"
-            >
-              新建
-              {guideAction === "create-project" && <span className="guide-badge">下一步</span>}
-            </button>
-            <button className="optional-action" onClick={onOpenProjectPath} type="button">打开</button>
-            <select
-              onChange={(event) => onChangeProject(event.target.value)}
-              value={activeWorkspacePath}
-            >
-              <option value="">当前项目</option>
-              {workspaceProjects.map((item) => (
-                <option key={item.path} value={item.path}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-            <button className="optional-action" onClick={onRenameProject} type="button">重命名</button>
-            <button className="btn-danger" onClick={onDeleteProject} type="button">删除</button>
-          </div>
-          <div className="toolbar-group toolbar-backup">
-            <button className="btn-primary" onClick={onSaveDesktop} type="button">保存</button>
-            <button className="optional-action" onClick={onLoadDesktop} type="button">加载</button>
-            <button className="optional-action" onClick={onExportBackup} type="button">导出备份</button>
-            <button className="optional-action" onClick={onImportBackupClick} type="button">导入备份</button>
-          </div>
-          <div className="toolbar-group toolbar-utility">
-            <button className="optional-action" onClick={onEditProjectSettings} type="button">设置</button>
-            <button
-              className={`btn-ghost ${focusMode ? "toggle-on" : ""}`}
-              onClick={() => setFocusMode((previous) => !previous)}
-              type="button"
-            >
-              {focusMode ? "退出专注" : "专注模式"}
-            </button>
-            <button
-              className={`btn-ghost ${canvasPriorityLayout ? "toggle-on" : ""}`}
-              onClick={() => setCanvasPriorityLayout((previous) => !previous)}
-              type="button"
-            >
-              {canvasPriorityLayout ? "预览优先" : "标准布局"}
-            </button>
-            {import.meta.env.DEV && (
-              <button
-                className={`btn-ghost ${layoutDebug ? "toggle-on" : ""}`}
-                onClick={() => setLayoutDebug((previous) => !previous)}
-                type="button"
-              >
-                布局线
-              </button>
-            )}
-            <button
-              className={`btn-ghost ${guideAction === "open-help" ? "guide-focus" : ""}`}
-              onClick={() => setShowHelpPanel(true)}
-              type="button"
-            >
-              帮助
-              {guideAction === "open-help" && <span className="guide-badge">下一步</span>}
-            </button>
-          </div>
-          <div className="status-strip">
-            <span>{saveState}</span>
-            <span className="shortcut-hint">空格 / ←→ / Shift+←→ / PgUp/PgDn / 1-7 / F / N / Cmd(Ctrl)+S</span>
-          </div>
-        </div>
-      </header>
-      {showOnboardingPanel && workbenchStage !== "preview" && (
+      {showOnboardingPanel && workbenchStage === "project" && (
         <section className="panel onboarding-panel">
           <header className="panel-header">
             <h2>开始引导</h2>
@@ -1576,6 +1835,7 @@ export function App() {
       <main className={`editor-layout single-screen workbench-layout ${auxPanelOpen ? "aux-open" : ""}`}>
         <section
           className="center-column main-focus workbench-stage"
+          key={workbenchStage}
           ref={centerColumnRef}
           style={{ gridTemplateRows: centerColumnGridRows }}
         >

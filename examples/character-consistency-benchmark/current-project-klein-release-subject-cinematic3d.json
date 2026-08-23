@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "assets": [
+      {
+        "id": "asset_1774017261433_390",
+        "projectId": "proj_001",
+        "type": "character",
+        "name": "沈砚",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterSidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+        "characterBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+        "characterFaceRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterDetailRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+        "characterIdentityPack": {
+          "version": "shen-yan-hybrid-v5",
+          "triggerWord": "char_shen_yan_v1",
+          "species": "human",
+          "speciesTraits": [],
+          "styleContractId": "cinematic_3d_donghua_v1",
+          "styleContractVersion": "1.0.0",
+          "styleContractDigest": "27db8be0b246c9b931217e24caffc9606c0959b035f7a0d9714ed0c058828b88",
+          "faceMasterPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "faceLeftPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "faceRightPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "hairBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+          "bodyFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "bodySidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "bodyBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+          "neutralExpressionPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "immutableTraits": [
+            "refined adult Chinese male face, age 24 to 28",
+            "natural-sized clear blue almond-shaped eyes",
+            "short dark brown side-swept layered hair",
+            "teal long-sleeve tunic",
+            "dark navy sleeveless long coat",
+            "brown leather belt and knee-high brown leather boots"
+          ],
+          "forbiddenChanges": [
+            "preserve recognizable facial identity and blue eye color",
+            "preserve hair color, length, fringe, and silhouette",
+            "preserve the teal tunic, navy long coat, brown belt, and brown boots",
+            "preserve mature adult male proportions",
+            "no beard, moustache, stubble, or facial hair shadow",
+            "human ears only, no animal ears, tail, horns, or muzzle"
+          ],
+          "approvedHeroFramePaths": [
+            "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png"
+          ],
+          "updatedAt": "2026-08-09T22:28:59.6576505+08:00"
+        }
+      }
+    ]
+  }
+}

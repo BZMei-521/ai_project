@@ -17,10 +17,8 @@ from typing import Any
 
 MODEL_ID = "google/siglip2-base-patch16-224"
 MODEL_REVISION = "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
-MODEL_DIR = Path(
-    r"C:\Users\Administrator\AppData\Local\Comfy-Desktop\ComfyUI-Shared\models\character_evaluators\siglip2-base-patch16-224-75de2d5"
-)
-SNAPSHOT_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "examples" / "character-consistency-benchmark" / "siglip2-snapshot-manifest.json"
+MODEL_DIR = Path(os.environ.get("CHARACTER_EVALUATOR_MODEL_DIR", r"C:\Users\Administrator\AppData\Local\Comfy-Desktop\ComfyUI-Shared\models\character_evaluators\siglip2-base-patch16-224-75de2d5"))
+SNAPSHOT_MANIFEST_PATH = Path(os.environ.get("CHARACTER_EVALUATOR_SNAPSHOT_MANIFEST", str(Path(__file__).resolve().parents[2] / "examples" / "character-consistency-benchmark" / "siglip2-snapshot-manifest.json")))
 SNAPSHOT_MANIFEST_SHA256 = "451ee614b7cf3349a125ffb24fa757238a455d369cb1b7ce15f6fc19b33a3b68"
 MAX_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_DIMENSION = 8192
@@ -151,17 +149,24 @@ def _validated_image(path_value: Any):
 
 
 def _quality(image) -> float:
-    from PIL import ImageFilter, ImageStat
-
+    import numpy as np
     luminance = image.convert("L")
-    edges = luminance.filter(ImageFilter.FIND_EDGES)
-    sharpness = min(1.0, math.sqrt(max(0.0, ImageStat.Stat(edges).var[0])) / 64.0)
+    values = np.asarray(luminance, dtype=np.float32) / 255.0
+    height, width = values.shape
+    subject = values[height // 10:height * 9 // 10, width // 6:width * 5 // 6]
+    horizontal = np.abs(np.diff(subject, axis=1)).ravel()
+    vertical = np.abs(np.diff(subject, axis=0)).ravel()
+    gradients = np.concatenate((horizontal, vertical))
+    percentile_75, percentile_95 = (float(value) for value in np.percentile(gradients, (75, 95)))
+    detail = min(1.0, max(0.0, (percentile_95 - 0.015) / 0.02))
+    oversharpen = min(1.0, max(0.0, (percentile_95 - 0.10) / 0.15))
+    dense_noise = min(1.0, max(0.0, ((percentile_75 / max(percentile_95, 1e-6)) - 0.45) / 0.35))
     histogram = luminance.histogram()
     pixels = max(1, image.width * image.height)
     clipped = (sum(histogram[:4]) + sum(histogram[-4:])) / pixels
     clipping = max(0.0, 1.0 - min(1.0, clipped * 2.0))
     entropy = min(1.0, max(0.0, luminance.entropy() / 8.0))
-    value = 0.45 * sharpness + 0.25 * clipping + 0.30 * entropy
+    value = 0.50 * detail + 0.20 * clipping + 0.30 * entropy - 0.25 * oversharpen - 0.15 * dense_noise
     if not math.isfinite(value):
         raise WorkerError("EQUALITY")
     return round(min(1.0, max(0.0, value)), 6)

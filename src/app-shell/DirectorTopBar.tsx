@@ -1,4 +1,4 @@
-import React, { type ReactNode } from "react";
+import React, { type ReactNode, type Ref } from "react";
 
 export type DirectorPrimaryAction = {
   label: string;
@@ -13,6 +13,9 @@ export type DirectorTopBarProps = {
   primaryAction?: DirectorPrimaryAction;
   projectMenuOpen?: boolean;
   projectMenu?: ReactNode;
+  commandTriggerRef?: Ref<HTMLButtonElement>;
+  projectMenuButtonRef?: Ref<HTMLButtonElement>;
+  projectMenuRef?: Ref<HTMLDivElement>;
   onOpenCommands: () => void;
   onOpenProjectMenu: () => void;
 };
@@ -24,6 +27,9 @@ export function DirectorTopBar({
   primaryAction,
   projectMenuOpen = false,
   projectMenu,
+  commandTriggerRef,
+  projectMenuButtonRef,
+  projectMenuRef,
   onOpenCommands,
   onOpenProjectMenu
 }: DirectorTopBarProps) {
@@ -32,6 +38,7 @@ export function DirectorTopBar({
       <div data-director-product-mark>Director Desk</div>
       <div data-director-project>
         <button
+          ref={projectMenuButtonRef}
           type="button"
           aria-label="打开项目菜单"
           aria-expanded={projectMenuOpen}
@@ -41,10 +48,10 @@ export function DirectorTopBar({
         </button>
         {projectPath ? <span data-director-project-path>{projectPath}</span> : null}
         <span aria-label={`保存状态：${saveStatus}`} data-director-save-status>{saveStatus}</span>
-        {projectMenuOpen && projectMenu ? <div data-director-project-menu>{projectMenu}</div> : null}
+        {projectMenuOpen && projectMenu ? <div ref={projectMenuRef} data-director-project-menu>{projectMenu}</div> : null}
       </div>
       <div data-director-top-actions>
-        <button type="button" aria-label="搜索命令" onClick={onOpenCommands}>搜索</button>
+        <button ref={commandTriggerRef} className="director-command-trigger" type="button" aria-label="搜索命令" onClick={onOpenCommands}>搜索</button>
         {primaryAction ? (
           <button
             type="button"

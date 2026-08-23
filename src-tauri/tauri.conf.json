@@ -25,6 +25,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "resources": {
+      "../scripts/evaluators/siglip2-character-attestor.py": "scripts/evaluators/siglip2-character-attestor.py",
+      "../scripts/evaluators/siglip2-character-worker.py": "scripts/evaluators/siglip2-character-worker.py",
+      "../scripts/prepare-character-reference.py": "scripts/prepare-character-reference.py",
+      "../examples/character-consistency-benchmark/benchmark.json": "examples/character-consistency-benchmark/benchmark.json",
+      "../examples/character-consistency-benchmark/siglip2-evaluator.example.json": "examples/character-consistency-benchmark/siglip2-evaluator.example.json",
+      "../examples/character-consistency-benchmark/siglip2-snapshot-manifest.json": "examples/character-consistency-benchmark/siglip2-snapshot-manifest.json"
+    }
   }
 }

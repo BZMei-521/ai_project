@@ -1,0 +1,43 @@
+{
+  "snapshot": {
+    "assets": [
+      {
+        "id": "asset_1774017261433_390",
+        "projectId": "proj_001",
+        "type": "character",
+        "name": "沈砚",
+        "characterIdentityPack": {
+          "version": "shen-yan-identity-v1",
+          "triggerWord": "char_shen_yan_v1",
+          "faceMasterPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_front_path.png",
+          "faceLeftPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_side_path.png",
+          "faceRightPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_side_path.png",
+          "hairBackPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_back_path.png",
+          "bodyFrontPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_front_path.png",
+          "bodySidePath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_side_path.png",
+          "bodyBackPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_back_path.png",
+          "neutralExpressionPath": "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_front_path.png",
+          "immutableTraits": [
+            "short dark brown side-swept hair",
+            "large blue eyes",
+            "teal long-sleeve tunic",
+            "dark navy sleeveless long coat",
+            "brown belt and knee-high brown boots",
+            "clean youthful animated male face"
+          ],
+          "forbiddenChanges": [
+            "do not change face shape or blue eye color",
+            "do not change hair color, length, fringe, or silhouette",
+            "do not change the teal tunic, navy long coat, brown belt, or brown boots",
+            "do not change age, gender presentation, or body proportions",
+            "do not switch from clean 2D animated character styling to photorealism"
+          ],
+          "approvedHeroFramePaths": [
+            "C:\\Users\\Administrator\\Documents\\ComfyUI\\input\\shot_shot_001_char1_front_path.png"
+          ],
+          "updatedAt": "2026-08-09T00:00:00.000+08:00"
+        }
+      }
+    ]
+  }
+}

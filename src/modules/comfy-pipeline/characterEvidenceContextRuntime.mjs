@@ -1,4 +1,12 @@
 import { importCharacterGenerationEvidence } from "./characterBenchmarkEvidenceRuntime.mjs";
+import {
+  computeCharacterIdentityMetadataDigest,
+  validateAndCanonicalizeCharacterIdentityMetadata
+} from "./characterIdentityMetadataRuntime.mjs";
+import {
+  CINEMATIC_3D_DONGHUA_CONTRACT,
+  computeCharacterStyleContractDigest
+} from "./characterStyleContractRuntime.mjs";
 
 const plain = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
@@ -14,6 +22,188 @@ const REFERENCE_FIELDS = Object.freeze({
   body_back: "bodyBackPath",
   expression_neutral: "neutralExpressionPath"
 });
+
+function normalizedHashMap(value) {
+  if (!plain(value)) return null;
+  const entries = Object.entries(value);
+  if (!entries.length || entries.some(([slot, hash]) => !text(slot) || !sha256Value(hash))) return null;
+  return Object.fromEntries(entries.map(([slot, hash]) => [slot, hash.toLowerCase()]));
+}
+
+export async function stageImmutableCharacterReferenceSnapshot(input = {}) {
+  if (!plain(input.identity) || typeof input.stageReference !== "function" || typeof input.hashIdentity !== "function") {
+    throw new Error("staged_reference_context_invalid");
+  }
+  const stagedIdentity = { ...input.identity };
+  const pathBySource = {};
+  const slotPaths = {};
+  const usedTargets = new Set();
+  for (const [slot, field] of Object.entries(REFERENCE_FIELDS)) {
+    const sourcePath = text(input.identity[field]);
+    if (!sourcePath) continue;
+    const stagedPath = text(await input.stageReference({ slot, field, sourcePath }));
+    if (!stagedPath || usedTargets.has(stagedPath)) throw new Error("staged_reference_path_invalid");
+    usedTargets.add(stagedPath);
+    stagedIdentity[field] = stagedPath;
+    slotPaths[slot] = stagedPath;
+    if (!pathBySource[sourcePath]) pathBySource[sourcePath] = stagedPath;
+  }
+  if (!Object.keys(slotPaths).length) throw new Error("staged_reference_context_invalid");
+  const supplementalPaths = {};
+  const supplementalSources = plain(input.supplementalReferences) ? input.supplementalReferences : {};
+  for (const [slot, value] of Object.entries(supplementalSources)) {
+    const sourcePath = text(value);
+    if (!text(slot) || !sourcePath) continue;
+    const stagedPath = text(await input.stageReference({ slot, field: null, sourcePath, supplemental: true }));
+    if (!stagedPath || usedTargets.has(stagedPath)) throw new Error("staged_reference_path_invalid");
+    usedTargets.add(stagedPath);
+    supplementalPaths[slot] = stagedPath;
+    if (!pathBySource[sourcePath]) pathBySource[sourcePath] = stagedPath;
+  }
+  const sourceHashes = normalizedHashMap(await input.hashIdentity(stagedIdentity));
+  if (!sourceHashes || Object.keys(sourceHashes).length !== Object.keys(slotPaths).length || Object.keys(slotPaths).some((slot) => !sourceHashes[slot])) {
+    throw new Error("staged_reference_hash_invalid");
+  }
+  let supplementalHashes = {};
+  if (Object.keys(supplementalPaths).length) {
+    if (typeof input.hashReferencePaths !== "function") throw new Error("staged_reference_context_invalid");
+    supplementalHashes = normalizedHashMap(await input.hashReferencePaths(supplementalPaths));
+    if (!supplementalHashes || Object.keys(supplementalPaths).some((slot) => !supplementalHashes[slot])) throw new Error("staged_reference_hash_invalid");
+  }
+  return { stagedIdentity, sourceHashes, pathBySource, slotPaths, supplementalPaths, supplementalHashes };
+}
+
+export async function verifyImmutableCharacterReferenceSnapshot(snapshot, hashIdentity, hashReferencePaths) {
+  if (!plain(snapshot) || !plain(snapshot.stagedIdentity) || !plain(snapshot.sourceHashes) || typeof hashIdentity !== "function") {
+    return { valid: false, reason: "staged_reference_context_invalid" };
+  }
+  try {
+    const expected = normalizedHashMap(snapshot.sourceHashes);
+    const actual = normalizedHashMap(await hashIdentity(snapshot.stagedIdentity));
+    const expectedSlots = expected ? Object.keys(expected).sort() : [];
+    const actualSlots = actual ? Object.keys(actual).sort() : [];
+    if (!expected || !actual || expectedSlots.length !== actualSlots.length || expectedSlots.some((slot, index) => slot !== actualSlots[index] || expected[slot] !== actual[slot])) {
+      return { valid: false, reason: "staged_reference_hash_mismatch" };
+    }
+    const supplementalPaths = plain(snapshot.supplementalPaths) ? snapshot.supplementalPaths : {};
+    if (Object.keys(supplementalPaths).length) {
+      if (typeof hashReferencePaths !== "function") return { valid: false, reason: "staged_reference_context_invalid" };
+      const expectedSupplemental = normalizedHashMap(snapshot.supplementalHashes);
+      const actualSupplemental = normalizedHashMap(await hashReferencePaths(supplementalPaths));
+      const expectedSupplementalSlots = expectedSupplemental ? Object.keys(expectedSupplemental).sort() : [];
+      const actualSupplementalSlots = actualSupplemental ? Object.keys(actualSupplemental).sort() : [];
+      if (!expectedSupplemental || !actualSupplemental || expectedSupplementalSlots.length !== actualSupplementalSlots.length || expectedSupplementalSlots.some((slot, index) => slot !== actualSupplementalSlots[index] || expectedSupplemental[slot] !== actualSupplemental[slot])) {
+        return { valid: false, reason: "staged_reference_hash_mismatch" };
+      }
+    }
+    return { valid: true, reason: "ok" };
+  } catch {
+    return { valid: false, reason: "staged_reference_read_failed" };
+  }
+}
+
+const normalizedReferenceFilename = (value) => typeof value === "string" ? value.trim().replace(/\\/g, "/") : "";
+
+const isCharacterReferenceSinkType = (value) =>
+  /^(?:ReferenceLatent|TextEncodeQwenImageEdit)|IPAdapter|InstantID|PuLID|PhotoMaker|FaceID/i.test(String(value ?? ""));
+
+const isTerminalImageType = (value) =>
+  /^(?:SaveImage|PreviewImage|VHS_VideoCombine|SaveAnimatedWEBP)$/i.test(String(value ?? ""));
+
+const collectApiInputSources = (value, knownNodeIds, found = new Set()) => {
+  if (Array.isArray(value)) {
+    if (value.length === 2 && knownNodeIds.has(String(value[0]))) found.add(String(value[0]));
+    else for (const item of value) collectApiInputSources(item, knownNodeIds, found);
+  } else if (plain(value)) {
+    for (const item of Object.values(value)) collectApiInputSources(item, knownNodeIds, found);
+  }
+  return found;
+};
+
+const activeCharacterReferenceFilenames = (compiledWorkflow) => {
+  const apiEntries = Object.entries(compiledWorkflow).filter(([, node]) => plain(node) && typeof node.class_type === "string");
+  let nodes;
+  let edges;
+  if (apiEntries.length) {
+    nodes = new Map(apiEntries.map(([id, node]) => [String(id), {
+      type: String(node.class_type),
+      filename: node.class_type === "LoadImage" && plain(node.inputs)
+        ? normalizedReferenceFilename(node.inputs.image)
+        : ""
+    }]));
+    const knownNodeIds = new Set(nodes.keys());
+    edges = new Map([...knownNodeIds].map((id) => [id, new Set()]));
+    for (const [targetId, node] of apiEntries) {
+      if (!plain(node.inputs)) continue;
+      for (const sourceId of collectApiInputSources(node.inputs, knownNodeIds)) edges.get(sourceId)?.add(String(targetId));
+    }
+  } else {
+    const graphNodes = Array.isArray(compiledWorkflow.nodes) ? compiledWorkflow.nodes : [];
+    nodes = new Map(graphNodes.flatMap((node) => {
+      if (!plain(node) || (typeof node.id !== "number" && typeof node.id !== "string")) return [];
+      const type = String(node.type ?? "");
+      return [[String(node.id), {
+        type,
+        filename: type === "LoadImage" && Array.isArray(node.widgets_values)
+          ? normalizedReferenceFilename(node.widgets_values[0])
+          : ""
+      }]];
+    }));
+    edges = new Map([...nodes.keys()].map((id) => [id, new Set()]));
+    const links = Array.isArray(compiledWorkflow.links) ? compiledWorkflow.links : [];
+    for (const link of links) {
+      if (!Array.isArray(link) || link.length < 4) continue;
+      const sourceId = String(link[1]);
+      const targetId = String(link[3]);
+      if (nodes.has(sourceId) && nodes.has(targetId)) edges.get(sourceId)?.add(targetId);
+    }
+  }
+  if (!nodes.size) return null;
+  const terminals = new Set([...nodes].filter(([, node]) => isTerminalImageType(node.type)).map(([id]) => id));
+  if (!terminals.size) return null;
+  const reachMemo = new Map();
+  const reachable = (startId) => {
+    if (reachMemo.has(startId)) return reachMemo.get(startId);
+    const seen = new Set();
+    const pending = [startId];
+    while (pending.length) {
+      const current = pending.pop();
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const next of edges.get(current) ?? []) pending.push(next);
+    }
+    reachMemo.set(startId, seen);
+    return seen;
+  };
+  const activeSinks = new Set([...nodes]
+    .filter(([id, node]) => isCharacterReferenceSinkType(node.type) && [...reachable(id)].some((candidate) => terminals.has(candidate)))
+    .map(([id]) => id));
+  if (!activeSinks.size) return null;
+  const filenames = [];
+  for (const [id, node] of nodes) {
+    if (node.type !== "LoadImage" || !node.filename) continue;
+    if ([...reachable(id)].some((candidate) => activeSinks.has(candidate))) filenames.push(node.filename);
+  }
+  return filenames;
+};
+
+export function verifyCompiledCharacterReferenceBindings(compiledWorkflow, expectedInputNames) {
+  if (!plain(compiledWorkflow) || !Array.isArray(expectedInputNames) || !expectedInputNames.length) {
+    return { valid: false, reason: "compiled_reference_binding_invalid" };
+  }
+  const expected = expectedInputNames.map(normalizedReferenceFilename);
+  if (expected.some((value) => !value) || new Set(expected).size !== expected.length) {
+    return { valid: false, reason: "compiled_reference_binding_invalid" };
+  }
+  const active = activeCharacterReferenceFilenames(compiledWorkflow);
+  if (!active) return { valid: false, reason: "compiled_reference_binding_mismatch" };
+  const activeSet = new Set(active);
+  const expectedSet = new Set(expected);
+  if (activeSet.size !== expectedSet.size || [...expectedSet].some((filename) => !activeSet.has(filename))) {
+    return { valid: false, reason: "compiled_reference_binding_mismatch" };
+  }
+  return { valid: true, reason: "ok" };
+}
 
 const REFERENCE_ROUTES = Object.freeze([
   Object.freeze({ shotId: "front_close", slots: Object.freeze(["face_master", "body_front"]), transforms: Object.freeze({ face_master: "head_shoulders_crop", body_front: "none" }) }),
@@ -32,8 +222,8 @@ export const TRUSTED_CHARACTER_EVIDENCE_METADATA = Object.freeze({
   fixtureDigest: "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
   evaluatorId: "siglip2-character-consistency",
   evaluatorVersion: "1.0.0",
-  evaluatorImplementationHash: "b5458e0d26ae515be0d7d1688b2635f68e18145b9075d37d41e4355d389527b2",
-  evaluatorPolicyHash: "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+  evaluatorImplementationHash: "e5e320bd503b84ec4f97c3e1c129e629e9078f04313f327f7f30f15f1d55ec19",
+  evaluatorPolicyHash: "5f08eb8e61ec83f18e9a846ae7e201b28f8bf0833a377352a30ff68f8a650db0",
   dimensionThreshold: 0.72
 });
 
@@ -101,16 +291,29 @@ export function buildTrustedCharacterGenerationEvidenceContext(input = {}) {
   const mode = text(input.mode);
   if (!plain(asset) || !text(asset.id) || !plain(identity) || !text(identity.version)) return { ok: false, reason: "identity_context_incomplete" };
   if (!['zero_shot_multi_reference', 'lora_augmented'].includes(mode)) return { ok: false, reason: "generation_mode_mismatch" };
+  const contract = CINEMATIC_3D_DONGHUA_CONTRACT;
+  const canonicalDigest = computeCharacterStyleContractDigest(contract);
+  if (identity.styleContractId !== contract.id || identity.styleContractVersion !== contract.version || identity.styleContractDigest !== canonicalDigest) {
+    return { ok: false, reason: "style_contract_mismatch" };
+  }
+  const canonicalIdentity = validateAndCanonicalizeCharacterIdentityMetadata(identity);
+  if (!canonicalIdentity.ok) return { ok: false, reason: "identity_context_incomplete" };
   const reference = computeTrustedCharacterReferenceManifestDigest(identity, input.referenceSourceHashes);
   if (!reference.ok) return reference;
+  const identityMetadataDigest = computeCharacterIdentityMetadataDigest(identity);
+  if (!sha256Value(identityMetadataDigest)) return { ok: false, reason: "identity_context_incomplete" };
   const proof = input.workflowProof;
   if (!plain(proof) || !sha256Value(proof.workflowDigest) || !text(proof.terminalOutputNode) || !Array.isArray(proof.authoritativeModelBindings) || !proof.authoritativeModelBindings.length) return { ok: false, reason: "workflow_invalid" };
   const provider = text(input.providerId); const modelName = text(input.modelName);
   if (!provider || !modelName) return { ok: false, reason: "provider_context_incomplete" };
   const context = {
     generationMode: mode,
+    benchmarkVersion: TRUSTED_CHARACTER_EVIDENCE_METADATA.benchmarkVersion,
+    promptTemplateVersion: TRUSTED_CHARACTER_EVIDENCE_METADATA.promptTemplateVersion,
     characterAssetId: asset.id.trim(),
     identityPackVersion: identity.version.trim(),
+    identityMetadataDigest,
+    ...canonicalIdentity.value,
     provider,
     modelName,
     fixtureDigest: TRUSTED_CHARACTER_EVIDENCE_METADATA.fixtureDigest,
@@ -119,6 +322,7 @@ export function buildTrustedCharacterGenerationEvidenceContext(input = {}) {
     evaluatorVersion: TRUSTED_CHARACTER_EVIDENCE_METADATA.evaluatorVersion,
     evaluatorImplementationHash: TRUSTED_CHARACTER_EVIDENCE_METADATA.evaluatorImplementationHash,
     evaluatorPolicyHash: TRUSTED_CHARACTER_EVIDENCE_METADATA.evaluatorPolicyHash,
+    dimensionThreshold: TRUSTED_CHARACTER_EVIDENCE_METADATA.dimensionThreshold,
     workflowProof: {
       workflowDigest: proof.workflowDigest,
       terminalOutputNode: proof.terminalOutputNode,
@@ -142,7 +346,7 @@ export function buildTrustedCharacterGenerationEvidenceContext(input = {}) {
 export function applyCharacterGenerationEvidenceImport(input = {}) {
   const mode = text(input.mode);
   if (!plain(input.report) || text(input.report.generationMode) !== mode) return { valid: false, reason: "generation_mode_mismatch", patch: null };
-  const imported = importCharacterGenerationEvidence(input.report, input.context, { reportLabel: input.reportLabel, now: input.now });
+  const imported = importCharacterGenerationEvidence(input.report, input.context, { reportLabel: input.reportLabel, now: input.now, trustedReceiptVerification: input.trustedReceiptVerification });
   if (!imported.valid || !imported.evidence) return { ...imported, patch: null };
   if (mode === "zero_shot_multi_reference") {
     return { valid: true, reason: "ok", evidence: imported.evidence, patch: { characterZeroShotEvidence: imported.evidence, currentZeroContext: input.context } };

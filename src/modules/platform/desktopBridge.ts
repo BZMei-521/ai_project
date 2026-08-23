@@ -20,7 +20,10 @@ export function isTauriRuntime(): boolean {
 
 export function isWebBridgeRuntime(): boolean {
   if (typeof window === "undefined") return false;
-  return window.__STORYBOARD_WEB_BRIDGE__ === true;
+  // Keep the explicit marker, but also recognize the packaged Windows bridge
+  // by its loopback port so cached pages or CSP can never fall back to CORS.
+  return window.__STORYBOARD_WEB_BRIDGE__ === true ||
+    (window.location.hostname === "127.0.0.1" && window.location.port === "3210");
 }
 
 export function isDesktopRuntime(): boolean {
@@ -60,6 +63,39 @@ export async function invokeDesktopCommand<T>(cmd: string, args?: Record<string,
   return payload as T;
 }
 
+export type TrustedCharacterReferenceBytes = {
+  base64Data: string;
+  byteLength: number;
+  imageFormat: "png" | "jpeg" | "webp";
+};
+
+export async function readTrustedCharacterReference(filePath: string): Promise<TrustedCharacterReferenceBytes> {
+  const value = filePath.trim();
+  if (!value) throw new Error("reference_path_missing");
+  return invokeDesktopCommand<TrustedCharacterReferenceBytes>("read_trusted_character_reference", { filePath: value });
+}
+
+export type TrustedCharacterEvidenceReceiptVerification = {
+  valid: boolean;
+  reason: string;
+  receiptId?: string;
+  claimsDigest?: string;
+};
+
+export async function attestCharacterGenerationReport(report: unknown, comfyRootDir = ""): Promise<Record<string, unknown>> {
+  if (!isDesktopRuntime()) throw new Error("receipt_backend_unavailable");
+  return invokeDesktopCommand<Record<string, unknown>>("attest_character_generation_report", { report, comfyRootDir });
+}
+
+export async function verifyCharacterEvidenceReceipt(evidence: { trustedReceipt?: unknown }, comfyRootDir = ""): Promise<TrustedCharacterEvidenceReceiptVerification> {
+  if (!isDesktopRuntime()) return { valid: false, reason: "receipt_backend_unavailable" };
+  try {
+    return await invokeDesktopCommand<TrustedCharacterEvidenceReceiptVerification>("verify_character_evidence_receipt", { receipt: evidence.trustedReceipt, evidence, comfyRootDir });
+  } catch {
+    return { valid: false, reason: "receipt_backend_unavailable" };
+  }
+}
+
 export type VideoProbe = {
   width: number;
   height: number;
@@ -80,7 +116,10 @@ export type VideoAnomalyReport = {
   freezeIntervals: Array<{ startSeconds: number; endSeconds: number; durationSeconds: number }>;
 };
 
-export type VideoInspection = { probe: VideoProbe; anomalies: VideoAnomalyReport };
+export type VideoInspection = {
+  probe: VideoProbe;
+  anomalies: VideoAnomalyReport;
+};
 
 export type NormalizationCredential = {
   schemaVersion: 1;
@@ -164,7 +203,12 @@ export type AssemblyReceipt = {
   orderedReceiptIds: string[];
   mac: string;
 };
-export type ProbeVideoSegmentRequest = { inputPath: string; projectAssetsDir: string };
+
+export type ProbeVideoSegmentRequest = {
+  inputPath: string;
+  projectAssetsDir: string;
+};
+
 export type NormalizeVideoSegmentRequest = ProbeVideoSegmentRequest & {
   runCapability: AssemblyRunCapability;
   segmentId: string;
@@ -222,7 +266,9 @@ function validateNormalizationCredential(credential: NormalizationCredential): N
     !/^[a-f0-9]{64}$/.test(credential.sha256 ?? "") ||
     !Number.isSafeInteger(credential.byteLength) || credential.byteLength <= 0 ||
     !Number.isSafeInteger(credential.modifiedUnixMillis) || credential.modifiedUnixMillis <= 0
-  ) throw new Error("normalization_credential_missing");
+  ) {
+    throw new Error("normalization_credential_missing");
+  }
   requireAbsoluteVideoPath(credential.normalizedPath, "normalization_credential_missing");
   requirePositiveSafeInteger(credential.projectWidth, "normalized_segment_dimensions_invalid");
   requirePositiveSafeInteger(credential.projectHeight, "normalized_segment_dimensions_invalid");
@@ -230,7 +276,10 @@ function validateNormalizationCredential(credential: NormalizationCredential): N
   if (credential.probe?.fpsNum !== 24 || credential.probe?.fpsDen !== 1) {
     throw new Error("normalized_segment_fps_invalid");
   }
-  if (credential.probe.width !== credential.projectWidth || credential.probe.height !== credential.projectHeight) {
+  if (
+    credential.probe.width !== credential.projectWidth ||
+    credential.probe.height !== credential.projectHeight
+  ) {
     throw new Error("normalized_segment_dimensions_mismatch");
   }
   if (
@@ -241,7 +290,9 @@ function validateNormalizationCredential(credential: NormalizationCredential): N
     credential.probe.hasMonotonicTimestamps !== true ||
     credential.probe.hasConstantFrameTimestamps !== true ||
     credential.probe.decodedFrameCount !== credential.durationFrames
-  ) throw new Error("normalized_segment_stream_contract_invalid");
+  ) {
+    throw new Error("normalized_segment_stream_contract_invalid");
+  }
   return credential;
 }
 
@@ -316,7 +367,9 @@ export function createExtractVideoReviewFramesRequest(request: ExtractVideoRevie
 
 export function createConcatNormalizedVideoSegmentsRequest(request: ConcatNormalizedVideoSegmentsRequest): ConcatNormalizedVideoSegmentsRequest {
   const projectAssetsDir = requireAbsoluteVideoPath(request.projectAssetsDir, "video_assets_root_missing");
-  if (!Array.isArray(request.segments) || request.segments.length === 0) throw new Error("normalized_segments_missing");
+  if (!Array.isArray(request.segments) || request.segments.length === 0) {
+    throw new Error("normalized_segments_missing");
+  }
   const segments = request.segments.map(validateNormalizationCredential);
   const { projectWidth, projectHeight } = segments[0];
   if (segments.some((segment) => segment.projectWidth !== projectWidth || segment.projectHeight !== projectHeight)) {
@@ -409,6 +462,118 @@ export async function gcVideoContinuityAssets(projectAssetsDir: string, ttlSecon
     projectAssetsDir: requireAbsoluteVideoPath(projectAssetsDir, "video_assets_root_missing"),
     ttlSeconds
   });
+}
+
+export type RunningHubHandoffPacket = {
+  schemaVersion: 1;
+  provider: "runninghub_manual_custom_workflow";
+  workflowId: "2090035427871903746";
+  workflowUrl: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace";
+  inputDigest: string;
+  references: [string, string];
+  prompt: string;
+  width: number;
+  height: number;
+  durationSeconds: number;
+};
+
+export type RunningHubHandoffReceipt = {
+  schemaVersion: 1;
+  status: "prepared";
+  handoffDir: string;
+  packetPath: string;
+  workflowUrl: "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace";
+  inputDigest: string;
+};
+
+export type PrepareRunningHubHandoffRequest = {
+  projectAssetsDir: string;
+  approval: {
+    shotId: string;
+    workflowId: RunningHubHandoffPacket["workflowId"];
+    workflowUrl: RunningHubHandoffPacket["workflowUrl"];
+    references: [string, string];
+    prompt: string;
+    width: number;
+    height: number;
+    durationSeconds: number;
+    createdAt: string;
+    inputDigest: string;
+  };
+};
+
+export function createPrepareRunningHubHandoffRequest(request: PrepareRunningHubHandoffRequest): PrepareRunningHubHandoffRequest {
+  const approval = request?.approval;
+  const projectAssetsDir = requireAbsoluteVideoPath(request?.projectAssetsDir ?? "", "runninghub_project_assets_dir_missing");
+  if (
+    !/^[a-zA-Z0-9_-]{1,80}$/.test(approval?.shotId ?? "") ||
+    approval?.workflowId !== "2090035427871903746" ||
+    approval.workflowUrl !== "https://www.runninghub.cn/workflow/2090035427871903746?source=workspace" ||
+    !/^[a-f0-9]{64}$/.test(approval.inputDigest ?? "") ||
+    !Array.isArray(approval.references) || approval.references.length !== 2 ||
+    new Set(approval.references).size !== 2 ||
+    approval.references.some((path) => !isAbsoluteLocalPath(path)) ||
+    !approval.prompt?.trim() ||
+    approval.width !== 1344 || approval.height !== 768 || approval.durationSeconds !== 8 || !approval.createdAt?.trim()
+  ) throw new Error("runninghub_handoff_request_invalid");
+  return {
+    projectAssetsDir,
+    approval: {
+      shotId: approval.shotId.trim(), workflowId: approval.workflowId, workflowUrl: approval.workflowUrl,
+      references: [approval.references[0], approval.references[1]], prompt: approval.prompt.trim(),
+      width: approval.width, height: approval.height, durationSeconds: approval.durationSeconds, createdAt: approval.createdAt.trim(), inputDigest: approval.inputDigest
+    }
+  };
+}
+
+export async function prepareRunningHubHandoffPacket(request: PrepareRunningHubHandoffRequest): Promise<RunningHubHandoffReceipt> {
+  return invokeDesktopCommand<RunningHubHandoffReceipt>("prepare_runninghub_handoff", createPrepareRunningHubHandoffRequest(request));
+}
+
+export type RecordRunningHubSubmissionRequest = PrepareRunningHubHandoffRequest & { taskId: string };
+export type RunningHubSubmissionReceipt = { status: "submitted"; taskId: string; approvalInputDigest: string };
+
+export async function recordRunningHubSubmissionPacket(request: RecordRunningHubSubmissionRequest): Promise<RunningHubSubmissionReceipt> {
+  const base = createPrepareRunningHubHandoffRequest(request);
+  const taskId = request?.taskId?.trim() ?? "";
+  if (!/^\d{1,40}$/.test(taskId)) throw new Error("runninghub_task_id_invalid");
+  return invokeDesktopCommand<RunningHubSubmissionReceipt>("record_runninghub_submission", { ...base, taskId });
+}
+
+export type ImportRunningHubResultRequest = {
+  projectAssetsDir: string;
+  approval: PrepareRunningHubHandoffRequest["approval"];
+  taskId: string;
+  sourcePath: string;
+  reportedTaskStatus: string;
+  downstreamError?: string;
+  submission: { status: "submitted"; taskId: string; approvalInputDigest: string };
+};
+
+export type RunningHubResultImportReceipt = {
+  schemaVersion: 1;
+  shotId: string;
+  taskId: string;
+  approvalInputDigest: string;
+  sourceSha256: string;
+  importedPath: string;
+  probe: VideoProbe;
+  status: "output_collected" | "recovered_primary_output";
+  warning?: string | null;
+};
+
+export function createImportRunningHubResultRequest(request: ImportRunningHubResultRequest): ImportRunningHubResultRequest {
+  const base = createPrepareRunningHubHandoffRequest({ projectAssetsDir: request?.projectAssetsDir ?? "", approval: request?.approval });
+  if (!/^\d{1,40}$/.test(request?.taskId?.trim() ?? "") || !isAbsoluteLocalPath(request?.sourcePath?.trim() ?? "") || !request?.reportedTaskStatus?.trim()
+    || request?.submission?.status !== "submitted" || request.submission.taskId !== request.taskId.trim() || request.submission.approvalInputDigest !== base.approval.inputDigest) {
+    throw new Error("runninghub_result_request_invalid");
+  }
+  if (request.downstreamError && request.downstreamError.length > 4096) throw new Error("runninghub_result_request_invalid");
+  return { ...base, taskId: request.taskId.trim(), sourcePath: request.sourcePath.trim(), reportedTaskStatus: request.reportedTaskStatus.trim(), submission: { status: "submitted", taskId: request.taskId.trim(), approvalInputDigest: base.approval.inputDigest }, ...(request.downstreamError ? { downstreamError: request.downstreamError } : {}) };
+}
+
+export async function importRunningHubResultPacket(request: ImportRunningHubResultRequest): Promise<RunningHubResultImportReceipt> {
+  return invokeDesktopCommand<RunningHubResultImportReceipt>("import_runninghub_result", createImportRunningHubResultRequest(request));
 }
 
 export function toDesktopMediaSource(raw: string | undefined): string {

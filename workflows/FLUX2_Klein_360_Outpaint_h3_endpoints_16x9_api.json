@@ -1,0 +1,7 @@
+{
+  "1": {"class_type": "LoadImage", "inputs": {"image": "FLUX2-Klein-360-Outpaint-wooden-spear-seam-repaired-1536x768.png"}},
+  "2": {"class_type": "Equirectangular to Perspective", "inputs": {"e_img": ["1", 0], "fov_deg_h": 90.0, "fov_deg_v": 58.0, "h_deg": 0.0, "v_deg": 0.0, "out_h": 576, "out_w": 1024, "in_rot_deg": 0.0, "padding_mode": "bicubic"}},
+  "3": {"class_type": "Equirectangular to Perspective", "inputs": {"e_img": ["1", 0], "fov_deg_h": 90.0, "fov_deg_v": 58.0, "h_deg": 45.0, "v_deg": 0.0, "out_h": 576, "out_w": 1024, "in_rot_deg": 0.0, "padding_mode": "bicubic"}},
+  "4": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "Storyboard/wooden_spear_h3_first_yaw000_1024x576"}},
+  "5": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": "Storyboard/wooden_spear_h3_last_yaw045_1024x576"}}
+}

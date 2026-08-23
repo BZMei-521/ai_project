@@ -1,0 +1,10 @@
+{
+  "version": "surface_empty_plate_v2_masks_v1",
+  "canvas": { "width": 1152, "height": 640 },
+  "overlapPixels": 32,
+  "bands": {
+    "upper_background": { "polygon": [[336,20],[840,20],[840,252],[336,252]] },
+    "middle_background": { "polygon": [[336,220],[840,220],[840,472],[336,472]] },
+    "lower_background": { "polygon": [[280,440],[850,440],[850,640],[280,640]] }
+  }
+}

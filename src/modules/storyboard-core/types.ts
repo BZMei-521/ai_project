@@ -4,8 +4,9 @@ import type {
   VideoQualityTier,
   VideoWorkflowProfileId
 } from "../video-production/types";
-import type { VideoProductionEvidence } from "../video-production/videoQuality";
+import type { VideoProductionEvidence, VideoProviderArtifact } from "../video-production/videoQuality";
 import type { CharacterSpeciesId } from "../comfy-pipeline/characterStyleContract";
+import type { RunningHubCloudRecord } from "../video-production/runningHubApproval";
 
 export type Project = {
   id: string;
@@ -22,6 +23,23 @@ export type Sequence = {
   projectId: string;
   name: string;
   order: number;
+};
+
+export type ShotTransitionFrameDependency = "none" | "previous_tail" | "shared_frame";
+
+export type ShotTransition = {
+  id: string;
+  sequenceId: string;
+  fromShotId: string;
+  toShotId: string;
+  type: VideoBoundaryKind;
+  durationSeconds: number;
+  frameDependency: ShotTransitionFrameDependency;
+  sharedFramePath?: string;
+  actionContinuity: string;
+  characterPosition: string;
+  cameraDirection: string;
+  notes: string;
 };
 
 export type Shot = {
@@ -66,6 +84,8 @@ export type Shot = {
   };
   videoGenerationContractDigest?: string;
   videoProductionEvidence?: VideoProductionEvidence;
+  videoProviderArtifact?: VideoProviderArtifact;
+  runningHubCloud?: RunningHubCloudRecord;
   skyboxFace?: "auto" | SkyboxFace;
   skyboxFaces?: SkyboxFace[];
   skyboxFaceWeights?: Partial<Record<SkyboxFace, number>>;

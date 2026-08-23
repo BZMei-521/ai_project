@@ -20,8 +20,8 @@ export const CHARACTER_GENERATION_PROVIDERS = Object.freeze([
     displayName: "FLUX.2 Klein 4B",
     commercialUse: true,
     license: "Apache-2.0",
-    requiredModels: ["flux2_klein_4b_fp8.safetensors"],
-    requiredNodes: ["ReferenceLatent", "FluxGuidance"],
+    requiredModels: ["flux-2-klein-4b-fp8.safetensors"],
+    requiredNodes: ["ReferenceLatent", "CFGGuider", "Flux2Scheduler"],
     referenceMode: "multi_reference",
     score: 80,
     hardwareNote: "Multi-reference candidate; requires at least 10GB VRAM."

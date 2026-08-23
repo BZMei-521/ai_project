@@ -1,5 +1,7 @@
 # Klein Zero-Shot / LoRA Dual-Track Release Implementation Plan
 
+> 安全补充（2026-08-09）：生产 gate 不再信任可公开重算的 `evidenceDigest`。严格 runner 报告携带本地 `verificationBundle`；桌面后端核对输出/参考字节并用固定 SigLIP2 重评后签发 registry-backed receipt。无回执、后端不可用和旧版无身份元数据证据均 fail closed / audit-only。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Allow an eight-shot, evidence-bearing FLUX.2 Klein 4B multi-reference benchmark to unlock local production without a character LoRA, while preserving the existing LoRA release gate as a stricter independent track.

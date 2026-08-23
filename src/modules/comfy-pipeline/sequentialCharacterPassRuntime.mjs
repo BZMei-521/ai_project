@@ -363,7 +363,10 @@ export function proveCompiledCharacterLoraBinding(input = {}) {
   const characterBindings = tracedBindings.filter((binding) => tokenBoundIds.has(binding.id));
   const expected = input.appliedLora;
   if (!expected) {
-    const activated = characterBindings.find((binding) =>
+    if (consumerTraces.length === 0 || consumerTraces.some((traced) => !traced.valid)) {
+      return { ok: false, reason: "unverified_terminal_model_path", providerProof, appliedLora: null };
+    }
+    const activated = tracedBindings.find((binding) =>
       binding.loraName || binding.strengthModel !== 0 || (binding.classType === "LoraLoader" && binding.strengthClip !== 0)
     );
     return activated
@@ -399,6 +402,22 @@ export function validateSequentialCharacterCount(value) {
     : { ok: false, count, reason: `unsupported_character_count:${count}` };
 }
 
+const hasCanonicalLoraContextConflict = (input = {}) => {
+  const lora = input.characterLora ?? input.lora;
+  const inherited = input.currentLoraContext;
+  if (!isPlainObject(lora) || !isPlainObject(inherited)) return false;
+  const sameText = (left, right, normalize = (value) => String(value ?? "").trim()) => !normalize(left) || !normalize(right) || normalize(left) === normalize(right);
+  return !sameText(input.characterAssetId, inherited.characterAssetId) ||
+    !sameText(input.identityPackVersion, inherited.identityPackVersion) ||
+    !sameText(input.providerId, inherited.provider) ||
+    !sameText(input.modelName || lora.modelName, inherited.modelName, modelBasename) ||
+    !sameText(lora.loraName, inherited.loraName) ||
+    !sameText(lora.version, inherited.loraVersion) ||
+    (Number.isFinite(Number(lora.strength)) && Number.isFinite(inherited.loraStrength) && Number(lora.strength) !== inherited.loraStrength) ||
+    (input.workflowProof?.workflowDigest && inherited.workflowProof?.workflowDigest && input.workflowProof.workflowDigest !== inherited.workflowProof.workflowDigest) ||
+    (input.workflowProof?.terminalOutputNode && inherited.workflowProof?.terminalOutputNode && input.workflowProof.terminalOutputNode !== inherited.workflowProof.terminalOutputNode);
+};
+
 const resolveValidatedLoraTrack = (input = {}) => {
   const lora = input.characterLora ?? input.lora;
   const strength = Number(lora?.strength);
@@ -412,20 +431,43 @@ const resolveValidatedLoraTrack = (input = {}) => {
     strength <= 0
   ) return null;
   if (modelBasename(input.modelName) && modelBasename(input.modelName) !== modelBasename(lora.modelName)) return null;
-  const currentLoraContext = {
-    generationMode: "lora_augmented",
+  const supplied = {
     characterAssetId: input.characterAssetId,
     identityPackVersion: input.identityPackVersion,
     provider: input.providerId,
+    modelName: input.modelName || lora.modelName,
     loraName,
     loraVersion: String(lora.version ?? "").trim(),
-    modelName: String(lora.modelName ?? "").trim(),
     loraStrength: strength,
-    workflowProof: input.workflowProof,
-    ...input.currentLoraContext
+    workflowProof: input.workflowProof
+  };
+  const inherited = input.currentLoraContext ?? {};
+  const sameText = (left, right, normalize = (value) => String(value ?? "").trim()) => !normalize(left) || !normalize(right) || normalize(left) === normalize(right);
+  if (
+    !sameText(supplied.characterAssetId, inherited.characterAssetId) ||
+    !sameText(supplied.identityPackVersion, inherited.identityPackVersion) ||
+    !sameText(supplied.provider, inherited.provider) ||
+    !sameText(supplied.modelName, inherited.modelName, modelBasename) ||
+    !sameText(supplied.loraName, inherited.loraName) ||
+    !sameText(supplied.loraVersion, inherited.loraVersion) ||
+    (Number.isFinite(supplied.loraStrength) && Number.isFinite(inherited.loraStrength) && supplied.loraStrength !== inherited.loraStrength) ||
+    (supplied.workflowProof?.workflowDigest && inherited.workflowProof?.workflowDigest && supplied.workflowProof.workflowDigest !== inherited.workflowProof.workflowDigest) ||
+    (supplied.workflowProof?.terminalOutputNode && inherited.workflowProof?.terminalOutputNode && supplied.workflowProof.terminalOutputNode !== inherited.workflowProof.terminalOutputNode)
+  ) return null;
+  const currentLoraContext = {
+    ...inherited,
+    generationMode: "lora_augmented",
+    characterAssetId: supplied.characterAssetId || inherited.characterAssetId,
+    identityPackVersion: supplied.identityPackVersion || inherited.identityPackVersion,
+    provider: supplied.provider || inherited.provider,
+    loraName: supplied.loraName || inherited.loraName,
+    loraVersion: supplied.loraVersion || inherited.loraVersion,
+    modelName: supplied.modelName || inherited.modelName,
+    loraStrength: supplied.loraStrength,
+    workflowProof: supplied.workflowProof || inherited.workflowProof
   };
   const evidenceValidation = lora.benchmarkEvidence?.generationMode
-    ? validateStoredCharacterGenerationEvidence(lora.benchmarkEvidence, currentLoraContext)
+    ? validateStoredCharacterGenerationEvidence(lora.benchmarkEvidence, currentLoraContext, { trustedReceiptVerification: input.trustedLoraReceiptVerification })
     : validateStoredCharacterBenchmarkEvidence(lora.benchmarkEvidence, currentLoraContext);
   if (!evidenceValidation.valid) return null;
   const version = String(lora.version ?? "").trim();
@@ -453,6 +495,7 @@ const compiledWorkflowHasActiveLora = (workflowValue) => {
 };
 
 export function resolveCharacterGenerationTrack(input = {}) {
+  if (hasCanonicalLoraContextConflict(input)) return null;
   const lora = resolveValidatedLoraTrack(input);
   if (lora) return lora;
   const compiledLora = compiledWorkflowHasActiveLora(input.compiledWorkflow);
@@ -467,13 +510,25 @@ export function resolveCharacterGenerationTrack(input = {}) {
     (input.identityPackVersion && input.identityPackVersion !== currentEvidenceContext.identityPackVersion) ||
     (modelBasename(input.modelName) && modelBasename(input.modelName) !== modelBasename(currentEvidenceContext.modelName))
   ) return null;
-  const zero = validateStoredCharacterGenerationEvidence(input.characterZeroShotEvidence, currentEvidenceContext);
+  const zero = validateStoredCharacterGenerationEvidence(input.characterZeroShotEvidence, currentEvidenceContext, { trustedReceiptVerification: input.trustedZeroReceiptVerification });
   return zero.valid ? {
     mode: "zero_shot_multi_reference",
-    providerId: input.providerId,
-    modelName: input.modelName,
+    providerId: input.providerId || currentEvidenceContext.provider,
+    modelName: input.modelName || currentEvidenceContext.modelName,
     appliedLora: null
   } : null;
+}
+
+export async function verifyFreshCharacterEvidenceReceipts(input = {}, verifyReceipt) {
+  if (typeof verifyReceipt !== "function") throw new Error("trusted_receipt_verifier_missing");
+  const missing = { valid: false, reason: "trusted_receipt_missing" };
+  const trustedZeroReceiptVerification = input.characterZeroShotEvidence
+    ? await verifyReceipt(input.characterZeroShotEvidence)
+    : missing;
+  const trustedLoraReceiptVerification = input.characterLora?.benchmarkEvidence
+    ? await verifyReceipt(input.characterLora.benchmarkEvidence)
+    : missing;
+  return { trustedZeroReceiptVerification, trustedLoraReceiptVerification };
 }
 
 export function resolveAppliedCharacterLora(input = {}) {

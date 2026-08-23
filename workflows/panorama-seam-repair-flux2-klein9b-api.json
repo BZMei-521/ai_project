@@ -1,0 +1,182 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "wooden-spear-flux2-klein9b-360-live-trial-1920x960.png"
+    }
+  },
+  "2": {
+    "class_type": "Equirectangular Rotation",
+    "inputs": {
+      "e_img": ["1", 0],
+      "roll": 0.0,
+      "h_deg": 180.0,
+      "v_deg": 0.0,
+      "padding_mode": "bicubic"
+    }
+  },
+  "3": {
+    "class_type": "Create Seam Mask",
+    "inputs": {
+      "image": ["2", 0],
+      "frac_width": 0.1,
+      "pixel_width": 160,
+      "feather": 64,
+      "roll_x_by_50_percent": true
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux-2-klein-9b-fp8.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "5": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["4", 0],
+      "lora_name": "[FLUX.2.Klein]360viewer_Redmond.safetensors",
+      "strength_model": 0.9
+    }
+  },
+  "6": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2",
+      "device": "default"
+    }
+  },
+  "7": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    }
+  },
+  "8": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["2", 0],
+      "vae": ["7", 0]
+    }
+  },
+  "9": {
+    "class_type": "SetLatentNoiseMask",
+    "inputs": {
+      "samples": ["8", 0],
+      "mask": ["3", 0]
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["6", 0],
+      "text": "360 View, 360. Repair only the narrow vertical center seam of this equirectangular prehistoric forest panorama. Continue the same tree trunks, rocks, mossy ground, lighting, depth and cinematic semi-realistic 3D donghua style smoothly across the masked strip. Preserve all unmasked pixels and spatial layout. No people, no text, no border, no split screen, no vertical line."
+    }
+  },
+  "11": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["10", 0]
+    }
+  },
+  "12": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": ["10", 0],
+      "latent": ["8", 0]
+    }
+  },
+  "13": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": ["11", 0],
+      "latent": ["8", 0]
+    }
+  },
+  "14": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 82136018
+    }
+  },
+  "15": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["5", 0],
+      "positive": ["12", 0],
+      "negative": ["13", 0],
+      "cfg": 1.0
+    }
+  },
+  "16": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "17": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 6,
+      "width": 1920,
+      "height": 960
+    }
+  },
+  "18": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["14", 0],
+      "guider": ["15", 0],
+      "sampler": ["16", 0],
+      "sigmas": ["17", 0],
+      "latent_image": ["9", 0]
+    }
+  },
+  "19": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["18", 0],
+      "vae": ["7", 0]
+    }
+  },
+  "20": {
+    "class_type": "Equirectangular Rotation",
+    "inputs": {
+      "e_img": ["19", 0],
+      "roll": 0.0,
+      "h_deg": 180.0,
+      "v_deg": 0.0,
+      "padding_mode": "bicubic"
+    }
+  },
+  "21": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["20", 0],
+      "filename_prefix": "Storyboard/wooden_spear_flux2_360_seam_repaired"
+    }
+  },
+  "22": {
+    "class_type": "Equirectangular to Perspective",
+    "inputs": {
+      "e_img": ["20", 0],
+      "fov_deg_h": 90.0,
+      "fov_deg_v": 58.0,
+      "h_deg": 180.0,
+      "v_deg": 0.0,
+      "out_h": 720,
+      "out_w": 1280,
+      "in_rot_deg": 0.0,
+      "padding_mode": "bicubic"
+    }
+  },
+  "23": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["22", 0],
+      "filename_prefix": "Storyboard/wooden_spear_flux2_360_seam_validation_yaw180"
+    }
+  }
+}

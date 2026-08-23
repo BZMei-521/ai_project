@@ -16,7 +16,7 @@ export function ObjectInspectorDrawer({
   onClose
 }: ObjectInspectorDrawerProps) {
   return (
-    <aside data-director-inspector data-open={open} aria-hidden={!open} hidden={!open} aria-label={title}>
+    <aside data-director-inspector data-open={open} hidden={!open} aria-label={title}>
       <header>
         <div>
           <h2>{title}</h2>

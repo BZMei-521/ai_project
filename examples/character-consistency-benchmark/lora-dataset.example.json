@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "characterId": "replace-with-character-asset-id",
+  "identityPackVersion": "v1",
+  "sourceRoots": ["approved-character-images"],
+  "commercialProviders": {
+    "qwen_image_edit_2511": "Qwen/Qwen-Image-Edit-2511",
+    "flux2_klein_4b": "black-forest-labs/FLUX.2-klein-base-4B"
+  },
+  "approvedImages": [
+    { "path": "approved-character-images/01-front-close.png", "approved": true, "view": "front", "scale": "close", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/02-front-medium.png", "approved": true, "view": "front", "scale": "medium", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/03-front-full-body.png", "approved": true, "view": "front", "scale": "full_body", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/04-three-quarter-close.png", "approved": true, "view": "three_quarter", "scale": "close", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/05-three-quarter-medium.png", "approved": true, "view": "three_quarter", "scale": "medium", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/06-three-quarter-full-body.png", "approved": true, "view": "three_quarter", "scale": "full_body", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/07-profile-close.png", "approved": true, "view": "profile", "scale": "close", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/08-profile-medium.png", "approved": true, "view": "profile", "scale": "medium", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/09-profile-full-body.png", "approved": true, "view": "profile", "scale": "full_body", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/10-back-close.png", "approved": true, "view": "back", "scale": "close", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/11-back-medium.png", "approved": true, "view": "back", "scale": "medium", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/12-back-full-body.png", "approved": true, "view": "back", "scale": "full_body", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/13-front-medium-alt.png", "approved": true, "view": "front", "scale": "medium", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/14-three-quarter-medium-alt.png", "approved": true, "view": "three_quarter", "scale": "medium", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] },
+    { "path": "approved-character-images/15-back-full-body-alt.png", "approved": true, "view": "back", "scale": "full_body", "identityPackVersion": "v1", "visibleImmutableTraits": ["replace-with-visible-immutable-trait"] }
+  ],
+  "generatedFramePaths": []
+}

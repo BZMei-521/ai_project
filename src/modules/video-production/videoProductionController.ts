@@ -14,7 +14,8 @@ import {
 import type { Project, Shot } from "../storyboard-core/types";
 import type { VideoBoundaryPlan } from "./continuityPlanner";
 import type { VideoProfilePreflightReport, VideoRouteDecision } from "./types";
-import type { VideoOperationIdentity, VideoProductionEvidence, VideoQualityReport, VideoRebuildRequest } from "./videoQuality";
+import { evaluateVideoQuality } from "./videoQuality";
+import type { VideoOperationIdentity, VideoProductionEvidence, VideoProviderArtifact, VideoQualityReport, VideoRebuildRequest } from "./videoQuality";
 
 export interface VideoProductionControllerInput {
   sequenceId?: string;
@@ -30,6 +31,7 @@ export interface VideoProductionControllerInput {
   boundary?: VideoBoundaryPlan;
   operation?: VideoOperationIdentity;
   generationReceipt?: Shot["videoGenerationReceipt"];
+  providerArtifact?: VideoProviderArtifact;
 }
 
 export interface GeneratedVideoResult { ok: boolean; generatedVideoPath?: string; [key: string]: unknown; }
@@ -50,7 +52,7 @@ export function createVideoProductionController(options: {
   persistEvidenceCAS?: (operation: unknown, evidence: VideoProductionEvidence) => boolean | Promise<boolean>;
   persistBatchCAS?: (items: unknown[]) => boolean | Promise<boolean>;
 }): VideoProductionController {
-  return runtimeCreateController({
+  const controller = runtimeCreateController({
     beginRun: beginVideoAssemblyRun,
     stage: stageVideoSegment,
     probe: probeVideoSegment,
@@ -68,6 +70,18 @@ export function createVideoProductionController(options: {
     persistEvidenceCAS: options.persistEvidenceCAS,
     persistBatchCAS: options.persistBatchCAS
   }) as VideoProductionController;
+  return {
+    ...controller,
+    async processGeneratedShot(input) {
+      assertProviderArtifact(input.providerArtifact);
+      const evidence = await controller.processGeneratedShot(input);
+      return input.providerArtifact ? { ...evidence, providerArtifact: input.providerArtifact } : evidence;
+    },
+    async verifyForDecision(evidence) {
+      assertProviderArtifact(evidence.providerArtifact);
+      return controller.verifyForDecision(evidence);
+    }
+  };
 }
 
 export function createControllerInputFromShot(input: {
@@ -93,6 +107,13 @@ export function createControllerInputFromShot(input: {
     profilePreflight: input.profilePreflight,
     boundary: input.boundary,
     operation: input.operation,
-    generationReceipt: input.generationReceipt ?? input.shot.videoGenerationReceipt
+    generationReceipt: input.generationReceipt ?? input.shot.videoGenerationReceipt,
+    providerArtifact: input.shot.videoProviderArtifact ?? (input.shot.runningHubCloud ? { provider: "runninghub" } : { provider: "local_comfy", watermarkDisposition: "not_applicable" })
   };
+}
+
+function assertProviderArtifact(providerArtifact?: VideoProviderArtifact) {
+  if (!providerArtifact) return;
+  const evaluation = evaluateVideoQuality({ normalized: true, providerArtifact });
+  if (evaluation.structuralIssues.includes("runninghub_watermark_not_clean")) throw new Error("runninghub_watermark_not_clean");
 }

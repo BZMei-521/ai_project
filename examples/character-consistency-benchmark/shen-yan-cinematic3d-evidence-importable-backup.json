@@ -1,0 +1,853 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-08-09T15:34:16.559Z",
+  "snapshot": {
+    "project": {
+      "id": "proj_001",
+      "name": "Teaser Episode 01",
+      "fps": 24,
+      "width": 1920,
+      "height": 1080,
+      "createdAt": "2026-03-10T08:04:57.873Z",
+      "updatedAt": "2026-03-10T08:04:57.873Z"
+    },
+    "sequences": [
+      {
+        "id": "seq_001",
+        "projectId": "proj_001",
+        "name": "Opening",
+        "order": 1
+      }
+    ],
+    "currentSequenceId": "seq_001",
+    "shots": [
+      {
+        "id": "river_continuity_001",
+        "sequenceId": "seq_001",
+        "order": 1,
+        "title": "河边远景建立",
+        "durationFrames": 24,
+        "dialogue": "",
+        "notes": "建立镜头必须锁定两人的固定外观，并让动作已经开始发生。两人都要踩在沿河石路上，阴影方向和傍晚环境一致，不能像背景上贴了两张立绘。",
+        "tags": [
+          "河边",
+          "建立镜头",
+          "双人",
+          "远景",
+          "接地"
+        ],
+        "storyPrompt": "河边远景建立；建立镜头必须锁定两人的固定外观，并让动作已经开始发生。两人都要踩在沿河石路上，阴影方向和傍晚环境一致，不能像背景上贴了两张立绘。；河边、建立镜头、双人、远景、接地 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚是画面主体，其他已写入脚本的角色必须继续留在同一画面内。沈砚，主体角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，有明确可读的身体动作，不是静止站桩，表情自然且与动作一致，在riverside stone path上站立，位置画面中左，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。江岚，必须出现的辅助角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，有小幅但可读的回应动作，不是静止站桩，有可读的回应表情，在riverside stone path上站立，位置画面右侧，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。人物必须是镜头主体，不能退化为空场景。不能出现贴纸式立绘拼贴。动作表演和表情变化必须清楚可读。电影分镜，大全景，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。",
+        "negativePrompt": "empty scene, scenery only, landscape only, pure environment, no character, no person, no people, character missing, missing one character, one character only, wrong character count, cropped body, cut off head, cut off feet, upper body only, portrait crop, partial body, floating character, hovering feet, detached shadow, tiny distant person, silhouette only, pasted character, collage, sticker-like character, flat cutout look, wrong face, different hairstyle, changed outfit, inconsistent costume, expressionless face, blank expression, no expression, mannequin pose, static pose, standing still",
+        "videoPrompt": "建立镜头必须锁定两人的固定外观，并让动作已经开始发生，两人都要踩在沿河石路上，阴影方向和傍晚环境一致，不能像背景上贴了两张立绘，河边远景建立，the characters keep grounded contact while standing on the riverside stone path，faces keep readable expression changes，hair and remain exactly consistent across shots，沈砚 stays the visual focus，no empty scenery shot，持续与 riverside environment 发生互动，镜头稳定 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚、江岚都必须全身清楚可见并真实处在场景内，角色在riverside stone path上保持稳定接地，表情变化可读，发型和服装跨镜头一致，阴影方向匹配环境，透视正确，沈砚保持视觉主位，不能退化为空场景镜头，持续与riverside environment发生互动，镜头稳定。",
+        "videoMode": "auto",
+        "videoStartFramePath": "",
+        "videoEndFramePath": "",
+        "skyboxFace": "auto",
+        "skyboxFaces": [],
+        "skyboxFaceWeights": {},
+        "characterRefs": [
+          "asset_1774017261433_390",
+          "asset_1773997039637_416"
+        ],
+        "sceneRefId": "asset_1773997921086_701",
+        "sourceCharacterNames": [
+          "沈砚",
+          "江岚"
+        ],
+        "sourceSceneName": "河边",
+        "sourceScenePrompt": "河边 场景设定图，无人物，环境一致，材质统一，空间关系清晰。河边远景建立；河边远景建立，建立镜头必须锁定两人的固定外观，并让动作已经开始发生，两人都要踩在沿河石路上，阴影方向和傍晚环境一致，不能像背景上贴了两张立绘，hairstyle，costume，colors，in the scene，showing a visible body action with head，shoulders，or hands instead of standing stiff，standing on the riverside stone path at screen center-left，showing a small but readable reactive body movement instead of standing stiff，standing on the riverside stone path at screen right，not the empty environment，电影分镜，大全景，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定；建立镜头必须锁定两人的固定外观，并让动作已经开始发生。两人都要踩在沿河石路上，阴影方向和傍晚环境一致，不能像背景上贴了两张立绘。；河边、建立镜头、双人、远景、接地",
+        "generatedImagePath": "http://127.0.0.1:8188/view?filename=%E6%B2%B3%E8%BE%B9%E8%BF%9C%E6%99%AF%E5%BB%BA%E7%AB%8B_zimage_00001_.png&subfolder=Storyboard&type=output&v=1786158937965",
+        "generatedVideoPath": "C:\\Users\\Administrator\\AppData\\Roaming\\StoryboardProWeb\\workspace\\default.sbproj\\exports\\animatic-1786158979598.mp4"
+      },
+      {
+        "id": "river_continuity_002",
+        "sequenceId": "seq_001",
+        "order": 2,
+        "title": "双人中景起话",
+        "durationFrames": 24,
+        "dialogue": "江岚：风小下来了。",
+        "notes": "第二镜要延续第一镜的站位和机位，只做小幅推进。动作和表情必须具体，不允许重新退化成双人静态站桩。",
+        "tags": [
+          "河边",
+          "中景",
+          "对话",
+          "续帧",
+          "双人"
+        ],
+        "storyPrompt": "双人中景起话；第二镜要延续第一镜的站位和机位，只做小幅推进。动作和表情必须具体，不允许重新退化成双人静态站桩。；江岚：风小下来了。；河边、中景、对话、续帧、双人 画面必须出现角色：沈砚、江岚。禁止缺失角色。。江岚是画面主体，其他已写入脚本的角色必须继续留在同一画面内。沈砚，必须出现的辅助角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，有小幅但可读的回应动作，不是静止站桩，有可读的回应表情，在riverside stone path上站立，位置画面左侧，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。江岚，主体角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，有明确可读的身体动作，不是静止站桩，表情自然且与动作一致，在riverside stone path上站立，位置画面中左，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。人物必须是镜头主体，不能退化为空场景。不能出现贴纸式立绘拼贴。动作表演和表情变化必须清楚可读。电影分镜，中景，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。",
+        "negativePrompt": "empty scene, scenery only, landscape only, pure environment, no character, no person, no people, character missing, missing one character, one character only, wrong character count, cropped body, cut off head, cut off feet, upper body only, portrait crop, partial body, floating character, hovering feet, detached shadow, tiny distant person, silhouette only, pasted character, collage, sticker-like character, flat cutout look, wrong face, different hairstyle, changed outfit, inconsistent costume, expressionless face, blank expression, no expression, mannequin pose, static pose, standing still",
+        "videoPrompt": "江岚：风小下来了，第二镜要延续第一镜的站位和机位，只做小幅推进，动作和表情必须具体，不允许重新退化成双人静态站桩，双人中景起话，the characters keep grounded contact while standing on the ground plane，faces keep readable expression changes，hair and remain exactly consistent across shots，江岚 stays the visual focus，no empty scenery shot，持续与 same environment 发生互动，镜头稳定 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚、江岚都必须全身清楚可见并真实处在场景内，角色在riverside stone path上保持稳定接地，表情变化可读，发型和服装跨镜头一致，阴影方向匹配环境，透视正确，江岚保持视觉主位，不能退化为空场景镜头，持续与riverside environment发生互动，镜头稳定。",
+        "videoMode": "auto",
+        "videoStartFramePath": "",
+        "videoEndFramePath": "",
+        "skyboxFace": "auto",
+        "skyboxFaces": [],
+        "skyboxFaceWeights": {},
+        "characterRefs": [
+          "asset_1774017261433_390",
+          "asset_1773997039637_416"
+        ],
+        "sceneRefId": "asset_1773997921086_701",
+        "sourceCharacterNames": [
+          "沈砚",
+          "江岚"
+        ],
+        "sourceSceneName": "河边",
+        "sourceScenePrompt": "河边 场景设定图，无人物，环境一致，材质统一，空间关系清晰。双人中景起话；双人中景起话，第二镜要延续第一镜的站位和机位，只做小幅推进，动作和表情必须具体，不允许重新退化成双人静态站桩，：风小下来了，hairstyle，costume，colors，in the scene，showing a visible body action with head，shoulders，or hands instead of standing stiff，standing on the ground plane at screen center-left，showing a small but readable reactive body movement instead of standing stiff，standing on the ground plane at screen right，not the empty environment，电影分镜，特写，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定；第二镜要延续第一镜的站位和机位，只做小幅推进。动作和表情必须具体，不允许重新退化成双人静态站桩。；：风小下来了。；河边、中景、对话、续帧、双人",
+        "generatedImagePath": "http://127.0.0.1:8188/view?filename=%E5%8F%8C%E4%BA%BA%E4%B8%AD%E6%99%AF%E8%B5%B7%E8%AF%9D_zimage_00001_.png&subfolder=Storyboard&type=output&v=1786158949346",
+        "generatedVideoPath": "C:\\Users\\Administrator\\AppData\\Roaming\\StoryboardProWeb\\workspace\\default.sbproj\\exports\\animatic-1786158981051.mp4"
+      },
+      {
+        "id": "river_continuity_003",
+        "sequenceId": "seq_001",
+        "order": 3,
+        "title": "江岚近景说话",
+        "durationFrames": 24,
+        "dialogue": "江岚：先沿着河岸往前走。",
+        "notes": "第三镜可以更靠近江岚，但仍必须保留沈砚和环境。重点是把江岚的表情从平静推进到思索和怀疑，而不是只写“在说话”。",
+        "tags": [
+          "河边",
+          "近中景",
+          "单人主镜头",
+          "续帧",
+          "人物明确存在"
+        ],
+        "storyPrompt": "江岚近景说话；第三镜可以更靠近江岚，但仍必须保留沈砚和环境。重点是把江岚的表情从平静推进到思索和怀疑，而不是只写“在说话”。；江岚：先沿着河岸往前走。；河边、近中景、单人主镜头、续帧、人物明确存在。江岚是画面主体，其他已写入脚本的角色必须继续留在同一画面内。沈砚，必须出现的辅助角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，保持可读的行走节奏，表情清楚地偏疑惑，在riverside stone path上行走，位置画面左侧，脚步接地明确，阴影方向匹配环境，透视正确，与riverside environment自然融合。江岚，主体角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，迈步动作清楚且接地，表情清楚地偏疑惑，在riverside stone path上行走，位置画面中左，脚步接地明确，阴影方向匹配环境，透视正确，与riverside environment自然融合。人物必须是镜头主体，不能退化为空场景。不能出现贴纸式立绘拼贴。动作表演和表情变化必须清楚可读。电影分镜，中景，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。",
+        "negativePrompt": "empty scene, scenery only, landscape only, pure environment, no character, no person, no people, character missing, missing character, cropped body, cut off head, cut off feet, upper body only, portrait crop, partial body, floating character, hovering feet, detached shadow, tiny distant person, silhouette only, pasted character, collage, sticker-like character, flat cutout look, wrong face, different hairstyle, changed outfit, inconsistent costume, expressionless face, blank expression, no expression, mannequin pose, static pose, standing still, missing one character, one character only, wrong character count",
+        "videoPrompt": "江岚：先沿着河岸往前走，第三镜可以更靠近江岚，但仍必须保留和环境，重点是把江岚的表情从平静推进到思索和怀疑，而不是只写“在说话”，说话，the characters keep grounded motion while walking on the riverside stone path，faces keep readable expression changes，hair and remain exactly consistent across shots，江岚 stays the visual focus，no empty scenery shot，持续与 riverside environment 发生互动，镜头稳定 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚、江岚都必须全身清楚可见并真实处在场景内，角色在riverside stone path上保持明确接地的运动，表情变化可读，发型和服装跨镜头一致，阴影方向匹配环境，透视正确，江岚保持视觉主位，不能退化为空场景镜头，持续与riverside environment发生互动，镜头稳定。",
+        "videoMode": "auto",
+        "videoStartFramePath": "",
+        "videoEndFramePath": "",
+        "skyboxFace": "auto",
+        "skyboxFaces": [],
+        "skyboxFaceWeights": {},
+        "characterRefs": [
+          "asset_1774017261433_390",
+          "asset_1773997039637_416"
+        ],
+        "sceneRefId": "asset_1773997921086_701",
+        "sourceCharacterNames": [
+          "沈砚",
+          "江岚"
+        ],
+        "sourceSceneName": "河边",
+        "sourceScenePrompt": "河边 场景设定图，无人物，环境一致，材质统一，空间关系清晰。近景说话；说话，第三镜可以更靠近，但仍必须保留和环境，重点是把的表情从平静推进到思索和怀疑，而不是只写“在说话”，：先沿着河岸往前走，hairstyle，costume，colors，in the scene，taking a visible grounded step，readable puzzled expression，walking on the riverside stone path at screen center，grounded foot contact，not the empty environment，电影分镜，特写，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定，keeping a readable grounded walking motion，walking on the riverside stone path at screen left，walking on the riverside stone path at screen center-left；第三镜可以更靠近，但仍必须保留和环境。重点是把的表情从平静推进到思索和怀疑，而不是只写“在说话”。；：先沿着河岸往前走。；河边、近中景、单人主镜头、续帧、明确存在",
+        "generatedImagePath": "http://127.0.0.1:8188/view?filename=%E6%B1%9F%E5%B2%9A%E8%BF%91%E6%99%AF%E8%AF%B4%E8%AF%9D_zimage_00001_.png&subfolder=Storyboard&type=output&v=1786158963974",
+        "generatedVideoPath": ""
+      },
+      {
+        "id": "river_continuity_004",
+        "sequenceId": "seq_001",
+        "order": 4,
+        "title": "沈砚回应点头",
+        "durationFrames": 24,
+        "dialogue": "沈砚：好，桥那边看得更清楚。",
+        "notes": "第四镜不要硬反打跳轴，只允许轻微侧移。主体切到沈砚时，动作必须比上一镜更明确，表情推进到警觉。",
+        "tags": [
+          "河边",
+          "反打",
+          "近景",
+          "续帧",
+          "回应动作"
+        ],
+        "storyPrompt": "沈砚回应点头；第四镜不要硬反打跳轴，只允许轻微侧移。主体切到沈砚时，动作必须比上一镜更明确，表情推进到警觉。；沈砚：好，桥那边看得更清楚。；河边、反打、近景、续帧、回应动作 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚是画面主体，其他已写入脚本的角色必须继续留在同一画面内。沈砚，主体角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，点头动作明确，表情清楚地偏警觉，在riverside stone path上站立，位置画面中左，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。江岚，必须出现的辅助角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，有轻微点头回应，表情清楚地偏警觉，在riverside stone path上站立，位置画面右侧，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。人物必须是镜头主体，不能退化为空场景。不能出现贴纸式立绘拼贴。动作表演和表情变化必须清楚可读。电影分镜，中近景，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。",
+        "negativePrompt": "empty scene, scenery only, landscape only, pure environment, no character, no person, no people, character missing, missing character, cropped body, cut off head, cut off feet, upper body only, portrait crop, partial body, floating character, hovering feet, detached shadow, tiny distant person, silhouette only, pasted character, collage, sticker-like character, flat cutout look, wrong face, different hairstyle, changed outfit, inconsistent costume, expressionless face, blank expression, no expression, mannequin pose, static pose, standing still",
+        "videoPrompt": "沈砚：好，桥那边看得更清楚，第四镜不要硬反打跳轴，只允许轻微侧移，主体切到沈砚时，动作必须比上一镜更明确，表情推进到警觉，沈砚回应点头，the characters keep grounded contact while standing on the ground plane，faces keep readable expression changes，hair and remain exactly consistent across shots，沈砚 stays the visual focus，no empty scenery shot，持续与 same environment 发生互动，镜头稳定 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚、江岚都必须全身清楚可见并真实处在场景内，角色在riverside stone path上保持稳定接地，表情变化可读，发型和服装跨镜头一致，阴影方向匹配环境，透视正确，沈砚保持视觉主位，不能退化为空场景镜头，持续与riverside environment发生互动，镜头稳定。",
+        "videoMode": "auto",
+        "videoStartFramePath": "",
+        "videoEndFramePath": "",
+        "skyboxFace": "auto",
+        "skyboxFaces": [],
+        "skyboxFaceWeights": {},
+        "characterRefs": [
+          "asset_1774017261433_390",
+          "asset_1773997039637_416"
+        ],
+        "sceneRefId": "asset_1773997921086_701",
+        "sourceCharacterNames": [
+          "沈砚",
+          "江岚"
+        ],
+        "sourceSceneName": "河边",
+        "sourceScenePrompt": "河边 场景设定图，无人物，环境一致，材质统一，空间关系清晰。回应点头；回应点头，第四镜不要硬反打跳轴，只允许轻微侧移，主体切到时，动作必须比上一镜更明确，表情推进到警觉，：好，桥那边看得更清楚，hairstyle，costume，colors，in the scene，giving a clear nod，readable alert expression，standing on the ground plane at screen center，not the empty environment，电影分镜，特写，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定；第四镜不要硬反打跳轴，只允许轻微侧移。主体切到时，动作必须比上一镜更明确，表情推进到警觉。；：好，桥那边看得更清楚。；河边、反打、近景、续帧、回应动作",
+        "generatedImagePath": "http://127.0.0.1:3211/api/local-file?path=C%3A%5CUsers%5CAdministrator%5CDesktop%5CAiProject%5CComfyUI_JM_windows_portable%5CComfyUI%5Coutput%5CStoryboard%5C1779017748772_river_continuity_004_storyboard_composite_still_fallback.png&v=1779017748794",
+        "generatedVideoPath": ""
+      },
+      {
+        "id": "river_continuity_005",
+        "sequenceId": "seq_001",
+        "order": 6,
+        "title": "并肩沿河慢走",
+        "durationFrames": 24,
+        "dialogue": "",
+        "notes": "第五镜是动作连续的关键镜头，必须真正出现迈步、摆臂、衣摆和重心变化。不能只是两张立绘在背景上平移。",
+        "tags": [
+          "河边",
+          "双人",
+          "移动",
+          "续帧",
+          "脚接地"
+        ],
+        "storyPrompt": "并肩沿河慢走；第五镜是动作连续的关键镜头，必须真正出现迈步、摆臂、衣摆和重心变化。不能只是两张立绘在背景上平移。；河边、双人、移动、续帧、脚接地 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚是画面主体，其他已写入脚本的角色必须继续留在同一画面内。沈砚，主体角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，迈步动作清楚且接地，表情自然且与动作一致，在riverside stone path上行走，位置画面中左，脚步接地明确，阴影方向匹配环境，透视正确，与riverside environment自然融合。江岚，必须出现的辅助角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，保持可读的行走节奏，有可读的回应表情，在riverside stone path上行走，位置画面右侧，脚步接地明确，阴影方向匹配环境，透视正确，与riverside environment自然融合。人物必须是镜头主体，不能退化为空场景。不能出现贴纸式立绘拼贴。动作表演和表情变化必须清楚可读。电影分镜，中景，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。",
+        "negativePrompt": "empty scene, scenery only, landscape only, pure environment, no character, no person, no people, character missing, missing one character, one character only, wrong character count, cropped body, cut off head, cut off feet, upper body only, portrait crop, partial body, floating character, hovering feet, detached shadow, tiny distant person, silhouette only, pasted character, collage, sticker-like character, flat cutout look, wrong face, different hairstyle, changed outfit, inconsistent costume, expressionless face, blank expression, no expression, mannequin pose, static pose, standing still",
+        "videoPrompt": "第五镜是动作连续的关键镜头，必须真正出现迈步、摆臂、衣摆和重心变化，不能只是两张立绘在背景上平移，并肩沿河慢走，the characters keep grounded motion while walking on the ground plane，faces keep readable expression changes，hair and remain exactly consistent across shots，沈砚 stays the visual focus，no empty scenery shot，持续与 same environment 发生互动，镜头稳定 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚、江岚都必须全身清楚可见并真实处在场景内，角色在riverside stone path上保持明确接地的运动，表情变化可读，发型和服装跨镜头一致，阴影方向匹配环境，透视正确，沈砚保持视觉主位，不能退化为空场景镜头，持续与riverside environment发生互动，镜头稳定。",
+        "videoMode": "auto",
+        "videoStartFramePath": "",
+        "videoEndFramePath": "",
+        "skyboxFace": "auto",
+        "skyboxFaces": [],
+        "skyboxFaceWeights": {},
+        "characterRefs": [
+          "asset_1774017261433_390",
+          "asset_1773997039637_416"
+        ],
+        "sceneRefId": "asset_1773997921086_701",
+        "sourceCharacterNames": [
+          "沈砚",
+          "江岚"
+        ],
+        "sourceSceneName": "河边",
+        "sourceScenePrompt": "河边 场景设定图，无人物，环境一致，材质统一，空间关系清晰。并肩沿河慢走；并肩沿河慢走，第五镜是动作连续的关键镜头，必须真正出现迈步、摆臂、衣摆和重心变化，不能只是两张立绘在背景上平移，hairstyle，costume，colors，in the scene，taking a visible grounded step，walking on the ground plane at screen center-left，grounded foot contact，keeping a readable grounded walking motion，walking on the ground plane at screen right，not the empty environment，电影分镜，大全景，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定；第五镜是动作连续的关键镜头，必须真正出现迈步、摆臂、衣摆和重心变化。不能只是两张立绘在背景上平移。；河边、双人、移动、续帧、脚接地",
+        "generatedImagePath": "http://127.0.0.1:3211/api/local-file?path=C%3A%5CUsers%5CAdministrator%5CDesktop%5CAiProject%5CComfyUI_JM_windows_portable%5CComfyUI%5Coutput%5CStoryboard%5C1779018237904_river_continuity_005_storyboard_composite_still_fallback.png&v=1779018237925",
+        "generatedVideoPath": ""
+      },
+      {
+        "id": "river_continuity_006",
+        "sequenceId": "seq_001",
+        "order": 5,
+        "title": "桥边停步收尾",
+        "durationFrames": 24,
+        "dialogue": "江岚：就从这里开始看吧。",
+        "notes": "收尾镜头不能只是两个人停在桥边发呆。要有停步后的后续动作，一个向水边探查，一个转身警戒，同时保持统一光影、透视和接地。",
+        "tags": [
+          "河边",
+          "收尾",
+          "双人",
+          "续帧",
+          "稳定分镜"
+        ],
+        "storyPrompt": "桥边停步收尾；收尾镜头不能只是两个人停在桥边发呆。要有停步后的后续动作，一个向水边探查，一个转身警戒，同时保持统一光影、透视和接地。；江岚：就从这里开始看吧。；河边、收尾、双人、续帧、稳定分镜 画面必须出现角色：沈砚、江岚。禁止缺失角色。。江岚是画面主体，其他已写入脚本的角色必须继续留在同一画面内。沈砚，必须出现的辅助角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，停步时有轻微跟随反应，有可读的回应表情，在riverside stone path near the bridge上站立，位置画面左侧，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。江岚，主体角色，保持跨镜头脸型、发型、服装、配色和体型一致，全身清楚可见，真实处在场景中，停步时有清楚重心变化，表情自然且与动作一致，在riverside stone path near the bridge上站立，位置画面中左，双脚接地，阴影方向匹配环境，透视正确，与riverside environment自然融合。人物必须是镜头主体，不能退化为空场景。不能出现贴纸式立绘拼贴。动作表演和表情变化必须清楚可读。电影分镜，中近景，人物主体明确，环境连续，镜头语言清晰，光影自然，构图稳定。",
+        "negativePrompt": "empty scene, scenery only, landscape only, pure environment, no character, no person, no people, character missing, missing one character, one character only, wrong character count, cropped body, cut off head, cut off feet, upper body only, portrait crop, partial body, floating character, hovering feet, detached shadow, tiny distant person, silhouette only, pasted character, collage, sticker-like character, flat cutout look, wrong face, different hairstyle, changed outfit, inconsistent costume, expressionless face, blank expression, no expression, mannequin pose, static pose, standing still",
+        "videoPrompt": "江岚：就从这里开始看吧，收尾镜头不能只是两个人停在桥边发呆，要有停步后的后续动作，一个向水边探查，一个转身警戒，同时保持统一光影、透视和接地，桥边停步收尾，the characters keep grounded contact while standing on the bridge deck，faces keep readable expression changes，hair and remain exactly consistent across shots，江岚 stays the visual focus，no empty scenery shot，持续与 bridge environment 发生互动，镜头稳定 画面必须出现角色：沈砚、江岚。禁止缺失角色。。沈砚、江岚都必须全身清楚可见并真实处在场景内，角色在riverside stone path near the bridge上保持稳定接地，表情变化可读，发型和服装跨镜头一致，阴影方向匹配环境，透视正确，江岚保持视觉主位，不能退化为空场景镜头，持续与riverside environment发生互动，镜头稳定。",
+        "videoMode": "auto",
+        "videoStartFramePath": "",
+        "videoEndFramePath": "",
+        "skyboxFace": "auto",
+        "skyboxFaces": [],
+        "skyboxFaceWeights": {},
+        "characterRefs": [
+          "asset_1774017261433_390",
+          "asset_1773997039637_416"
+        ],
+        "sceneRefId": "asset_1773997921086_701",
+        "sourceCharacterNames": [
+          "沈砚",
+          "江岚"
+        ],
+        "sourceSceneName": "河边",
+        "sourceScenePrompt": "河边 场景设定图，无人物，环境一致，材质统一，空间关系清晰。桥边停步收尾；桥边停步收尾，收尾镜头不能只是两个人停在桥边发呆，要有停步后的后续动作，一个向水边探查，一个转身警戒，同时保持统一光影、透视和接地，：就从这里开始看吧，hairstyle，costume，colors，in the scene，slowing down and stopping with visible weight shift，standing on the bridge deck at screen center-left，slowing down with a reactive weight shift，standing on the bridge deck at screen right，not the empty environment，电影分镜，大全景，主体明确，环境连续，镜头语言清晰，光影自然，构图稳定；收尾镜头不能只是两个人停在桥边发呆。要有停步后的后续动作，一个向水边探查，一个转身警戒，同时保持统一光影、透视和接地。；：就从这里开始看吧。；河边、收尾、双人、续帧、稳定分镜",
+        "generatedImagePath": "http://127.0.0.1:8188/view?filename=%E6%A1%A5%E8%BE%B9%E5%81%9C%E6%AD%A5%E6%94%B6%E5%B0%BE_zimage_00001_.png&subfolder=Storyboard&type=output&v=1786158978343",
+        "generatedVideoPath": ""
+      }
+    ],
+    "layers": [
+      {
+        "id": "layer_river_continuity_001_1",
+        "shotId": "river_continuity_001",
+        "name": "图层 1",
+        "visible": true,
+        "locked": false,
+        "zIndex": 1,
+        "bitmapPath": "shots/river_continuity_001/layer_river_continuity_001_1.png"
+      },
+      {
+        "id": "layer_river_continuity_002_1",
+        "shotId": "river_continuity_002",
+        "name": "图层 1",
+        "visible": true,
+        "locked": false,
+        "zIndex": 1,
+        "bitmapPath": "shots/river_continuity_002/layer_river_continuity_002_1.png"
+      },
+      {
+        "id": "layer_river_continuity_003_1",
+        "shotId": "river_continuity_003",
+        "name": "图层 1",
+        "visible": true,
+        "locked": false,
+        "zIndex": 1,
+        "bitmapPath": "shots/river_continuity_003/layer_river_continuity_003_1.png"
+      },
+      {
+        "id": "layer_river_continuity_004_1",
+        "shotId": "river_continuity_004",
+        "name": "图层 1",
+        "visible": true,
+        "locked": false,
+        "zIndex": 1,
+        "bitmapPath": "shots/river_continuity_004/layer_river_continuity_004_1.png"
+      },
+      {
+        "id": "layer_river_continuity_005_1",
+        "shotId": "river_continuity_005",
+        "name": "图层 1",
+        "visible": true,
+        "locked": false,
+        "zIndex": 1,
+        "bitmapPath": "shots/river_continuity_005/layer_river_continuity_005_1.png"
+      },
+      {
+        "id": "layer_river_continuity_006_1",
+        "shotId": "river_continuity_006",
+        "name": "图层 1",
+        "visible": true,
+        "locked": false,
+        "zIndex": 1,
+        "bitmapPath": "shots/river_continuity_006/layer_river_continuity_006_1.png"
+      }
+    ],
+    "assets": [
+      {
+        "id": "asset_1774017261433_390",
+        "projectId": "proj_001",
+        "type": "character",
+        "name": "沈砚",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterSidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+        "characterBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+        "characterAnchorModelName": "",
+        "voiceProfile": "",
+        "characterFaceRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+        "characterDetailRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+        "characterIdentityPack": {
+          "version": "shen-yan-hybrid-v5",
+          "triggerWord": "char_shen_yan_v1",
+          "species": "human",
+          "speciesTraits": [],
+          "styleContractId": "cinematic_3d_donghua_v1",
+          "styleContractVersion": "1.0.0",
+          "styleContractDigest": "27db8be0b246c9b931217e24caffc9606c0959b035f7a0d9714ed0c058828b88",
+          "faceMasterPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "faceLeftPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "faceRightPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "hairBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+          "bodyFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "bodySidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\side.png",
+          "bodyBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-hybrid-v5\\back.png",
+          "neutralExpressionPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png",
+          "immutableTraits": [
+            "refined adult Chinese male face, age 24 to 28",
+            "natural-sized clear blue almond-shaped eyes",
+            "short dark brown side-swept layered hair",
+            "teal long-sleeve tunic",
+            "dark navy sleeveless long coat",
+            "brown leather belt and knee-high brown leather boots"
+          ],
+          "forbiddenChanges": [
+            "preserve recognizable facial identity and blue eye color",
+            "preserve hair color, length, fringe, and silhouette",
+            "preserve the teal tunic, navy long coat, brown belt, and brown boots",
+            "preserve mature adult male proportions",
+            "no beard, moustache, stubble, or facial hair shadow",
+            "human ears only, no animal ears, tail, horns, or muzzle"
+          ],
+          "approvedHeroFramePaths": [
+            "C:\\Users\\Administrator\\Desktop\\ai_project\\logs\\shen-yan-zimage-hero-v1\\hero-2026080913.png"
+          ],
+          "updatedAt": "2026-08-09T22:28:59.6576505+08:00"
+        },
+        "characterZeroShotEvidence": {
+          "reportLabel": "character-consistency-benchmark-klein-cinematic3d-zero-shot-quality-v4.json",
+          "evidenceDigest": "b1c4620823a79c339b98cbf4962d3f2fcb573a1deda01e9135340f76a928bf79",
+          "generationMode": "zero_shot_multi_reference",
+          "benchmarkVersion": "1",
+          "promptTemplateVersion": "klein-character-v2",
+          "fixtureDigest": "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
+          "generationParametersDigest": "7c15b5fab4b5827c14589c3b684422177c12c52f637f4f2178e08e9db2d849d1",
+          "characterAssetId": "asset_1774017261433_390",
+          "provider": "flux2_klein_4b",
+          "identityPackVersion": "shen-yan-hybrid-v5",
+          "identityMetadataDigest": "3a8b30f0d73b5b7842a158ebc9e3cff0b7c4e84946c0403ac54991afec5c7f56",
+          "referenceManifestDigest": "e49d062b6688deabdf0b5567e43c1a8b0191985d15ca693faba2d7412e761289",
+          "references": [
+            {
+              "shotId": "front_close",
+              "slot": "body_front",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "front_close",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "three_quarter_medium",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "three_quarter_medium",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "left_profile",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "left_profile",
+              "slot": "face_left",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "d880f29f8cd440016671ecb4313a5cf59ba62b0a2dc43fe4940caa0bb7704e2c",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "right_profile",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "right_profile",
+              "slot": "face_right",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "d880f29f8cd440016671ecb4313a5cf59ba62b0a2dc43fe4940caa0bb7704e2c",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "back_view",
+              "slot": "body_back",
+              "sourceSha256": "2abafd0d96d0beb77441760a37872f367f4f3af0fcea4721176a313bd0a76195",
+              "transformedSha256": "9a533fc7694f3f18d097e313f6ef0ba527502ba42ab4f626e6d4a20285e0e758",
+              "transform": "none"
+            },
+            {
+              "shotId": "back_view",
+              "slot": "hair_back",
+              "sourceSha256": "2abafd0d96d0beb77441760a37872f367f4f3af0fcea4721176a313bd0a76195",
+              "transformedSha256": "9a533fc7694f3f18d097e313f6ef0ba527502ba42ab4f626e6d4a20285e0e758",
+              "transform": "none"
+            },
+            {
+              "shotId": "full_body_action",
+              "slot": "body_front",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "full_body_action",
+              "slot": "body_side",
+              "sourceSha256": "2a0ed3ef0dd1ce290f2f66d1f558d754d37a1e239b092c3189a431bf7ba2b861",
+              "transformedSha256": "6774d4d64e8b492e76e00a3a782bfa34f9bfeca27c2bf4fc8271348abdcf053a",
+              "transform": "none"
+            },
+            {
+              "shotId": "strong_expression",
+              "slot": "expression_neutral",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "strong_expression",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            },
+            {
+              "shotId": "different_lighting",
+              "slot": "body_front",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "112b66b42f70d33aa0714579b4f92110fb3fafbbd1ca0d03250e3a86549370a4",
+              "transform": "none"
+            },
+            {
+              "shotId": "different_lighting",
+              "slot": "face_master",
+              "sourceSha256": "bb93213df418213e41cb1206e397056cbb45e34ed446274307f531f658713043",
+              "transformedSha256": "8af33efb9c368479b685b99eb81d2873be5bbc596dca323bf56954ab955930a1",
+              "transform": "head_shoulders_crop"
+            }
+          ],
+          "modelName": "flux-2-klein-4b-fp8.safetensors",
+          "workflowDigest": "e820879e1050ce1151c20a19a3dddaabefa9b2d15b9a6c6994528633af710ab3",
+          "terminalOutputNode": "19",
+          "terminalModel": "flux-2-klein-4b-fp8.safetensors",
+          "evaluatorId": "siglip2-character-consistency",
+          "evaluatorVersion": "1.0.0",
+          "evaluatorImplementationHash": "928799e00d8f1af139caa01be76fe750416c710711c432940a151c2f7072571e",
+          "evaluatorPolicyHash": "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+          "dimensionThreshold": 0.72,
+          "shots": [
+            {
+              "id": "front_close",
+              "outputSha256": "72f6f6fc19906c2dcbb5303be0ca4aa7df10f7c493981625b2eb56e63a036050",
+              "score": 0.944065,
+              "dimensionScores": {
+                "face": 0.94795,
+                "hair": 0.940977,
+                "outfit": 0.939103,
+                "body": 0.939103,
+                "quality": 0.943114
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "three_quarter_medium",
+              "outputSha256": "00abc3b02d098e038a472bbe7aa96c04a2704a9a5aaae1f670d5c8c570c70dd6",
+              "score": 0.963745,
+              "dimensionScores": {
+                "face": 0.972641,
+                "hair": 0.967692,
+                "outfit": 0.966511,
+                "body": 0.966511,
+                "quality": 0.936725
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "left_profile",
+              "outputSha256": "658fbb578d0ad9350ed01a71379bbe01d7c6dad3b0a2110eab7f9cdef003ddb2",
+              "score": 0.93112,
+              "dimensionScores": {
+                "face": 0.93164,
+                "hair": 0.931344,
+                "outfit": 0.928716,
+                "body": 0.928716,
+                "quality": 0.934682
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "right_profile",
+              "outputSha256": "5eb22c64bbb178e620ae09ab2361c831c67893ce7ed25ff8d6ffd8dbbb5d0376",
+              "score": 0.920146,
+              "dimensionScores": {
+                "face": 0.940457,
+                "hair": 0.938166,
+                "outfit": 0.935184,
+                "body": 0.935184,
+                "quality": 0.827497
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "back_view",
+              "outputSha256": "1219edbad39228c02b7adf15efe9ddab6ae56323600aa10b2281ec7b8cc1022c",
+              "score": 0.947817,
+              "dimensionScores": {
+                "face": 0.962467,
+                "hair": 0.971642,
+                "outfit": 0.974025,
+                "body": 0.974025,
+                "quality": 0.834029
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "full_body_action",
+              "outputSha256": "d56c8538e43c3c29efe479ed43aa71f3c00d802994f6793641b085a717fc17d6",
+              "score": 0.96976,
+              "dimensionScores": {
+                "face": 0.985007,
+                "hair": 0.978938,
+                "outfit": 0.975407,
+                "body": 0.975407,
+                "quality": 0.935845
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "strong_expression",
+              "outputSha256": "933dffee64741741ce25dd7365814a7269be40225852e7f3f9f344ec483e429f",
+              "score": 0.945439,
+              "dimensionScores": {
+                "face": 0.948621,
+                "hair": 0.941138,
+                "outfit": 0.939516,
+                "body": 0.939516,
+                "quality": 0.948654
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            },
+            {
+              "id": "different_lighting",
+              "outputSha256": "593687ef7b2f0724e36b099d6b6eee181bfbfe265307df748e9219683f2a3692",
+              "score": 0.964286,
+              "dimensionScores": {
+                "face": 0.977632,
+                "hair": 0.968661,
+                "outfit": 0.965252,
+                "body": 0.965252,
+                "quality": 0.932435
+              },
+              "retries": 0,
+              "finalStatus": "accepted",
+              "provenance": "model_generation",
+              "actualProvider": "flux2_klein_4b",
+              "terminalOutputNode": "19"
+            }
+          ],
+          "aggregateScore": 0.948297,
+          "acceptedShots": 8,
+          "verifiedAt": "2026-08-09T15:13:55.741Z",
+          "importedAt": "2026-08-09T15:13:55.741Z",
+          "sourceReportDigest": "72e97696826412ccc8b5bfa5ac7d6e274ae59909b83e17144f64addb5660408c",
+          "trustedReceipt": {
+            "schemaVersion": 1,
+            "issuer": "storyboard-desktop-character-evidence-v1",
+            "receiptId": "921fe6bb5dcc8db5e9a273cf0f021334275533b7eae89245ffd52ee558f5903b",
+            "reportDigest": "72e97696826412ccc8b5bfa5ac7d6e274ae59909b83e17144f64addb5660408c",
+            "generationMode": "zero_shot_multi_reference",
+            "characterAssetId": "asset_1774017261433_390",
+            "identityPackVersion": "shen-yan-hybrid-v5",
+            "identityMetadataDigest": "3a8b30f0d73b5b7842a158ebc9e3cff0b7c4e84946c0403ac54991afec5c7f56",
+            "fixtureDigest": "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
+            "evaluatorImplementationHash": "928799e00d8f1af139caa01be76fe750416c710711c432940a151c2f7072571e",
+            "evaluatorPolicyHash": "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+            "outputHashesDigest": "9a421156e23d6a7306ba24c2a4399778a654fb7d75953f68b512915c7d70266a",
+            "referenceBindingDigest": "4620c7c383a2ce2392f00ed7e5ea220d78780043fb4ae553774b95ce34e8f92f",
+            "claimsDigest": "38904582fdbcae3d159efd24f57e605100d241490a1b27ed57ae95ff5019da23"
+          }
+        },
+        "currentZeroContext": {
+          "generationMode": "zero_shot_multi_reference",
+          "benchmarkVersion": "1",
+          "promptTemplateVersion": "klein-character-v2",
+          "characterAssetId": "asset_1774017261433_390",
+          "identityPackVersion": "shen-yan-hybrid-v5",
+          "identityMetadataDigest": "3a8b30f0d73b5b7842a158ebc9e3cff0b7c4e84946c0403ac54991afec5c7f56",
+          "triggerWord": "char_shen_yan_v1",
+          "immutableTraits": [
+            "brown leather belt and knee-high brown leather boots",
+            "dark navy sleeveless long coat",
+            "natural-sized clear blue almond-shaped eyes",
+            "refined adult Chinese male face, age 24 to 28",
+            "short dark brown side-swept layered hair",
+            "teal long-sleeve tunic"
+          ],
+          "forbiddenChanges": [
+            "human ears only, no animal ears, tail, horns, or muzzle",
+            "no beard, moustache, stubble, or facial hair shadow",
+            "preserve hair color, length, fringe, and silhouette",
+            "preserve mature adult male proportions",
+            "preserve recognizable facial identity and blue eye color",
+            "preserve the teal tunic, navy long coat, brown belt, and brown boots"
+          ],
+          "species": "human",
+          "speciesTraits": [],
+          "styleContractId": "cinematic_3d_donghua_v1",
+          "styleContractVersion": "1.0.0",
+          "styleContractDigest": "27db8be0b246c9b931217e24caffc9606c0959b035f7a0d9714ed0c058828b88",
+          "provider": "flux2_klein_4b",
+          "modelName": "flux-2-klein-4b-fp8.safetensors",
+          "fixtureDigest": "48fe813b546ec15cdaac58d8e9e550c3c2ffad53009d7fa8bad9c0274841b72d",
+          "referenceManifestDigest": "e49d062b6688deabdf0b5567e43c1a8b0191985d15ca693faba2d7412e761289",
+          "evaluatorId": "siglip2-character-consistency",
+          "evaluatorVersion": "1.0.0",
+          "evaluatorImplementationHash": "928799e00d8f1af139caa01be76fe750416c710711c432940a151c2f7072571e",
+          "evaluatorPolicyHash": "828f4a18f06b4d325adc72d48463e67965db2d474c065bfdbe83994b6ad4cfae",
+          "dimensionThreshold": 0.72,
+          "workflowProof": {
+            "workflowDigest": "e820879e1050ce1151c20a19a3dddaabefa9b2d15b9a6c6994528633af710ab3",
+            "terminalOutputNode": "19",
+            "authoritativeModelBindings": [
+              {
+                "model": "flux-2-klein-4b-fp8.safetensors"
+              }
+            ],
+            "authoritativeLoraBindings": []
+          }
+        }
+      },
+      {
+        "id": "asset_1774017261428_271",
+        "projectId": "proj_001",
+        "type": "character",
+        "name": "沈砚",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\沈砚\\front.png",
+        "characterFrontPath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\沈砚\\front.png",
+        "voiceProfile": ""
+      },
+      {
+        "id": "asset_1773997921086_701",
+        "projectId": "proj_001",
+        "type": "skybox",
+        "name": "河边",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_front.png",
+        "skyboxDescription": "傍晚河边，必须可见开阔河面、清晰岸线、旧石桥、垂柳、沿河石路与对岸轮廓，纯户外自然河岸环境，不是树林草坡，不是公园草地。，日景外景，空间开阔，自然光明确，远中近层次清晰，适合建立镜头和动作调度，生成可复用天空盒六面，六张图都不得出现任何人物、角色、动物、群像，只保留纯环境空间，空间结构统一、材质一致、光照一致，保持地平线与垂直结构稳定，避免几何扭曲，画面清晰锐利，可支持后续角色合成，符合真实空间与物理逻辑，这是纯环境底板，不是角色插画，不是叙事海报，不是节庆场景，不允许人物入镜，自然内陆河边外景，必须出现开阔河面、清晰岸线、沿河石路、垂柳、旧石桥或对岸轮廓；镜头接近人眼平视，禁止鸟瞰航拍；禁止现代白色大型建筑、校园园区、环形办公楼、建筑概念图、草坡园林外景；禁止海边、沙滩、海岸住宅区和海景公寓；禁止洞穴、神像、奇幻遗迹；禁止树林溪流、狭窄山涧、乱石浅溪。，ground-level inland riverside environment, broad calm river water, visible shoreline, willow trees, stone riverbank path, old stone bridge, opposite bank silhouette, outdoor only, no people, no buildings as main subject, not a forest creek, not a mountain stream, not a rocky brook，必须是纯户外环境空间，不是室内大厅，不是中庭，不是展厅，不是白色建筑内景。，必须明确表现自然河岸/江边环境：画面中必须可见成片开阔水面、清晰岸线、沿岸植被、旧石桥或河道延伸方向，以及对岸轮廓；空间是自然河边，不是树林草坡，不是园区草坪，不是现代建筑外景，不是海边沙滩，也不是海岸住宅区或海滨城市。必须是开阔河道，不是狭窄山涧，不是树林溪流，不是布满大石块的浅溪，不是被乱石填满的浅水河床。，河面必须连续展开，占据中景主要面积；岸线应当清晰可读，不能让圆石浅滩和树林把河面完全挤成狭窄溪流。，镜头高度必须接近人眼平视或轻微抬头，不允许鸟瞰航拍，不允许高空俯视山谷或丘陵地貌。，光线必须是傍晚/黄昏自然天光，允许暖色夕照与冷暖交替的自然天空光。，pure environment plate, not storyboard character art, not concept sheet, not technical sketch。",
+        "skyboxTags": [],
+        "skyboxFaces": {
+          "front": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_front.png",
+          "right": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_right.png",
+          "back": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_back.png",
+          "left": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_left.png",
+          "up": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_up.png",
+          "down": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\场景\\河边\\skybox_down.png"
+        },
+        "skyboxUpdateEvents": []
+      },
+      {
+        "id": "asset_1773997039637_416",
+        "projectId": "proj_001",
+        "type": "character",
+        "name": "江岚",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\江岚\\front.png",
+        "characterFrontPath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\江岚\\front.png",
+        "characterSidePath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\江岚\\side.png",
+        "characterBackPath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\江岚\\back.png",
+        "characterAnchorModelName": "Qwen-Rapid-AIO-SFW-v5.safetensors",
+        "voiceProfile": "",
+        "characterFaceRefPath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\江岚\\face_ref.png",
+        "characterDetailRefPath": "C:\\Users\\Administrator\\Desktop\\AiProject\\ComfyUI_JM_windows_portable\\ComfyUI\\output\\人物\\江岚\\detail_ref.png"
+      }
+    ],
+    "audioTracks": [
+      {
+        "id": "audio_001",
+        "projectId": "proj_001",
+        "filePath": "audio/temp-dialogue.wav",
+        "startFrame": 0,
+        "gain": 1,
+        "kind": "dialogue",
+        "label": "示例对白"
+      },
+      {
+        "id": "audio_tts_river_continuity_002_0",
+        "projectId": "proj_001",
+        "filePath": "C:\\Users\\Administrator\\AppData\\Roaming\\StoryboardProWeb\\workspace\\default.sbproj\\generated-audio\\双人中景起话_江岚_1786159191049_cb2ccp.mp3",
+        "startFrame": 24,
+        "gain": 1,
+        "kind": "dialogue",
+        "label": "对白 / 江岚"
+      },
+      {
+        "id": "audio_tts_river_continuity_003_0",
+        "projectId": "proj_001",
+        "filePath": "C:\\Users\\Administrator\\AppData\\Roaming\\StoryboardProWeb\\workspace\\default.sbproj\\generated-audio\\江岚近景说话_江岚_1786159192610_ewsh50.mp3",
+        "startFrame": 48,
+        "gain": 1,
+        "kind": "dialogue",
+        "label": "对白 / 江岚"
+      },
+      {
+        "id": "audio_tts_river_continuity_004_0",
+        "projectId": "proj_001",
+        "filePath": "C:\\Users\\Administrator\\AppData\\Roaming\\StoryboardProWeb\\workspace\\default.sbproj\\generated-audio\\沈砚回应点头_沈砚_1786159193841_34pz03.mp3",
+        "startFrame": 72,
+        "gain": 1,
+        "kind": "dialogue",
+        "label": "对白 / 沈砚"
+      },
+      {
+        "id": "audio_tts_river_continuity_006_0",
+        "projectId": "proj_001",
+        "filePath": "C:\\Users\\Administrator\\AppData\\Roaming\\StoryboardProWeb\\workspace\\default.sbproj\\generated-audio\\桥边停步收尾_江岚_1786159194959_3yykfz.mp3",
+        "startFrame": 96,
+        "gain": 1,
+        "kind": "dialogue",
+        "label": "对白 / 江岚"
+      }
+    ],
+    "selectedShotId": "river_continuity_006",
+    "activeLayerByShotId": {
+      "river_continuity_001": "layer_river_continuity_001_1",
+      "river_continuity_002": "layer_river_continuity_002_1",
+      "river_continuity_003": "layer_river_continuity_003_1",
+      "river_continuity_004": "layer_river_continuity_004_1",
+      "river_continuity_005": "layer_river_continuity_005_1",
+      "river_continuity_006": "layer_river_continuity_006_1"
+    },
+    "canvasTool": {
+      "mode": "draw",
+      "brushColor": "#0f172a",
+      "brushSize": 4,
+      "onionSkinEnabled": false,
+      "onionSkinRange": 1
+    },
+    "exportSettings": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 24,
+      "videoBitrateKbps": 8000
+    },
+    "shotStrokes": {
+      "river_continuity_001": [],
+      "river_continuity_002": [],
+      "river_continuity_003": [],
+      "river_continuity_004": [],
+      "river_continuity_005": [],
+      "river_continuity_006": []
+    },
+    "shotHistory": {
+      "river_continuity_001": {
+        "past": [],
+        "future": []
+      },
+      "river_continuity_002": {
+        "past": [],
+        "future": []
+      },
+      "river_continuity_003": {
+        "past": [],
+        "future": []
+      },
+      "river_continuity_004": {
+        "past": [],
+        "future": []
+      },
+      "river_continuity_005": {
+        "past": [],
+        "future": []
+      },
+      "river_continuity_006": {
+        "past": [],
+        "future": []
+      }
+    },
+    "generationTasks": []
+  }
+}

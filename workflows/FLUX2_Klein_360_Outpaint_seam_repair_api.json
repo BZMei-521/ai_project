@@ -1,0 +1,20 @@
+{
+  "1":{"class_type":"LoadImage","inputs":{"image":"FLUX2-Klein-360-Outpaint-wooden-spear-1536x768.png"}},
+  "2":{"class_type":"PanoramaSeamPrep","inputs":{"image":["1",0],"seam_width_px":160,"seam_center_offset_px":0,"mask_blur_px":32}},
+  "3":{"class_type":"UNETLoader","inputs":{"unet_name":"flux-2-klein-base-4b-fp8.safetensors","weight_dtype":"default"}},
+  "4":{"class_type":"LoraLoaderModelOnly","inputs":{"model":["3",0],"lora_name":"flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors","strength_model":1.0}},
+  "5":{"class_type":"DifferentialDiffusion","inputs":{"model":["4",0],"strength":1.0}},
+  "6":{"class_type":"CLIPLoader","inputs":{"clip_name":"qwen_3_4b.safetensors","type":"flux2","device":"default"}},
+  "7":{"class_type":"VAELoader","inputs":{"vae_name":"flux2-vae.safetensors"}},
+  "8":{"class_type":"CLIPTextEncode","inputs":{"text":"Repair only the narrow vertical seam in this seamless 360 equirectangular panorama. Continue the same tree trunks, roots, mossy rocks, mist, lighting, color, and depth smoothly across the repaired band. Preserve the rest of the forest image exactly. No people, no animals, no buildings, no text.","clip":["6",0]}},
+  "9":{"class_type":"CLIPTextEncode","inputs":{"text":"visible seam, vertical line, discontinuity, duplicated objects, warped trees, people, animals, text, watermark","clip":["6",0]}},
+  "10":{"class_type":"InpaintModelConditioning","inputs":{"positive":["8",0],"negative":["9",0],"vae":["7",0],"pixels":["2",0],"mask":["2",2],"noise_mask":true}},
+  "11":{"class_type":"CFGGuider","inputs":{"model":["5",0],"positive":["10",0],"negative":["10",1],"cfg":5.0}},
+  "12":{"class_type":"RandomNoise","inputs":{"noise_seed":43}},
+  "13":{"class_type":"KSamplerSelect","inputs":{"sampler_name":"euler"}},
+  "14":{"class_type":"Flux2Scheduler","inputs":{"steps":18,"width":1536,"height":768}},
+  "15":{"class_type":"SamplerCustomAdvanced","inputs":{"noise":["12",0],"guider":["11",0],"sampler":["13",0],"sigmas":["14",0],"latent_image":["10",2]}},
+  "16":{"class_type":"VAEDecode","inputs":{"samples":["15",0],"vae":["7",0]}},
+  "17":{"class_type":"PanoramaSeamPrep","inputs":{"image":["16",0],"seam_width_px":1,"seam_center_offset_px":0,"mask_blur_px":0}},
+  "18":{"class_type":"SaveImage","inputs":{"images":["17",0],"filename_prefix":"Storyboard/FLUX2_Klein_360_Outpaint_wooden_spear_seam_repaired"}}
+}

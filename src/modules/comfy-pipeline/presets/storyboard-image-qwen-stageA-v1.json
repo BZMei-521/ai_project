@@ -1,0 +1,220 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "lora_name": "Qwen-Image-Lightning-4steps-V1.0.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "4": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{FRAME_IMAGE_PATH}}"
+    }
+  },
+  "7": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{CHAR1_PRIMARY_PATH}}"
+    }
+  },
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{SCENE_REF_PATH}}"
+    }
+  },
+  "9": {
+    "class_type": "LoadImageMask",
+    "inputs": {
+      "image": "{{PASS_A_CHARACTER_MASK_PATH}}",
+      "channel": "red"
+    }
+  },
+  "10": {
+    "class_type": "QwenEditAdaptiveLongestEdge",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ],
+      "max_size": 896
+    }
+  },
+  "11": {
+    "class_type": "QwenEditConfigPreparer",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "mask": [
+        "9",
+        0
+      ],
+      "to_ref": true,
+      "ref_main_image": true,
+      "ref_longest_edge": [
+        "10",
+        0
+      ],
+      "ref_crop": "pad",
+      "ref_upscale": "lanczos",
+      "to_vl": true,
+      "vl_resize": true,
+      "vl_target_size": 384,
+      "vl_crop": "center",
+      "vl_upscale": "bicubic"
+    }
+  },
+  "12": {
+    "class_type": "QwenEditConfigPreparer",
+    "inputs": {
+      "image": [
+        "7",
+        0
+      ],
+      "configs": [
+        "11",
+        0
+      ],
+      "to_ref": true,
+      "ref_main_image": false,
+      "ref_longest_edge": 512,
+      "ref_crop": "center",
+      "ref_upscale": "lanczos",
+      "to_vl": true,
+      "vl_resize": true,
+      "vl_target_size": 384,
+      "vl_crop": "center",
+      "vl_upscale": "bicubic"
+    }
+  },
+  "13": {
+    "class_type": "QwenEditConfigPreparer",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ],
+      "configs": [
+        "12",
+        0
+      ],
+      "to_ref": false,
+      "ref_main_image": false,
+      "ref_longest_edge": 512,
+      "ref_crop": "center",
+      "ref_upscale": "lanczos",
+      "to_vl": true,
+      "vl_resize": true,
+      "vl_target_size": 384,
+      "vl_crop": "center",
+      "vl_upscale": "bicubic"
+    }
+  },
+  "14": {
+    "class_type": "TextEncodeQwenImageEditPlusCustom_lrzjason",
+    "inputs": {
+      "clip": [
+        "4",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "configs": [
+        "12",
+        0
+      ],
+      "prompt": "Repaint only the masked region into one coherent anime storyboard frame. Picture 1 is the current shot frame and main composition anchor. Picture 2 is Character A primary reference. Picture 3 is the clean scene reference for environment correction only. Follow the shot script for camera, blocking, action, and composition: {{PROMPT}} Generate exactly one full-body person only, {{CHAR1_NAME}}. If the shot later needs another character, leave natural space for them without generating them now. Preserve the original environment materials and boundary as much as possible. No extra people, no duplicate bodies, no pasted cutout look, no poster composition.",
+      "return_full_refs_cond": true,
+      "instruction": "Treat Picture 1 as the main frame and keep its camera, perspective, and blocking. Rewrite only the masked character region. Keep exactly one person, {{CHAR1_NAME}} only, keep the scene coherent, and preserve the original ground texture."
+    }
+  },
+  "15": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "14",
+        0
+      ]
+    }
+  },
+  "16": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "15",
+        0
+      ],
+      "latent_image": [
+        "14",
+        1
+      ],
+      "seed": "{{SEED}}",
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1.0
+    }
+  },
+  "17": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "16",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    }
+  },
+  "20": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "17",
+        0
+      ],
+      "filename_prefix": "Storyboard/{{SHOT_TITLE}}_stageA"
+    }
+  }
+}

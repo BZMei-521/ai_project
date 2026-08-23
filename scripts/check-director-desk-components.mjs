@@ -73,7 +73,8 @@ const top = TestRenderer.create(React.createElement(runtime.DirectorTopBar, {
   onOpenProjectMenu: () => undefined
 }));
 assert.equal(top.root.findAllByProps({ "data-director-primary": true }).length, 1);
-assert.equal(top.root.findAllByProps({ "aria-label": "搜索命令" }).length, 1);
+const commandTrigger = top.root.findByProps({ "aria-label": "搜索命令" });
+assert.match(commandTrigger.props.className ?? "", /director-command-trigger/);
 
 const emptyInspector = TestRenderer.create(React.createElement(runtime.ObjectInspectorDrawer, {
   open: false,
@@ -82,6 +83,7 @@ const emptyInspector = TestRenderer.create(React.createElement(runtime.ObjectIns
 }));
 assert.match(JSON.stringify(emptyInspector.toJSON()), /未选择对象/);
 assert.equal(emptyInspector.root.findByType("aside").props.hidden, true);
+assert.equal(emptyInspector.root.findByType("aside").props["aria-hidden"], undefined);
 
 const openInspector = TestRenderer.create(React.createElement(runtime.ObjectInspectorDrawer, {
   open: true,
@@ -110,7 +112,17 @@ const palette = TestRenderer.create(React.createElement(runtime.CommandPalette, 
 }));
 assert.equal(palette.root.findByProps({ role: "dialog" }).props["aria-modal"], true);
 assert.equal(palette.root.findByProps({ "data-danger": "true" }).props.type, "button");
-assert.equal(palette.root.findByProps({ "aria-label": "搜索命令" }).props.type, "search");
+const paletteSearch = palette.root.findByProps({ "aria-label": "搜索命令" });
+const paletteListbox = palette.root.findByProps({ role: "listbox" });
+const paletteOption = palette.root.findByProps({ role: "option" });
+assert.equal(paletteSearch.props.type, "search");
+assert.equal(paletteSearch.props.role, "combobox");
+assert.equal(paletteSearch.props["aria-expanded"], true);
+assert.equal(paletteSearch.props["aria-controls"], paletteListbox.props.id);
+assert.equal(paletteSearch.props["aria-activedescendant"], paletteOption.props.id);
+assert.equal(paletteOption.props.id.includes("project-delete"), true, "option ids should be stable from command ids");
+assert.equal(paletteOption.props.tabIndex, -1, "combobox options should stay out of the Tab order");
+assert.equal(palette.root.findByProps({ "data-director-command-backdrop": true }).props.className, "director-command-backdrop");
 
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
 const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
@@ -146,6 +158,7 @@ function keyboardEvent(key, shiftKey = false) {
   return {
     key,
     shiftKey,
+    target: fakeDocument.activeElement,
     preventDefault() {
       prevented = true;
     },
@@ -161,7 +174,7 @@ async function createFocusTestPalette(commands, onClose) {
   const closeButton = new FakeElement("close");
   const dialog = {
     querySelectorAll() {
-      return [searchInput, ...commandButtons, closeButton];
+      return [searchInput, closeButton];
     }
   };
   let commandButtonIndex = 0;
@@ -192,7 +205,11 @@ const behaviorCommands = [
   { id: "project.open", label: "打开项目", keywords: ["打开"], run: () => { firstRuns += 1; } },
   { id: "project.delete", label: "删除项目", keywords: ["删除"], danger: true, run: () => { secondRuns += 1; } }
 ];
-const focusPalette = await createFocusTestPalette(behaviorCommands, () => { commandCloseCalls += 1; });
+const executionOrder = [];
+const focusPalette = await createFocusTestPalette(behaviorCommands, () => {
+  executionOrder.push("close");
+  commandCloseCalls += 1;
+});
 assert.equal(fakeDocument.activeElement, focusPalette.searchInput);
 assert.equal(focusPalette.searchInput.focusCount, 1);
 
@@ -201,6 +218,11 @@ await TestRenderer.act(async () => {
   dialogNode.props.onKeyDown(keyboardEvent("ArrowDown"));
 });
 assert.equal(focusPalette.renderer.root.findAllByProps({ role: "option" })[1].props["aria-selected"], true);
+assert.equal(
+  focusPalette.renderer.root.findByProps({ role: "combobox" }).props["aria-activedescendant"],
+  focusPalette.renderer.root.findAllByProps({ role: "option" })[1].props.id,
+  "ArrowDown should announce the newly active option through aria-activedescendant"
+);
 await TestRenderer.act(async () => {
   dialogNode.props.onKeyDown(keyboardEvent("ArrowUp"));
 });
@@ -220,25 +242,50 @@ await TestRenderer.act(async () => {
 assert.equal(tabBackward.prevented, true);
 assert.equal(fakeDocument.activeElement, focusPalette.closeButton);
 
+const closeButtonEnter = keyboardEvent("Enter");
+await TestRenderer.act(async () => {
+  dialogNode.props.onKeyDown(closeButtonEnter);
+  focusPalette.renderer.root.findByProps({ "aria-label": "关闭命令面板" }).props.onClick();
+  await Promise.resolve();
+});
+assert.equal(closeButtonEnter.prevented, false, "dialog must not consume Enter from the close button");
+assert.equal(firstRuns + secondRuns, 0, "close-button Enter must not invoke the active command");
+assert.equal(commandCloseCalls, 1, "close-button Enter should close exactly once through its native click");
+commandCloseCalls = 0;
+executionOrder.length = 0;
+
+focusPalette.searchInput.focus();
 await TestRenderer.act(async () => {
   dialogNode.props.onKeyDown(keyboardEvent("ArrowDown"));
 });
+const successorFocus = new FakeElement("successor");
+behaviorCommands[1].run = () => {
+  executionOrder.push("run");
+  secondRuns += 1;
+  successorFocus.focus();
+};
 await TestRenderer.act(async () => {
   dialogNode.props.onKeyDown(keyboardEvent("Enter"));
+  await Promise.resolve();
 });
 assert.equal(firstRuns, 0);
 assert.equal(secondRuns, 1);
 assert.equal(commandCloseCalls, 1);
+assert.deepEqual(executionOrder, ["close", "run"], "palette should close before command callback runs");
 await TestRenderer.act(async () => {
   focusPalette.renderer.update(React.createElement(runtime.CommandPalette, {
     open: false,
     commands: behaviorCommands,
-    onClose: () => { commandCloseCalls += 1; }
+    onClose: () => {
+      executionOrder.push("close");
+      commandCloseCalls += 1;
+    }
   }));
 });
-assert.equal(fakeDocument.activeElement, previousFocus);
+assert.equal(fakeDocument.activeElement, successorFocus, "command focus handoff must not be overwritten by trigger restoration");
 
 let escapeCloseCalls = 0;
+fakeDocument.activeElement = previousFocus;
 const escapePalette = await createFocusTestPalette(behaviorCommands, () => { escapeCloseCalls += 1; });
 const escapeDialog = escapePalette.renderer.root.findByProps({ role: "dialog" });
 await TestRenderer.act(async () => {

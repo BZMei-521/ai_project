@@ -1,0 +1,208 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "4": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "wooden_spear_h3_first_yaw000_1024x576_00001_.png"
+    }
+  },
+  "7": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "岚-sheet.png"
+    }
+  },
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "林越-sheet.png"
+    }
+  },
+  "10": {
+    "class_type": "QwenEditAdaptiveLongestEdge",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "max_size": 1024
+    }
+  },
+  "11": {
+    "class_type": "QwenEditConfigPreparer",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "to_ref": true,
+      "ref_main_image": true,
+      "ref_longest_edge": [
+        "10",
+        0
+      ],
+      "ref_crop": "pad",
+      "ref_upscale": "lanczos",
+      "to_vl": true,
+      "vl_resize": true,
+      "vl_target_size": 384,
+      "vl_crop": "center",
+      "vl_upscale": "bicubic"
+    }
+  },
+  "12": {
+    "class_type": "QwenEditConfigPreparer",
+    "inputs": {
+      "image": [
+        "7",
+        0
+      ],
+      "configs": [
+        "11",
+        0
+      ],
+      "to_ref": true,
+      "ref_main_image": false,
+      "ref_longest_edge": 512,
+      "ref_crop": "center",
+      "ref_upscale": "lanczos",
+      "to_vl": true,
+      "vl_resize": true,
+      "vl_target_size": 384,
+      "vl_crop": "center",
+      "vl_upscale": "bicubic"
+    }
+  },
+  "13": {
+    "class_type": "QwenEditConfigPreparer",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ],
+      "configs": [
+        "12",
+        0
+      ],
+      "to_ref": true,
+      "ref_main_image": false,
+      "ref_longest_edge": 512,
+      "ref_crop": "center",
+      "ref_upscale": "lanczos",
+      "to_vl": true,
+      "vl_resize": true,
+      "vl_target_size": 384,
+      "vl_crop": "center",
+      "vl_upscale": "bicubic"
+    }
+  },
+  "14": {
+    "class_type": "TextEncodeQwenImageEditPlusCustom_lrzjason",
+    "inputs": {
+      "clip": [
+        "4",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "configs": [
+        "13",
+        0
+      ],
+      "prompt": "Edit Picture 1 into one coherent cinematic 3D-donghua storyboard frame while preserving its camera, giant tree trunks, roots, rocks, cyan fog, lighting, color palette, and forest geometry. Picture 2 is the strict identity reference for 岚. Picture 3 is the strict identity reference for 林越. Add exactly two people: 岚 stands in the foreground center in a low defensive stance, holding one straight obsidian short spear horizontally; preserve her gray cat ears, long gray tail, gray hide hunting outfit, green malachite pendant, face, hair, body proportions, and outfit colors from Picture 2. 林越 is behind her and slightly to camera-left, half-sitting on the wet ground with his injured right foot clearly visible and held protectively off the ground; the right foot must be a normal dark boot attached continuously to one anatomically correct lower leg, not bare, hand-shaped, fused, or detached; preserve his face, hair, 27-year-old male appearance, and damaged dark rescue uniform from Picture 3. Add exactly three lean gray wolves total, not four: one wolf on camera-left and two wolves on camera-right in the middle and far ground, forming a loose triangular encirclement without blocking either face. Match perspective, ground contact, occlusion, cool cyan environment light, and contact shadows. Keep all limbs anatomically separate. No fourth wolf, no extra people, no duplicate bodies, no shared limbs, no hand-foot fusion, no swapped clothes, no extra weapons, no gore, no text, no building, no poster layout.",
+      "return_full_refs_cond": true
+    }
+  },
+  "15": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "14",
+        0
+      ]
+    }
+  },
+  "16": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "15",
+        0
+      ],
+      "latent_image": [
+        "14",
+        1
+      ],
+      "seed": 8221101,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1.0
+    }
+  },
+  "17": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "16",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    }
+  },
+  "20": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "17",
+        0
+      ],
+      "filename_prefix": "Storyboard/wooden_spear_character_panorama_stageA_retry2"
+    }
+  }
+}

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [app, shell, css] = await Promise.all([
+const [app, shell, css] = (await Promise.all([
   readFile("src/app/App.tsx", "utf8"),
   readFile("src/app-shell/WorkbenchShell.tsx", "utf8"),
   readFile("src/styles/director-desk.css", "utf8")
-]);
+])).map((source) => source.replace(/\r\n/g, "\n"));
 
 function blockBetween(source, start, end) {
   const startIndex = source.indexOf(start);

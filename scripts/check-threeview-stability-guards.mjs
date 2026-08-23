@@ -70,6 +70,35 @@ if (!source.includes("纯提示词 front 只作为兜底，无法保证任意提
   failures.push("Missing explicit failure message that pure-text front cannot guarantee arbitrary prompts.");
 }
 
+const bannedThreeViewBackgroundPatterns = [
+  {
+    label: "split side/back gray background normalization",
+    pattern: /normalizeCharacterAnchorBackground\(trimmed,\s*view === "front" \? "white" : "gray"\)/
+  },
+  {
+    label: "panel candidate gray background normalization",
+    pattern: /normalizeCharacterAnchorBackground\(pathOrUrl,\s*"gray"\)/
+  },
+  {
+    label: "view-dependent gray fitted canvas background",
+    pattern: /context\.fillStyle = view === "front" \? "rgb\(250,250,250\)" : "rgb\(236,236,236\)"/
+  }
+];
+
+for (const entry of bannedThreeViewBackgroundPatterns) {
+  if (entry.pattern.test(source)) {
+    failures.push(`Found mixed-background three-view output path: ${entry.label}`);
+  }
+}
+
+if (!source.includes("back_profile_like(")) {
+  failures.push("Missing stricter back-view profile guard issue.");
+}
+
+if (!source.includes("side_back_too_similar(")) {
+  failures.push("Missing side/back near-duplicate guard for three-view panels.");
+}
+
 if (failures.length > 0) {
   console.error("[threeview-guards] FAILED");
   for (const failure of failures) {

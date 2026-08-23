@@ -1,0 +1,34 @@
+{
+  "1": {
+    "inputs": {
+      "image": "{{SOURCE_IMAGE}}"
+    },
+    "class_type": "LoadImage"
+  },
+  "2": {
+    "inputs": {
+      "image": ["1", 0],
+      "detect_hand": "enable",
+      "detect_body": "enable",
+      "detect_face": "enable",
+      "resolution": 1152,
+      "bbox_detector": "yolox_l.onnx",
+      "pose_estimator": "dw-ll_ucoco_384.onnx",
+      "scale_stick_for_xinsr_cn": "disable"
+    },
+    "class_type": "DWPreprocessor"
+  },
+  "3": {
+    "inputs": {
+      "images": ["2", 0]
+    },
+    "class_type": "PreviewImage"
+  },
+  "4": {
+    "inputs": {
+      "pose_kps": ["2", 1],
+      "filename_prefix": "{{FILENAME_PREFIX}}"
+    },
+    "class_type": "SavePoseKpsAsJsonFile"
+  }
+}
