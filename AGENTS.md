@@ -21,6 +21,7 @@ Codex CLI 中优先通过 `$skill-name` 或 `/skills` 调用；自然语言也�
 | `$novel-action-director`、人物动作/表演导演 | novel-action-director | 动作、微表情、互动、战斗与受力设计 |
 | `$novel-storyboard`、分镜/镜头表 | novel-storyboard | 分镜、镜头动机、打击呈现、关键帧与 H3 投产包 |
 | `$novel-fantasy-vfx`、仙侠法术/阵法特效 | novel-fantasy-vfx | 法术、阵法、结界与能量生命周期设计 |
+| `$novel-edit-director`、转场/剪辑衔接 | novel-edit-director | 相邻生成段的匹配剪辑、遮挡桥与声音桥 |
 | `$browser-cdp` | browser-cdp | 浏览器 CDP 工具 |
 
 ## 文件结构

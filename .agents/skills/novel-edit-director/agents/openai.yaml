@@ -1,0 +1,6 @@
+interface:
+  display_name: "Novel Edit Director"
+  short_description: "设计镜头段之间的转场、匹配剪辑与声音桥"
+  default_prompt: "Use $novel-edit-director to create a validated edit.json for this storyboard."
+policy:
+  allow_implicit_invocation: true
