@@ -1,0 +1,22 @@
+{
+  "source": "阵门试炼",
+  "episodes": [
+    {
+      "ep": 1,
+      "targetSeconds": 60,
+      "scenes": [
+        {
+          "id": "S01",
+          "lighting": "暴雨夜",
+          "characters": ["C01", "C02"],
+          "props": ["P01"],
+          "beats": [
+            { "action": "C01 双手结印，脚下升起金色八卦防御阵，挡住迎面雷火。" },
+            { "action": "C02 引动上百柄灵剑化作剑雨，向石台中央倾泻攻击。" },
+            { "speaker": "C01", "line": "阵眼撑不了多久。", "delivery": "压低声音" }
+          ]
+        }
+      ]
+    }
+  ]
+}
