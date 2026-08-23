@@ -180,10 +180,103 @@ export function gateReport(doc, script) {
 export function validateEffects(doc, script) {
   return gateReport(doc, script).filter((gate) => !gate.pass).map((gate) => ({ gate: gate.id, details: gate.details }));
 }
-export function buildStoryboardSummary() { return { source: '', effects: {} }; }
-export function renderMarkdown() { return ''; }
-export function renderHtml() { return ''; }
-export async function runCli() { return 0; }
+function requireValid(doc, script) {
+  const problems = validateEffects(doc, script);
+  if (problems.length) throw new Error(`法术方案未通过门禁：${problems.map((item) => item.gate).join(', ')}`);
+}
+
+export function buildStoryboardSummary(doc, script) {
+  requireValid(doc, script);
+  const effects = {};
+  for (const { ep, effect } of allEffects(doc)) {
+    const key = `E${String(ep).padStart(2, '0')}-S${String(effect.sceneIndex ?? effect.sourceBeat.sceneIndex).padStart(2, '0')}-B${String(effect.beat ?? effect.sourceBeat.beat).padStart(2, '0')}`;
+    effects[key] = {
+      id: effect.id, kind: effect.kind, function: effect.function,
+      sourceBeat: clone(effect.sourceBeat), topology: clone(effect.topology),
+      phaseSummary: effect.phases.map((item) => `${item.name}: ${item.fromState} -> ${item.toState}`),
+      environmentResponse: clone(effect.environmentResponse), endState: clone(effect.endState),
+      mustShow: clone(effect.cameraIntent?.mustShow ?? []), actionRefs: clone(effect.actionRefs ?? []),
+      generationRisk: clone(effect.generationRisk ?? []),
+    };
+  }
+  return { source: doc?.source ?? script?.source ?? '', version: 1, effects };
+}
+
+function fmt(value) {
+  return Array.isArray(value) ? value.join('、') : String(value ?? '');
+}
+
+export function renderMarkdown(doc, script) {
+  requireValid(doc, script);
+  const gates = gateReport(doc, script);
+  const lines = [`# 法术视觉设计：${doc?.source ?? script?.source ?? ''}`, '', `门禁：${gates.filter((gate) => gate.pass).length}/${gates.length}`, ''];
+  for (const { ep, effect } of allEffects(doc)) {
+    lines.push(`## E${String(ep).padStart(2, '0')} · ${effect.id}`, '', `- 来源：${effect.sourceBeat.text}`, `- 类型/功能：${effect.kind} / ${effect.function}`,
+      `- 拓扑：${effect.topology.shape}，原点 ${effect.topology.origin}，尺度 ${effect.topology.scale}`,
+      `- 生命周期：${effect.phases.map((item) => item.name).join(' → ')}`,
+      `- 环境响应：${fmt(effect.environmentResponse.responses)}`, `- 结束状态：${effect.endState.phase} / ${effect.endState.persistence}`,
+      `- 必须看见：${fmt(effect.cameraIntent?.mustShow)}`, `- 动作引用：${fmt(effect.actionRefs) || '无'}`,
+      `- 生成风险：${fmt(effect.generationRisk) || '无'}`, '');
+  }
+  lines.push('## 门禁结果', '', ...gates.map((gate) => `- ${gate.pass ? '✓' : '✗'} ${gate.id}`), '');
+  return lines.join('\n');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+export function renderHtml(doc, script) {
+  requireValid(doc, script);
+  const gates = gateReport(doc, script);
+  const cards = allEffects(doc).map(({ effect }) => `<article><h2>${escapeHtml(effect.id)}</h2><p><b>来源：</b>${escapeHtml(effect.sourceBeat.text)}</p><p><b>拓扑：</b>${escapeHtml(`${effect.topology.shape} / ${effect.topology.origin} / ${effect.topology.scale}`)}</p><p><b>生命周期：</b>${escapeHtml(effect.phases.map((item) => item.name).join(' → '))}</p><p><b>环境响应：</b>${escapeHtml(fmt(effect.environmentResponse.responses))}</p><p><b>结束状态：</b>${escapeHtml(`${effect.endState.phase} / ${effect.endState.persistence}`)}</p><p><b>生成风险：</b>${escapeHtml(fmt(effect.generationRisk) || '无')}</p></article>`).join('');
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>法术视觉设计</title><body><h1>${escapeHtml(doc?.source ?? script?.source ?? '')}</h1><p>门禁：${gates.filter((gate) => gate.pass).length}/${gates.length}</p>${cards}<h2>门禁结果</h2><ul>${gates.map((gate) => `<li>${gate.pass ? '✓' : '✗'} ${escapeHtml(gate.id)}</li>`).join('')}</ul></body></html>`;
+}
+
+function option(args, name) {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : null;
+}
+
+function loadJson(path, read) {
+  if (!path) throw new Error('缺少必需的 JSON 路径');
+  try { return JSON.parse(read(path, 'utf8')); } catch (error) { throw new Error(`无法读取 JSON ${path}：${error.message}`); }
+}
+
+export async function runCli(args, io = { readFileSync, writeFileSync, stdout: process.stdout, stderr: process.stderr }) {
+  const out = (value) => io.stdout.write(`${value}\n`);
+  try {
+    const [command, input] = args;
+    if (!command || !input) throw new Error('用法：seed|validate|render|export <input.json> ...');
+    if (command === 'seed') {
+      const script = loadJson(input, io.readFileSync);
+      out(JSON.stringify(seedFromScript(script, parseEpisodeRange(option(args, '--eps'))), null, 2));
+    } else if (command === 'validate') {
+      const doc = loadJson(input, io.readFileSync);
+      const script = loadJson(option(args, '--script'), io.readFileSync);
+      requireValid(doc, script);
+      out(`✓ 通过 ${GATE_IDS.length} 项法术门禁`);
+    } else if (command === 'render') {
+      const doc = loadJson(input, io.readFileSync);
+      const script = loadJson(option(args, '--script'), io.readFileSync);
+      if (!args.includes('--md') && !args.includes('--html')) throw new Error('render 必须指定 --md 或 --html');
+      out(args.includes('--html') ? renderHtml(doc, script) : renderMarkdown(doc, script));
+    } else if (command === 'export') {
+      const doc = loadJson(input, io.readFileSync);
+      const script = loadJson(option(args, '--script'), io.readFileSync);
+      const outputPath = option(args, '--out');
+      if (!outputPath) throw new Error('export 缺少 --out');
+      io.writeFileSync(outputPath, `${JSON.stringify(buildStoryboardSummary(doc, script), null, 2)}\n`, 'utf8');
+      out(`✓ 已导出 ${outputPath}`);
+    } else {
+      throw new Error(`未知命令：${command}`);
+    }
+    return 0;
+  } catch (error) {
+    io.stderr.write(`错误：${error.message}\n`);
+    return 1;
+  }
+}
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const code = await runCli(process.argv.slice(2), { readFileSync, writeFileSync, stdout: process.stdout, stderr: process.stderr });

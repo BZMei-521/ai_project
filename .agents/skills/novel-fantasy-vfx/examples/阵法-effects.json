@@ -1,0 +1,47 @@
+{
+  "source": "阵门试炼",
+  "version": 1,
+  "params": { "maxMajorEffectsPerBeat": 1 },
+  "ordinaryBeatsPreserved": true,
+  "episodes": [
+    {
+      "ep": 1,
+      "seedScenes": [],
+      "effects": [
+        {
+          "id": "E01-S01-B01-FX01",
+          "sceneIndex": 1,
+          "beat": 1,
+          "kind": "formation",
+          "function": "defense",
+          "sourceBeat": { "sceneIndex": 1, "beat": 1, "text": "C01 双手结印，脚下升起金色八卦防御阵，挡住迎面雷火。" },
+          "participants": ["C01"],
+          "propRefs": [],
+          "startState": { "phase": "dormant", "persistence": "none" },
+          "endState": { "phase": "residue", "persistence": "ended" },
+          "topology": {
+            "shape": "bagua-circle",
+            "origin": "ground-under-C01",
+            "scale": "body",
+            "fineSymbols": true,
+            "nodes": ["坎", "离", "震", "兑"],
+            "circuits": [["坎", "离"], ["震", "兑"]]
+          },
+          "phases": [
+            { "name": "dormant", "fromState": "unlit", "toState": "unlit" },
+            { "name": "charging", "fromState": "unlit", "toState": "gold-lines-gather", "transition": "energy enters ground" },
+            { "name": "forming", "fromState": "gold-lines-gather", "toState": "bagua-closed", "transition": "nodes connect" },
+            { "name": "active", "fromState": "bagua-closed", "toState": "barrier-raised", "transition": "barrier rises" },
+            { "name": "impact", "fromState": "barrier-raised", "toState": "barrier-holds", "transition": "thunder-fire strikes" },
+            { "name": "dissipating", "fromState": "barrier-holds", "toState": "light-fades", "transition": "energy drains" },
+            { "name": "residue", "fromState": "light-fades", "toState": "scorched-ring", "transition": "residue remains" }
+          ],
+          "environmentResponse": { "scale": "body", "responses": ["dust-lifts", "rain-splits"] },
+          "cameraIntent": { "mustShow": ["ground topology", "barrier blocks thunder-fire"] },
+          "generationRisk": ["fine-symbols"],
+          "actionRefs": []
+        }
+      ]
+    }
+  ]
+}

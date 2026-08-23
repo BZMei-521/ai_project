@@ -73,7 +73,22 @@ for (const [gateId, doc] of mutations) {
   assert.ok(failed.includes(gateId), `${gateId} should fail, got: ${failed.join(', ')}`);
 }
 
-assert.equal(typeof buildStoryboardSummary, 'function');
-assert.equal(typeof renderMarkdown, 'function');
-assert.equal(typeof renderHtml, 'function');
+const summary = buildStoryboardSummary(effectsDoc, SCRIPT);
+const exported = summary.effects['E01-S01-B01'];
+assert.equal(exported.function, 'defense');
+assert.equal(exported.topology.shape, 'bagua-circle');
+assert.equal(exported.phaseSummary[0], 'dormant: unlit -> unlit');
+assert.deepEqual(exported.environmentResponse.responses, ['dust-lifts', 'rain-splits']);
+assert.equal(exported.endState.persistence, 'ended');
+assert.deepEqual(exported.mustShow, ['ground topology', 'barrier blocks thunder-fire']);
+assert.deepEqual(exported.actionRefs, []);
+assert.deepEqual(exported.generationRisk, ['fine-symbols']);
+const markdown = renderMarkdown(effectsDoc, SCRIPT);
+const html = renderHtml(effectsDoc, SCRIPT);
+assert.match(markdown, /生命周期/);
+assert.match(markdown, /拓扑/);
+assert.match(markdown, /12\/12/);
+assert.match(html, /生命周期/);
+assert.match(html, /拓扑/);
+assert.match(html, /12\/12/);
 console.log(`✓ fantasy-vfx public contract and ${expectedIds.length} gates`);
