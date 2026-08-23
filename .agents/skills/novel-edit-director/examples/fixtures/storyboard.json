@@ -1,5 +1,6 @@
 {
   "source": "渡口测试分镜",
+  "audioCues": ["脚步声", "水声"],
   "episodes": [{
     "ep": 1,
     "segments": [
