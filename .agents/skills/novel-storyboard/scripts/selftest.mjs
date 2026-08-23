@@ -4,7 +4,8 @@
 // 证明它真的会拦，不是一个永远为真的假测试。
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -36,10 +37,14 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = JSON.parse(readFileSync(join(here, '../examples/渡口-storyboard.json'), 'utf8'));
-const SCRIPT = JSON.parse(readFileSync(join(here, '../../novel-script/examples/渡口-script.json'), 'utf8'));
-const OUTLINE = JSON.parse(readFileSync(join(here, '../../novel-outline/examples/渡口-outline.json'), 'utf8'));
-const CAST = JSON.parse(readFileSync(join(here, '../../novel-characters/examples/渡口-cast.json'), 'utf8'));
-const ART = JSON.parse(readFileSync(join(here, '../../novel-art/examples/渡口-art.json'), 'utf8'));
+const siblingFixture = (skill, file) => {
+  const project = join(here, `../../${skill}/examples/${file}`);
+  return existsSync(project) ? project : join(homedir(), '.codex', 'skills', skill, 'examples', file);
+};
+const SCRIPT = JSON.parse(readFileSync(siblingFixture('novel-script', '渡口-script.json'), 'utf8'));
+const OUTLINE = JSON.parse(readFileSync(siblingFixture('novel-outline', '渡口-outline.json'), 'utf8'));
+const CAST = JSON.parse(readFileSync(siblingFixture('novel-characters', '渡口-cast.json'), 'utf8'));
+const ART = JSON.parse(readFileSync(siblingFixture('novel-art', '渡口-art.json'), 'utf8'));
 const CTX = { script: SCRIPT, outline: OUTLINE, cast: CAST, art: ART };
 
 let passed = 0;
@@ -84,6 +89,15 @@ const ACTIONS = {
       phaseSummary: [{ phase: 'action', path: 'river-road' }, { phase: 'recovery', stablePose: 'pier-approach' }],
       cameraIntent: { mustShow: ['皮箱始终贴胸', '鞋底踏过水洼'] },
       generationRisk: [],
+      impactEvidence: {
+        contactPoint: 'right-shoe/puddle-surface',
+        contactVisible: true,
+        targetLatency: '水面先压低半拍再向外炸开',
+        supportChange: '右脚落地承重后左脚继续前送',
+        centerOfMassShift: '重心越过右脚向前移动',
+        forceDirection: 'downward-forward',
+        wholeBodyResult: '身体保持前倾并完成下一步推进',
+      },
     },
   },
 };
@@ -105,6 +119,14 @@ eq(actionSummaryOf(ACTIONS, 1, 1, 2, 3).length, 0, '动作摘要不越过分镜�
     startState: clone(ACTIONS.actions['E01-S01-B01'].startState),
     endState: clone(ACTIONS.actions['E01-S01-B01'].endState),
     mustShow: clone(ACTIONS.actions['E01-S01-B01'].cameraIntent.mustShow),
+  };
+  cut.impactPresentation = {
+    actionId: 'E01-S01-B01-A01',
+    contactVisibility: 'clear',
+    impactPulse: 'brief',
+    informationOrder: ['contact', 'latency', 'imbalance'],
+    overlapReplays: 1,
+    slowMotionPhase: 'post-contact',
   };
   ok(actionGateReport(doc, ACTIONS).every((g) => g.ok), '正确动作认领与状态投影通过');
   ok(gateReport(doc, { ...CTX, actions: ACTIONS }).every((g) => g.ok), '传 actions 时动作门并入总门禁');
@@ -128,6 +150,22 @@ eq(actionSummaryOf(ACTIONS, 1, 1, 2, 3).length, 0, '动作摘要不越过分镜�
   const cameraOverrideActions = clone(ACTIONS);
   cameraOverrideActions.actions['E01-S01-B01'].cameraIntent.camera = 'Tracking Shot';
   ok(!actionGateReport(doc, cameraOverrideActions).find((g) => g.id === 'action-camera-boundary').ok, '动作层具体运镜覆盖会失败');
+
+  const noPresentation = clone(doc);
+  delete noPresentation.episodes[0].segments[0].cuts[0].impactPresentation;
+  ok(!actionGateReport(noPresentation, ACTIONS).find((g) => g.id === 'impact-presentation').ok, '有打击证据却缺打击呈现会失败');
+
+  const tooManyReplays = clone(doc);
+  tooManyReplays.episodes[0].segments[0].cuts[0].impactPresentation.overlapReplays = 3;
+  ok(!actionGateReport(tooManyReplays, ACTIONS).find((g) => g.id === 'impact-presentation').ok, '重叠镜头超过两段会失败');
+
+  const missingEvidenceOrder = clone(doc);
+  missingEvidenceOrder.episodes[0].segments[0].cuts[0].impactPresentation.informationOrder = ['effect'];
+  ok(!actionGateReport(missingEvidenceOrder, ACTIONS).find((g) => g.id === 'impact-presentation').ok, '信息顺序缺接触与受力反馈会失败');
+
+  const fullActionSlowMotion = clone(doc);
+  fullActionSlowMotion.episodes[0].segments[0].cuts[0].impactPresentation.slowMotionPhase = 'full-action';
+  ok(!actionGateReport(fullActionSlowMotion, ACTIONS).find((g) => g.id === 'impact-presentation').ok, '整段发力慢放会失败');
 }
 {
   const skipped = actionGateReport(FIXTURE, null);
@@ -180,6 +218,34 @@ eq(paramsOf({ params: { maxCutSeconds: 4 } }).maxCutSeconds, 4, '分镜上限可
 
 ok(gateReport(FIXTURE, CTX).every((g) => g.ok), '样例带全部上游全部门通过');
 eq(gateReport(FIXTURE, CTX).length, 18, '十八道门');
+{
+  const valid = clone(FIXTURE);
+  valid.episodes[0].segments[0].cuts[0].cameraPlan = {
+    purpose: '逐步暴露人物压抑情绪',
+    path: 'push-in',
+    speed: 'slow',
+    amplitude: 'short',
+    subjectRelation: 'approach',
+    stabilization: 'stable',
+    foregroundOcclusion: 'none',
+    startSize: 'medium',
+    endSize: 'close',
+  };
+  ok(gate(valid, 'camera-plan').ok, '完整可选镜头计划通过');
+
+  const missingPurpose = clone(valid);
+  delete missingPurpose.episodes[0].segments[0].cuts[0].cameraPlan.purpose;
+  ok(!gate(missingPurpose, 'camera-plan').ok, '镜头计划缺目的会失败');
+
+  const unknownSpeed = clone(valid);
+  unknownSpeed.episodes[0].segments[0].cuts[0].cameraPlan.speed = 'hyper';
+  ok(!gate(unknownSpeed, 'camera-plan').ok, '镜头计划未知速度会失败');
+
+  const badSizes = clone(valid);
+  badSizes.episodes[0].segments[0].cuts[0].cameraPlan.startSize = 'cowboy';
+  badSizes.episodes[0].segments[0].cuts[0].cameraPlan.endSize = 'macro';
+  ok(!gate(badSizes, 'camera-plan').ok, '镜头计划首尾景别越过现有枚举会失败');
+}
 {
   const gates = gateReport(FIXTURE, {});
   ok(gates.every((g) => g.ok), '不带上游也通过（对账门跳过）');
