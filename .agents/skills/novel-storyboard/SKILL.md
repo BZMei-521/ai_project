@@ -73,6 +73,7 @@ node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 \
 
 - `{baseDir}/references/storyboard-pass.md` 和 `{baseDir}/references/schema.md`（读它们，照着做）
 - `{baseDir}/references/directing-continuity.md`（`seed` 默认开启 `continuityVersion: 1`；按这份契约做资产决策、关键场计划和分镜首尾边界）
+- 只有需要高级运动、情绪镜头或动作镜头时，再读 `{baseDir}/references/camera-language.md`；普通场不必为使用词库而运动
 - 该集的 seedScenes 底稿 + 场景卡（art.json 的锚点与光照提示词）+ 角色卡（cast.json 的形象要点）
 
 流程：先把本集角色/造型/道具状态收敛成 `assetDecisions`；只给真正改变体验的关键场写 `scenePlans`；再**按剧情单元分段**（每段 9–15 秒、不跨场），**段内切 2–5 秒的分镜**。每切先写 `purpose`、`startBoundary`、`endBoundary`，后写分镜图与 H3 提示词。相邻镜头的边界必须相等；真正有意的跳切才用 `continuityOverride` 写明理由。
@@ -89,7 +90,7 @@ node {baseDir}/scripts/novel-storyboard.mjs validate <storyboard.json> \
   [--actions <storyboard-actions.json>]
 ```
 
-基础 18 道质量门全是代码：原 16 道门保持，新增**关键场导演计划完整性**和**镜头首尾边界 / 资产状态引用 / 同场跨镜连续性**。传 `--actions` 时再启用 4 道动作门：动作认领、首尾状态投影、手/道具/接触/结果事实、镜头意图边界。未传时旧项目仍是原 18 门、原输出形状；独立动作门报告会明确写“未提供 action.json，跳过”。
+基础 19 道质量门全是代码：原门保持，并含**关键场导演计划完整性**、**镜头首尾边界 / 资产状态引用 / 同场跨镜连续性**和可选 `cameraPlan` 合法性。传 `--actions` 时再启用 5 道动作门：动作认领、首尾状态投影、手/道具/接触/结果事实、镜头意图边界，以及有打击证据时的 `impactPresentation`。未传时旧项目行为不变；独立动作门报告会明确写“未提供 action.json，跳过”。
 
 **有违规逐条修，改完重跑，直到通过。**
 
@@ -159,7 +160,7 @@ novel-storyboard → storyboard.json （怎么拍：镜头、首帧、批次）
 node {baseDir}/scripts/selftest.mjs
 ```
 
-221 项断言，不调模型、不花额度。基础 18 道质量门和可选 4 道动作门都有击穿用例。改完脚本先跑这个。
+230+ 项断言，不调模型、不花额度。基础 19 道质量门和可选 5 道动作门都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 

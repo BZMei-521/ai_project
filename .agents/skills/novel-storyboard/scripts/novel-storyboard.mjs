@@ -894,7 +894,17 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
       const mapping = (seg.cuts ?? [])
         .map((_, i) => `- Picture ${i + 1} = f${i + 1}.png${i === 0 ? '（**首帧**，钉 0.00 秒）' : `（钉 ${starts[i].toFixed(2)} 秒）`}`)
         .join('\n');
-      const promptMd = `# ${seg.id} · H3 提示词\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
+      const directing = (seg.cuts ?? [])
+        .map((cut, i) => {
+          const lines = [];
+          if (cut.cameraPlan) lines.push(`- Shot ${i + 1} · **镜头动机**：${cut.cameraPlan.purpose}\n  - 镜头计划：\`${JSON.stringify(cut.cameraPlan)}\``);
+          if (cut.impactPresentation) lines.push(`- Shot ${i + 1} · **打击呈现**：\`${JSON.stringify(cut.impactPresentation)}\``);
+          return lines.join('\n');
+        })
+        .filter(Boolean)
+        .join('\n');
+      const directingSection = directing ? `\n\n## 导演附注\n\n${directing}` : '';
+      const promptMd = `# ${seg.id} · H3 提示词\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}${directingSection}\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
       files.push({ path: `${prefix}${seg.id}/prompt.md`, content: promptMd });
       const pictures = (seg.cuts ?? []).map((_, i) => `${prefix}${seg.id}/f${i + 1}.png`);
       const missing = pictures.filter((rel) => !imageExists(rel));
@@ -907,6 +917,11 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
         prompt: `${prefix}${seg.id}/prompt.md`,
         pictures,
         missing,
+        cameraImpact: (seg.cuts ?? []).map((cut, i) => ({
+          cut: i + 1,
+          ...(cut.cameraPlan ? { cameraPlan: cut.cameraPlan } : {}),
+          ...(cut.impactPresentation ? { impactPresentation: cut.impactPresentation } : {}),
+        })).filter((item) => item.cameraPlan || item.impactPresentation),
       });
     }
   }
@@ -1022,6 +1037,8 @@ const I18N = {
     },
     continuityTitle: '连续性边界',
     purposeLabel: '镜头目的',
+    cameraPlanTitle: '镜头动机',
+    impactPresentationTitle: '打击呈现',
     showSegs: '▾ 展开全部段',
     hideSegs: '▴ 收起',
     copy: '复制', copied: '已复制', copyFailed: '复制失败',
@@ -1086,6 +1103,8 @@ const I18N = {
     },
     continuityTitle: 'Continuity boundaries',
     purposeLabel: 'Shot purpose',
+    cameraPlanTitle: 'Camera motivation',
+    impactPresentationTitle: 'Impact presentation',
     showSegs: '▾ Show all segments',
     hideSegs: '▴ Collapse',
     copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed',
@@ -1191,6 +1210,10 @@ export function renderMarkdown(board, ctx = {}) {
           out.push(`- #${ci + 1} · **${t.purposeLabel}**：${cut.purpose ?? ''}`, '', '```json', JSON.stringify({ startBoundary: cut.startBoundary, endBoundary: cut.endBoundary, ...(cut.continuityOverride ? { continuityOverride: cut.continuityOverride } : {}) }, null, 2), '```', '');
         });
       }
+      seg.cuts.forEach((cut, ci) => {
+        if (cut.cameraPlan) out.push(`- #${ci + 1} · **${t.cameraPlanTitle}**：${cut.cameraPlan.purpose}`, '', '```json', JSON.stringify(cut.cameraPlan, null, 2), '```', '');
+        if (cut.impactPresentation) out.push(`- #${ci + 1} · **${t.impactPresentationTitle}**`, '', '```json', JSON.stringify(cut.impactPresentation, null, 2), '```', '');
+      });
     }
   }
 
@@ -1315,6 +1338,8 @@ export function renderHtml(board, ctx = {}) {
     <button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.framePrompt)}</button>
   </div>
   ${summary}
+  ${cut.cameraPlan ? `<details class="continuity"><summary>${esc(t.cameraPlanTitle)}：${esc(cut.cameraPlan.purpose)}</summary><pre>${esc(JSON.stringify(cut.cameraPlan, null, 2))}</pre></details>` : ''}
+  ${cut.impactPresentation ? `<details class="continuity"><summary>${esc(t.impactPresentationTitle)}</summary><pre>${esc(JSON.stringify(cut.impactPresentation, null, 2))}</pre></details>` : ''}
   ${board.continuityVersion === 1 ? `<details class="continuity"><summary>${esc(t.continuityTitle)} · ${esc(t.purposeLabel)}：${esc(cut.purpose ?? '')}</summary><pre>${esc(JSON.stringify({ startBoundary: cut.startBoundary, endBoundary: cut.endBoundary, ...(cut.continuityOverride ? { continuityOverride: cut.continuityOverride } : {}) }, null, 2))}</pre></details>` : ''}
 </li>`;
             })

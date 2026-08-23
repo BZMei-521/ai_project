@@ -74,7 +74,38 @@
 | `continuityOverride` | string | 仅有意跳切/时间跳跃时可选，写明省略了什么及不误读的理由 |
 | `actionRefs` | string[] | 传 `--actions` 时必填：本切认领的动作 ID。动作所在 beat 必须落在本切 `beats` 区间，且全板恰好认领一次 |
 | `actionStateProjection` | object | 传 `--actions` 且本切覆盖关键动作时必填：投影动作首态、末态和必须看清的信息；不得改写动作事实 |
+| `cameraPlan` | object | 可选高级镜头计划；只在镜头运动确实承担叙事任务时填写，字段见下表 |
+| `impactPresentation` | object | 上游动作带 `impactEvidence` 时必填；只决定打击证据怎样被观众读到，不改写受力事实 |
 | `note` | string | 备注，可选 |
+
+### cameraPlan（可选）
+
+| 字段 | 允许值 / 要求 |
+| --- | --- |
+| `purpose` | 非空；这次移动让观众多知道或多感受什么 |
+| `path` | 非空；空间路径，如 `push-in / arc-left / lateral-right` |
+| `speed` | `very-slow / slow / moderate / fast` |
+| `amplitude` | `micro / short / medium / large` |
+| `subjectRelation` | 非空；镜头与主体关系，如 `approach / follow / reveal / withdraw` |
+| `stabilization` | `locked / stable / gimbal / handheld` |
+| `foregroundOcclusion` | 非空；前景遮挡策略，无则写 `none` |
+| `startSize` | `SHOT_SIZES` 现有键之一 |
+| `endSize` | `SHOT_SIZES` 现有键之一 |
+
+`cameraPlan` 不新增 H3 运镜枚举。最终 `camera` 仍只能从现有 `CAMERA_MOVES` 选择，计划只是选择依据。普通对话、信息已清楚或运动没有新增信息时可以完全省略。
+
+### impactPresentation（动作带 impactEvidence 时）
+
+| 字段 | 允许值 / 要求 |
+| --- | --- |
+| `actionId` | 必须匹配本切 `actionRefs` 中带 `impactEvidence` 的动作 |
+| `contactVisibility` | `clear / occluded-with-alternative`；遮挡时必须用替代证据传达接触 |
+| `impactPulse` | `none / brief`；短促打击脉冲，不把整段做成抖动 |
+| `informationOrder` | 数组；必须含 `contact`，并至少含 `latency / support-change / center-of-mass / imbalance` 之一 |
+| `overlapReplays` | 整数 `0–2`；每次重叠必须提供新信息 |
+| `slowMotionPhase` | `none / opportunity / post-contact / aftermath`；禁止整段发力慢放 |
+
+打击呈现的事实来源只有上游 `impactEvidence`。光效、火花、刀光、音效都只能放大已经成立的接触—迟滞—重心变化，不能代替受力反馈。
 
 ### boundary
 
@@ -114,6 +145,7 @@
 - `mustShow` 是信息约束，不是具体镜头命令。cut 的 `size`、`camera`、构图与节奏仍由分镜决定。
 - 不得把动作摘要中的 `cameraIntent` 原样塞进 cut，也不得在 `actionStateProjection` 内新增 `camera`、`lens`、`shotSize` 等字段。
 - 未传 `--actions` 时，`actionRefs` 和 `actionStateProjection` 都是可选，旧文件行为不变。
+- 动作摘要带 `impactEvidence` 时，同切必须补 `impactPresentation`；摘要没有打击证据时不强制。
 
 ## h3Prompt 的结构（三道门盯着，两处逐字对账）
 
