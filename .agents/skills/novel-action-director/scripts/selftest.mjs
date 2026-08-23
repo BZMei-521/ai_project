@@ -103,6 +103,7 @@ const GATE_SCRIPT = {
         { kind: 'action', text: 'C01 用右手打开木匣。' },
         { kind: 'action', text: 'C02 绕过桌角走到门边。' },
         { kind: 'action', text: '两人隔门沉默。' },
+        { kind: 'action', text: 'C01 的刀刃命中 C02 肩甲。' },
       ],
     }],
   }],
@@ -189,6 +190,42 @@ const broken = (mutate) => {
   return value;
 };
 
+const IMPACT_SCRIPT = structuredClone(GATE_SCRIPT);
+const IMPACT_VALID = structuredClone(VALID);
+IMPACT_VALID.episodes[0].actions.push({
+  id: 'E01-S01-B07-A01', sceneIndex: 1, beat: 7, kind: 'combat', intent: '命中肩甲迫使对手失衡',
+  participants: ['C01', 'C02'], propRefs: [], sourceBeat: sourceBeat(7, 'C01 的刀刃命中 C02 肩甲。'),
+  continuity: { timeJump: true },
+  startState: { characters: { C01: { support: 'right-foot' }, C02: { support: 'both-feet', position: 'front' } }, props: {} },
+  phases: [
+    { phase: 'setup', support: 'right-foot' },
+    { phase: 'anticipation', weightShift: 'forward' },
+    { phase: 'action', path: 'diagonal-cut', support: 'right-foot', landing: 'left-foot' },
+    { phase: 'contact', contactPoint: 'blade/C02-left-shoulder-armor', forceDirection: 'backward-right', forceResult: 'C02 shoulder stops', outcome: 'hit' },
+    { phase: 'reaction', subject: 'C02', response: 'left shoulder stalls before torso tilts backward-right' },
+    recovery('C01 收刀站稳，C02 右脚后撤重新支撑'),
+  ],
+  impactEvidence: {
+    contactPoint: 'blade/C02-left-shoulder-armor',
+    contactVisible: true,
+    targetLatency: 'C02 左肩停顿半拍',
+    supportChange: 'C02 右脚向后补步',
+    centerOfMassShift: '由双脚中线移向右后方',
+    forceDirection: 'backward-right',
+    wholeBodyResult: '躯干随肩甲向右后倾斜后重新站稳',
+  },
+  endState: { characters: { C01: { support: 'both-feet' }, C02: { support: 'right-foot-back', position: 'half-step-back' } }, props: {} },
+  cameraIntent: { mustShow: ['刀刃与左肩甲接触点', 'C02 右脚补步结果'] }, generationRisk: [],
+  summaryConsistency: { contradictions: [] },
+});
+
+const impactGate = (doc, id) => gateReport(doc, { script: IMPACT_SCRIPT }).find((item) => item.id === id);
+const brokenImpact = (mutate) => {
+  const value = structuredClone(IMPACT_VALID);
+  mutate(value);
+  return value;
+};
+
 check(() => assert.equal(gateReport(VALID, { script: GATE_SCRIPT }).length, 18));
 check(() => assert.ok(gateReport(VALID, { script: GATE_SCRIPT }).every((item) => item.ok)));
 check(() => assert.equal(validateAction(VALID, { script: GATE_SCRIPT }).length, 0));
@@ -216,6 +253,32 @@ const failures = [
 
 for (const [id, mutate] of failures) {
   check(() => assert.equal(gate(broken(mutate), id).ok, false, `${id} 应失败`));
+}
+
+check(() => assert.equal(gateReport(IMPACT_VALID, { script: IMPACT_SCRIPT }).length, 24));
+check(() => assert.ok(gateReport(IMPACT_VALID, { script: IMPACT_SCRIPT }).every((item) => item.ok)));
+
+const impactFailures = [
+  ['impact-required', (doc) => { delete doc.episodes[0].actions.at(-1).impactEvidence; }],
+  ['impact-contact-consistency', (doc) => { doc.episodes[0].actions.at(-1).impactEvidence.contactPoint = 'wrong-point'; }],
+  ['impact-target-feedback', (doc) => {
+    const evidence = doc.episodes[0].actions.at(-1).impactEvidence;
+    evidence.targetLatency = '';
+    evidence.supportChange = '';
+    evidence.centerOfMassShift = '';
+    evidence.wholeBodyResult = '';
+  }],
+  ['impact-causal-result', (doc) => { doc.episodes[0].actions.at(-1).impactEvidence.wholeBodyResult = '向受力反方向无因飞起'; }],
+  ['impact-not-vfx-only', (doc) => {
+    doc.episodes[0].actions.at(-1).impactEvidence = {
+      contactPoint: 'blade/C02-left-shoulder-armor', contactVisible: true, vfx: 'sparks and shake',
+    };
+  }],
+  ['impact-content-authority', (doc) => { doc.episodes[0].actions.at(-1).impactEvidence.wholeBodyResult = '肩部断裂并喷血'; }],
+];
+
+for (const [id, mutate] of impactFailures) {
+  check(() => assert.equal(impactGate(brokenImpact(mutate), id).ok, false, `${id} 应失败`));
 }
 
 const summary = buildStoryboardSummary(VALID, GATE_SCRIPT);
