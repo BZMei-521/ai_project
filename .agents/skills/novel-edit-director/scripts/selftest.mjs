@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import {
   BOUNDARY_TYPES,
   EDIT_METHODS,
+  buildWorkbenchTransitions,
   gateReport,
+  renderHtml,
+  renderMarkdown,
   seedFromStoryboard,
   validateEdit,
 } from './novel-edit-director.mjs';
@@ -112,5 +115,32 @@ for (const [id, mutate] of failures) {
   const item = gateReport(broken(mutate), { storyboard: STORYBOARD }).find((gate) => gate.id === id);
   assert.equal(item?.ok, false, `${id} 应失败`);
 }
+
+const MATCH_EDIT = deepClone(VALID_EDIT);
+Object.assign(MATCH_EDIT.boundaries[0], {
+  type: 'match_cut',
+  method: 'action-match',
+  purpose: '在右脚落地的动作峰值匹配剪辑',
+});
+const transitions = buildWorkbenchTransitions(MATCH_EDIT, STORYBOARD, 'sequence-1');
+assert.equal(transitions.length, 2);
+const [transition] = transitions;
+assert.equal(transition.sequenceId, 'sequence-1');
+assert.equal(transition.type, 'match_cut');
+assert.equal(transition.durationSeconds, 0.18);
+assert.equal(transition.frameDependency, 'shared_frame');
+assert.equal(transition.fromShotId, 'E01-01');
+assert.equal(transition.toShotId, 'E01-02');
+assert.match(transition.notes, /^edit-director:v1 /);
+assert.match(transition.notes, /"method":"action-match"/);
+
+const markdown = renderMarkdown(MATCH_EDIT, STORYBOARD);
+assert.match(markdown, /action-match/);
+assert.match(markdown, /12 项门禁/);
+const htmlEdit = deepClone(MATCH_EDIT);
+htmlEdit.boundaries[0].purpose = '<script>alert(1)</script>';
+const html = renderHtml(htmlEdit, STORYBOARD);
+assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+assert.doesNotMatch(html, /<script>alert/);
 
 console.log('✓ edit-director public contract and 12 gates');
