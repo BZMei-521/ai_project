@@ -1,0 +1,6 @@
+interface:
+  display_name: "Novel Action Director"
+  short_description: "深化人物表演、互动、战斗受力与打击证据"
+  default_prompt: "Use $novel-action-director to turn this script into a validated action.json."
+policy:
+  allow_implicit_invocation: true
