@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:novel-output-root": "node scripts/check-novel-output-root.mjs",
     "test:spatial-stage-schema": "node scripts/check-spatial-stage-schema.mjs",
     "test:spatial-stage-capabilities": "node scripts/check-spatial-stage-capabilities.mjs",
     "test:spatial-stage-viewport": "node scripts/check-spatial-stage-viewport.mjs",

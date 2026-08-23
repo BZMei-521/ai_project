@@ -6,12 +6,13 @@ import { pathToFileURL } from "node:url";
 
 const dataRoot = await mkdtemp(path.join(tmpdir(), "runninghub-web-bridge-"));
 process.env.STORYBOARD_WEB_DATA_DIR = dataRoot;
+process.env.STORYBOARD_NOVEL_OUTPUT_DIR = path.join(dataRoot, "novels");
 const bridge = await import(`${pathToFileURL(path.resolve("scripts/windows-web-server.mjs")).href}?${Date.now()}`);
-const projectRoot = path.join(dataRoot, "workspace", "web.sbproj");
+const projectRoot = path.join(dataRoot, "novels", "应用项目", "web.sbproj");
 const projectAssetsDir = path.join(projectRoot, "assets");
 await mkdir(projectAssetsDir, { recursive: true });
 await writeFile(path.join(dataRoot, "current-project.txt"), `${projectRoot}\n`);
-const otherProjectRoot = path.join(dataRoot, "workspace", "other.sbproj");
+const otherProjectRoot = path.join(dataRoot, "novels", "应用项目", "other.sbproj");
 const otherProjectAssetsDir = path.join(otherProjectRoot, "assets");
 await mkdir(otherProjectAssetsDir, { recursive: true });
 const approval = {

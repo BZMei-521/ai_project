@@ -387,16 +387,22 @@ struct Resolution {
 }
 
 fn workspace_root_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let root = app
+    let desktop = app
         .path()
-        .app_data_dir()
-        .map_err(|err| format!("Unable to resolve app data dir: {err}"))?;
+        .desktop_dir()
+        .map_err(|err| format!("Unable to resolve desktop dir: {err}"))?;
+    let root = desktop.join("小说").join("应用项目");
     fs::create_dir_all(&root).map_err(|err| format!("Unable to create workspace dir: {err}"))?;
     Ok(root)
 }
 
 fn current_project_marker_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(workspace_root_dir(app)?.join("current-project.txt"))
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("Unable to resolve app data dir: {err}"))?;
+    fs::create_dir_all(&root).map_err(|err| format!("Unable to create app data dir: {err}"))?;
+    Ok(root.join("current-project.txt"))
 }
 
 fn set_current_project_path(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
@@ -411,13 +417,19 @@ fn fallback_project_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn resolve_current_project_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let workspace = fs::canonicalize(workspace_root_dir(app)?)
+        .map_err(|err| format!("Unable to resolve workspace dir: {err}"))?;
     let marker = current_project_marker_path(app)?;
     if marker.exists() {
         let raw = fs::read_to_string(&marker)
             .map_err(|err| format!("Unable to read current project marker: {err}"))?;
         let selected = PathBuf::from(raw.trim());
         if selected.exists() {
-            return Ok(selected);
+            if let Ok(canonical_selected) = fs::canonicalize(&selected) {
+                if canonical_selected.starts_with(&workspace) {
+                    return Ok(canonical_selected);
+                }
+            }
         }
     }
 

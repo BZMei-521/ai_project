@@ -8,6 +8,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { attestCharacterGenerationReport, verifyCharacterEvidenceReceiptFromRegistry } from "./character-evidence-attestation.mjs";
+import { resolveApplicationProjectsRoot } from "./novel-paths.mjs";
 import { readLimitedJsonBody } from "./windows-web-request-body.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,7 +29,7 @@ const shouldOpen = cli.open === true;
 const openHost = cli.openHost || (host === "0.0.0.0" ? "127.0.0.1" : host);
 
 const dataRoot = resolveDataRoot();
-const workspaceRoot = path.join(dataRoot, "workspace");
+const workspaceRoot = resolveApplicationProjectsRoot();
 const currentProjectMarker = path.join(dataRoot, "current-project.txt");
 const bridgeLogsRoot = path.join(dataRoot, "logs");
 const comfyViewCacheRoot = path.join(dataRoot, "cache", "comfy-view");
@@ -2747,7 +2748,7 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 10000) {
 
 async function resolveCurrentProjectDir() {
   const marker = await readCurrentProjectMarker();
-  if (marker && (await dirExists(marker))) return marker;
+  if (marker && isPathInside(workspaceRoot, marker) && (await dirExists(marker))) return marker;
   const fallback = fallbackProjectDir();
   await ensureDir(fallback);
   await setCurrentProjectPath(fallback);
