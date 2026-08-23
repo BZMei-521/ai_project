@@ -1,0 +1,6 @@
+interface:
+  display_name: "Novel Storyboard"
+  short_description: "设计AI短剧分镜、镜头动机、打击呈现与H3投产包"
+  default_prompt: "Use $novel-storyboard to turn this script and optional action.json into a validated storyboard and H3 production package."
+policy:
+  allow_implicit_invocation: true
