@@ -174,6 +174,28 @@ eq(actionSummaryOf(ACTIONS, 1, 1, 2, 3).length, 0, '动作摘要不越过分镜�
   ok(skipped.every((g) => g.ok && g.detail.includes('未提供 action.json，跳过')), '无 actions 时五门明确跳过');
 }
 
+function withCameraImpact() {
+  const doc = clone(FIXTURE);
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.cameraPlan = {
+    purpose: '逐步暴露人物压抑情绪', path: 'push-in', speed: 'slow', amplitude: 'short',
+    subjectRelation: 'approach', stabilization: 'stable', foregroundOcclusion: 'none',
+    startSize: 'medium', endSize: 'close',
+  };
+  cut.actionRefs = ['E01-S01-B01-A01'];
+  cut.actionStateProjection = {
+    startState: clone(ACTIONS.actions['E01-S01-B01'].startState),
+    endState: clone(ACTIONS.actions['E01-S01-B01'].endState),
+    mustShow: clone(ACTIONS.actions['E01-S01-B01'].cameraIntent.mustShow),
+  };
+  cut.impactPresentation = {
+    actionId: 'E01-S01-B01-A01', contactVisibility: 'clear', impactPulse: 'brief',
+    informationOrder: ['contact', 'latency', 'imbalance'], overlapReplays: 1,
+    slowMotionPhase: 'post-contact',
+  };
+  return doc;
+}
+
 /* ---------------- H3 骨架推导 ---------------- */
 
 eq(h3CutTime(3), '00:03.000', '切点时刻格式 分:秒.毫秒');
@@ -597,6 +619,14 @@ function withContinuityV1(input = FIXTURE) {
   ok(pack.missingTotal > 0, '缺图总数上报');
 }
 {
+  const pack = exportPack(withCameraImpact(), SCRIPT, { imageExists: () => false });
+  const p01 = pack.files.find((f) => f.path === 'E01-01/prompt.md');
+  ok(p01.content.includes('镜头动机'), '投产 prompt 包保留镜头计划');
+  ok(p01.content.includes('打击呈现'), '投产 prompt 包保留打击呈现');
+  ok(pack.manifest[0].cameraImpact?.[0]?.cameraPlan?.purpose === '逐步暴露人物压抑情绪', 'manifest 结构化保留镜头计划');
+  ok(pack.manifest[0].cameraImpact?.[0]?.impactPresentation?.actionId === 'E01-S01-B01-A01', 'manifest 结构化保留打击呈现');
+}
+{
   const pack = exportPack(FIXTURE, SCRIPT, { imageExists: () => true, dir: 'out' });
   eq(pack.missingTotal, 0, '图齐了就没有缺图标注');
   ok(pack.files.some((f) => f.path === 'out/manifest.json'), '--out 改导出目录');
@@ -665,6 +695,11 @@ ok(md.includes('老周'), 'md 说话人显示名字');
 ok(md.includes('生成批次单') && md.includes('配音对齐单'), 'md 带两张工单');
 ok(renderMarkdown(FIXTURE, { script: SCRIPT }).includes('C03'), '不给 outline 退回裸 ID');
 {
+  const cameraImpactMd = renderMarkdown(withCameraImpact(), { ...CTX, actions: ACTIONS });
+  ok(cameraImpactMd.includes('镜头动机'), 'md 呈现镜头动机');
+  ok(cameraImpactMd.includes('打击呈现'), 'md 呈现打击呈现');
+}
+{
   const continuityMd = renderMarkdown(withContinuityV1(), CTX);
   ok(continuityMd.includes('关键场次导演计划'), 'md 呈现导演计划');
   ok(continuityMd.includes('连续性边界') && continuityMd.includes('startBoundary'), 'md 呈现分镜首尾边界');
@@ -684,6 +719,11 @@ ok(html.includes('class="rseg"'), '节奏带按段分组（粗分隔）');
 ok(html.includes('#seg-E01-01'), '节奏带段可跳转');
 ok(html.includes('主分镜图 · #1 未生成'), '主分镜图缺图时显示占位不装有');
 ok(html.includes('#2 未生成'), '子分镜图缺图有小占位');
+{
+  const cameraImpactHtml = renderHtml(withCameraImpact(), { ...CTX, actions: ACTIONS });
+  ok(cameraImpactHtml.includes('镜头动机'), 'html 呈现镜头动机');
+  ok(cameraImpactHtml.includes('打击呈现'), 'html 呈现打击呈现');
+}
 {
   const continuityHtml = renderHtml(withContinuityV1(), CTX);
   ok(continuityHtml.includes('关键场次导演计划'), 'html 呈现导演计划');
