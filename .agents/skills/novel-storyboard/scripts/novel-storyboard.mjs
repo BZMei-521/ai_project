@@ -68,6 +68,10 @@ export const CAMERA_MOVES = {
   'Roll Counterclockwise': '逆旋',
 };
 
+const CAMERA_PLAN_SPEEDS = new Set(['very-slow', 'slow', 'moderate', 'fast']);
+const CAMERA_PLAN_AMPLITUDES = new Set(['micro', 'short', 'medium', 'large']);
+const CAMERA_PLAN_STABILIZATION = new Set(['locked', 'stable', 'gimbal', 'handheld']);
+
 /** 分镜图风格预设：与 novel-characters / novel-art 同名对齐（realistic / ghibli）。
  *  短语必须出现在每条分镜图提示词里——同一部剧的分镜图不许画风漂。 */
 export const STYLE_PRESETS = {
@@ -261,11 +265,12 @@ export function actionGateReport(board, actions) {
     ['action-state-projection', '动作首尾状态投影一致'],
     ['action-fact-integrity', '左右手、道具、接触与结果事实不可改写'],
     ['action-camera-boundary', '动作镜头意图不覆盖具体分镜运镜'],
+    ['impact-presentation', '有打击证据的动作必须呈现接触、迟滞与失衡信息'],
   ];
   const skipped = '未提供 action.json，跳过（视为通过）';
   if (!actions) return definitions.map(([id, label]) => ({ id, label, ok: true, detail: skipped }));
 
-  const bad = { ownership: [], state: [], facts: [], camera: [] };
+  const bad = { ownership: [], state: [], facts: [], camera: [], impact: [] };
   const claims = actionClaims(board, actions);
   const expectedCounts = new Map();
   const referenceCounts = new Map();
@@ -302,6 +307,23 @@ export function actionGateReport(board, actions) {
     if (forbiddenProjection.length || cut.cameraIntent != null) {
       bad.camera.push(`${cutId} 把动作信息需求写成了具体镜头字段`);
     }
+
+    const impactActions = expected.filter((item) => item.impactEvidence);
+    for (const impactAction of impactActions) {
+      const presentation = cut.impactPresentation;
+      if (!presentation || typeof presentation !== 'object' || Array.isArray(presentation)) {
+        bad.impact.push(`${cutId} 的 ${impactAction.actionId} 有 impactEvidence 但缺 impactPresentation`);
+        continue;
+      }
+      if (presentation.actionId !== impactAction.actionId) bad.impact.push(`${cutId} 的 impactPresentation.actionId 未匹配 ${impactAction.actionId}`);
+      if (!new Set(['clear', 'occluded-with-alternative']).has(presentation.contactVisibility)) bad.impact.push(`${cutId} 的 contactVisibility 无效`);
+      if (!new Set(['none', 'brief']).has(presentation.impactPulse)) bad.impact.push(`${cutId} 的 impactPulse 无效`);
+      if (!Number.isInteger(presentation.overlapReplays) || presentation.overlapReplays < 0 || presentation.overlapReplays > 2) bad.impact.push(`${cutId} 的 overlapReplays 必须为 0–2`);
+      if (!new Set(['none', 'opportunity', 'post-contact', 'aftermath']).has(presentation.slowMotionPhase)) bad.impact.push(`${cutId} 的 slowMotionPhase 无效`);
+      const order = Array.isArray(presentation.informationOrder) ? presentation.informationOrder : [];
+      const feedback = ['latency', 'support-change', 'center-of-mass', 'imbalance'];
+      if (!order.includes('contact') || !feedback.some((item) => order.includes(item))) bad.impact.push(`${cutId} 的 informationOrder 必须含 contact 和至少一种受力反馈`);
+    }
   }
 
   for (const [id, expectedCount] of expectedCounts) {
@@ -318,6 +340,7 @@ export function actionGateReport(board, actions) {
     { id: definitions[1][0], label: definitions[1][1], ok: bad.state.length === 0, detail: bad.state.join('；') || '通过' },
     { id: definitions[2][0], label: definitions[2][1], ok: bad.facts.length === 0, detail: bad.facts.join('；') || '通过' },
     { id: definitions[3][0], label: definitions[3][1], ok: bad.camera.length === 0, detail: bad.camera.join('；') || '通过' },
+    { id: definitions[4][0], label: definitions[4][1], ok: bad.impact.length === 0, detail: bad.impact.join('；') || '通过' },
   ];
 }
 
@@ -416,7 +439,7 @@ export function gateReport(board, ctx = {}) {
   const bad = {
     coverage: [], segCap: [], cutLen: [], fit: [], duration: [], crowd: [],
     id: [], size: [], camera: [], english: [], names: [], refs: [],
-    h3s: [], h3d: [], h3e: [], style: [], directorPlan: [], continuity: [],
+    h3s: [], h3d: [], h3e: [], style: [], directorPlan: [], continuity: [], cameraPlan: [],
   };
   const styleId = board?.style ?? DEFAULT_STYLE;
   const style = STYLE_PRESETS[styleId];
@@ -592,6 +615,22 @@ export function gateReport(board, ctx = {}) {
       cuts.forEach((cut, ci) => {
         const cid = `${sid}#${ci + 1}`;
 
+        if (cut?.cameraPlan != null) {
+          const plan = cut.cameraPlan;
+          if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+            bad.cameraPlan.push(`${cid} 的 cameraPlan 必须是对象`);
+          } else {
+            for (const field of ['purpose', 'path', 'speed', 'amplitude', 'subjectRelation', 'stabilization', 'foregroundOcclusion', 'startSize', 'endSize']) {
+              if (!String(plan[field] ?? '').trim()) bad.cameraPlan.push(`${cid} 的 cameraPlan 缺 ${field}`);
+            }
+            if (!CAMERA_PLAN_SPEEDS.has(plan.speed)) bad.cameraPlan.push(`${cid} 的 cameraPlan.speed「${plan.speed}」无效`);
+            if (!CAMERA_PLAN_AMPLITUDES.has(plan.amplitude)) bad.cameraPlan.push(`${cid} 的 cameraPlan.amplitude「${plan.amplitude}」无效`);
+            if (!CAMERA_PLAN_STABILIZATION.has(plan.stabilization)) bad.cameraPlan.push(`${cid} 的 cameraPlan.stabilization「${plan.stabilization}」无效`);
+            if (!SHOT_SIZES[plan.startSize]) bad.cameraPlan.push(`${cid} 的 cameraPlan.startSize「${plan.startSize}」不在景别枚举里`);
+            if (!SHOT_SIZES[plan.endSize]) bad.cameraPlan.push(`${cid} 的 cameraPlan.endSize「${plan.endSize}」不在景别枚举里`);
+          }
+        }
+
         if (continuityV1) {
           if (!String(cut?.purpose ?? '').trim()) bad.continuity.push(`${cid} 缺 purpose`);
           checkBoundary(cut?.startBoundary, `${cid}.startBoundary`, scene);
@@ -714,6 +753,7 @@ export function gateReport(board, ctx = {}) {
   add('segment-id', '段号 E01-01 格式、按顺序连号', bad.id.length === 0, bad.id.join('；'));
   add('size-phrase', '景别短语写进分镜图提示词', bad.size.length === 0, bad.size.join('；'));
   add('camera-phrase', '运镜用 H3 官方词表，且出现在自己的 [Shot k] 段落里', bad.camera.length === 0, bad.camera.join('；'));
+  add('camera-plan', '可选镜头计划必须写清动机、路径、速度、幅度、主体关系、稳定方式、前景遮挡与首尾景别', bad.cameraPlan.length === 0, bad.cameraPlan.join('；'));
   add('h3-structure', 'H3 首行对齐指令由分镜结构推导逐字对账，切点时刻逐个对', eps.length > 0 && bad.h3s.length === 0, bad.h3s.join('；'));
   add('h3-dialogue', '认领节拍的台词逐字进 H3 提示词的 <d> 块', bad.h3d.length === 0, script ? bad.h3d.join('；') : SKIP_SCRIPT);
   add('h3-lang', `H3 提示词语言与设定一致（promptLang=${promptLang}，正文${promptLang === 'en' ? '全英文' : '中文'}、骨架 token 官方英文格式）`, bad.h3e.length === 0, bad.h3e.join('；'));
@@ -817,6 +857,12 @@ export function seedFromScript(script, epRange = null, actions = null) {
             ...(summaries.length ? {
               actionRefs: summaries.map((summary) => summary.actionId),
               actionIntent: summaries.map((summary) => summary.intent).join('；'),
+              ...(summaries.some((summary) => summary.impactEvidence) ? {
+                impactEvidence: summaries.filter((summary) => summary.impactEvidence).map((summary) => ({
+                  actionId: summary.actionId,
+                  evidence: summary.impactEvidence,
+                })),
+              } : {}),
             } : {}),
           };
         }),

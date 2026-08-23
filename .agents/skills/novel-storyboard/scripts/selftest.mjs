@@ -109,6 +109,7 @@ eq(actionSummaryOf(ACTIONS, 1, 1, 2, 3).length, 0, '动作摘要不越过分镜�
   assert.deepEqual(seeded.episodes[0].seedScenes[0].beats[0].actionRefs, ['E01-S01-B01-A01']);
   passed += 1;
   eq(seeded.episodes[0].seedScenes[0].beats[0].actionIntent, '抱紧皮箱跑向栈桥', 'seed 只投影紧凑动作意图');
+  eq(seeded.episodes[0].seedScenes[0].beats[0].impactEvidence[0].actionId, 'E01-S01-B01-A01', 'seed 保留打击证据供分镜层选择呈现');
   ok(!Object.hasOwn(seedFromScript(SCRIPT).episodes[0].seedScenes[0].beats[0], 'actionRefs'), '不传 actions 时 seed 形状保持旧版');
 }
 {
@@ -169,8 +170,8 @@ eq(actionSummaryOf(ACTIONS, 1, 1, 2, 3).length, 0, '动作摘要不越过分镜�
 }
 {
   const skipped = actionGateReport(FIXTURE, null);
-  eq(skipped.length, 4, '动作适配器固定四门');
-  ok(skipped.every((g) => g.ok && g.detail.includes('未提供 action.json，跳过')), '无 actions 时四门明确跳过');
+  eq(skipped.length, 5, '动作适配器固定五门');
+  ok(skipped.every((g) => g.ok && g.detail.includes('未提供 action.json，跳过')), '无 actions 时五门明确跳过');
 }
 
 /* ---------------- H3 骨架推导 ---------------- */
@@ -217,7 +218,7 @@ eq(paramsOf({ params: { maxCutSeconds: 4 } }).maxCutSeconds, 4, '分镜上限可
 /* ---------------- 质量门：全绿基线 ---------------- */
 
 ok(gateReport(FIXTURE, CTX).every((g) => g.ok), '样例带全部上游全部门通过');
-eq(gateReport(FIXTURE, CTX).length, 18, '十八道门');
+eq(gateReport(FIXTURE, CTX).length, 19, '十九道门');
 {
   const valid = clone(FIXTURE);
   valid.episodes[0].segments[0].cuts[0].cameraPlan = {
@@ -546,7 +547,7 @@ function withContinuityV1(input = FIXTURE) {
 {
   const doc = withContinuityV1();
   ok(gateReport(doc, CTX).every((g) => g.ok), 'continuityVersion 1 的完整边界与导演计划通过');
-  eq(gateReport(doc, CTX).length, 18, '新增导演计划和连续性两道门');
+  eq(gateReport(doc, CTX).length, 19, '新增导演计划、连续性与镜头计划门');
 }
 {
   const doc = withContinuityV1();
@@ -678,7 +679,7 @@ ok(html.includes('分镜节奏带'), '01 分镜节奏带');
 ok(html.includes('分集分镜表'), '02 分集分镜表');
 ok(html.includes('生成批次单'), '03 生成批次单');
 ok(html.includes('配音对齐单'), '04 配音对齐单');
-ok(html.includes('✓ 质量门 18 / 18'), '页眉徽章全绿');
+ok(html.includes('✓ 质量门 19 / 19'), '页眉徽章全绿');
 ok(html.includes('class="rseg"'), '节奏带按段分组（粗分隔）');
 ok(html.includes('#seg-E01-01'), '节奏带段可跳转');
 ok(html.includes('主分镜图 · #1 未生成'), '主分镜图缺图时显示占位不装有');
@@ -743,7 +744,7 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   const en = renderHtml(FIXTURE, { ...CTX, lang: 'en' });
   ok(en.includes('<html lang="en">'), 'en 报告的 html lang 属性跟着语言走');
   ok(en.includes('Export JSON'), 'en 界面：导出按钮英文');
-  ok(en.includes('Quality gates 18 / 18'), 'en 界面：页眉徽章英文');
+  ok(en.includes('Quality gates 19 / 19'), 'en 界面：页眉徽章英文');
   ok(en.includes('Cut rhythm strip'), 'en 界面：节奏带节标题英文');
   ok(en.includes('Segment cards'), 'en 界面：分镜表节标题英文');
   ok(en.includes('Generation batches'), 'en 界面：批次节标题英文');
