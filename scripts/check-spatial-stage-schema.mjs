@@ -42,7 +42,7 @@ const {
 
 const now = "2026-08-19T00:00:00.000Z";
 const empty = createEmptySceneStage("scene_01", now);
-assert.equal(empty.schemaVersion, 1);
+assert.equal(empty.schemaVersion, 2);
 assert.equal(empty.sceneId, "scene_01");
 assert.equal(empty.coordinateFrame.handedness, "right");
 assert.equal(empty.coordinateFrame.upAxis, "y");
@@ -93,6 +93,58 @@ assert.equal(normalizeSceneStage(null), null);
 assert.equal(normalizeSceneStage({}), null);
 assert.deepEqual(normalizeSceneStages([empty, null, {}, normalized]), [empty, normalized]);
 assert.deepEqual(normalizeSceneStages("not-an-array"), []);
+
+const migrated = normalizeSceneStage({
+  ...empty,
+  schemaVersion: 1,
+  snapshots: [{
+    id: "legacy-c01",
+    beatId: "C01",
+    entityStates: [],
+    constraintIds: [],
+    createdAt: now
+  }]
+});
+assert.ok(migrated);
+assert.equal(migrated.schemaVersion, 2);
+assert.equal(migrated.snapshots[0].shotId, "C01");
+
+const meshStage = normalizeSceneStage({
+  ...migrated,
+  entities: [{
+    id: "coffin",
+    label: "Coffin shell",
+    tags: ["prop"],
+    transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] },
+    geometry: {
+      kind: "imported_mesh",
+      resource: {
+        filePath: "C:\\assets\\coffin.glb",
+        sha256: "a".repeat(64),
+        triangleCount: 12000,
+        materialCount: 2,
+        bounds: [2.05, 0.5, 0.68]
+      }
+    },
+    rig: { kind: "humanoid", joints: { left_wrist: "wrist.L" } },
+    attachments: [{
+      id: "nail_socket",
+      label: "Nail socket",
+      localTransform: { position: [0, 0.2, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] }
+    }],
+    visibility: "visible",
+    metadata: {}
+  }]
+});
+assert.ok(meshStage);
+assert.equal(meshStage.entities[0].geometry.kind, "imported_mesh");
+assert.equal(meshStage.entities[0].geometry.resource.triangleCount, 12000);
+assert.equal(meshStage.entities[0].rig.kind, "humanoid");
+assert.equal(meshStage.entities[0].attachments[0].id, "nail_socket");
+assert.equal(normalizeSceneStage({ ...meshStage, entities: [{ ...meshStage.entities[0], geometry: { ...meshStage.entities[0].geometry, resource: { ...meshStage.entities[0].geometry.resource, sha256: "bad" } } }] }).entities[0].geometry.kind, "box");
+const changedMeshHash = structuredClone(meshStage);
+changedMeshHash.entities[0].geometry.resource.sha256 = "b".repeat(64);
+assert.notEqual(computeStageSourceDigest(meshStage), computeStageSourceDigest(changedMeshHash));
 
 const digestA = createEmptySceneStage("scene_digest", now);
 const digestB = { ...digestA, updatedAt: "2026-08-20T00:00:00.000Z", revision: 99 };

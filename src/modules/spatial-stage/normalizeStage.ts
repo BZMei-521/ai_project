@@ -8,11 +8,13 @@ import type {
   Transform3D,
   Vec3
 } from "./types";
+import { normalizeAttachmentPoints, normalizePoseSnapshot, normalizeRigBinding } from "./rigState";
 
 const MANUAL_FALLBACK_MESSAGE =
   "Automatic geometry is not configured; manual proxy stage is available.";
 const MAX_PANORAMA_TEXTURE_WIDTH = 4096;
 const MAX_VISIBLE_TRIANGLES = 250_000;
+const SHA256 = /^[a-f0-9]{64}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -166,21 +168,79 @@ function normalizeEntity(value: unknown): StageEntity | null {
   const id = stringValue(value.id);
   if (!id) return null;
   const geometry = isRecord(value.geometry) ? value.geometry : {};
-  const kind = ["box", "capsule", "sphere", "plane"].includes(String(geometry.kind))
-    ? geometry.kind as StageEntity["geometry"]["kind"]
+  const primitiveKind = ["box", "capsule", "sphere", "plane"].includes(String(geometry.kind))
+    ? geometry.kind as "box" | "capsule" | "sphere" | "plane"
     : "box";
+  const resource = isRecord(geometry.resource) ? geometry.resource : {};
+  const bounds = normalizeVec3(resource.bounds, [0, 0, 0]);
+  const meshValid = geometry.kind === "imported_mesh"
+    && Boolean(stringValue(resource.filePath))
+    && SHA256.test(stringValue(resource.sha256).toLowerCase())
+    && bounds.every((component) => component > 0)
+    && finiteNumber(resource.triangleCount, -1) >= 0
+    && finiteNumber(resource.triangleCount, MAX_VISIBLE_TRIANGLES + 1) <= MAX_VISIBLE_TRIANGLES
+    && finiteNumber(resource.materialCount, -1) >= 0;
+  const normalizedGeometry: StageEntity["geometry"] = meshValid
+    ? {
+        kind: "imported_mesh",
+        resource: {
+          filePath: stringValue(resource.filePath),
+          sha256: stringValue(resource.sha256).toLowerCase(),
+          triangleCount: finiteInteger(resource.triangleCount, 0, 0, MAX_VISIBLE_TRIANGLES),
+          materialCount: finiteInteger(resource.materialCount, 0, 0, Number.MAX_SAFE_INTEGER),
+          bounds
+        }
+      }
+    : {
+        kind: primitiveKind,
+        size: normalizeVec3(geometry.size, [1, 1, 1])
+      };
+  const attachments = normalizeAttachmentPoints(value.attachments);
   return {
     id,
     ...(optionalString(value.assetId) ? { assetId: optionalString(value.assetId) } : {}),
     label: stringValue(value.label, id),
     tags: Array.isArray(value.tags) ? value.tags.map((item) => stringValue(item)).filter(Boolean) : [],
     transform: normalizeTransform(value.transform),
-    geometry: {
-      kind,
-      size: normalizeVec3(geometry.size, [1, 1, 1])
-    },
+    geometry: normalizedGeometry,
+    ...(isRecord(value.rig) ? { rig: normalizeRigBinding(value.rig) } : {}),
+    ...(attachments.length ? { attachments } : {}),
     visibility: value.visibility === "hidden" ? "hidden" : "visible",
     metadata: isRecord(value.metadata) ? value.metadata : {}
+  };
+}
+
+function normalizeSnapshot(value: unknown): SceneStage["snapshots"][number] | null {
+  if (!isRecord(value)) return null;
+  const id = stringValue(value.id);
+  const beatId = stringValue(value.beatId);
+  const shotId = stringValue(value.shotId, beatId);
+  if (!id || !beatId || !shotId) return null;
+  const entityStates = Array.isArray(value.entityStates)
+    ? value.entityStates.flatMap((item) => {
+        if (!isRecord(item)) return [];
+        const entityId = stringValue(item.entityId);
+        if (!entityId) return [];
+        const pose = normalizePoseSnapshot(item.pose);
+        return [{
+          entityId,
+          transform: normalizeTransform(item.transform),
+          ...(pose ? { pose } : {}),
+          visibility: item.visibility === "hidden" ? "hidden" as const : "visible" as const
+        }];
+      })
+    : [];
+  return {
+    id,
+    shotId,
+    beatId,
+    ...(optionalString(value.previousSnapshotId) ? { previousSnapshotId: optionalString(value.previousSnapshotId) } : {}),
+    ...(optionalString(value.cameraId) ? { cameraId: optionalString(value.cameraId) } : {}),
+    entityStates,
+    constraintIds: Array.isArray(value.constraintIds)
+      ? value.constraintIds.map((item) => stringValue(item)).filter(Boolean)
+      : [],
+    createdAt: stringValue(value.createdAt, new Date(0).toISOString())
   };
 }
 
@@ -190,7 +250,7 @@ export function createEmptySceneStage(
 ): SceneStage {
   const normalizedSceneId = stringValue(sceneId, "unbound_scene");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: `stage_${normalizedSceneId}`,
     sceneId: normalizedSceneId,
     revision: 1,
@@ -215,7 +275,7 @@ export function createEmptySceneStage(
 }
 
 export function normalizeSceneStage(value: unknown): SceneStage | null {
-  if (!isRecord(value) || value.schemaVersion !== 1) return null;
+  if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) return null;
   const id = stringValue(value.id);
   const sceneId = stringValue(value.sceneId);
   if (!id || !sceneId) return null;
@@ -230,7 +290,7 @@ export function normalizeSceneStage(value: unknown): SceneStage | null {
   const updatedAt = stringValue(value.updatedAt, new Date(0).toISOString());
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     sceneId,
     revision: finiteInteger(value.revision, 1, 1, Number.MAX_SAFE_INTEGER),
@@ -247,7 +307,9 @@ export function normalizeSceneStage(value: unknown): SceneStage | null {
     entities,
     constraints: Array.isArray(value.constraints) ? value.constraints as SceneStage["constraints"] : [],
     cameras: Array.isArray(value.cameras) ? value.cameras as SceneStage["cameras"] : [],
-    snapshots: Array.isArray(value.snapshots) ? value.snapshots as SceneStage["snapshots"] : [],
+    snapshots: Array.isArray(value.snapshots)
+      ? value.snapshots.map(normalizeSnapshot).filter((item): item is SceneStage["snapshots"][number] => Boolean(item))
+      : [],
     capabilities: isRecord(value.capabilities)
       ? value.capabilities as unknown as StageCapabilityReport
       : createManualCapabilityReport(updatedAt),

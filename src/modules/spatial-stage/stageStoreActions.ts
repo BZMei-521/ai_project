@@ -22,7 +22,7 @@ export function patchStage(
     const updated: SceneStage = {
       ...stage,
       ...patch,
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: stage.id,
       sceneId: stage.sceneId,
       revision: stage.revision + 1,

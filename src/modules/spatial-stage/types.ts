@@ -68,16 +68,31 @@ export type PoseSnapshot = {
   confidence: number;
 };
 
+export type StageMeshResource = {
+  filePath: string;
+  sha256: string;
+  triangleCount: number;
+  materialCount: number;
+  bounds: Vec3;
+};
+
+export type StageEntityGeometry =
+  | {
+      kind: "box" | "capsule" | "sphere" | "plane";
+      size: Vec3;
+    }
+  | {
+      kind: "imported_mesh";
+      resource: StageMeshResource;
+    };
+
 export type StageEntity = {
   id: string;
   assetId?: string;
   label: string;
   tags: string[];
   transform: Transform3D;
-  geometry: {
-    kind: "box" | "capsule" | "sphere" | "plane";
-    size: Vec3;
-  };
+  geometry: StageEntityGeometry;
   rig?: RigBinding;
   attachments?: AttachmentPoint[];
   visibility: "visible" | "hidden";
@@ -121,6 +136,7 @@ export type StageCamera = {
 
 export type StageStateSnapshot = {
   id: string;
+  shotId: string;
   beatId: string;
   previousSnapshotId?: string;
   cameraId?: string;
@@ -135,7 +151,7 @@ export type StageStateSnapshot = {
 };
 
 export type SceneStage = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   sceneId: string;
   revision: number;

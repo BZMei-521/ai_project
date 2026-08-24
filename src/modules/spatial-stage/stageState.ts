@@ -56,6 +56,7 @@ export function createStageSnapshot(
   });
   return {
     id: `${stage.id}_${beatId}`,
+    shotId: beatId,
     beatId,
     ...(cameraId ? { cameraId } : {}),
     entityStates,
@@ -106,6 +107,7 @@ export function inheritStageSnapshot(
   }
   return {
     id: `${stage.id}_${beatId}`,
+    shotId: beatId,
     beatId,
     previousSnapshotId: previous.id,
     ...(patch.cameraId || previous.cameraId ? { cameraId: patch.cameraId ?? previous.cameraId } : {}),
