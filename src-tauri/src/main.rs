@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 mod video_continuity;
+mod spatial_stage;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -3964,6 +3965,7 @@ fn main() {
             video_continuity::prepare_runninghub_handoff,
             video_continuity::record_runninghub_submission,
             video_continuity::import_runninghub_result,
+            spatial_stage::write_spatial_control_artifact,
             video_continuity::begin_video_assembly_run,
             video_continuity::stage_video_segment,
             video_continuity::probe_video_segment,

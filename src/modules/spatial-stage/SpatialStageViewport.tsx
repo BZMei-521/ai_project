@@ -4,12 +4,17 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { loadStageMesh } from "./importedMesh";
+import { createStageOverrideMaterial, renderStagePasses, type StageRenderPassRequest } from "./stageRenderPasses";
+import type { StageRenderArtifact, StageRenderKind } from "./spatialControlPack";
 import { ThreeResourceTracker } from "./threeResourceTracker";
 import type { SceneStage, StageCamera, StageEntity, Transform3D } from "./types";
 
 const MAX_PANORAMA_TEXTURE_WIDTH = 4096;
 
-export type SpatialStageViewportHandle = { releaseGpuResources(): void };
+export type SpatialStageViewportHandle = {
+  releaseGpuResources(): void;
+  renderControlArtifacts(request: Omit<StageRenderPassRequest, "render">): Promise<StageRenderArtifact[]>;
+};
 
 export type SpatialStageViewportProps = {
   stage: SceneStage;
@@ -74,8 +79,15 @@ export const SpatialStageViewport = forwardRef<SpatialStageViewportHandle, Spati
   }, ref) {
     const hostRef = useRef<HTMLDivElement | null>(null);
     const releaseRef = useRef<(() => void) | null>(null);
+    const renderPassesRef = useRef<((request: Omit<StageRenderPassRequest, "render">) => Promise<StageRenderArtifact[]>) | null>(null);
 
-    useImperativeHandle(ref, () => ({ releaseGpuResources: () => releaseRef.current?.() }), []);
+    useImperativeHandle(ref, () => ({
+      releaseGpuResources: () => releaseRef.current?.(),
+      renderControlArtifacts: (request) => {
+        if (!renderPassesRef.current) return Promise.reject(new Error("spatial_render_viewport_unavailable"));
+        return renderPassesRef.current(request);
+      }
+    }), []);
 
     useEffect(() => {
       const host = hostRef.current;
@@ -205,6 +217,51 @@ export const SpatialStageViewport = forwardRef<SpatialStageViewportHandle, Spati
         attachSelected(entity.id, mesh);
       }
 
+      const canvasPngBytes = () => new Promise<Uint8Array>((resolve, reject) => {
+        renderer.domElement.toBlob((blob) => {
+          if (!blob) { reject(new Error("spatial_render_canvas_export_failed")); return; }
+          blob.arrayBuffer().then((buffer) => resolve(new Uint8Array(buffer)), reject);
+        }, "image/png");
+      });
+      const renderPass = async (kind: StageRenderKind): Promise<Uint8Array> => {
+        const originalBackground = scene.background;
+        const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+        const overrideMaterials: THREE.Material[] = [];
+        if (kind !== "color") {
+          scene.background = new THREE.Color(0x000000);
+          for (const entity of stage.entities) {
+            const object = entityObjects.get(entity.id);
+            object?.traverse((child) => {
+              if (!(child instanceof THREE.Mesh)) return;
+              const material = createStageOverrideMaterial(kind, entity);
+              if (!material) return;
+              originalMaterials.set(child, child.material);
+              overrideMaterials.push(material);
+              child.material = material;
+            });
+          }
+        }
+        renderer.render(scene, camera);
+        const pngBytes = await canvasPngBytes();
+        for (const [mesh, material] of originalMaterials) mesh.material = material;
+        for (const material of overrideMaterials) material.dispose();
+        scene.background = originalBackground;
+        return pngBytes;
+      };
+      renderPassesRef.current = async (request) => {
+        const previousSize = renderer.getSize(new THREE.Vector2());
+        renderer.setSize(request.width, request.height, false);
+        camera.aspect = request.width / request.height;
+        camera.updateProjectionMatrix();
+        try {
+          return await renderStagePasses({ ...request, render: renderPass });
+        } finally {
+          renderer.setSize(previousSize.x, previousSize.y, false);
+          camera.aspect = previousSize.x / Math.max(previousSize.y, 1);
+          camera.updateProjectionMatrix();
+        }
+      };
+
       const orbitControls = new OrbitControls(camera, renderer.domElement);
       orbitControls.target.set(...(savedCameraDefinition?.target ?? [0, 1, 0]));
       orbitControls.enabled = interactionMode !== "transform";
@@ -260,6 +317,7 @@ export const SpatialStageViewport = forwardRef<SpatialStageViewportHandle, Spati
         renderer.renderLists.dispose();
         renderer.dispose();
         tracker.dispose();
+        renderPassesRef.current = null;
       };
       return () => {
         observer.disconnect();

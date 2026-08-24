@@ -94,6 +94,32 @@ export async function verifyCharacterEvidenceReceipt(evidence: { trustedReceipt?
   } catch {
     return { valid: false, reason: "receipt_backend_unavailable" };
   }
+export type SpatialControlArtifactKind = "color" | "depth" | "normal" | "character_id" | "prop_id" | "pose";
+export type WriteSpatialControlArtifactRequest = {
+  projectAssetsDir: string;
+  stageId: string;
+  shotId: string;
+  kind: SpatialControlArtifactKind;
+  pngBytes: Uint8Array;
+  width: number;
+  height: number;
+};
+export type SpatialControlArtifactReceipt = {
+  kind: SpatialControlArtifactKind;
+  filePath: string;
+  sha256: string;
+  width: number;
+  height: number;
+  byteLength: number;
+};
+
+export async function writeSpatialControlArtifact(
+  request: WriteSpatialControlArtifactRequest
+): Promise<SpatialControlArtifactReceipt> {
+  if (!isDesktopRuntime()) throw new Error("spatial_control_writer_unavailable");
+  return invokeDesktopCommand<SpatialControlArtifactReceipt>("write_spatial_control_artifact", {
+    request: { ...request, pngBytes: Array.from(request.pngBytes) }
+  });
 }
 
 export type VideoProbe = {
