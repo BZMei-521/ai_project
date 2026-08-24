@@ -8,6 +8,8 @@ import { auditMogeWorkflow, buildMogePanoramaWorkflow } from "./mogeWorkflow";
 import { runMogeInitialization } from "./mogeRunner";
 import { createComfyMogeTransport } from "./comfyMogeTransport";
 import { stageMogePanoramaAsset } from "./mogeAssetStaging";
+import { normalizeSceneStage } from "./normalizeStage";
+import e01SpatialStageSeed from "../../../影帝他总想对我图谋不轨_漫剧改编/分镜/work/E01-01.spatial-stage.seed.json";
 
 type ProxyGeometryKind = "box" | "capsule" | "sphere" | "plane";
 
@@ -16,6 +18,8 @@ function currentSceneId(
   shots: ReturnType<typeof useStoryboardStore.getState>["shots"],
   currentSequenceId: string
 ): string {
+  const segmentMatch = selectedShotId.match(/^(E\d+-\d+)-C\d+$/i);
+  if (segmentMatch) return `segment_${segmentMatch[1]}`;
   return shots.find((shot) => shot.id === selectedShotId)?.sceneRefId?.trim() || `sequence:${currentSequenceId || "unbound"}`;
 }
 
@@ -80,6 +84,17 @@ export function SpatialStageWorkbench() {
       cameras: stage.cameras.map((item) => item.id === camera.id ? camera : item)
     });
   }, [stage, updateSpatialStage]);
+  const importE01Stage = () => {
+    const seed = normalizeSceneStage(e01SpatialStageSeed);
+    if (!seed) { setSnapshotMessage("E01-01 空间舞台种子无效"); return; }
+    const existing = useStoryboardStore.getState().spatialStages.find((item) => item.id === seed.id);
+    if (!existing) createSpatialStage(seed.sceneId);
+    const target = useStoryboardStore.getState().spatialStages.find((item) => item.id === seed.id);
+    if (!target) { setSnapshotMessage("E01-01 空间舞台建立失败"); return; }
+    updateSpatialStage(target.id, seed);
+    setActiveCameraId(seed.cameras[0]?.id);
+    setSnapshotMessage("E01-01 空间舞台已导入：5 镜头、5 实体");
+  };
 
   const update = (next: SceneStage) => updateSpatialStage(next.id, next);
   const enterCameraMode = () => {
@@ -123,6 +138,7 @@ export function SpatialStageWorkbench() {
           <button className="btn-primary" type="button" onClick={() => createSpatialStage(sceneId)}>
             建立空间预演
           </button>
+          {selectedShotId.startsWith("E01-01-") && <button className="btn-primary" type="button" onClick={importE01Stage}>导入 E01-01 空间舞台</button>}
         </div>
       </section>
     );
@@ -227,6 +243,7 @@ export function SpatialStageWorkbench() {
           <small>Revision {stage.revision}{stage.sourceDigest ? " · 已同步" : " · 待同步"}</small>
         </div>
         <div className="spatial-stage-actions">
+          {selectedShotId.startsWith("E01-01-") && <button className="btn-ghost" type="button" onClick={importE01Stage}>导入 E01-01 空间舞台</button>}
           <button className={interactionMode === "orbit" ? "btn-primary" : "btn-ghost"} type="button" onClick={() => setInteractionMode("orbit")}>观察模式</button>
           <button className={interactionMode === "camera" ? "btn-primary" : "btn-ghost"} type="button" onClick={enterCameraMode}>镜头模式</button>
           <button className={interactionMode === "transform" ? "btn-primary" : "btn-ghost"} type="button" disabled={!selectedEntityId} onClick={() => setInteractionMode("transform")}>变换模式</button>

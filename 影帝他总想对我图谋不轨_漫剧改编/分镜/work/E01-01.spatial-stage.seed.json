@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 2,
+  "id": "stage_segment_E01-01",
+  "sceneId": "segment_E01-01",
+  "revision": 1,
+  "coordinateFrame": {
+    "handedness": "right",
+    "upAxis": "y",
+    "unit": "metre",
+    "origin": [0, 0, 0],
+    "forward": [0, 0, -1],
+    "groundY": 0,
+    "scaleMode": "metric"
+  },
+  "environment": {
+    "sources": [
+      { "kind": "procedural", "primitive": "room" }
+    ]
+  },
+  "entities": [
+    {
+      "id": "E01-01-coffin-shell",
+      "label": "密闭木棺棺体",
+      "tags": ["environment", "coffin", "prop"],
+      "transform": { "position": [0, 0.22, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
+      "geometry": { "kind": "box", "size": [0.78, 0.44, 2.15] },
+      "visibility": "visible",
+      "metadata": { "innerLengthMetres": 2.05, "innerWidthMetres": 0.68, "innerHeightMetres": 0.38, "material": "dark_dry_wood" }
+    },
+    {
+      "id": "E01-01-lid",
+      "label": "独立棺盖",
+      "tags": ["prop", "coffin_lid"],
+      "transform": { "position": [0, 0.45, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
+      "geometry": { "kind": "box", "size": [0.78, 0.08, 2.15] },
+      "attachments": [
+        { "id": "lid_left_contact", "label": "左掌撑盖点", "localTransform": { "position": [-0.2, -0.04, -0.15], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } },
+        { "id": "lid_right_contact", "label": "右掌撑盖点", "localTransform": { "position": [0.2, -0.04, -0.15], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } },
+        { "id": "lid_strike_contact", "label": "掌击棺盖点", "localTransform": { "position": [0.18, -0.04, -0.42], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } }
+      ],
+      "visibility": "visible",
+      "metadata": { "state": "sealed", "material": "dark_dry_wood" }
+    },
+    {
+      "id": "E01-01-silk",
+      "label": "单层连续白绫",
+      "tags": ["prop", "silk"],
+      "transform": { "position": [0, 0.055, 0], "rotation": [-0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] },
+      "geometry": { "kind": "plane", "size": [0.64, 0.01, 1.92] },
+      "attachments": [
+        { "id": "silk_left_contact", "label": "左掌压绫点", "localTransform": { "position": [-0.18, 0, -0.45], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } }
+      ],
+      "visibility": "visible",
+      "metadata": { "layerCount": 1, "material": "burial_silk" }
+    },
+    {
+      "id": "E01-01-nail",
+      "label": "唯一青铜棺钉",
+      "tags": ["prop", "bronze_nail"],
+      "transform": { "position": [0.27, 0.405, -0.62], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] },
+      "geometry": { "kind": "capsule", "size": [0.035, 0.16, 0.035] },
+      "attachments": [
+        { "id": "nail_head_contact", "label": "棺钉头触点", "localTransform": { "position": [0, 0.08, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } }
+      ],
+      "visibility": "visible",
+      "metadata": {
+        "state": "Nail-Found",
+        "instanceCount": 1,
+        "statesByShot": {
+          "E01-01-C01": "Nail-Sealed",
+          "E01-01-C02": "Nail-Sealed",
+          "E01-01-C03": "Nail-Sealed",
+          "E01-01-C04": "Nail-Sealed",
+          "E01-01-C05": "Nail-Found"
+        }
+      }
+    },
+    {
+      "id": "E01-01-li-baozhu",
+      "label": "李宝珠人体代理",
+      "tags": ["character", "lead", "humanoid_proxy"],
+      "transform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] },
+      "geometry": { "kind": "capsule", "size": [0.22, 1.25, 0.22] },
+      "rig": {
+        "kind": "humanoid",
+        "joints": { "head": "head", "neck": "neck", "leftShoulder": "shoulder_l", "leftElbow": "elbow_l", "leftWrist": "wrist_l", "rightShoulder": "shoulder_r", "rightElbow": "elbow_r", "rightWrist": "wrist_r" }
+      },
+      "attachments": [
+        { "id": "left_palm", "label": "左掌心", "localTransform": { "position": [-0.22, 0.34, -0.12], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } },
+        { "id": "right_palm", "label": "右掌心", "localTransform": { "position": [0.22, 0.34, -0.12], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] } }
+      ],
+      "visibility": "visible",
+      "metadata": { "identityAssetId": "character-li-baozhu", "shoulderAnatomyCritical": true }
+    }
+  ],
+  "constraints": [
+    { "id": "E01-01-left-lid-contact", "kind": "contact", "subjectEntityId": "E01-01-li-baozhu", "targetEntityId": "E01-01-lid", "subjectAttachmentId": "left_palm", "targetAttachmentId": "lid_left_contact", "parameters": { "maxDistance": 0.03 }, "enabled": true },
+    { "id": "E01-01-right-lid-contact", "kind": "contact", "subjectEntityId": "E01-01-li-baozhu", "targetEntityId": "E01-01-lid", "subjectAttachmentId": "right_palm", "targetAttachmentId": "lid_right_contact", "parameters": { "maxDistance": 0.03 }, "enabled": true },
+    { "id": "E01-01-right-strike-contact", "kind": "contact", "subjectEntityId": "E01-01-li-baozhu", "targetEntityId": "E01-01-lid", "subjectAttachmentId": "right_palm", "targetAttachmentId": "lid_strike_contact", "parameters": { "maxDistance": 0.02 }, "enabled": true },
+    { "id": "E01-01-left-silk-contact", "kind": "contact", "subjectEntityId": "E01-01-li-baozhu", "targetEntityId": "E01-01-silk", "subjectAttachmentId": "left_palm", "targetAttachmentId": "silk_left_contact", "parameters": { "maxDistance": 0.02 }, "enabled": true },
+    { "id": "E01-01-right-nail-contact", "kind": "contact", "subjectEntityId": "E01-01-li-baozhu", "targetEntityId": "E01-01-nail", "subjectAttachmentId": "right_palm", "targetAttachmentId": "nail_head_contact", "parameters": { "maxDistance": 0.015, "requiredCount": 1 }, "enabled": true }
+  ],
+  "cameras": [
+    { "id": "E01-01-C01-camera", "label": "C01 胸口上方推进", "position": [0, 0.31, -0.15], "rotation": [-0.70710678, 0, 0, 0.70710678], "target": [0, 0.18, 0.05], "panoramaYaw": 0, "panoramaPitch": 0, "fov": 48, "near": 0.01, "far": 10, "continuityGroup": "E01-01-coffin" },
+    { "id": "E01-01-C02-camera", "label": "C02 面部呼救", "position": [0.02, 0.29, -0.48], "rotation": [-0.70710678, 0, 0, 0.70710678], "target": [0, 0.2, -0.62], "panoramaYaw": 0, "panoramaPitch": 0, "fov": 42, "near": 0.01, "far": 10, "continuityGroup": "E01-01-coffin" },
+    { "id": "E01-01-C03-camera", "label": "C03 掌击特写", "position": [0.22, 0.32, -0.38], "rotation": [-0.70710678, 0, 0, 0.70710678], "target": [0.18, 0.43, -0.42], "panoramaYaw": 0, "panoramaPitch": 0, "fov": 35, "near": 0.01, "far": 10, "continuityGroup": "E01-01-coffin" },
+    { "id": "E01-01-C04-camera", "label": "C04 屏息面部", "position": [-0.03, 0.3, -0.5], "rotation": [-0.70710678, 0, 0, 0.70710678], "target": [0, 0.19, -0.62], "panoramaYaw": 0, "panoramaPitch": 0, "fov": 40, "near": 0.01, "far": 10, "continuityGroup": "E01-01-coffin" },
+    { "id": "E01-01-C05-camera", "label": "C05 白绫与棺钉特写", "position": [0.2, 0.3, -0.52], "rotation": [-0.70710678, 0, 0, 0.70710678], "target": [0.23, 0.35, -0.58], "panoramaYaw": 0, "panoramaPitch": 0, "fov": 32, "near": 0.01, "far": 10, "continuityGroup": "E01-01-coffin" }
+  ],
+  "snapshots": [
+    {
+      "id": "stage_segment_E01-01_E01-01-C01", "shotId": "E01-01-C01", "beatId": "C01-Awake", "cameraId": "E01-01-C01-camera",
+      "entityStates": [
+        { "entityId": "E01-01-coffin-shell", "transform": { "position": [0, 0.22, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-lid", "transform": { "position": [0, 0.45, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-silk", "transform": { "position": [0, 0.055, 0], "rotation": [-0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-nail", "transform": { "position": [0.27, 0.405, -0.62], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-li-baozhu", "transform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "visibility": "visible", "pose": { "rootTransform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "jointRotations": {}, "contacts": [{ "attachmentId": "left_palm", "targetEntityId": "E01-01-lid", "targetAttachmentId": "lid_left_contact" }, { "attachmentId": "right_palm", "targetEntityId": "E01-01-lid", "targetAttachmentId": "lid_right_contact" }], "source": "manual", "confidence": 1 } }
+      ],
+      "constraintIds": ["E01-01-left-lid-contact", "E01-01-right-lid-contact"], "createdAt": "2026-08-24T00:00:00.000Z"
+    },
+    {
+      "id": "stage_segment_E01-01_E01-01-C02", "shotId": "E01-01-C02", "beatId": "C02-Call", "previousSnapshotId": "stage_segment_E01-01_E01-01-C01", "cameraId": "E01-01-C02-camera",
+      "entityStates": [
+        { "entityId": "E01-01-coffin-shell", "transform": { "position": [0, 0.22, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-lid", "transform": { "position": [0, 0.45, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-silk", "transform": { "position": [0, 0.055, 0], "rotation": [-0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-nail", "transform": { "position": [0.27, 0.405, -0.62], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-li-baozhu", "transform": { "position": [0, 0.175, 0.02], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "visibility": "visible", "pose": { "rootTransform": { "position": [0, 0.175, 0.02], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "jointRotations": {}, "contacts": [{ "attachmentId": "left_palm", "targetEntityId": "E01-01-lid", "targetAttachmentId": "lid_left_contact" }, { "attachmentId": "right_palm", "targetEntityId": "E01-01-lid", "targetAttachmentId": "lid_right_contact" }], "source": "manual", "confidence": 1 } }
+      ],
+      "constraintIds": ["E01-01-left-lid-contact", "E01-01-right-lid-contact"], "createdAt": "2026-08-24T00:00:01.000Z"
+    },
+    {
+      "id": "stage_segment_E01-01_E01-01-C03", "shotId": "E01-01-C03", "beatId": "C03-Strike", "previousSnapshotId": "stage_segment_E01-01_E01-01-C02", "cameraId": "E01-01-C03-camera",
+      "entityStates": [
+        { "entityId": "E01-01-coffin-shell", "transform": { "position": [0, 0.22, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-lid", "transform": { "position": [0, 0.45, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-silk", "transform": { "position": [0, 0.055, 0], "rotation": [-0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-nail", "transform": { "position": [0.27, 0.405, -0.62], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-li-baozhu", "transform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "visibility": "visible", "pose": { "rootTransform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "jointRotations": {}, "contacts": [{ "attachmentId": "right_palm", "targetEntityId": "E01-01-lid", "targetAttachmentId": "lid_strike_contact" }], "source": "manual", "confidence": 1 } }
+      ],
+      "constraintIds": ["E01-01-right-strike-contact"], "createdAt": "2026-08-24T00:00:02.000Z"
+    },
+    {
+      "id": "stage_segment_E01-01_E01-01-C04", "shotId": "E01-01-C04", "beatId": "C04-Listen", "previousSnapshotId": "stage_segment_E01-01_E01-01-C03", "cameraId": "E01-01-C04-camera",
+      "entityStates": [
+        { "entityId": "E01-01-coffin-shell", "transform": { "position": [0, 0.22, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-lid", "transform": { "position": [0, 0.45, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-silk", "transform": { "position": [0, 0.055, 0], "rotation": [-0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-nail", "transform": { "position": [0.27, 0.405, -0.62], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-li-baozhu", "transform": { "position": [0, 0.16, 0.06], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "visibility": "visible", "pose": { "rootTransform": { "position": [0, 0.16, 0.06], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "jointRotations": {}, "contacts": [], "source": "manual", "confidence": 1 } }
+      ],
+      "constraintIds": [], "createdAt": "2026-08-24T00:00:03.000Z"
+    },
+    {
+      "id": "stage_segment_E01-01_E01-01-C05", "shotId": "E01-01-C05", "beatId": "Nail-Found", "previousSnapshotId": "stage_segment_E01-01_E01-01-C04", "cameraId": "E01-01-C05-camera",
+      "entityStates": [
+        { "entityId": "E01-01-coffin-shell", "transform": { "position": [0, 0.22, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-lid", "transform": { "position": [0, 0.45, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-silk", "transform": { "position": [0, 0.055, 0], "rotation": [-0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-nail", "transform": { "position": [0.27, 0.405, -0.62], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [1, 1, 1] }, "visibility": "visible" },
+        { "entityId": "E01-01-li-baozhu", "transform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "visibility": "visible", "pose": { "rootTransform": { "position": [0, 0.17, 0.05], "rotation": [0.70710678, 0, 0, 0.70710678], "scale": [0.86, 0.86, 0.86] }, "jointRotations": {}, "contacts": [{ "attachmentId": "left_palm", "targetEntityId": "E01-01-silk", "targetAttachmentId": "silk_left_contact" }, { "attachmentId": "right_palm", "targetEntityId": "E01-01-nail", "targetAttachmentId": "nail_head_contact" }], "source": "manual", "confidence": 1 } }
+      ],
+      "constraintIds": ["E01-01-left-silk-contact", "E01-01-right-nail-contact"], "createdAt": "2026-08-24T00:00:04.000Z"
+    }
+  ],
+  "sourceDigest": "",
+  "updatedAt": "2026-08-24T00:00:04.000Z"
+}
