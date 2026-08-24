@@ -1,13 +1,15 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useStoryboardStore } from "../storyboard-core/store";
 import { computeStageSourceDigest } from "./stageDigest";
 import { SpatialStageViewport, type SpatialStageViewportHandle } from "./SpatialStageViewport";
-import type { SceneStage, StageEntity } from "./types";
+import type { SceneStage, StageCamera, StageEntity, Transform3D } from "./types";
 import { createStageSnapshot, inheritStageSnapshot, validateStageSnapshot } from "./stageState";
 import { auditMogeWorkflow, buildMogePanoramaWorkflow } from "./mogeWorkflow";
 import { runMogeInitialization } from "./mogeRunner";
 import { createComfyMogeTransport } from "./comfyMogeTransport";
 import { stageMogePanoramaAsset } from "./mogeAssetStaging";
+
+type ProxyGeometryKind = "box" | "capsule" | "sphere" | "plane";
 
 function currentSceneId(
   selectedShotId: string,
@@ -17,7 +19,7 @@ function currentSceneId(
   return shots.find((shot) => shot.id === selectedShotId)?.sceneRefId?.trim() || `sequence:${currentSequenceId || "unbound"}`;
 }
 
-function createProxy(stage: SceneStage, kind: StageEntity["geometry"]["kind"]): SceneStage {
+function createProxy(stage: SceneStage, kind: ProxyGeometryKind): SceneStage {
   const index = stage.entities.length + 1;
   const entity: StageEntity = {
     id: `${stage.id}_proxy_${index}`,
@@ -47,6 +49,9 @@ export function SpatialStageWorkbench() {
   const [mogeMessage, setMogeMessage] = useState<string>("");
   const [comfyBaseUrl, setComfyBaseUrl] = useState("http://127.0.0.1:8188");
   const [mogeBusy, setMogeBusy] = useState(false);
+  const [interactionMode, setInteractionMode] = useState<"orbit" | "camera" | "transform">("orbit");
+  const [overlayMode, setOverlayMode] = useState<"color" | "depth" | "normal" | "entity_id" | "pose">("color");
+  const [activeCameraId, setActiveCameraId] = useState<string>();
   const viewportRef = useRef<SpatialStageViewportHandle>(null);
   const sceneId = currentSceneId(selectedShotId, shots, currentSequenceId);
   const stage = spatialStages.find((item) => item.sceneId === sceneId);
@@ -54,9 +59,45 @@ export function SpatialStageWorkbench() {
     const sceneAssetId = stage?.environment.sources.find((source) => source.kind === "panorama")?.assetId;
     return assets.find((asset) => asset.id === sceneAssetId && asset.type === "skybox")?.filePath;
   }, [assets, stage]);
+  const persistEntityTransform = useCallback((entityId: string, transform: Transform3D) => {
+    if (!stage) return;
+    updateSpatialStage(stage.id, {
+      entities: stage.entities.map((entity) => entity.id === entityId ? { ...entity, transform } : entity)
+    });
+  }, [stage, updateSpatialStage]);
+  const persistCamera = useCallback((camera: StageCamera) => {
+    if (!stage) return;
+    updateSpatialStage(stage.id, {
+      cameras: stage.cameras.map((item) => item.id === camera.id ? camera : item)
+    });
+  }, [stage, updateSpatialStage]);
 
   const update = (next: SceneStage) => updateSpatialStage(next.id, next);
-  const addProxy = (kind: StageEntity["geometry"]["kind"]) => {
+  const enterCameraMode = () => {
+    if (!stage) return;
+    const existing = stage.cameras.find((camera) => camera.id === activeCameraId) ?? stage.cameras[0];
+    if (existing) {
+      setActiveCameraId(existing.id);
+      setInteractionMode("camera");
+      return;
+    }
+    const camera: StageCamera = {
+      id: `${stage.id}_camera_1`,
+      label: "镜头 1",
+      position: [0, 1.6, 4],
+      rotation: [0, 0, 0, 1],
+      target: [0, 1, 0],
+      panoramaYaw: 0,
+      panoramaPitch: 0,
+      fov: 50,
+      near: 0.01,
+      far: 1000
+    };
+    updateSpatialStage(stage.id, { cameras: [...stage.cameras, camera] });
+    setActiveCameraId(camera.id);
+    setInteractionMode("camera");
+  };
+  const addProxy = (kind: ProxyGeometryKind) => {
     if (!stage) return;
     const next = createProxy(stage, kind);
     update(next);
@@ -153,6 +194,16 @@ export function SpatialStageWorkbench() {
           <small>Revision {stage.revision}{stage.sourceDigest ? " · 已同步" : " · 待同步"}</small>
         </div>
         <div className="spatial-stage-actions">
+          <button className={interactionMode === "orbit" ? "btn-primary" : "btn-ghost"} type="button" onClick={() => setInteractionMode("orbit")}>观察模式</button>
+          <button className={interactionMode === "camera" ? "btn-primary" : "btn-ghost"} type="button" onClick={enterCameraMode}>镜头模式</button>
+          <button className={interactionMode === "transform" ? "btn-primary" : "btn-ghost"} type="button" disabled={!selectedEntityId} onClick={() => setInteractionMode("transform")}>变换模式</button>
+          <select aria-label="活动镜头" value={activeCameraId ?? stage.cameras[0]?.id ?? ""} onChange={(event) => setActiveCameraId(event.target.value || undefined)}>
+            <option value="">调试相机</option>
+            {stage.cameras.map((camera) => <option key={camera.id} value={camera.id}>{camera.label}</option>)}
+          </select>
+          <select aria-label="预览通道" value={overlayMode} onChange={(event) => setOverlayMode(event.target.value as typeof overlayMode)}>
+            <option value="color">彩色</option><option value="depth">深度</option><option value="normal">法线</option><option value="entity_id">实体 ID</option><option value="pose">姿态</option>
+          </select>
           <select aria-label="全景环境" value={panoramaSource?.assetId ?? ""} onChange={(event) => setPanorama(event.target.value)}>
             <option value="">空舞台</option>
             {assets.filter((asset) => asset.type === "skybox").map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
@@ -171,7 +222,19 @@ export function SpatialStageWorkbench() {
         </div>
       </header>
       <div className="spatial-stage-main">
-        <SpatialStageViewport ref={viewportRef} stage={stage} panoramaUrl={panorama} selectedEntityId={selectedEntityId} paused={false} onContextStatusChange={() => undefined} />
+        <SpatialStageViewport
+          ref={viewportRef}
+          stage={stage}
+          panoramaUrl={panorama}
+          selectedEntityId={selectedEntityId}
+          activeCameraId={activeCameraId ?? stage.cameras[0]?.id}
+          interactionMode={interactionMode}
+          overlayMode={overlayMode}
+          paused={false}
+          onEntityTransformChange={persistEntityTransform}
+          onCameraChange={persistCamera}
+          onContextStatusChange={() => undefined}
+        />
         <aside className="spatial-stage-inspector">
           <strong>场景树</strong>
           <small>{stage.capabilities.overall === "manual_fallback" ? "手工代理模式" : stage.capabilities.overall}</small>
@@ -202,6 +265,7 @@ export function SpatialStageWorkbench() {
             </div>
             <label><input type="checkbox" checked={selectedEntity.visibility === "visible"} onChange={(event) => updateEntity({ visibility: event.target.checked ? "visible" : "hidden" })} /> 可见</label>
             <small>挂点：{selectedEntity.attachments?.map((point) => point.label).join("、") || "未定义"}</small>
+            {selectedEntity.geometry.kind === "imported_mesh" && <small>GLB/GLTF 模型；加载失败时显示红色线框代理</small>}
           </div>}
           <label>节拍 ID<input value={beatId} onChange={(event) => setBeatId(event.target.value)} /></label>
           {snapshotMessage && <small className={snapshotMessage.startsWith("未解析") ? "spatial-stage-conflict" : "spatial-stage-ok"}>{snapshotMessage}</small>}

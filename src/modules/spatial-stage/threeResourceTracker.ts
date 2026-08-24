@@ -1,14 +1,12 @@
+import type { Material, Object3D } from "three";
+
 export type DisposableResource = { dispose(): void };
 
 type TrackableTexture = DisposableResource & { isTexture?: boolean };
-type TrackableMaterial = DisposableResource & Record<string, unknown>;
-type TrackableMesh = {
+type TrackableMesh = Object3D & {
   isMesh?: boolean;
   geometry?: DisposableResource;
-  material?: TrackableMaterial | TrackableMaterial[];
-};
-type TrackableObject3D = {
-  traverse(callback: (object: TrackableMesh) => void): void;
+  material?: Material | Material[];
 };
 
 export class ThreeResourceTracker {
@@ -23,15 +21,16 @@ export class ThreeResourceTracker {
     this.resources.delete(resource);
   }
 
-  trackObject3D(object: TrackableObject3D): void {
+  trackObject3D(object: Object3D): void {
     object.traverse((child) => {
-      if (!child.isMesh) return;
-      if (child.geometry) this.track(child.geometry);
-      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      const mesh = child as TrackableMesh;
+      if (!mesh.isMesh) return;
+      if (mesh.geometry) this.track(mesh.geometry);
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) {
         if (!material) continue;
         this.track(material);
-        for (const value of Object.values(material)) {
+        for (const value of Object.values(material as unknown as Record<string, unknown>)) {
           const texture = value as TrackableTexture | null;
           if (texture?.isTexture && typeof texture.dispose === "function") this.track(texture);
         }
