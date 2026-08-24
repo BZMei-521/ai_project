@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>E01-01 分镜旧版 / 新版对比</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+        background: #111214;
+        color: #f3eee7;
+      }
+
+      * { box-sizing: border-box; }
+
+      body { margin: 0; background: #111214; }
+
+      main {
+        width: min(1600px, 100%);
+        margin: 0 auto;
+        padding: clamp(18px, 3vw, 48px);
+      }
+
+      h1 { margin: 0; font-size: clamp(1.35rem, 2.4vw, 2.25rem); }
+      .intro { margin: .6rem 0 1.75rem; color: #bdb8b0; line-height: 1.65; }
+
+      .comparison {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) minmax(190px, .56fr);
+        border: 1px solid #3c3935;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #1a1b1e;
+      }
+
+      .heading, .cell {
+        min-width: 0;
+        padding: clamp(12px, 1.7vw, 22px);
+        border-right: 1px solid #3c3935;
+        border-bottom: 1px solid #3c3935;
+      }
+
+      .heading {
+        background: #25262b;
+        color: #d6d0c7;
+        font-size: .86rem;
+        font-weight: 700;
+        letter-spacing: .08em;
+      }
+
+      .comparison > :nth-child(3n) { border-right: 0; }
+      .comparison > :nth-last-child(-n + 3) { border-bottom: 0; }
+
+      figure { margin: 0; }
+      figcaption { margin: 0 0 .65rem; color: #c8c2b8; font-weight: 700; }
+      img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
+        background: #08090a;
+        border: 1px solid #4d4942;
+        border-radius: 7px;
+      }
+
+      .focus { display: grid; align-content: center; gap: .75rem; }
+      .cut { color: #d7a462; font-size: .8rem; font-weight: 700; letter-spacing: .08em; }
+      h2 { margin: 0; font-size: clamp(1.05rem, 1.65vw, 1.35rem); }
+      .purpose { margin: 0; color: #c5c0b8; font-size: .94rem; line-height: 1.68; }
+
+      @media (max-width: 760px) {
+        main { padding: 16px; }
+        .comparison { display: block; border-radius: 8px; }
+        .heading { display: none; }
+        .cell { border-right: 0; padding: 14px; }
+        .cell::before {
+          display: block;
+          margin-bottom: .55rem;
+          color: #9f998f;
+          font-size: .78rem;
+          font-weight: 700;
+          letter-spacing: .08em;
+        }
+        .old::before { content: "旧版"; }
+        .new::before { content: "新版"; }
+        .focus::before { content: "检查重点"; }
+        .focus { min-height: 0; background: #202126; }
+        .comparison > :nth-last-child(-n + 3) { border-bottom: 1px solid #3c3935; }
+        .comparison > :last-child { border-bottom: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>E01-01 分镜 A/B 对比</h1>
+      <p class="intro">逐镜比较旧版与重制关键帧；重点检查手部、面部、冷光与棺木几何是否更清晰地服务动作目的。</p>
+
+      <section class="comparison" aria-label="E01-01 五镜旧版新版对比">
+        <div class="heading">旧版</div><div class="heading">新版</div><div class="heading">检查重点</div>
+
+        <div class="cell old"><figure><figcaption>镜头 1</figcaption><img src="../../E01-01/f1.png" alt="旧版镜头 1：棺中惊醒" /></figure></div>
+        <div class="cell new"><figure><figcaption>镜头 1</figcaption><img src="../E01-01/f1.png" alt="新版镜头 1：棺中惊醒" /></figure></div>
+        <div class="cell focus"><span class="cut">CUT 01</span><h2>惊醒与受限</h2><p class="purpose">先让惊醒可读，再以受困躯体和不对称撑顶说明棺盖无法撼动。</p></div>
+
+        <div class="cell old"><figure><figcaption>镜头 2</figcaption><img src="../../E01-01/f2.png" alt="旧版镜头 2：呼救与蓄力" /></figure></div>
+        <div class="cell new"><figure><figcaption>镜头 2</figcaption><img src="../E01-01/f2.png" alt="新版镜头 2：呼救与蓄力" /></figure></div>
+        <div class="cell focus"><span class="cut">CUT 02</span><h2>呼救到蓄力</h2><p class="purpose">呼吸与呼救先行；左手维持定向，右手撤回并蓄力拍击。</p></div>
+
+        <div class="cell old"><figure><figcaption>镜头 3</figcaption><img src="../../E01-01/f3.png" alt="旧版镜头 3：手掌接触棺盖" /></figure></div>
+        <div class="cell new"><figure><figcaption>镜头 3</figcaption><img src="../E01-01/f3.png" alt="新版镜头 3：手掌接触棺盖" /></figure></div>
+        <div class="cell focus"><span class="cut">CUT 03</span><h2>接触与回弹</h2><p class="purpose">孤立右掌与木盖接触、压缩和短促回弹，棺盖不产生位移。</p></div>
+
+        <div class="cell old"><figure><figcaption>镜头 4</figcaption><img src="../../E01-01/f4.png" alt="旧版镜头 4：沉默聆听" /></figure></div>
+        <div class="cell new"><figure><figcaption>镜头 4</figcaption><img src="../E01-01/f4.png" alt="新版镜头 4：沉默聆听" /></figure></div>
+        <div class="cell focus"><span class="cut">CUT 04</span><h2>静默认知</h2><p class="purpose">外部挣扎收束为闭唇、上望、收紧下颌与受限的浅呼吸。</p></div>
+
+        <div class="cell old"><figure><figcaption>镜头 5</figcaption><img src="../../E01-01/f5.png" alt="旧版镜头 5：触摸丝绸与铜钉" /></figure></div>
+        <div class="cell new"><figure><figcaption>镜头 5</figcaption><img src="../E01-01/f5.png" alt="新版镜头 5：触摸丝绸与铜钉" /></figure></div>
+        <div class="cell focus"><span class="cut">CUT 05</span><h2>左右手触觉证据</h2><p class="purpose">左手确认身下锦缎，右手确认头顶粗大铜钉，双触点同时冻结。</p></div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,432 @@
+{
+  "version": 1,
+  "source": "影帝他总想对我图谋不轨",
+  "physicsProfile": "realistic",
+  "actions": {
+    "E01-S01-B01": {
+      "actionId": "E01-S01-B01-A01",
+      "kind": "performance",
+      "intent": "从昏迷中惊醒并本能撑向近在咫尺的棺盖",
+      "participants": [
+        "C01"
+      ],
+      "propRefs": [],
+      "startState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "低位固定在棺底，躯干无侧移空间",
+            "gaze": "双眼闭合，无明确注视",
+            "leftHand": "屈肘收在左肋旁，手掌未接触棺盖",
+            "rightHand": "屈肘收在右肋旁，手掌未接触棺盖",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底"
+            ],
+            "breath": "昏迷后的浅弱呼吸"
+          }
+        },
+        "props": {}
+      },
+      "endState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "仍压在棺底，胸肩因撑顶短暂绷紧",
+            "gaze": "睁眼后固定在近在眼前的黑暗棺盖",
+            "leftHand": "左肘弯曲，左掌贴住头顶偏左棺盖内侧",
+            "rightHand": "右肘弯曲，右掌贴住头顶偏右棺盖内侧",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧",
+              "右掌/棺盖内侧"
+            ],
+            "breath": "惊醒后的短促吸气转为受限急喘"
+          }
+        },
+        "props": {}
+      },
+      "phaseSummary": [
+        {
+          "phase": "setup",
+          "subject": "C01"
+        },
+        {
+          "phase": "anticipation",
+          "subject": "C01"
+        },
+        {
+          "phase": "action",
+          "subject": "C01",
+          "response": "棺盖不动，身体被狭窄棺木卡住"
+        },
+        {
+          "phase": "reaction",
+          "subject": "C01"
+        },
+        {
+          "phase": "recovery",
+          "subject": "C01",
+          "stablePose": "仰卧受限，肩背与骨盆贴底，双肘弯曲、双掌稳定贴住头顶棺盖"
+        }
+      ],
+      "cameraIntent": {
+        "mustShow": [
+          "双眼从闭合到猛然睁开",
+          "弯曲双肘下双掌同时贴住棺盖",
+          "肩背被棺底限制且棺盖没有位移"
+        ]
+      },
+      "generationRisk": [
+        "cramped-occlusion"
+      ]
+    },
+    "E01-S01-B02": {
+      "actionId": "E01-S01-B02-A01",
+      "kind": "performance",
+      "intent": "在受限呼吸中呼救并把撑顶升级为拍击预备",
+      "participants": [
+        "C01"
+      ],
+      "propRefs": [],
+      "startState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "仍压在棺底，胸肩因撑顶短暂绷紧",
+            "gaze": "睁眼后固定在近在眼前的黑暗棺盖",
+            "leftHand": "左肘弯曲，左掌贴住头顶偏左棺盖内侧",
+            "rightHand": "右肘弯曲，右掌贴住头顶偏右棺盖内侧",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧",
+              "右掌/棺盖内侧"
+            ],
+            "breath": "惊醒后的短促吸气转为受限急喘"
+          }
+        },
+        "props": {}
+      },
+      "endState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "肩背压在棺底，右肩略回收为拍击蓄力",
+            "gaze": "固定在头顶棺盖",
+            "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+            "rightHand": "右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧"
+            ],
+            "breath": "嘶哑呼救后气息断续，胸腔起伏受限"
+          }
+        },
+        "props": {}
+      },
+      "phaseSummary": [
+        {
+          "phase": "setup",
+          "subject": "C01"
+        },
+        {
+          "phase": "action",
+          "subject": "C01"
+        },
+        {
+          "phase": "anticipation",
+          "subject": "C01"
+        },
+        {
+          "phase": "recovery",
+          "subject": "C01",
+          "stablePose": "仰卧贴底，左肘弯曲撑住棺盖，右肘回收、右掌在棺盖下不足一掌处稳定悬停"
+        }
+      ],
+      "cameraIntent": {
+        "mustShow": [
+          "嘶哑呼救时受限的胸腔起伏",
+          "左掌持续撑盖而右掌撤回拍击预备",
+          "右掌与棺盖之间不足一掌的狭窄距离"
+        ]
+      },
+      "generationRisk": [
+        "cramped-occlusion"
+      ]
+    },
+    "E01-S01-B03": {
+      "actionId": "E01-S01-B03-A01",
+      "kind": "performance",
+      "intent": "以右掌击中棺盖并从闷响和回弹确认棺盖无法推动",
+      "participants": [
+        "C01"
+      ],
+      "propRefs": [],
+      "startState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "肩背压在棺底，右肩略回收为拍击蓄力",
+            "gaze": "固定在头顶棺盖",
+            "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+            "rightHand": "右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧"
+            ],
+            "breath": "嘶哑呼救后气息断续，胸腔起伏受限"
+          }
+        },
+        "props": {}
+      },
+      "endState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "击掌回弹后仍压在棺底，右肩随反力回落",
+            "gaze": "随闷响固定在右掌击中的棺盖内侧",
+            "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+            "rightHand": "右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧"
+            ],
+            "breath": "听见贴耳闷响后短促屏息，等待回声消退"
+          }
+        },
+        "props": {}
+      },
+      "phaseSummary": [
+        {
+          "phase": "setup",
+          "subject": "C01"
+        },
+        {
+          "phase": "anticipation",
+          "subject": "C01"
+        },
+        {
+          "phase": "action",
+          "subject": "C01",
+          "path": "右掌由胸前上方短距离直达头顶偏右棺盖内侧"
+        },
+        {
+          "phase": "contact",
+          "subject": "C01",
+          "contactPoint": "右掌掌心/梓木棺盖内侧",
+          "response": "棺盖没有位移，沉闷回声贴耳反弹"
+        },
+        {
+          "phase": "reaction",
+          "subject": "C01"
+        },
+        {
+          "phase": "recovery",
+          "subject": "C01",
+          "stablePose": "仰卧贴底，左掌继续撑盖，右掌在击中点下方不足一掌处稳定悬停、五指微屈"
+        }
+      ],
+      "cameraIntent": {
+        "mustShow": [
+          "左掌持续撑住棺盖",
+          "右掌掌心准确击中梓木棺盖内侧",
+          "右掌被回弹震开不足一掌且五指微屈",
+          "棺盖没有位移"
+        ]
+      },
+      "generationRisk": [
+        "fine-finger",
+        "cramped-occlusion"
+      ]
+    },
+    "E01-S01-B04": {
+      "actionId": "E01-S01-B04-A01",
+      "kind": "performance",
+      "intent": "在回声后的静默中压住恐慌并辨认陌生寒冷环境",
+      "participants": [
+        "C01"
+      ],
+      "propRefs": [],
+      "startState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "击掌回弹后仍压在棺底，右肩随反力回落",
+            "gaze": "随闷响固定在右掌击中的棺盖内侧",
+            "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+            "rightHand": "右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧"
+            ],
+            "breath": "听见贴耳闷响后短促屏息，等待回声消退"
+          }
+        },
+        "props": {}
+      },
+      "endState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "回落并稳定压在棺底，双肩不再持续撑顶",
+            "gaze": "从接触点移向棺内四周的黑暗边缘",
+            "leftHand": "左掌仍贴头顶偏左棺盖内侧但手臂已经卸力",
+            "rightHand": "右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧"
+            ],
+            "breath": "强迫拉长呼气后恢复浅而受限的呼吸"
+          }
+        },
+        "props": {}
+      },
+      "phaseSummary": [
+        {
+          "phase": "setup",
+          "subject": "C01"
+        },
+        {
+          "phase": "reaction",
+          "subject": "C01"
+        },
+        {
+          "phase": "recovery",
+          "subject": "C01",
+          "stablePose": "仰卧贴底，左掌卸力贴在头顶偏左棺盖，右掌在头顶偏右处悬停，双肩不再持续撑顶"
+        }
+      ],
+      "cameraIntent": {
+        "mustShow": [
+          "视线从击掌点转向四周黑暗",
+          "肩颈下降且左掌卸去撑顶力量",
+          "右手仍保留回弹后的五指微屈"
+        ]
+      },
+      "generationRisk": [
+        "cramped-occlusion"
+      ]
+    },
+    "E01-S01-B05": {
+      "actionId": "E01-S01-B05-A01",
+      "kind": "performance",
+      "intent": "以左手确认身下绸缎、右手确认头顶铜钉后僵住",
+      "participants": [
+        "C01"
+      ],
+      "propRefs": [],
+      "startState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "回落并稳定压在棺底，双肩不再持续撑顶",
+            "gaze": "从接触点移向棺内四周的黑暗边缘",
+            "leftHand": "左掌仍贴头顶偏左棺盖内侧但手臂已经卸力",
+            "rightHand": "右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左掌/棺盖内侧"
+            ],
+            "breath": "强迫拉长呼气后恢复浅而受限的呼吸"
+          }
+        },
+        "props": {}
+      },
+      "endState": {
+        "characters": {
+          "C01": {
+            "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+            "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+            "support": "后脑、肩背、骨盆与双腿由棺底承托",
+            "centerOfMass": "稳定压在棺底，触认铜钉后全身冻结",
+            "gaze": "黑暗中冻结在头顶铜钉方向",
+            "leftHand": "左手探至腰侧，指腹压住身下锦缎并停住",
+            "rightHand": "右手在头顶偏右处搜索后，指尖贴住粗大铜钉并停住",
+            "contact": [
+              "后脑/棺底内衬",
+              "肩背/身下锦缎",
+              "骨盆与双腿/棺底",
+              "左手指腹/身下锦缎",
+              "右手指尖/头顶粗大铜钉"
+            ],
+            "breath": "触认铜钉后屏息，胸腔骤停半拍"
+          }
+        },
+        "props": {}
+      },
+      "phaseSummary": [
+        {
+          "phase": "setup",
+          "subject": "C01"
+        },
+        {
+          "phase": "action",
+          "subject": "C01",
+          "path": "左手沿左侧下移至腰侧，右手沿头顶偏右区域小幅横向探查"
+        },
+        {
+          "phase": "contact",
+          "subject": "C01",
+          "contactPoint": "左手指腹/身下锦缎；右手指尖/头顶粗大铜钉",
+          "response": "确认铜钉的瞬间双手停止移动"
+        },
+        {
+          "phase": "reaction",
+          "subject": "C01"
+        },
+        {
+          "phase": "recovery",
+          "subject": "C01",
+          "stablePose": "仰卧贴底，左手指腹稳定压住腰侧身下锦缎，右手指尖稳定贴住头顶粗大铜钉，肩颈与呼吸僵住"
+        }
+      ],
+      "cameraIntent": {
+        "mustShow": [
+          "左手从棺盖收回并以指腹确认身下锦缎",
+          "右手随后以指尖确认头顶粗大铜钉",
+          "双手分别停在锦缎与铜钉接触点",
+          "触认铜钉后肩颈与呼吸同时僵住"
+        ]
+      },
+      "generationRisk": [
+        "fine-finger",
+        "cramped-occlusion"
+      ]
+    }
+  }
+}
