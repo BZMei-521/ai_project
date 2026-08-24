@@ -1,0 +1,4 @@
+export const createStoryboardImageEvidenceReceipt: unknown;
+export const validateStoryboardImageEvidenceReceipt: unknown;
+export const resolveLegacyStoryboardImageEvidence: unknown;
+export const canonicalizeStoryboardImageEvidence: unknown;
