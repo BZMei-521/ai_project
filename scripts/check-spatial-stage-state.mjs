@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
 
 const repoRoot = process.cwd();
 const result = await build({
@@ -21,7 +22,7 @@ const result = await build({
 });
 const bundle = result.outputFiles[0]?.text;
 assert.ok(bundle, "stage state bundle should be available");
-const { createEmptySceneStage, createStageSnapshot, inheritStageSnapshot, validateStageSnapshot } = await import(
+const { createEmptySceneStage, createShotSnapshot, createStageSnapshot, inheritShotSnapshot, inheritStageSnapshot, validateStageSnapshot } = await import(
   `data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`
 );
 
@@ -58,6 +59,18 @@ stage.constraints = [{
   parameters: {},
   enabled: true
 }];
+stage.cameras = ["C01", "C02", "C03", "C04", "C05"].map((shotId, index) => ({
+  id: `camera-${shotId}`,
+  label: shotId,
+  position: [index, 1.6, 4],
+  rotation: [0, 0, 0, 1],
+  target: [0, 1, 0],
+  panoramaYaw: 0,
+  panoramaPitch: 0,
+  fov: 50,
+  near: 0.01,
+  far: 1000
+}));
 
 const first = createStageSnapshot(stage, "beat-1", undefined, now);
 assert.equal(first.id, "stage_scene-1_beat-1");
@@ -79,5 +92,31 @@ const invalid = inheritStageSnapshot(stage, first, "beat-3", {
 assert.equal(validateStageSnapshot(stage, invalid).unresolved.length, 1);
 assert.equal(validateStageSnapshot(stage, invalid).valid, false);
 assert.equal(stage.snapshots.length, 0);
+
+const c01 = createShotSnapshot(stage, "C01", "Awake", "camera-C01", now);
+const c02 = inheritShotSnapshot(stage, c01, "C02", "Brace", {}, now);
+const c03 = inheritShotSnapshot(stage, c02, "C03", "Push", { cameraId: "camera-C03" }, now);
+const c04 = inheritShotSnapshot(stage, c03, "C04", "Listen", { cameraId: "camera-C04" }, now);
+const c05 = inheritShotSnapshot(stage, c04, "C05", "Nail-Found", { cameraId: "camera-C05" }, now);
+assert.equal(c01.shotId, "C01");
+assert.equal(c02.shotId, "C02");
+assert.equal(c02.cameraId, "camera-C01", "camera should inherit until explicitly patched");
+assert.deepEqual(c02.entityStates, c01.entityStates, "entity state should inherit until explicitly patched");
+assert.equal(c03.cameraId, "camera-C03");
+assert.equal(c05.beatId, "Nail-Found");
+assert.equal(new Set([c01, c02, c03, c04, c05].map((item) => item.shotId)).size, 5);
+
+const missingCamera = createShotSnapshot(stage, "C06", "Exit", "camera-missing", now);
+assert.deepEqual(validateStageSnapshot(stage, missingCamera).unresolved, ["camera:camera-missing"]);
+stage.snapshots = [c01];
+const duplicateShot = createShotSnapshot(stage, "C01", "Duplicate", "camera-C01", now);
+assert.ok(validateStageSnapshot(stage, duplicateShot).unresolved.includes("shot:C01:duplicate"));
+
+const workbenchSource = await readFile("src/modules/spatial-stage/SpatialStageWorkbench.tsx", "utf8");
+assert.match(workbenchSource, /createShotSnapshot/);
+assert.match(workbenchSource, /inheritShotSnapshot/);
+assert.match(workbenchSource, /activeSnapshot/);
+assert.match(workbenchSource, /selectShot/);
+assert.match(workbenchSource, /shot\.id/);
 
 console.log("spatial stage state checks passed");

@@ -42,10 +42,11 @@ function stageEntityState(stage: SceneStage): EntityState[] {
   }));
 }
 
-export function createStageSnapshot(
+export function createShotSnapshot(
   stage: SceneStage,
+  shotId: string,
   beatId: string,
-  cameraId?: string,
+  cameraId: string,
   createdAt = new Date().toISOString()
 ): StageStateSnapshot {
   const entityStates = stageEntityState(stage).map((state) => {
@@ -55,8 +56,8 @@ export function createStageSnapshot(
       : state;
   });
   return {
-    id: `${stage.id}_${beatId}`,
-    shotId: beatId,
+    id: `${stage.id}_${shotId}`,
+    shotId,
     beatId,
     ...(cameraId ? { cameraId } : {}),
     entityStates,
@@ -65,9 +66,19 @@ export function createStageSnapshot(
   };
 }
 
-export function inheritStageSnapshot(
+export function createStageSnapshot(
+  stage: SceneStage,
+  beatId: string,
+  cameraId?: string,
+  createdAt = new Date().toISOString()
+): StageStateSnapshot {
+  return createShotSnapshot(stage, beatId, beatId, cameraId ?? "", createdAt);
+}
+
+export function inheritShotSnapshot(
   stage: SceneStage,
   previous: StageStateSnapshot,
+  shotId: string,
   beatId: string,
   patch: StageSnapshotPatch = {},
   createdAt = new Date().toISOString()
@@ -106,8 +117,8 @@ export function inheritStageSnapshot(
     }
   }
   return {
-    id: `${stage.id}_${beatId}`,
-    shotId: beatId,
+    id: `${stage.id}_${shotId}`,
+    shotId,
     beatId,
     previousSnapshotId: previous.id,
     ...(patch.cameraId || previous.cameraId ? { cameraId: patch.cameraId ?? previous.cameraId } : {}),
@@ -115,6 +126,16 @@ export function inheritStageSnapshot(
     constraintIds: stage.constraints.filter((constraint) => constraint.enabled).map((constraint) => constraint.id),
     createdAt
   };
+}
+
+export function inheritStageSnapshot(
+  stage: SceneStage,
+  previous: StageStateSnapshot,
+  beatId: string,
+  patch: StageSnapshotPatch = {},
+  createdAt = new Date().toISOString()
+): StageStateSnapshot {
+  return inheritShotSnapshot(stage, previous, beatId, beatId, patch, createdAt);
 }
 
 function attachmentExists(stage: SceneStage, entityId: string, attachmentId: string): boolean {
@@ -135,6 +156,15 @@ export function validateStageSnapshot(
 ): StageSnapshotValidation {
   const unresolved: string[] = [];
   const disabledConstraints: string[] = [];
+  if (snapshot.cameraId && !stage.cameras.some((camera) => camera.id === snapshot.cameraId)) {
+    unresolved.push(`camera:${snapshot.cameraId}`);
+  }
+  if (stage.snapshots.some((item) => item !== snapshot && item.shotId === snapshot.shotId)) {
+    unresolved.push(`shot:${snapshot.shotId}:duplicate`);
+  }
+  for (const state of snapshot.entityStates) {
+    if (!stage.entities.some((entity) => entity.id === state.entityId)) unresolved.push(`entity:${state.entityId}`);
+  }
   for (const constraint of stage.constraints) {
     if (!constraint.enabled) {
       disabledConstraints.push(constraint.id);
@@ -149,6 +179,9 @@ export function validateStageSnapshot(
       }
       if (contact.targetEntityId && !snapshot.entityStates.some((item) => item.entityId === contact.targetEntityId)) {
         unresolved.push(`contact-target:${contact.targetEntityId}`);
+      }
+      if (contact.targetEntityId && contact.targetAttachmentId && !attachmentExists(stage, contact.targetEntityId, contact.targetAttachmentId)) {
+        unresolved.push(`contact-target-attachment:${contact.targetEntityId}:${contact.targetAttachmentId}`);
       }
     }
   }

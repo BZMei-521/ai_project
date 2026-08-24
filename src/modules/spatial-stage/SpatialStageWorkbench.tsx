@@ -3,7 +3,7 @@ import { useStoryboardStore } from "../storyboard-core/store";
 import { computeStageSourceDigest } from "./stageDigest";
 import { SpatialStageViewport, type SpatialStageViewportHandle } from "./SpatialStageViewport";
 import type { SceneStage, StageCamera, StageEntity, Transform3D } from "./types";
-import { createStageSnapshot, inheritStageSnapshot, validateStageSnapshot } from "./stageState";
+import { createShotSnapshot, inheritShotSnapshot, validateStageSnapshot } from "./stageState";
 import { auditMogeWorkflow, buildMogePanoramaWorkflow } from "./mogeWorkflow";
 import { runMogeInitialization } from "./mogeRunner";
 import { createComfyMogeTransport } from "./comfyMogeTransport";
@@ -43,6 +43,7 @@ export function SpatialStageWorkbench() {
   const createSpatialStage = useStoryboardStore((state) => state.createSpatialStage);
   const updateSpatialStage = useStoryboardStore((state) => state.updateSpatialStage);
   const removeSpatialStage = useStoryboardStore((state) => state.removeSpatialStage);
+  const selectShot = useStoryboardStore((state) => state.selectShot);
   const [selectedEntityId, setSelectedEntityId] = useState<string>();
   const [beatId, setBeatId] = useState("beat-1");
   const [snapshotMessage, setSnapshotMessage] = useState<string>("");
@@ -55,6 +56,10 @@ export function SpatialStageWorkbench() {
   const viewportRef = useRef<SpatialStageViewportHandle>(null);
   const sceneId = currentSceneId(selectedShotId, shots, currentSequenceId);
   const stage = spatialStages.find((item) => item.sceneId === sceneId);
+  const sequenceShots = useMemo(
+    () => shots.filter((shot) => shot.sequenceId === currentSequenceId).slice().sort((left, right) => left.order - right.order),
+    [currentSequenceId, shots]
+  );
   const panorama = useMemo(() => {
     const sceneAssetId = stage?.environment.sources.find((source) => source.kind === "panorama")?.assetId;
     return assets.find((asset) => asset.id === sceneAssetId && asset.type === "skybox")?.filePath;
@@ -62,9 +67,13 @@ export function SpatialStageWorkbench() {
   const persistEntityTransform = useCallback((entityId: string, transform: Transform3D) => {
     if (!stage) return;
     updateSpatialStage(stage.id, {
-      entities: stage.entities.map((entity) => entity.id === entityId ? { ...entity, transform } : entity)
+      entities: stage.entities.map((entity) => entity.id === entityId ? { ...entity, transform } : entity),
+      snapshots: stage.snapshots.map((snapshot) => snapshot.shotId !== selectedShotId ? snapshot : {
+        ...snapshot,
+        entityStates: snapshot.entityStates.map((state) => state.entityId === entityId ? { ...state, transform } : state)
+      })
     });
-  }, [stage, updateSpatialStage]);
+  }, [selectedShotId, stage, updateSpatialStage]);
   const persistCamera = useCallback((camera: StageCamera) => {
     if (!stage) return;
     updateSpatialStage(stage.id, {
@@ -120,18 +129,42 @@ export function SpatialStageWorkbench() {
   }
 
   const panoramaSource = stage.environment.sources.find((source) => source.kind === "panorama");
-  const selectedEntity = stage.entities.find((entity) => entity.id === selectedEntityId);
+  const activeSnapshot = stage.snapshots.find((snapshot) => snapshot.shotId === selectedShotId);
+  const viewportStage: SceneStage = activeSnapshot ? {
+    ...stage,
+    entities: stage.entities.map((entity) => {
+      const state = activeSnapshot.entityStates.find((item) => item.entityId === entity.id);
+      return state ? { ...entity, transform: state.transform, visibility: state.visibility } : entity;
+    })
+  } : stage;
+  const selectedEntity = viewportStage.entities.find((entity) => entity.id === selectedEntityId);
   const updateEntity = (patch: Partial<StageEntity>) => {
     if (!selectedEntity) return;
-    update({ ...stage, entities: stage.entities.map((entity) => entity.id === selectedEntity.id ? { ...entity, ...patch } : entity) });
+    updateSpatialStage(stage.id, {
+      entities: stage.entities.map((entity) => entity.id === selectedEntity.id ? { ...entity, ...patch } : entity),
+      snapshots: stage.snapshots.map((snapshot) => snapshot.shotId !== selectedShotId ? snapshot : {
+        ...snapshot,
+        entityStates: snapshot.entityStates.map((state) => state.entityId !== selectedEntity.id ? state : {
+          ...state,
+          ...(patch.transform ? { transform: patch.transform } : {}),
+          ...(patch.visibility ? { visibility: patch.visibility } : {})
+        })
+      })
+    });
   };
   const createInheritedSnapshot = () => {
-    const previous = stage.snapshots[stage.snapshots.length - 1];
+    const shotIndex = sequenceShots.findIndex((shot) => shot.id === selectedShotId);
+    const previousShotId = shotIndex > 0 ? sequenceShots[shotIndex - 1]?.id : undefined;
+    const previous = previousShotId ? stage.snapshots.find((snapshot) => snapshot.shotId === previousShotId) : undefined;
+    const cameraId = activeSnapshot?.cameraId ?? activeCameraId ?? stage.cameras[0]?.id ?? "";
     const nextSnapshot = previous
-      ? inheritStageSnapshot(stage, previous, beatId, {}, new Date().toISOString())
-      : createStageSnapshot(stage, beatId, undefined, new Date().toISOString());
+      ? inheritShotSnapshot(stage, previous, selectedShotId, beatId, { cameraId }, new Date().toISOString())
+      : createShotSnapshot(stage, selectedShotId, beatId, cameraId, new Date().toISOString());
     const validation = validateStageSnapshot(stage, nextSnapshot);
-    update({ ...stage, snapshots: [...stage.snapshots, nextSnapshot] });
+    const snapshots = stage.snapshots.some((snapshot) => snapshot.shotId === selectedShotId)
+      ? stage.snapshots.map((snapshot) => snapshot.shotId === selectedShotId ? nextSnapshot : snapshot)
+      : [...stage.snapshots, nextSnapshot];
+    updateSpatialStage(stage.id, { snapshots });
     setSnapshotMessage(validation.valid ? `快照 ${nextSnapshot.id} 已确认` : `未解析 ${validation.unresolved.length} 项：${validation.unresolved.join(", ")}`);
     setBeatId(`beat-${stage.snapshots.length + 2}`);
   };
@@ -224,10 +257,10 @@ export function SpatialStageWorkbench() {
       <div className="spatial-stage-main">
         <SpatialStageViewport
           ref={viewportRef}
-          stage={stage}
+          stage={viewportStage}
           panoramaUrl={panorama}
           selectedEntityId={selectedEntityId}
-          activeCameraId={activeCameraId ?? stage.cameras[0]?.id}
+          activeCameraId={activeSnapshot?.cameraId ?? activeCameraId ?? stage.cameras[0]?.id}
           interactionMode={interactionMode}
           overlayMode={overlayMode}
           paused={false}
@@ -275,6 +308,16 @@ export function SpatialStageWorkbench() {
           <button className="btn-ghost" type="button" onClick={() => removeSpatialStage(stage.id)}>移除舞台</button>
         </aside>
       </div>
+      <nav className="spatial-stage-shot-strip" aria-label="镜头空间快照">
+        {sequenceShots.map((shot) => {
+          const snapshot = stage.snapshots.find((item) => item.shotId === shot.id);
+          return (
+            <button className={shot.id === selectedShotId ? "selected" : ""} key={shot.id} type="button" onClick={() => selectShot(shot.id)}>
+              <strong>{shot.id}</strong><small>{snapshot ? snapshot.beatId : "未绑定"}</small>
+            </button>
+          );
+        })}
+      </nav>
     </section>
   );
 }
