@@ -23,7 +23,7 @@
 
 `seed` 默认写入 `continuityVersion: 1`。该版本要求资产决策、关键场导演计划和逐切首尾边界。旧文件没有 `continuityVersion` 时以向后兼容模式读取；不会凭空生成边界。完整创作规则见 [directing-continuity.md](directing-continuity.md)。
 
-`correspondenceVersion` 可省略；仅值为 `1` 时才启用逐切多模态对应门，并要求每个 `cut` 有 `correspondence`。它消费 cast 的 approved `identityModule`、可选 actions/预演、cut 认领、边界和道具，不启用时不读取该契约。字段、权威顺序、空镜与参考槽位规则见 [multimodal-correspondence.md](multimodal-correspondence.md)。
+`correspondenceVersion` 可省略；**只有字段完全缺失**时才走 legacy。字段存在时仅接受数值 `1`，`null`、其他数字和字符串 `"1"` 都失败。v1 启用逐切多模态对应门，并要求每个 `cut` 有 `correspondence`。它消费 cast 的 approved `identityModule`、可选 actions/预演、cut 认领、完整边界和道具；任何 `cut.actionRefs` 非空时都必须提供可解析的 actions 上下文。字段、权威顺序、绑定唯一性、空镜、证据归属与参考槽位规则见 [multimodal-correspondence.md](multimodal-correspondence.md)。
 
 ## assetDecisions（根层）
 

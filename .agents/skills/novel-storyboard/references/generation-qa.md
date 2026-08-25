@@ -26,7 +26,7 @@
 }
 ```
 
-`version` 只能为 `1`。`source` 必须等于已批准分镜的 `source`。`summary` 非空；`hasDiscrepancies` 必须与 `findings` 是否为空严格一致。每条 finding 的 `id` 唯一，`cutRef` 必须指向真实的 `<segment.id>#<从 1 开始的切序>`。
+`version` 只能为 `1`。`source` 必须等于已批准分镜的 `source`。`summary` 必须是实际的非空字符串，数值、布尔值、对象和数组均无效；`hasDiscrepancies` 必须与 `findings` 是否为空严格一致。每条 finding 的 `id` 唯一，`cutRef` 必须指向真实的 `<segment.id>#<从 1 开始的切序>`。
 
 ## 偏差分类与严重度
 

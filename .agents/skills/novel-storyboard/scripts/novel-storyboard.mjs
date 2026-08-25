@@ -436,53 +436,112 @@ export function computeStats(board, script) {
 /* 质量门                                                               */
 /* ------------------------------------------------------------------ */
 
+const isPlainObject = (value) => value !== null && typeof value === 'object'
+  && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+const isNonEmptyString = (value) => typeof value === 'string' && Boolean(value.trim());
+
 /** correspondenceVersion: 1 的逐切多模态事实绑定检查。 */
 export function correspondenceProblems(board, ctx = {}) {
-  if (board?.correspondenceVersion == null) return [];
+  if (!isPlainObject(board) || !Object.hasOwn(board, 'correspondenceVersion')) return [];
   if (board.correspondenceVersion !== 1) return [`correspondenceVersion 目前只支持 1，实际是 ${board.correspondenceVersion}`];
   const out = [];
-  const identities = new Map((ctx.cast?.characters ?? []).map((c) => [c.identityModule?.characterRef, c.identityModule]));
-  const actionById = new Map(Object.values(ctx.actions?.actions ?? {}).map((action) => [action.actionId, action]));
+  const identities = new Map();
+  for (const character of Array.isArray(ctx.cast?.characters) ? ctx.cast.characters : []) {
+    if (isPlainObject(character?.identityModule) && isNonEmptyString(character.identityModule.characterRef)) {
+      identities.set(character.identityModule.characterRef, character.identityModule);
+    }
+  }
+  const hasActionContext = isPlainObject(ctx.actions);
+  const actionById = new Map();
+  for (const action of isPlainObject(ctx.actions?.actions) ? Object.values(ctx.actions.actions) : []) {
+    if (isPlainObject(action) && isNonEmptyString(action.actionId)) actionById.set(action.actionId, action);
+  }
   for (const ep of board.episodes ?? []) for (const seg of ep.segments ?? []) {
     for (let index = 0; index < (seg.cuts ?? []).length; index += 1) {
       const cut = seg.cuts[index];
       const where = `${seg.id}#${index + 1}`;
       const c = cut?.correspondence;
-      if (!c || typeof c !== 'object' || Array.isArray(c)) { out.push(`${where} 缺 correspondence`); continue; }
+      if (!isPlainObject(c)) { out.push(`${where} 缺 correspondence`); continue; }
       if (c.sourceBeats?.sceneIndex !== seg.sceneIndex || stable(c.sourceBeats?.beats) !== stable(cut.beats)) out.push(`${where} sourceBeats 与分镜认领不一致`);
       const refs = new Set(cut.characters ?? []);
       if (!Array.isArray(c.characters)) out.push(`${where} characters 必须是数组`);
-      const bindings = Array.isArray(c.characters) ? c.characters : [];
-      const bound = new Set(bindings.map((x) => x.characterRef));
+      const bindings = [];
+      const bound = new Set();
+      for (let bindingIndex = 0; bindingIndex < (Array.isArray(c.characters) ? c.characters.length : 0); bindingIndex += 1) {
+        const binding = c.characters[bindingIndex];
+        if (!isPlainObject(binding)) {
+          out.push(`${where} 第 ${bindingIndex + 1} 个角色绑定必须是普通对象`);
+          continue;
+        }
+        bindings.push(binding);
+        if (!isNonEmptyString(binding.characterRef)) {
+          out.push(`${where} 第 ${bindingIndex + 1} 个角色绑定 characterRef 必须是非空字符串`);
+          continue;
+        }
+        if (bound.has(binding.characterRef)) out.push(`${where} characterRef 重复绑定：${binding.characterRef}`);
+        bound.add(binding.characterRef);
+      }
       if (stable([...refs].sort()) !== stable([...bound].sort())) out.push(`${where} 角色绑定集合与 cut.characters 不一致`);
       if (c.emptyCharacterShot !== (refs.size === 0)) out.push(`${where} emptyCharacterShot 与角色数量矛盾`);
+
+      const cutActionRefs = Array.isArray(cut.actionRefs) ? [...new Set(cut.actionRefs)] : [];
+      if (cut.actionRefs != null && !Array.isArray(cut.actionRefs)) out.push(`${where} cut.actionRefs 必须是数组`);
+      if (cutActionRefs.length && !hasActionContext) out.push(`${where} 存在 actionRefs 但未提供 action 上下文`);
+      if (hasActionContext) {
+        for (const ref of cutActionRefs) if (!actionById.has(ref)) out.push(`${where} actionRef 不存在：${ref}`);
+      }
+      const resolvedCutActions = cutActionRefs.map((ref) => actionById.get(ref)).filter(Boolean);
+
       for (const binding of bindings) {
-        const identity = identities.get(binding.characterRef);
-        if (!identity || identity.status !== 'approved') out.push(`${where} 的 ${binding.characterRef} 没有 approved 身份模块`);
-        if (identity && binding.identityVersion !== identity.identityVersion) out.push(`${where} 的 ${binding.characterRef} 身份版本错绑`);
-        const start = cut.startBoundary?.characters?.[binding.characterRef];
-        const end = cut.endBoundary?.characters?.[binding.characterRef];
-        if (binding.lookRef !== start?.lookRef) out.push(`${where} 的 ${binding.characterRef} lookRef 与开始边界不一致`);
-        if (binding.startPosition !== start?.position || binding.endPosition !== end?.position) out.push(`${where} 的 ${binding.characterRef} 首尾位置不一致`);
-        const cutActionRefs = new Set(cut.actionRefs ?? []);
-        const expectedActions = [...cutActionRefs].filter((ref) => (actionById.get(ref)?.participants ?? []).includes(binding.characterRef)).sort();
-        if (!Array.isArray(binding.actionRefs)) out.push(`${where} 的 ${binding.characterRef} actionRefs 必须是数组`);
+        const characterRef = binding.characterRef;
+        if (!isNonEmptyString(characterRef)) continue;
+        const identity = identities.get(characterRef);
+        if (!identity || identity.status !== 'approved') out.push(`${where} 的 ${characterRef} 没有 approved 身份模块`);
+        if (identity && binding.identityVersion !== identity.identityVersion) out.push(`${where} 的 ${characterRef} 身份版本错绑`);
+        for (const field of ['lookRef', 'startPosition', 'endPosition']) {
+          if (!isNonEmptyString(binding[field])) out.push(`${where} 的 ${characterRef} ${field} 必须是非空字符串`);
+        }
+
+        const start = cut.startBoundary?.characters?.[characterRef];
+        const end = cut.endBoundary?.characters?.[characterRef];
+        const boundaryFields = ['position', 'facing', 'gaze', 'leftHand', 'rightHand', 'lookRef'];
+        if (!isPlainObject(start)) out.push(`${where} 开始边界缺 ${characterRef} 的完整角色状态`);
+        else for (const field of boundaryFields) if (!isNonEmptyString(start[field])) out.push(`${where} 开始边界 ${characterRef}.${field} 必须是非空字符串`);
+        if (!isPlainObject(end)) out.push(`${where} 结束边界缺 ${characterRef} 的完整角色状态`);
+        else for (const field of boundaryFields) if (!isNonEmptyString(end[field])) out.push(`${where} 结束边界 ${characterRef}.${field} 必须是非空字符串`);
+        if (isNonEmptyString(binding.lookRef) && isPlainObject(start) && binding.lookRef !== start.lookRef) out.push(`${where} 的 ${characterRef} lookRef 与开始边界不一致`);
+        if (isNonEmptyString(binding.startPosition) && isPlainObject(start) && binding.startPosition !== start.position) out.push(`${where} 的 ${characterRef} 开始位置不一致`);
+        if (isNonEmptyString(binding.endPosition) && isPlainObject(end) && binding.endPosition !== end.position) out.push(`${where} 的 ${characterRef} 结束位置不一致`);
+
+        const expectedActions = resolvedCutActions
+          .filter((action) => Array.isArray(action.participants) && action.participants.includes(characterRef))
+          .map((action) => action.actionId)
+          .sort();
+        if (!Array.isArray(binding.actionRefs)) out.push(`${where} 的 ${characterRef} actionRefs 必须是数组`);
         const boundActions = [...new Set(Array.isArray(binding.actionRefs) ? binding.actionRefs : [])].sort();
-        if (stable(expectedActions) !== stable(boundActions)) out.push(`${where} 的 ${binding.characterRef} actionRefs 与参与动作不一致`);
-        if (!Array.isArray(binding.poseEvidenceRefs)) out.push(`${where} 的 ${binding.characterRef} poseEvidenceRefs 必须是数组`);
+        if (stable(expectedActions) !== stable(boundActions)) out.push(`${where} 的 ${characterRef} actionRefs 与参与动作不一致`);
+        if (!Array.isArray(binding.poseEvidenceRefs)) out.push(`${where} 的 ${characterRef} poseEvidenceRefs 必须是数组`);
         const supplied = Array.isArray(binding.poseEvidenceRefs) ? binding.poseEvidenceRefs : [];
+        if (boundActions.length === 0 && supplied.length > 0) out.push(`${where} 的 ${characterRef} 无参与动作却携带 poseEvidenceRefs`);
+        const referencedActions = boundActions.map((ref) => actionById.get(ref)).filter(Boolean);
+        const approvedEvidence = new Set(referencedActions.flatMap((action) => [
+          ...(Array.isArray(action.previs?.evidence?.stillRefs) ? action.previs.evidence.stillRefs : []),
+          ...(Array.isArray(action.previs?.evidence?.clipRefs) ? action.previs.evidence.clipRefs : []),
+        ]));
+        for (const evidenceRef of supplied) {
+          if (!approvedEvidence.has(evidenceRef)) out.push(`${where} 的 ${characterRef} 引用未批准预演证据：${evidenceRef}`);
+        }
         const requiredPrevis = boundActions
           .map((ref) => ({ ref, previs: actionById.get(ref)?.previs }))
           .filter(({ previs }) => previs?.required === true);
         if (requiredPrevis.length) {
-          const approvedEvidence = new Set(requiredPrevis.flatMap(({ previs }) => [
-            ...(previs.evidence?.stillRefs ?? []), ...(previs.evidence?.clipRefs ?? []),
-          ]));
-          if (supplied.length === 0) out.push(`${where} 的 ${binding.characterRef} 缺必需预演证据`);
-          for (const evidenceRef of supplied) if (!approvedEvidence.has(evidenceRef)) out.push(`${where} 的 ${binding.characterRef} 引用未批准预演证据：${evidenceRef}`);
+          if (supplied.length === 0) out.push(`${where} 的 ${characterRef} 缺必需预演证据`);
           for (const { ref, previs } of requiredPrevis) {
-            const actionEvidence = new Set([...(previs.evidence?.stillRefs ?? []), ...(previs.evidence?.clipRefs ?? [])]);
-            if (!supplied.some((evidenceRef) => actionEvidence.has(evidenceRef))) out.push(`${where} 的 ${binding.characterRef} 缺 ${ref} 的必需预演证据`);
+            const actionEvidence = new Set([
+              ...(Array.isArray(previs.evidence?.stillRefs) ? previs.evidence.stillRefs : []),
+              ...(Array.isArray(previs.evidence?.clipRefs) ? previs.evidence.clipRefs : []),
+            ]);
+            if (!supplied.some((evidenceRef) => actionEvidence.has(evidenceRef))) out.push(`${where} 的 ${characterRef} 缺 ${ref} 的必需预演证据`);
           }
         }
       }
@@ -827,7 +886,7 @@ export function gateReport(board, ctx = {}) {
   add('director-plan', '关键场次有已选导演计划：观众立场、信息时机、空间压力、最强画面、反应落点与声音策略', bad.directorPlan.length === 0, continuityV1 ? bad.directorPlan.join('；') : SKIP_CONTINUITY);
   add('continuity', '镜头首尾边界、资产状态引用与同场跨镜连续性一致', bad.continuity.length === 0, continuityV1 ? bad.continuity.join('；') : SKIP_CONTINUITY);
 
-  if (board?.correspondenceVersion != null) {
+  if (isPlainObject(board) && Object.hasOwn(board, 'correspondenceVersion')) {
     const detail = correspondenceProblems(board, ctx);
     add('multimodal-correspondence', '逐切角色身份、动作姿势、场景道具与首尾边界严格对应', detail.length === 0, detail.join('；'));
   }
@@ -849,9 +908,6 @@ const QA_TYPES = new Set([
 const QA_SEVERITIES = new Set(['blocking', 'major', 'minor']);
 const QA_LAYERS = new Set(['characters', 'action-previs', 'art', 'storyboard', 'generation']);
 const QA_SCOPES = new Set(['masked-region', 'local-cut', 'segment', 'upstream']);
-const isPlainObject = (value) => value !== null && typeof value === 'object'
-  && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-const isNonEmptyString = (value) => typeof value === 'string' && Boolean(value.trim());
 
 export function validateGenerationQa(report, board) {
   const out = [];
@@ -859,7 +915,7 @@ export function validateGenerationQa(report, board) {
   if (report.version !== 1) out.push('QA version 目前只支持 1');
   if (report.source !== board?.source) out.push('QA source 与 storyboard.source 不一致');
   if (typeof report.hasDiscrepancies !== 'boolean') out.push('hasDiscrepancies 必须是布尔值');
-  if (!String(report.summary ?? '').trim()) out.push('summary 不能为空');
+  if (!isNonEmptyString(report.summary)) out.push('summary 必须是非空字符串');
   if (!Array.isArray(report.findings)) return [...out, 'findings 必须是数组'];
   if (report.hasDiscrepancies !== (report.findings.length > 0)) out.push('hasDiscrepancies 与 findings 是否为空矛盾');
   const cuts = new Set();
@@ -906,7 +962,7 @@ export function validateStoryboard(board, ctx = {}) {
   }
   const seen = new Set();
   if (board.continuityVersion != null && board.continuityVersion !== 1) p('continuityVersion 目前只支持 1');
-  if (board.correspondenceVersion != null && board.correspondenceVersion !== 1) p('correspondenceVersion 目前只支持 1');
+  if (Object.hasOwn(board, 'correspondenceVersion') && board.correspondenceVersion !== 1) p('correspondenceVersion 目前只支持 1');
   if (board.continuityVersion === 1 && !Array.isArray(board.assetDecisions)) p('continuityVersion: 1 要求根层 assetDecisions 数组');
   for (const ep of eps) {
     const label = `第 ${ep?.ep ?? '?'} 集`;

@@ -15,6 +15,7 @@ import {
   STYLE_PRESETS,
   actionGateReport,
   actionSummaryOf,
+  correspondenceProblems,
   exportPack,
   H3_I2VA_LINE,
   SHOT_SIZES,
@@ -697,6 +698,9 @@ ok(validateGenerationQa(nullFindingQa, correspondenceDoc).some((x) => x.includes
 const arrayFindingQa = clone(QA_REPORT);
 arrayFindingQa.findings[0] = [];
 ok(validateGenerationQa(arrayFindingQa, correspondenceDoc).some((x) => x.includes('finding 必须是普通对象')), '数组 finding 失败且不抛错');
+const numericSummaryQa = clone(QA_REPORT);
+numericSummaryQa.summary = 7;
+ok(validateGenerationQa(numericSummaryQa, correspondenceDoc).some((x) => x.includes('summary 必须是非空字符串')), '数值 summary 失败');
 
 const missingBinding = withCorrespondence();
 missingBinding.episodes[0].segments[0].cuts[0].correspondence.characters = [];
@@ -704,7 +708,10 @@ ok(!gate(missingBinding, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_C
 
 const wrongVersion = withCorrespondence();
 wrongVersion.episodes[0].segments[0].cuts[0].correspondence.characters[0].identityVersion = 99;
-ok(!gate(wrongVersion, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '身份版本错绑失败');
+const wrongVersionGate = gate(wrongVersion, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST });
+ok(!wrongVersionGate.ok, '身份版本错绑失败');
+ok(wrongVersionGate.detail.includes('E01-01#1'), '身份错绑诊断包含准确 cutRef');
+ok(wrongVersionGate.detail.includes('C01'), '身份错绑诊断包含准确 characterRef');
 
 const badEmptyShot = withCorrespondence();
 badEmptyShot.episodes[0].segments[0].cuts[0].correspondence.emptyCharacterShot = true;
@@ -750,6 +757,88 @@ function withEmptyCorrespondenceCut() {
   const binding = doc.episodes[0].segments[0].cuts[0].correspondence.characters[0];
   delete binding.poseEvidenceRefs;
   ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '角色缺 poseEvidenceRefs 数组失败');
+}
+for (const [malformed, label] of [[null, 'null'], [[], '数组'], ['C01', '字符串']]) {
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0].correspondence.characters[0] = malformed;
+  const problems = correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST });
+  ok(problems.some((x) => x.includes('角色绑定必须是普通对象')), `${label} 角色绑定结构化失败且不抛错`);
+}
+{
+  const doc = withCorrespondence();
+  const bindings = doc.episodes[0].segments[0].cuts[0].correspondence.characters;
+  bindings.push(clone(bindings[0]));
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes('characterRef 重复绑定')), '重复 characterRef 绑定失败');
+}
+for (const field of ['lookRef', 'startPosition', 'endPosition']) {
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0].correspondence.characters[0][field] = '';
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes(`${field} 必须是非空字符串`)), `${field} 显式要求非空字符串`);
+  const numericDoc = withCorrespondence();
+  numericDoc.episodes[0].segments[0].cuts[0].correspondence.characters[0][field] = 7;
+  ok(correspondenceProblems(numericDoc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes(`${field} 必须是非空字符串`)), `${field} 拒绝非字符串`);
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  delete cut.startBoundary.characters.C01;
+  delete cut.correspondence.characters[0].lookRef;
+  delete cut.correspondence.characters[0].startPosition;
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes('开始边界缺 C01 的完整角色状态')), '缺开始边界角色项显式失败');
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  delete cut.endBoundary.characters.C01;
+  delete cut.correspondence.characters[0].endPosition;
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes('结束边界缺 C01 的完整角色状态')), '缺结束边界角色项显式失败');
+}
+for (const [boundaryField, label] of [['startBoundary', '开始'], ['endBoundary', '结束']]) {
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0][boundaryField].characters.C01 = {};
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes(`${label}边界 C01.position 必须是非空字符串`)), `${label}边界空对象不是完整角色状态`);
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.actionRefs = ['E01-S01-B01-A99'];
+  cut.correspondence.characters[0].actionRefs = [];
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes('存在 actionRefs 但未提供 action 上下文')), '有动作引用但无 action 上下文失败');
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.actionRefs = ['E01-S01-B01-A99'];
+  cut.correspondence.characters[0].actionRefs = [];
+  const emptyActions = { actions: {} };
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST, actions: emptyActions }).some((x) => x.includes('actionRef 不存在：E01-S01-B01-A99')), '未知 actionRef 在有上下文时失败');
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.actionRefs = ['E01-S01-B01-A01'];
+  cut.correspondence.characters[0].actionRefs = [];
+  const participantActions = { actions: { first: {
+    actionId: 'E01-S01-B01-A01', participants: ['C01'],
+  } } };
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST, actions: participantActions }).some((x) => x.includes('actionRefs 与参与动作不一致')), '绑定 actionRefs 必须等于角色实际参与动作');
+}
+{
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0].correspondence.characters[0].poseEvidenceRefs = ['orphan-evidence'];
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST }).some((x) => x.includes('无参与动作却携带 poseEvidenceRefs')), '无动作角色不能携带姿势证据');
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.actionRefs = ['E01-S01-B01-A01'];
+  cut.correspondence.characters[0].actionRefs = ['E01-S01-B01-A01'];
+  cut.correspondence.characters[0].poseEvidenceRefs = ['unapproved-evidence'];
+  const optionalPrevisActions = { actions: { first: {
+    actionId: 'E01-S01-B01-A01', participants: ['C01'],
+    previs: { required: false, evidence: { stillRefs: ['approved-evidence'], clipRefs: [] } },
+  } } };
+  ok(correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST, actions: optionalPrevisActions }).some((x) => x.includes('引用未批准预演证据：unapproved-evidence')), '非必需预演也拒绝未批准证据');
 }
 {
   const doc = withCorrespondence();
@@ -807,10 +896,16 @@ ok(!gate(withTwoPrevisActions(['previs-A']), 'multimodal-correspondence', { ...C
   ok(pack.missingTotal > 0, '缺图总数上报');
 }
 {
-  const pack = exportPack(withCorrespondence(), SCRIPT, { imageExists: () => true });
+  const sourceBoard = withCorrespondence();
+  const pack = exportPack(sourceBoard, SCRIPT, { imageExists: () => true });
   const m = pack.manifest.find((x) => x.segment === 'E01-01');
   ok(Array.isArray(m.correspondence) && m.correspondence.length === 4, 'v1 导出逐切 correspondence 快照');
-  ok(m.correspondence[0].correspondence === pack.manifest[0].correspondence[0].correspondence, 'v1 manifest 保留批准的对应对象');
+  assert.deepEqual(m.correspondence[0].correspondence, sourceBoard.episodes[0].segments[0].cuts[0].correspondence, 'v1 manifest 内容等于来源 correspondence');
+  passed += 1;
+  const manifestFile = pack.files.find((file) => file.path === 'manifest.json');
+  const roundTripManifest = JSON.parse(manifestFile.content);
+  assert.deepEqual(roundTripManifest[0].correspondence[0].correspondence, sourceBoard.episodes[0].segments[0].cuts[0].correspondence, '序列化/反序列化 manifest 保留 correspondence');
+  passed += 1;
 }
 {
   const pack = exportPack(withCameraImpact(), SCRIPT, { imageExists: () => false });
@@ -830,6 +925,20 @@ ok(!gate(withTwoPrevisActions(['previs-A']), 'multimodal-correspondence', { ...C
 /* ---------------- validateStoryboard 结构检查 ---------------- */
 
 eq(validateStoryboard(FIXTURE, CTX).length, 0, '样例零违规');
+ok(!Object.hasOwn(FIXTURE, 'correspondenceVersion'), '旧样例确实缺 correspondenceVersion');
+{
+  const doc = clone(FIXTURE);
+  doc.correspondenceVersion = null;
+  ok(validateStoryboard(doc, CTX).some((x) => x.includes('correspondenceVersion 目前只支持 1')), '显式 null correspondenceVersion 结构校验失败');
+  const correspondenceGate = gate(doc, 'multimodal-correspondence', CTX);
+  ok(correspondenceGate && !correspondenceGate.ok, '显式 null correspondenceVersion 进入并击穿对应门');
+}
+for (const version of [0, 2, '1']) {
+  const doc = clone(FIXTURE);
+  doc.correspondenceVersion = version;
+  ok(validateStoryboard(doc, CTX).some((x) => x.includes('correspondenceVersion 目前只支持 1')), `不支持 correspondenceVersion ${JSON.stringify(version)} 结构校验失败`);
+  ok(!gate(doc, 'multimodal-correspondence', CTX).ok, `不支持 correspondenceVersion ${JSON.stringify(version)} 击穿对应门`);
+}
 ok(validateStoryboard(null).length > 0, 'null 不崩');
 ok(validateStoryboard({}).some((p) => p.includes('source')), '缺 source 报出来');
 ok(validateStoryboard({ source: 'x', episodes: [] }).some((p) => p.includes('episodes')), '空 episodes 报出来');
