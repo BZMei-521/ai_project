@@ -30,4 +30,16 @@ assert.equal(
   validateSpatialShotContract({ ...contract, relations: [{ kind: "inside", subjectEntityId: "actor", targetEntityId: "missing" }] }).reason,
   "spatial_contract_relation_target_missing:missing"
 );
+
+for (const invalidId of [undefined, null, {}]) {
+  const invalidContract = normalizeSpatialShotContract({
+    ...contract,
+    layers: [{ id: invalidId, order: 10, role: "environment", entityIds: ["room"] }],
+    relations: []
+  });
+  const validation = validateSpatialShotContract(invalidContract);
+  assert.equal(validation.valid, false);
+  assert.match(validation.reason, /^spatial_contract_layer_invalid:/);
+}
+
 console.log("PASS generic spatial layer contract");
