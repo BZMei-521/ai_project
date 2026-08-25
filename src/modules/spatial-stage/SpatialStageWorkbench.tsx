@@ -9,9 +9,30 @@ import { runMogeInitialization } from "./mogeRunner";
 import { createComfyMogeTransport } from "./comfyMogeTransport";
 import { stageMogePanoramaAsset } from "./mogeAssetStaging";
 import { normalizeSceneStage } from "./normalizeStage";
+import { isDesktopRuntime, writeSpatialControlArtifact } from "../platform/desktopBridge";
+import { canonicalSpatialControlPackJson, exportShotControlPack } from "./spatialControlExport";
 import e01SpatialStageSeed from "../../../影帝他总想对我图谋不轨_漫剧改编/分镜/work/E01-01.spatial-stage.seed.json";
 
 type ProxyGeometryKind = "box" | "capsule" | "sphere" | "plane";
+
+export type SpatialStageWorkbenchProps = { projectAssetsDir?: string };
+
+function expectedControlContract(shotId: string) {
+  const expectedProps = [
+    { entityId: "E01-01-coffin-shell", count: 1, state: "shared sealed shell" },
+    { entityId: "E01-01-lid", count: 1, state: "fixed and never displaced" },
+    { entityId: "E01-01-silk", count: 1, state: "continuous beneath the body" },
+    { entityId: "E01-01-nail", count: 1, state: "fixed until C05 fingertip contact" }
+  ];
+  const contacts: Record<string, Array<{ side: "left" | "right"; visible: boolean; contactTargetId?: string }>> = {
+    "E01-01-C01": [{ side: "left", visible: true, contactTargetId: "E01-01-lid" }, { side: "right", visible: true, contactTargetId: "E01-01-lid" }],
+    "E01-01-C02": [{ side: "left", visible: true, contactTargetId: "E01-01-lid" }, { side: "right", visible: true }],
+    "E01-01-C03": [{ side: "left", visible: true, contactTargetId: "E01-01-lid" }, { side: "right", visible: true, contactTargetId: "E01-01-lid" }],
+    "E01-01-C04": [{ side: "left", visible: true, contactTargetId: "E01-01-lid" }, { side: "right", visible: true }],
+    "E01-01-C05": [{ side: "left", visible: true, contactTargetId: "E01-01-silk" }, { side: "right", visible: true, contactTargetId: "E01-01-nail" }]
+  };
+  return { expectedHands: contacts[shotId] ?? [], expectedProps };
+}
 
 function currentSceneId(
   selectedShotId: string,
@@ -38,7 +59,7 @@ function createProxy(stage: SceneStage, kind: ProxyGeometryKind): SceneStage {
   return { ...next, revision: stage.revision + 1, sourceDigest: computeStageSourceDigest(next) };
 }
 
-export function SpatialStageWorkbench() {
+export function SpatialStageWorkbench({ projectAssetsDir = "" }: SpatialStageWorkbenchProps) {
   const selectedShotId = useStoryboardStore((state) => state.selectedShotId);
   const shots = useStoryboardStore((state) => state.shots);
   const currentSequenceId = useStoryboardStore((state) => state.currentSequenceId);
@@ -54,6 +75,9 @@ export function SpatialStageWorkbench() {
   const [mogeMessage, setMogeMessage] = useState<string>("");
   const [comfyBaseUrl, setComfyBaseUrl] = useState("http://127.0.0.1:8188");
   const [mogeBusy, setMogeBusy] = useState(false);
+  const [controlExportBusy, setControlExportBusy] = useState(false);
+  const [controlExportMessage, setControlExportMessage] = useState("");
+  const [controlPackJson, setControlPackJson] = useState("");
   const [interactionMode, setInteractionMode] = useState<"orbit" | "camera" | "transform">("orbit");
   const [overlayMode, setOverlayMode] = useState<"color" | "depth" | "normal" | "entity_id" | "pose">("color");
   const [activeCameraId, setActiveCameraId] = useState<string>();
@@ -146,6 +170,7 @@ export function SpatialStageWorkbench() {
 
   const panoramaSource = stage.environment.sources.find((source) => source.kind === "panorama");
   const activeSnapshot = stage.snapshots.find((snapshot) => snapshot.shotId === selectedShotId);
+  const activeCamera = stage.cameras.find((camera) => camera.id === activeSnapshot?.cameraId);
   const viewportStage: SceneStage = activeSnapshot ? {
     ...stage,
     entities: stage.entities.map((entity) => {
@@ -154,6 +179,38 @@ export function SpatialStageWorkbench() {
     })
   } : stage;
   const selectedEntity = viewportStage.entities.find((entity) => entity.id === selectedEntityId);
+  const exportCurrentControls = async () => {
+    if (!isDesktopRuntime()) { setControlExportMessage("普通网页模式不能写入控制包，请使用 Tauri 或 3210 Windows Bridge"); return; }
+    if (!projectAssetsDir.trim()) { setControlExportMessage("当前项目缺少可信本地目录"); return; }
+    if (!activeSnapshot) { setControlExportMessage("当前镜头没有空间快照"); return; }
+    if (!activeCamera) { setControlExportMessage("当前快照没有匹配相机"); return; }
+    const viewport = viewportRef.current;
+    if (!viewport) { setControlExportMessage("空间视口尚未就绪"); return; }
+    setControlExportBusy(true);
+    setControlExportMessage("");
+    setControlPackJson("");
+    try {
+      const contract = expectedControlContract(selectedShotId);
+      const pack = await exportShotControlPack({
+        stage: { ...stage, sourceDigest: stage.sourceDigest || computeStageSourceDigest(stage) },
+        shotId: selectedShotId,
+        snapshot: activeSnapshot,
+        camera: activeCamera,
+        projectAssetsDir,
+        width: 1280,
+        height: 720,
+        ...contract,
+        renderControlArtifacts: (request) => viewport.renderControlArtifacts(request),
+        writeArtifact: (request) => writeSpatialControlArtifact({ projectAssetsDir, ...request })
+      });
+      setControlPackJson(canonicalSpatialControlPackJson(pack));
+      setControlExportMessage(`控制包 ${selectedShotId} 已导出：6 个通道`);
+    } catch (error) {
+      setControlExportMessage(`控制包导出失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setControlExportBusy(false);
+    }
+  };
   const updateEntity = (patch: Partial<StageEntity>) => {
     if (!selectedEntity) return;
     updateSpatialStage(stage.id, {
@@ -269,6 +326,14 @@ export function SpatialStageWorkbench() {
           <button className="btn-primary" type="button" onClick={createInheritedSnapshot}>继承上一节拍</button>
           <button className="btn-ghost" type="button" onClick={prepareMoge}>MoGe 几何预检</button>
           <button className="btn-primary" type="button" disabled={mogeBusy || stage.capabilities.overall !== "available"} onClick={queueMoge}>{mogeBusy ? "排队中…" : "排队生成几何"}</button>
+          <button
+            className="btn-primary"
+            data-spatial-control-export
+            disabled={controlExportBusy || !isDesktopRuntime() || !projectAssetsDir.trim() || !activeSnapshot || !activeCamera}
+            title={!isDesktopRuntime() ? "请使用 Tauri 或 3210 Windows Bridge 安全写入" : !projectAssetsDir.trim() ? "当前项目缺少可信本地目录" : undefined}
+            type="button"
+            onClick={() => void exportCurrentControls()}
+          >{controlExportBusy ? "导出中…" : "导出当前镜头控制包"}</button>
         </div>
       </header>
       <div className="spatial-stage-main">
@@ -320,6 +385,8 @@ export function SpatialStageWorkbench() {
           <label>节拍 ID<input value={beatId} onChange={(event) => setBeatId(event.target.value)} /></label>
           {snapshotMessage && <small className={snapshotMessage.startsWith("未解析") ? "spatial-stage-conflict" : "spatial-stage-ok"}>{snapshotMessage}</small>}
           {mogeMessage && <small className={mogeMessage.includes("失败") || mogeMessage.includes("未设置") ? "spatial-stage-conflict" : "spatial-stage-ok"}>{mogeMessage}</small>}
+          {controlExportMessage && <small className={controlExportMessage.includes("失败") || controlExportMessage.includes("不能") || controlExportMessage.includes("缺少") ? "spatial-stage-conflict" : "spatial-stage-ok"}>{controlExportMessage}</small>}
+          {controlPackJson && <pre data-spatial-control-pack>{controlPackJson}</pre>}
           <label>ComfyUI 地址<input value={comfyBaseUrl} onChange={(event) => setComfyBaseUrl(event.target.value)} /></label>
           <button className="btn-ghost" type="button" onClick={() => viewportRef.current?.releaseGpuResources()}>释放视口显存</button>
           <button className="btn-ghost" type="button" onClick={() => removeSpatialStage(stage.id)}>移除舞台</button>

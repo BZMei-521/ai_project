@@ -82,6 +82,10 @@ function sha256(input: string): string {
   return hash.slice(0, 8).map((word) => (word >>> 0).toString(16).padStart(8, "0")).join("");
 }
 
+export function computeSpatialCameraDigest(camera: import("./types").StageCamera): string {
+  return sha256(JSON.stringify(canonicalize(camera)));
+}
+
 function packDigest(pack: Omit<SpatialControlPack, "packDigest">): string {
   return sha256(JSON.stringify(canonicalize(pack)));
 }

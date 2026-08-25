@@ -1485,7 +1485,7 @@ export function App() {
     poseKeyframes: []
   };
   const activePreviewScene = spatialScenes[0] ?? fallbackPreviewScene;
-  const storyboardLegacyWorkspace = workspaceMode === "spatial_stage" ? <SpatialStageWorkbench /> : <>
+  const storyboardLegacyWorkspace = workspaceMode === "spatial_stage" ? <SpatialStageWorkbench projectAssetsDir={activeWorkspacePath} /> : <>
     <StoryboardPreviewPanel />
     <div
       className="timeline-splitter"
@@ -1523,7 +1523,7 @@ export function App() {
         canRedo={shotSequenceHistory.future.length > 0}
       />;
       case "assets": return <AssetWorkspaceView assetCount={assets.length} />;
-      case "preview": return <PreviewWorkspaceView scene={activePreviewScene} selection={selectedSpatialObjectId} onSceneChange={updateSpatialScene} onSelectionChange={setSelectedSpatialObject} />;
+      case "preview": return <PreviewWorkspaceView scene={activePreviewScene} selection={selectedSpatialObjectId} projectAssetsDir={activeWorkspacePath} onSceneChange={updateSpatialScene} onSelectionChange={setSelectedSpatialObject} />;
       case "production": return <ProductionWorkspaceView taskLabel={generationTasks.length ? "处理中" : "等待生成"} />;
       case "storyboard":
       default: return <StoryboardWorkspaceView shotCount={shots.length}>{storyboardLegacyWorkspace}</StoryboardWorkspaceView>;
