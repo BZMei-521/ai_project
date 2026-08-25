@@ -52,6 +52,7 @@ assert.match(workbenchSource, /onEntityTransformChange/);
 assert.match(workbenchSource, /onCameraChange/);
 assert.match(workbenchSource, /观察模式/);
 assert.match(workbenchSource, /镜头模式/);
+assert.match(workbenchSource, /value=\{activeSnapshot\?\.cameraId \?\? activeCameraId/);
 assert.match(workbenchSource, /rig/);
 assert.match(workbenchSource, /继承上一节拍/);
 assert.match(workbenchSource, /未解析|冲突/);

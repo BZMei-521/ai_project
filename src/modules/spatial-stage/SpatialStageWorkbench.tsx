@@ -247,7 +247,7 @@ export function SpatialStageWorkbench() {
           <button className={interactionMode === "orbit" ? "btn-primary" : "btn-ghost"} type="button" onClick={() => setInteractionMode("orbit")}>观察模式</button>
           <button className={interactionMode === "camera" ? "btn-primary" : "btn-ghost"} type="button" onClick={enterCameraMode}>镜头模式</button>
           <button className={interactionMode === "transform" ? "btn-primary" : "btn-ghost"} type="button" disabled={!selectedEntityId} onClick={() => setInteractionMode("transform")}>变换模式</button>
-          <select aria-label="活动镜头" value={activeCameraId ?? stage.cameras[0]?.id ?? ""} onChange={(event) => setActiveCameraId(event.target.value || undefined)}>
+          <select aria-label="活动镜头" value={activeSnapshot?.cameraId ?? activeCameraId ?? stage.cameras[0]?.id ?? ""} onChange={(event) => setActiveCameraId(event.target.value || undefined)}>
             <option value="">调试相机</option>
             {stage.cameras.map((camera) => <option key={camera.id} value={camera.id}>{camera.label}</option>)}
           </select>
