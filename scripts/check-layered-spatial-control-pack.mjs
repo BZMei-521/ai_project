@@ -58,6 +58,27 @@ assert.ok(bundle, "layered renderer bundle should be available");
 const { renderLayeredStagePasses } = await import(`data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`);
 const png = Uint8Array.from(Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c6360000200000500017a5eab3f0000000049454e44ae426082", "hex"));
 const pngHash = "43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6";
+const pngCrc32 = (bytes) => {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+const pngChunk = (type, data = Uint8Array.of()) => {
+  const chunk = new Uint8Array(12 + data.length);
+  new DataView(chunk.buffer).setUint32(0, data.length);
+  chunk.set([...type].map((character) => character.charCodeAt(0)), 4);
+  chunk.set(data, 8);
+  new DataView(chunk.buffer).setUint32(8 + data.length, pngCrc32(chunk.slice(4, 8 + data.length)));
+  return chunk;
+};
+const joinPngChunks = (...chunks) => Uint8Array.from(chunks.flatMap((chunk) => [...chunk]));
+const pngSignature = png.slice(0, 8);
+const pngIhdr = png.slice(8, 33);
+const pngIdat = png.slice(33, 56);
+const pngIend = png.slice(56);
 assert.equal(sha256Bytes(Uint8Array.from([97, 98, 99])), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 assert.equal(sha256Bytes(png), pngHash);
 const specs = [{ layerId: "back", kind: "color", entityIds: ["room"] }, { layerId: "actor", kind: "mask", entityIds: ["actor"] }];
@@ -74,7 +95,13 @@ const neverWrite = async ({ layerId, kind, width, height }) => {
   malformedWriteAttempts += 1;
   return { layerId, kind, filePath: "unexpected.png", sha256: pngHash, width, height };
 };
-for (const malformed of [png.slice(0, 8), png.slice(0, 20), Uint8Array.from(png, (value, index) => index === 29 ? value ^ 1 : value), png.slice(0, -12), Uint8Array.from([...png, 0])]) {
+for (const malformed of [
+  png.slice(0, 8), png.slice(0, 20), Uint8Array.from(png, (value, index) => index === 29 ? value ^ 1 : value), png.slice(0, -12), Uint8Array.from([...png, 0]),
+  joinPngChunks(pngSignature, pngIhdr, pngIend),
+  joinPngChunks(pngSignature, pngIhdr, pngIhdr, pngIdat, pngIend),
+  joinPngChunks(pngSignature, pngIhdr, pngIdat, pngChunk("tEXt"), pngIdat, pngIend),
+  joinPngChunks(pngSignature, pngIhdr, pngChunk("ABCD"), pngIdat, pngIend)
+]) {
   await assert.rejects(() => renderLayeredStagePasses({ ...renderRequest(malformed), writeArtifact: neverWrite, passes: [specs[0]] }), /layered_render_png_invalid/);
 }
 await assert.rejects(() => renderLayeredStagePasses({ ...renderRequest(png, pngHash, 2, 1), writeArtifact: neverWrite, passes: [specs[0]] }), /layered_render_png_invalid/);

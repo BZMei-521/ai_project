@@ -31,6 +31,9 @@ function validateRequest(request: LayeredStageRenderPassRequest): void {
 function validatePng(bytes: Uint8Array): void {
   if (bytes.length < PNG_SIGNATURE.length || PNG_SIGNATURE.some((value, index) => bytes[index] !== value)) throw new Error("layered_render_png_invalid");
   let offset = PNG_SIGNATURE.length;
+  let sawIhdr = false;
+  let sawIdat = false;
+  let idatClosed = false;
   let sawIend = false;
   while (offset < bytes.length) {
     if (bytes.length - offset < 12) throw new Error("layered_render_png_invalid");
@@ -40,16 +43,34 @@ function validatePng(bytes: Uint8Array): void {
     const crcOffset = dataEnd;
     if (dataEnd > bytes.length - 4) throw new Error("layered_render_png_invalid");
     const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
-    if (offset === PNG_SIGNATURE.length && (type !== "IHDR" || length !== 13)) throw new Error("layered_render_png_invalid");
+    const isCritical = bytes[offset + 4] >= 65 && bytes[offset + 4] <= 90;
+    if (!sawIhdr) {
+      if (type !== "IHDR" || length !== 13) throw new Error("layered_render_png_invalid");
+      sawIhdr = true;
+    } else if (type === "IHDR") {
+      throw new Error("layered_render_png_invalid");
+    }
     if (crc32(bytes, offset + 4, dataEnd) !== readUint32(bytes, crcOffset)) throw new Error("layered_render_png_invalid");
     offset = crcOffset + 4;
     if (type === "IEND") {
-      if (length !== 0 || offset !== bytes.length) throw new Error("layered_render_png_invalid");
+      if (length !== 0 || !sawIdat || offset !== bytes.length) throw new Error("layered_render_png_invalid");
       sawIend = true;
       break;
     }
+    if (type === "IHDR") continue;
+    if (type === "IDAT") {
+      if (idatClosed) throw new Error("layered_render_png_invalid");
+      sawIdat = true;
+      continue;
+    }
+    if (sawIdat) idatClosed = true;
+    if (type === "PLTE") {
+      if (sawIdat) throw new Error("layered_render_png_invalid");
+      continue;
+    }
+    if (isCritical) throw new Error("layered_render_png_invalid");
   }
-  if (!sawIend) throw new Error("layered_render_png_invalid");
+  if (!sawIhdr || !sawIdat || !sawIend) throw new Error("layered_render_png_invalid");
 }
 
 function readUint32(bytes: Uint8Array, offset: number): number {
