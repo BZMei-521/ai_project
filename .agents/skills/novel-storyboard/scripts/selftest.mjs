@@ -601,6 +601,63 @@ function withContinuityV1(input = FIXTURE) {
   ok(!gate(doc, 'director-plan').ok, '关键场次导演计划缺声音策略被拦');
 }
 
+/* ---------------- 逐切多模态对应（correspondenceVersion 1） ---------------- */
+
+function withCorrespondence() {
+  const doc = withContinuityV1();
+  doc.correspondenceVersion = 1;
+  for (const ep of doc.episodes) for (const seg of ep.segments) {
+    for (const cut of seg.cuts) {
+      cut.correspondence = {
+        sourceBeats: { sceneIndex: seg.sceneIndex, beats: clone(cut.beats) },
+        emptyCharacterShot: cut.characters.length === 0,
+        characters: cut.characters.map((characterRef) => ({
+          characterRef,
+          identityVersion: 1,
+          lookRef: cut.startBoundary.characters[characterRef].lookRef,
+          actionRefs: clone(cut.actionRefs ?? []),
+          poseEvidenceRefs: [],
+          startPosition: cut.startBoundary.characters[characterRef].position,
+          endPosition: cut.endBoundary.characters[characterRef].position,
+        })),
+        sceneRef: cut.startBoundary.spatialAnchor,
+        propRefs: clone(cut.props ?? []),
+        mustShow: clone(cut.actionStateProjection?.mustShow ?? []),
+      };
+    }
+  }
+  return doc;
+}
+
+const fixtureCharacterRefs = [...new Set(FIXTURE.episodes.flatMap((ep) =>
+  ep.segments.flatMap((seg) => seg.cuts.flatMap((cut) => cut.characters ?? []))))];
+const IDENTITY_CAST = {
+  characters: fixtureCharacterRefs.map((characterRef) => ({
+    identityModule: {
+      characterRef, identityVersion: 1, anchorRef: `${characterRef}-A0-v1`, status: 'approved',
+      invariants: { face: ['face'], hair: ['hair'], body: ['body'], baseCostume: ['costume'] },
+      allowedVariations: ['expression', 'pose', 'lighting'],
+      forbiddenDrift: ['face-geometry', 'hair-structure', 'body-scale'],
+    },
+  })),
+};
+
+eq(gateReport(FIXTURE, CTX).length, 19, '旧分镜仍保持十九道门');
+const correspondenceDoc = withCorrespondence();
+ok(gate(correspondenceDoc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '完整逐切对应通过');
+
+const missingBinding = withCorrespondence();
+missingBinding.episodes[0].segments[0].cuts[0].correspondence.characters = [];
+ok(!gate(missingBinding, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '画内角色缺绑定失败');
+
+const wrongVersion = withCorrespondence();
+wrongVersion.episodes[0].segments[0].cuts[0].correspondence.characters[0].identityVersion = 99;
+ok(!gate(wrongVersion, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '身份版本错绑失败');
+
+const badEmptyShot = withCorrespondence();
+badEmptyShot.episodes[0].segments[0].cuts[0].correspondence.emptyCharacterShot = true;
+ok(!gate(badEmptyShot, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '有角色镜头不能标为空镜');
+
 /* ---------------- exportPack（H3 投产包） ---------------- */
 
 {

@@ -12,6 +12,7 @@
   "style": "realistic",
   "promptLang": "zh",
   "continuityVersion": 1,
+  "correspondenceVersion": 1,
   "assetDecisions": [ ... ],
   "params": { "maxSegmentSeconds": 15, "minCutSeconds": 2, "maxCutSeconds": 5, "maxOnScreen": 3, "tolerance": 0.15 },
   "episodes": [ { "ep": 1, "directorCriticalScenes": [2], "scenePlans": [ ... ], "segments": [ ... ] } ]
@@ -21,6 +22,8 @@
 `promptLang` 可省略（**默认 `en`——官方规范口径**）：整条英文、禁角色名，台词在 `<d>[Chinese]` 里保留原文。设成 `zh` 可切整条中文（对齐指令、字段名、镜头标记都有中文版，人名放行）——偏离官方推荐的备选项。`style` 可省略（默认 `realistic`），预设与角色/场景 skill 同名对齐（`realistic` / `ghibli`），对应的英文短语（如 `cinematic film still`）必须出现在**每条**分镜图提示词里——同一部剧的分镜图不许画风漂，门查。
 
 `seed` 默认写入 `continuityVersion: 1`。该版本要求资产决策、关键场导演计划和逐切首尾边界。旧文件没有 `continuityVersion` 时以向后兼容模式读取；不会凭空生成边界。完整创作规则见 [directing-continuity.md](directing-continuity.md)。
+
+`correspondenceVersion` 可省略；仅值为 `1` 时才启用逐切多模态对应门，并要求每个 `cut` 有 `correspondence`。它消费 cast 的 approved `identityModule`、可选 actions/预演、cut 认领、边界和道具，不启用时不读取该契约。字段、权威顺序、空镜与参考槽位规则见 [multimodal-correspondence.md](multimodal-correspondence.md)。
 
 ## assetDecisions（根层）
 
@@ -76,6 +79,7 @@
 | `actionStateProjection` | object | 传 `--actions` 且本切覆盖关键动作时必填：投影动作首态、末态和必须看清的信息；不得改写动作事实 |
 | `cameraPlan` | object | 可选高级镜头计划；只在镜头运动确实承担叙事任务时填写，字段见下表 |
 | `impactPresentation` | object | 上游动作带 `impactEvidence` 时必填；只决定打击证据怎样被观众读到，不改写受力事实 |
+| `correspondence` | object | 仅 `correspondenceVersion: 1` 时必填：本切的节拍、approved 人物身份、动作/预演、首尾位置、场景、道具与 must-show 快照；字段见 [multimodal-correspondence.md](multimodal-correspondence.md) |
 | `note` | string | 备注，可选 |
 
 ### cameraPlan（可选）

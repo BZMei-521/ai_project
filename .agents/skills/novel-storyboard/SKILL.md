@@ -34,6 +34,7 @@ metadata:
 | 节拍认领 | 每个节拍被恰好一个镜头认领、顺序不乱——剧本改了重跑 validate，失效的镜头当场点名 |
 | 关键场导演计划 | 先确定观众立场、信息时机、空间压力、最强画面、反应落点与声音策略，再切镜 |
 | 首尾边界 + 资产状态 | 角色站位/朝向/目光/双手、道具持有/位置/状态有稳定引用；上镜结束必须等于下镜开始 |
+| 逐切多模态对应（可选 v1） | 启用 `correspondenceVersion: 1` 时，把 approved 角色身份、动作/预演、场景道具和首尾边界逐切绑定；冲突一律拦截 |
 | 可选动作摘要 | 传入 `novel-action-director` 的摘要后，分镜必须认领关键动作，首尾状态、左右手、道具、接触与结果不可改写 |
 | 单镜头 ≤ 15 秒 | AI 视频单段生成上限，长对话在这里被强制拆镜（`params.maxShotSeconds` 按模型改） |
 | 台词装得下 | 认领节拍的台词秒数 ≤ 镜头秒数——逐镜检查，不是拍脑袋 |
@@ -73,6 +74,7 @@ node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 \
 
 - `{baseDir}/references/storyboard-pass.md` 和 `{baseDir}/references/schema.md`（读它们，照着做）
 - `{baseDir}/references/directing-continuity.md`（`seed` 默认开启 `continuityVersion: 1`；按这份契约做资产决策、关键场计划和分镜首尾边界）
+- 只有 storyboard 根层使用 `correspondenceVersion: 1` 时，再读 `{baseDir}/references/multimodal-correspondence.md`；按其权威顺序逐切填写对应快照和参考槽位
 - 只有需要高级运动、情绪镜头或动作镜头时，再读 `{baseDir}/references/camera-language.md`；普通场不必为使用词库而运动
 - 该集的 seedScenes 底稿 + 场景卡（art.json 的锚点与光照提示词）+ 角色卡（cast.json 的形象要点）
 

@@ -4,6 +4,8 @@
 
 切镜前先读 [directing-continuity.md](directing-continuity.md)：建立本集 `assetDecisions`，把真正需要整场导演决策的场次列入 `directorCriticalScenes` 并写 `scenePlans`。普通场不加计划，不为流程完整过度设计。
 
+仅当根层使用 `correspondenceVersion: 1` 时，再读 [multimodal-correspondence.md](multimodal-correspondence.md)：逐切固定 approved 身份、动作/预演、场景道具与首尾边界的快照；没有该版本不额外要求旧分镜。
+
 ## 先分段，再切镜
 
 1. **段 = 一次生成调用**，≤ 15 秒，不跨场次。先把每场的节拍按剧情单元分组（一次交锋、一次进场、一次收尾），每组 9–15 秒就是一段。
@@ -20,6 +22,7 @@
 6. **先边界，后提示词。** 每切先写 `purpose / startBoundary / endBoundary`，再把开始边界投影成分镜图，把起点到终点投影成 H3 动作。提示词不是第二份状态真相。
 7. **相邻切首尾对账。** 同场上一切 `endBoundary` 必须与下一切 `startBoundary` 完全相等。确实有意跳切才写 `continuityOverride`，不得把它当成消报错的开关。
 8. **动作事实只投影，不重写。** seed beat 带 `actionRefs` 时，本切必须认领对应动作并填写 `actionStateProjection`。首尾状态、左右手、道具、接触点和结果逐项照摘要；`mustShow` 说明观众要看清什么，但具体景别和运镜仍由分镜决定。
+9. **启用对应版先填快照再写提示词。** `correspondenceVersion: 1` 时，每切的 `correspondence` 必须与认领、approved identity module、动作参与者、边界与 `props` 完全一致；空镜明确标注，冲突停下修上游或快照，不能让 prompt 裁决。
 
 ## 镜头选择 pass：先问为什么，再选怎么动
 
@@ -64,6 +67,8 @@
 - 场景设定图（该段场景 + 光照状态）——必挂
 - 画内每个角色的设定图——有几个挂几个
 - 画内叙事道具的设定图——有就挂
+
+启用 `correspondenceVersion: 1` 时，以上参考图改按 [multimodal-correspondence.md](multimodal-correspondence.md) 的固定槽位顺序组装；不要把 anchor、版本或证据 ID 写进 prompt。
 
 提示词与参考图冲突时，模型听参考图的——所以提示词专心写构图、**此刻的位置状态**（已上船 / 在舱内 / 在桥头）和姿态，长相材质交给参考图。画面里出现的大资产（船、车、宅门）也要挂它自己的设定图，不挂就每帧长得不一样。
 

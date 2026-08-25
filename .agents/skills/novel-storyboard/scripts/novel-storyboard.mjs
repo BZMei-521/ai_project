@@ -82,6 +82,13 @@ export const DEFAULT_STYLE = 'realistic';
 
 const CJK = /[㐀-鿿぀-ヿ가-힯]/;
 const r1 = (n) => Math.round(n * 10) / 10;
+const stable = (value) => {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stable(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
 
 /* ------------------------------------------------------------------ */
 /* H3 提示词的确定性骨架                                                 */
@@ -429,6 +436,58 @@ export function computeStats(board, script) {
 /* 质量门                                                               */
 /* ------------------------------------------------------------------ */
 
+/** correspondenceVersion: 1 的逐切多模态事实绑定检查。 */
+export function correspondenceProblems(board, ctx = {}) {
+  if (board?.correspondenceVersion == null) return [];
+  if (board.correspondenceVersion !== 1) return [`correspondenceVersion 目前只支持 1，实际是 ${board.correspondenceVersion}`];
+  const out = [];
+  const identities = new Map((ctx.cast?.characters ?? []).map((c) => [c.identityModule?.characterRef, c.identityModule]));
+  const actionById = new Map(Object.values(ctx.actions?.actions ?? {}).map((action) => [action.actionId, action]));
+  for (const ep of board.episodes ?? []) for (const seg of ep.segments ?? []) {
+    for (let index = 0; index < (seg.cuts ?? []).length; index += 1) {
+      const cut = seg.cuts[index];
+      const where = `${seg.id}#${index + 1}`;
+      const c = cut?.correspondence;
+      if (!c || typeof c !== 'object' || Array.isArray(c)) { out.push(`${where} 缺 correspondence`); continue; }
+      if (c.sourceBeats?.sceneIndex !== seg.sceneIndex || stable(c.sourceBeats?.beats) !== stable(cut.beats)) out.push(`${where} sourceBeats 与分镜认领不一致`);
+      const refs = new Set(cut.characters ?? []);
+      const bindings = Array.isArray(c.characters) ? c.characters : [];
+      const bound = new Set(bindings.map((x) => x.characterRef));
+      if (stable([...refs].sort()) !== stable([...bound].sort())) out.push(`${where} 角色绑定集合与 cut.characters 不一致`);
+      if (c.emptyCharacterShot !== (refs.size === 0)) out.push(`${where} emptyCharacterShot 与角色数量矛盾`);
+      for (const binding of bindings) {
+        const identity = identities.get(binding.characterRef);
+        if (!identity || identity.status !== 'approved') out.push(`${where} 的 ${binding.characterRef} 没有 approved 身份模块`);
+        if (identity && binding.identityVersion !== identity.identityVersion) out.push(`${where} 的 ${binding.characterRef} 身份版本错绑`);
+        const start = cut.startBoundary?.characters?.[binding.characterRef];
+        const end = cut.endBoundary?.characters?.[binding.characterRef];
+        if (binding.lookRef !== start?.lookRef) out.push(`${where} 的 ${binding.characterRef} lookRef 与开始边界不一致`);
+        if (binding.startPosition !== start?.position || binding.endPosition !== end?.position) out.push(`${where} 的 ${binding.characterRef} 首尾位置不一致`);
+        const cutActionRefs = new Set(cut.actionRefs ?? []);
+        const expectedActions = [...cutActionRefs].filter((ref) => (actionById.get(ref)?.participants ?? []).includes(binding.characterRef)).sort();
+        const boundActions = [...new Set(binding.actionRefs ?? [])].sort();
+        if (stable(expectedActions) !== stable(boundActions)) out.push(`${where} 的 ${binding.characterRef} actionRefs 与参与动作不一致`);
+        for (const ref of boundActions) {
+          const previs = actionById.get(ref)?.previs;
+          if (previs?.required === true) {
+            const approvedEvidence = new Set([...(previs.evidence?.stillRefs ?? []), ...(previs.evidence?.clipRefs ?? [])]);
+            const supplied = binding.poseEvidenceRefs ?? [];
+            if (!Array.isArray(supplied) || supplied.length === 0) out.push(`${where} 的 ${binding.characterRef} 缺必需预演证据`);
+            for (const evidenceRef of supplied) if (!approvedEvidence.has(evidenceRef)) out.push(`${where} 的 ${binding.characterRef} 引用未批准预演证据：${evidenceRef}`);
+          }
+        }
+      }
+      const correspondenceProps = [...new Set(c.propRefs ?? [])].sort();
+      const cutProps = [...new Set(cut.props ?? [])].sort();
+      if (stable(correspondenceProps) !== stable(cutProps)) out.push(`${where} propRefs 与 cut.props 不一致`);
+      if (!String(c.sceneRef ?? '').trim()) out.push(`${where} 缺 sceneRef`);
+      else if (c.sceneRef !== cut.startBoundary?.spatialAnchor) out.push(`${where} sceneRef 与开始边界空间锚点不一致`);
+      if (!Array.isArray(c.mustShow)) out.push(`${where} mustShow 必须是数组`);
+    }
+  }
+  return out;
+}
+
 export function gateReport(board, ctx = {}) {
   const gates = [];
   const add = (id, label, ok, detail = '') => gates.push({ id, label, ok, detail });
@@ -452,13 +511,6 @@ export function gateReport(board, ctx = {}) {
   const objectEntries = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? Object.entries(value)
     : [];
-  const stable = (value) => {
-    if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
-    if (value && typeof value === 'object') {
-      return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stable(value[k])}`).join(',')}}`;
-    }
-    return JSON.stringify(value);
-  };
   const requiredBoundaryString = (record, field, where) => {
     if (!String(record?.[field] ?? '').trim()) bad.continuity.push(`${where} 缺 ${field}`);
   };
@@ -764,6 +816,11 @@ export function gateReport(board, ctx = {}) {
   add('director-plan', '关键场次有已选导演计划：观众立场、信息时机、空间压力、最强画面、反应落点与声音策略', bad.directorPlan.length === 0, continuityV1 ? bad.directorPlan.join('；') : SKIP_CONTINUITY);
   add('continuity', '镜头首尾边界、资产状态引用与同场跨镜连续性一致', bad.continuity.length === 0, continuityV1 ? bad.continuity.join('；') : SKIP_CONTINUITY);
 
+  if (board?.correspondenceVersion != null) {
+    const detail = correspondenceProblems(board, ctx);
+    add('multimodal-correspondence', '逐切角色身份、动作姿势、场景道具与首尾边界严格对应', detail.length === 0, detail.join('；'));
+  }
+
   if (ctx.actions) gates.push(...actionGateReport(board, ctx.actions));
 
   return gates;
@@ -786,6 +843,7 @@ export function validateStoryboard(board, ctx = {}) {
   }
   const seen = new Set();
   if (board.continuityVersion != null && board.continuityVersion !== 1) p('continuityVersion 目前只支持 1');
+  if (board.correspondenceVersion != null && board.correspondenceVersion !== 1) p('correspondenceVersion 目前只支持 1');
   if (board.continuityVersion === 1 && !Array.isArray(board.assetDecisions)) p('continuityVersion: 1 要求根层 assetDecisions 数组');
   for (const ep of eps) {
     const label = `第 ${ep?.ep ?? '?'} 集`;
@@ -922,6 +980,10 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
           ...(cut.cameraPlan ? { cameraPlan: cut.cameraPlan } : {}),
           ...(cut.impactPresentation ? { impactPresentation: cut.impactPresentation } : {}),
         })).filter((item) => item.cameraPlan || item.impactPresentation),
+        correspondence: (seg.cuts ?? []).map((cut, i) => ({
+          cut: i + 1,
+          ...(cut.correspondence ? { correspondence: cut.correspondence } : {}),
+        })).filter((item) => item.correspondence),
       });
     }
   }
