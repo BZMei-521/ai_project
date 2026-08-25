@@ -658,6 +658,84 @@ const badEmptyShot = withCorrespondence();
 badEmptyShot.episodes[0].segments[0].cuts[0].correspondence.emptyCharacterShot = true;
 ok(!gate(badEmptyShot, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '有角色镜头不能标为空镜');
 
+function withEmptyCorrespondenceCut() {
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.characters = [];
+  cut.actionRefs = [];
+  cut.props = [];
+  cut.correspondence.characters = [];
+  cut.correspondence.emptyCharacterShot = true;
+  cut.correspondence.propRefs = [];
+  cut.correspondence.mustShow = [];
+  return doc;
+}
+
+{
+  const doc = withEmptyCorrespondenceCut();
+  ok(gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '空镜和无动作无道具的空数组完整时通过');
+  delete doc.episodes[0].segments[0].cuts[0].correspondence.characters;
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '空镜缺 characters 数组失败');
+}
+{
+  const doc = withEmptyCorrespondenceCut();
+  delete doc.episodes[0].segments[0].cuts[0].correspondence.propRefs;
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '无道具切缺 propRefs 数组失败');
+}
+{
+  const doc = withEmptyCorrespondenceCut();
+  delete doc.episodes[0].segments[0].cuts[0].correspondence.mustShow;
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '无动作切缺 mustShow 数组失败');
+}
+{
+  const doc = withCorrespondence();
+  const binding = doc.episodes[0].segments[0].cuts[0].correspondence.characters[0];
+  delete binding.actionRefs;
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '角色缺 actionRefs 数组失败');
+}
+{
+  const doc = withCorrespondence();
+  const binding = doc.episodes[0].segments[0].cuts[0].correspondence.characters[0];
+  delete binding.poseEvidenceRefs;
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '角色缺 poseEvidenceRefs 数组失败');
+}
+{
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.actionStateProjection = { mustShow: ['手指压住铜扣'] };
+  cut.correspondence.mustShow = ['错误信息'];
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, 'mustShow 改写动作投影失败');
+}
+{
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0].correspondence.mustShow = ['不应出现'];
+  ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '空 mustShow 被改写失败');
+}
+
+const TWO_PREVIS_ACTIONS = {
+  actions: {
+    first: {
+      actionId: 'E01-S01-B01-A01', participants: ['C01'],
+      previs: { required: true, evidence: { stillRefs: ['previs-A'], clipRefs: [] } },
+    },
+    second: {
+      actionId: 'E01-S01-B01-A02', participants: ['C01'],
+      previs: { required: true, evidence: { stillRefs: [], clipRefs: ['previs-B'] } },
+    },
+  },
+};
+function withTwoPrevisActions(poseEvidenceRefs) {
+  const doc = withCorrespondence();
+  const cut = doc.episodes[0].segments[0].cuts[0];
+  cut.actionRefs = ['E01-S01-B01-A01', 'E01-S01-B01-A02'];
+  const binding = cut.correspondence.characters.find((x) => x.characterRef === 'C01');
+  binding.actionRefs = clone(cut.actionRefs);
+  binding.poseEvidenceRefs = poseEvidenceRefs;
+  return doc;
+}
+ok(gate(withTwoPrevisActions(['previs-A', 'previs-B']), 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST, actions: TWO_PREVIS_ACTIONS }).ok, '两项必需预演各有证据时通过');
+ok(!gate(withTwoPrevisActions(['previs-A']), 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST, actions: TWO_PREVIS_ACTIONS }).ok, '遗漏第二项必需预演证据失败');
+
 /* ---------------- exportPack（H3 投产包） ---------------- */
 
 {
@@ -670,10 +748,17 @@ ok(!gate(badEmptyShot, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAS
   ok(p01.content.includes('Picture 4 = f4.png（钉 10.00 秒）'), '每张图的切点秒数写明');
   ok(p01.content.includes('---\n\nHow the reference pictures align'), '分隔线以下是 h3Prompt 原样（官方英文口径）');
   const m = pack.manifest.find((x) => x.segment === 'E01-01');
+  ok(!Object.hasOwn(m, 'correspondence'), '旧分镜导出不新增 correspondence 空数组');
   eq(m.pictures.join(','), 'E01-01/f1.png,E01-01/f2.png,E01-01/f3.png,E01-01/f4.png', 'Picture 序 = 文件夹里的 f1..fn');
   eq(m.cutStarts.join(','), '0,3,6,10', 'manifest 带切点时刻表');
   eq(m.missing.length, 4, '缺图逐张标注');
   ok(pack.missingTotal > 0, '缺图总数上报');
+}
+{
+  const pack = exportPack(withCorrespondence(), SCRIPT, { imageExists: () => true });
+  const m = pack.manifest.find((x) => x.segment === 'E01-01');
+  ok(Array.isArray(m.correspondence) && m.correspondence.length === 4, 'v1 导出逐切 correspondence 快照');
+  ok(m.correspondence[0].correspondence === pack.manifest[0].correspondence[0].correspondence, 'v1 manifest 保留批准的对应对象');
 }
 {
   const pack = exportPack(withCameraImpact(), SCRIPT, { imageExists: () => false });

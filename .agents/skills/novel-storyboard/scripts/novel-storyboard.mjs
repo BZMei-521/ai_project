@@ -451,6 +451,7 @@ export function correspondenceProblems(board, ctx = {}) {
       if (!c || typeof c !== 'object' || Array.isArray(c)) { out.push(`${where} 缺 correspondence`); continue; }
       if (c.sourceBeats?.sceneIndex !== seg.sceneIndex || stable(c.sourceBeats?.beats) !== stable(cut.beats)) out.push(`${where} sourceBeats 与分镜认领不一致`);
       const refs = new Set(cut.characters ?? []);
+      if (!Array.isArray(c.characters)) out.push(`${where} characters 必须是数组`);
       const bindings = Array.isArray(c.characters) ? c.characters : [];
       const bound = new Set(bindings.map((x) => x.characterRef));
       if (stable([...refs].sort()) !== stable([...bound].sort())) out.push(`${where} 角色绑定集合与 cut.characters 不一致`);
@@ -465,24 +466,34 @@ export function correspondenceProblems(board, ctx = {}) {
         if (binding.startPosition !== start?.position || binding.endPosition !== end?.position) out.push(`${where} 的 ${binding.characterRef} 首尾位置不一致`);
         const cutActionRefs = new Set(cut.actionRefs ?? []);
         const expectedActions = [...cutActionRefs].filter((ref) => (actionById.get(ref)?.participants ?? []).includes(binding.characterRef)).sort();
-        const boundActions = [...new Set(binding.actionRefs ?? [])].sort();
+        if (!Array.isArray(binding.actionRefs)) out.push(`${where} 的 ${binding.characterRef} actionRefs 必须是数组`);
+        const boundActions = [...new Set(Array.isArray(binding.actionRefs) ? binding.actionRefs : [])].sort();
         if (stable(expectedActions) !== stable(boundActions)) out.push(`${where} 的 ${binding.characterRef} actionRefs 与参与动作不一致`);
-        for (const ref of boundActions) {
-          const previs = actionById.get(ref)?.previs;
-          if (previs?.required === true) {
-            const approvedEvidence = new Set([...(previs.evidence?.stillRefs ?? []), ...(previs.evidence?.clipRefs ?? [])]);
-            const supplied = binding.poseEvidenceRefs ?? [];
-            if (!Array.isArray(supplied) || supplied.length === 0) out.push(`${where} 的 ${binding.characterRef} 缺必需预演证据`);
-            for (const evidenceRef of supplied) if (!approvedEvidence.has(evidenceRef)) out.push(`${where} 的 ${binding.characterRef} 引用未批准预演证据：${evidenceRef}`);
+        if (!Array.isArray(binding.poseEvidenceRefs)) out.push(`${where} 的 ${binding.characterRef} poseEvidenceRefs 必须是数组`);
+        const supplied = Array.isArray(binding.poseEvidenceRefs) ? binding.poseEvidenceRefs : [];
+        const requiredPrevis = boundActions
+          .map((ref) => ({ ref, previs: actionById.get(ref)?.previs }))
+          .filter(({ previs }) => previs?.required === true);
+        if (requiredPrevis.length) {
+          const approvedEvidence = new Set(requiredPrevis.flatMap(({ previs }) => [
+            ...(previs.evidence?.stillRefs ?? []), ...(previs.evidence?.clipRefs ?? []),
+          ]));
+          if (supplied.length === 0) out.push(`${where} 的 ${binding.characterRef} 缺必需预演证据`);
+          for (const evidenceRef of supplied) if (!approvedEvidence.has(evidenceRef)) out.push(`${where} 的 ${binding.characterRef} 引用未批准预演证据：${evidenceRef}`);
+          for (const { ref, previs } of requiredPrevis) {
+            const actionEvidence = new Set([...(previs.evidence?.stillRefs ?? []), ...(previs.evidence?.clipRefs ?? [])]);
+            if (!supplied.some((evidenceRef) => actionEvidence.has(evidenceRef))) out.push(`${where} 的 ${binding.characterRef} 缺 ${ref} 的必需预演证据`);
           }
         }
       }
-      const correspondenceProps = [...new Set(c.propRefs ?? [])].sort();
+      if (!Array.isArray(c.propRefs)) out.push(`${where} propRefs 必须是数组`);
+      const correspondenceProps = [...new Set(Array.isArray(c.propRefs) ? c.propRefs : [])].sort();
       const cutProps = [...new Set(cut.props ?? [])].sort();
       if (stable(correspondenceProps) !== stable(cutProps)) out.push(`${where} propRefs 与 cut.props 不一致`);
       if (!String(c.sceneRef ?? '').trim()) out.push(`${where} 缺 sceneRef`);
       else if (c.sceneRef !== cut.startBoundary?.spatialAnchor) out.push(`${where} sceneRef 与开始边界空间锚点不一致`);
       if (!Array.isArray(c.mustShow)) out.push(`${where} mustShow 必须是数组`);
+      else if (stable(c.mustShow) !== stable(cut.actionStateProjection?.mustShow ?? [])) out.push(`${where} mustShow 与动作投影不一致`);
     }
   }
   return out;
@@ -980,10 +991,12 @@ export function exportPack(board, script, { imageExists = () => false, dir = '.'
           ...(cut.cameraPlan ? { cameraPlan: cut.cameraPlan } : {}),
           ...(cut.impactPresentation ? { impactPresentation: cut.impactPresentation } : {}),
         })).filter((item) => item.cameraPlan || item.impactPresentation),
-        correspondence: (seg.cuts ?? []).map((cut, i) => ({
-          cut: i + 1,
-          ...(cut.correspondence ? { correspondence: cut.correspondence } : {}),
-        })).filter((item) => item.correspondence),
+        ...(board?.correspondenceVersion === 1 ? {
+          correspondence: (seg.cuts ?? []).map((cut, i) => ({
+            cut: i + 1,
+            ...(cut.correspondence ? { correspondence: cut.correspondence } : {}),
+          })).filter((item) => item.correspondence),
+        } : {}),
       });
     }
   }

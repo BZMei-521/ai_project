@@ -34,10 +34,10 @@
 ```
 
 - `sourceBeats.sceneIndex` 与 `sourceBeats.beats` 分别等于所在 `segment.sceneIndex` 与 `cut.beats`。
-- `characters` 的 `characterRef` 集合必须与 `cut.characters` 完全相同；每项只用该角色 approved identity module 的当前版本和开始边界 `lookRef`。
+- `characters`、每项的 `actionRefs` / `poseEvidenceRefs`、`propRefs` 和 `mustShow` 都是 **必填数组**；即使预期为空也必须写 `[]`，不得以缺字段表示空值。`characters` 的 `characterRef` 集合必须与 `cut.characters` 完全相同；每项只用该角色 approved identity module 的当前版本和开始边界 `lookRef`。
 - 画内角色为零时，`characters: []` 且 `emptyCharacterShot: true`；只要画内有角色，`emptyCharacterShot` 必须为 `false`，不得借空镜逃过身份绑定。
-- `actionRefs` 只列该人物参与的本切动作；没有则 `[]`。没有预演要求时 `poseEvidenceRefs` 可为 `[]`。
-- `sceneRef` 等于 `startBoundary.spatialAnchor`；`propRefs` 与 `cut.props` 集合相等；`mustShow` 必须为数组，并从 `actionStateProjection.mustShow` 复写。
+- `actionRefs` 只列该人物参与的本切动作；没有则 `[]`。没有预演要求时 `poseEvidenceRefs` 为 `[]`。多个 required 预演动作时，证据允许来自全部动作批准证据的并集，但每个 required 动作都至少要有一条自己的批准证据被引用。
+- `sceneRef` 等于 `startBoundary.spatialAnchor`；`propRefs` 与 `cut.props` 集合相等；`mustShow` 必须与 `actionStateProjection.mustShow` 按顺序完全一致（投影缺该字段时两者均为 `[]`）。
 
 ## 参考槽位与提示词边界
 
