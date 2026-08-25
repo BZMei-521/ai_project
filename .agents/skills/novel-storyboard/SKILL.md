@@ -96,6 +96,17 @@ node {baseDir}/scripts/novel-storyboard.mjs validate <storyboard.json> \
 
 **有违规逐条修，改完重跑，直到通过。**
 
+### Step 3.5 — 生成结果 QA（可选，只读）
+
+生成后如需把画面偏差结构化记录为 `storyboard-qa.json`，先读 `{baseDir}/references/generation-qa.md`，再运行：
+
+```bash
+node {baseDir}/scripts/novel-storyboard.mjs qa-validate <storyboard-qa.json> \
+  --storyboard <storyboard.json>
+```
+
+QA 按已批准分镜记录偏差、权威修复层、最小安全范围和必须保留的内容。校验**从不应用修正**：不改 storyboard、媒体、提示词或资产；任何实际修复或重生成须先经用户批准，并在一轮建议后停下等待选择。
+
 ### Step 4 — 出分镜图（可选）
 
 一切一张 16:9 关键帧，走 codex 内置 `$imagegen`，读 `{baseDir}/references/frame.md` 照契约做。要点：

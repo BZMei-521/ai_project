@@ -32,6 +32,7 @@ import {
   seedFromScript,
   segSeconds,
   slug,
+  validateGenerationQa,
   validateStoryboard,
 } from './novel-storyboard.mjs';
 
@@ -645,6 +646,28 @@ const IDENTITY_CAST = {
 eq(gateReport(FIXTURE, CTX).length, 19, '旧分镜仍保持十九道门');
 const correspondenceDoc = withCorrespondence();
 ok(gate(correspondenceDoc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '完整逐切对应通过');
+
+const QA_REPORT = {
+  version: 1,
+  source: FIXTURE.source,
+  hasDiscrepancies: true,
+  summary: 'C01 身份正确，但右手道具缺失',
+  findings: [{
+    id: 'Q-E01-01-C01-01', cutRef: 'E01-01#1', type: 'scene-or-prop-mismatch',
+    severity: 'blocking', sourceRef: 'P01 / endBoundary.characters.C01.rightHand',
+    expected: 'C01 右手持续握住 P01', actual: '右手为空', repairLayer: 'generation',
+    repairScope: 'masked-region', correctionPrompt: '仅重绘 C01 右手与 P01 的接触区域。',
+    preserve: ['C01 面部', '服装', '背景', '其他角色', '构图'],
+  }],
+};
+
+eq(validateGenerationQa(QA_REPORT, correspondenceDoc).length, 0, '身份绑定分镜上的完整 QA 报告通过');
+const unknownCutQa = clone(QA_REPORT);
+unknownCutQa.findings[0].cutRef = 'E99-99#9';
+ok(validateGenerationQa(unknownCutQa, correspondenceDoc).some((x) => x.includes('不存在')), '未知 cutRef 失败');
+const falseButFindings = clone(QA_REPORT);
+falseButFindings.hasDiscrepancies = false;
+ok(validateGenerationQa(falseButFindings, correspondenceDoc).some((x) => x.includes('矛盾')), '无偏差标记与 findings 矛盾失败');
 
 const missingBinding = withCorrespondence();
 missingBinding.episodes[0].segments[0].cuts[0].correspondence.characters = [];

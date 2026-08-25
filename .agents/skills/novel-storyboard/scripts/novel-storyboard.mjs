@@ -841,6 +841,48 @@ export function gateReport(board, ctx = {}) {
 /* validate                                                            */
 /* ------------------------------------------------------------------ */
 
+const QA_TYPES = new Set([
+  'wrong-character', 'missing-character', 'extra-character', 'duplicate-character',
+  'identity-drift', 'pose-mismatch', 'layout-mismatch', 'scene-or-prop-mismatch',
+  'script-contradiction', 'continuity-break',
+]);
+const QA_SEVERITIES = new Set(['blocking', 'major', 'minor']);
+const QA_LAYERS = new Set(['characters', 'action-previs', 'art', 'storyboard', 'generation']);
+const QA_SCOPES = new Set(['masked-region', 'local-cut', 'segment', 'upstream']);
+
+export function validateGenerationQa(report, board) {
+  const out = [];
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return ['storyboard-qa.json 不是对象'];
+  if (report.version !== 1) out.push('QA version 目前只支持 1');
+  if (report.source !== board?.source) out.push('QA source 与 storyboard.source 不一致');
+  if (typeof report.hasDiscrepancies !== 'boolean') out.push('hasDiscrepancies 必须是布尔值');
+  if (!String(report.summary ?? '').trim()) out.push('summary 不能为空');
+  if (!Array.isArray(report.findings)) return [...out, 'findings 必须是数组'];
+  if (report.hasDiscrepancies !== (report.findings.length > 0)) out.push('hasDiscrepancies 与 findings 是否为空矛盾');
+  const cuts = new Set();
+  for (const ep of board?.episodes ?? []) for (const seg of ep.segments ?? []) {
+    (seg.cuts ?? []).forEach((_, index) => cuts.add(`${seg.id}#${index + 1}`));
+  }
+  const ids = new Set();
+  for (const finding of report.findings) {
+    const id = String(finding?.id ?? '');
+    if (!id || ids.has(id)) out.push(`finding id 缺失或重复：${id || '(空)'}`);
+    ids.add(id);
+    if (!cuts.has(finding?.cutRef)) out.push(`${id} 的 cutRef 不存在：${finding?.cutRef}`);
+    if (!QA_TYPES.has(finding?.type)) out.push(`${id} 的 type 无效`);
+    if (!QA_SEVERITIES.has(finding?.severity)) out.push(`${id} 的 severity 无效`);
+    if (!QA_LAYERS.has(finding?.repairLayer)) out.push(`${id} 的 repairLayer 无效`);
+    if (!QA_SCOPES.has(finding?.repairScope)) out.push(`${id} 的 repairScope 无效`);
+    if (finding?.repairLayer !== 'generation' && finding?.repairScope !== 'upstream') out.push(`${id} 的上游问题 repairScope 必须为 upstream`);
+    if (finding?.repairScope === 'masked-region' && finding?.repairLayer !== 'generation') out.push(`${id} 只有 generation 层允许 masked-region`);
+    for (const field of ['sourceRef', 'expected', 'actual', 'correctionPrompt']) {
+      if (!String(finding?.[field] ?? '').trim()) out.push(`${id} 缺 ${field}`);
+    }
+    if (!Array.isArray(finding?.preserve)) out.push(`${id} 的 preserve 必须是数组`);
+  }
+  return out;
+}
+
 export function validateStoryboard(board, ctx = {}) {
   const problems = [];
   const p = (msg) => problems.push(msg);
@@ -1829,6 +1871,8 @@ const USAGE = `novel-storyboard.mjs — novel-storyboard skill 的确定性工�
   validate <sb.json> --script <script.json>   校验；有违规逐条打印并 exit 1
            [--outline] [--cast] [--art]       outline/cast 查提示词人名；art 只管显示名字
            [--actions <summary.json>]         校验动作认领、首尾状态和事实投影
+  qa-validate <storyboard-qa.json> --storyboard <storyboard.json>
+                                               校验生成 QA 报告结构与 cutRef 引用；不应用修正
   checkup <sb.json> --script <script.json>    只打印质量门 ✓/✗，有未过项 exit 1
   render <sb.json> --script <script.json>     渲染报告到 stdout（默认 --md）
          [--html|--md] [--outline] [--art]    分镜图从 ./<段号>/f<切序>.png 找
@@ -1860,6 +1904,19 @@ function main(argv) {
   if (!cmd || cmd === '-h' || cmd === '--help') {
     console.log(USAGE);
     process.exit(cmd ? 0 : 1);
+  }
+
+  if (cmd === 'qa-validate') {
+    const [path] = rest;
+    const boardPath = flag(rest, '--storyboard');
+    if (!path || !boardPath) throw new Error('用法：qa-validate <storyboard-qa.json> --storyboard <storyboard.json>');
+    const problems = validateGenerationQa(readJson(path), readJson(boardPath));
+    if (problems.length) {
+      console.error(`✗ ${problems.length} 处 QA 结构违规：\n\n${problems.map((x) => `  ${x}`).join('\n')}`);
+      process.exit(1);
+    }
+    console.log('✓ storyboard-qa.json 结构与分镜引用全部通过');
+    return;
   }
 
   if (cmd === 'seed') {
