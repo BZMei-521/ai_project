@@ -62,14 +62,31 @@ export function runSpatialPreflight(input) {
   }
 
   const joints = Array.isArray(input?.joints) ? input.joints : [];
-  if ((contract.layers ?? []).some((layer) => layer?.role === "subject") && joints.length === 0) {
+  const subjectEntityIds = new Set(
+    (contract.layers ?? [])
+      .filter((layer) => layer?.role === "subject")
+      .flatMap((layer) => (Array.isArray(layer.entityIds) ? layer.entityIds : []))
+  );
+  if (subjectEntityIds.size > 0 && joints.length === 0) {
     errors.push({ code: "spatial_skeleton_evidence_missing" });
   }
+  const skeletonEntityIds = new Set();
   for (const skeleton of joints) {
+    const entityId = skeleton && typeof skeleton === "object" && typeof skeleton.entityId === "string" ? skeleton.entityId : undefined;
+    if (entityId) skeletonEntityIds.add(entityId);
+    if (!skeleton || typeof skeleton !== "object" || !entityId || !Array.isArray(skeleton.names)) {
+      errors.push({ code: "spatial_skeleton_evidence_invalid", entityId });
+      continue;
+    }
     const names = Array.isArray(skeleton.names) ? skeleton.names : [];
     const missing = REQUIRED_JOINT_NAMES.filter((name) => !names.includes(name));
     if (missing.length) {
       errors.push({ code: "spatial_skeleton_incomplete", entityId: skeleton.entityId, missing });
+    }
+  }
+  for (const entityId of subjectEntityIds) {
+    if (!skeletonEntityIds.has(entityId) && joints.length > 0) {
+      errors.push({ code: "spatial_skeleton_evidence_invalid", entityId });
     }
   }
 

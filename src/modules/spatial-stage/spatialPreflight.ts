@@ -12,7 +12,7 @@ export type SpatialSkeletonEvidence = { entityId: string; names: string[] };
 export type SpatialPreflightError = {
   code: string;
   relation?: SpatialShotContract["relations"][number];
-  contact?: SpatialContactEvidence;
+  contact?: unknown;
   entityId?: string;
   missing?: string[];
 };
