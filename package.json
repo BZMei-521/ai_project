@@ -16,6 +16,7 @@
     "test:yingdi-e01-c19-c22-spatial": "node scripts/check-yingdi-e01-c19-c22-spatial-stage.mjs",
     "test:spatial-layer-contract": "node scripts/check-spatial-layer-contract.mjs",
     "test:spatial-preflight": "node scripts/check-spatial-preflight.mjs",
+    "test:layered-spatial-control-pack": "node scripts/check-layered-spatial-control-pack.mjs",
     "test:spatial-stage-moge": "node scripts/check-spatial-stage-moge.mjs",
     "test:graybean-workbench": "node scripts/check-graybean-workbench-acceptance.mjs",
     "test:director-desk": "node scripts/check-director-desk-state.mjs && node scripts/check-director-desk-commands.mjs && node scripts/check-director-desk-components.mjs && node scripts/check-workbench-shell.mjs && node scripts/check-director-desk-responsive.mjs && node scripts/check-director-desk-app-integration.mjs",

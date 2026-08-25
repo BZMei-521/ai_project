@@ -23,6 +23,7 @@ export type SpatialControlPack = {
 
 export type SpatialControlPackInput = Omit<SpatialControlPack, "schemaVersion" | "packDigest">;
 export type ControlPackValidation = { valid: true } | { valid: false; reason: string };
+export type AnySpatialControlPack = SpatialControlPack | import("./layeredSpatialControlPack").LayeredSpatialControlPack;
 
 export const STAGE_RENDER_KINDS: readonly StageRenderKind[] = [
   "color", "depth", "normal", "character_id", "prop_id", "pose"
