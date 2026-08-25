@@ -1,4 +1,5 @@
 import type { LayerArtifactKind, LayerRenderArtifact } from "./layeredSpatialControlPack";
+import { sha256Bytes } from "./layeredSpatialControlPackRuntime.mjs";
 
 export type LayeredPassSpec = { layerId: string; kind: LayerArtifactKind; entityIds: string[] };
 export type LayeredArtifactWriteRequest = LayeredPassSpec & { stageId: string; shotId: string; pngBytes: Uint8Array; width: number; height: number };
@@ -29,6 +30,39 @@ function validateRequest(request: LayeredStageRenderPassRequest): void {
 
 function validatePng(bytes: Uint8Array): void {
   if (bytes.length < PNG_SIGNATURE.length || PNG_SIGNATURE.some((value, index) => bytes[index] !== value)) throw new Error("layered_render_png_invalid");
+  let offset = PNG_SIGNATURE.length;
+  let sawIend = false;
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 12) throw new Error("layered_render_png_invalid");
+    const length = readUint32(bytes, offset);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const crcOffset = dataEnd;
+    if (dataEnd > bytes.length - 4) throw new Error("layered_render_png_invalid");
+    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+    if (offset === PNG_SIGNATURE.length && (type !== "IHDR" || length !== 13)) throw new Error("layered_render_png_invalid");
+    if (crc32(bytes, offset + 4, dataEnd) !== readUint32(bytes, crcOffset)) throw new Error("layered_render_png_invalid");
+    offset = crcOffset + 4;
+    if (type === "IEND") {
+      if (length !== 0 || offset !== bytes.length) throw new Error("layered_render_png_invalid");
+      sawIend = true;
+      break;
+    }
+  }
+  if (!sawIend) throw new Error("layered_render_png_invalid");
+}
+
+function readUint32(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset] * 0x1000000) + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3]) >>> 0;
+}
+
+function crc32(bytes: Uint8Array, start: number, end: number): number {
+  let crc = 0xffffffff;
+  for (let index = start; index < end; index += 1) {
+    crc ^= bytes[index];
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function validateReceipt(receipt: LayerRenderArtifact, request: LayeredArtifactWriteRequest): void {
@@ -36,6 +70,7 @@ function validateReceipt(receipt: LayerRenderArtifact, request: LayeredArtifactW
   if (receipt.kind !== request.kind) throw new Error("layered_render_receipt_kind_mismatch");
   if (receipt.width !== request.width || receipt.height !== request.height) throw new Error("layered_render_receipt_dimensions_mismatch");
   if (!receipt.filePath || !HEX64.test(receipt.sha256)) throw new Error("layered_render_receipt_invalid");
+  if (receipt.sha256 !== sha256Bytes(request.pngBytes)) throw new Error("layered_render_receipt_hash_mismatch");
 }
 
 export async function renderLayeredStagePasses(request: LayeredStageRenderPassRequest): Promise<LayerRenderArtifact[]> {
@@ -44,6 +79,7 @@ export async function renderLayeredStagePasses(request: LayeredStageRenderPassRe
   for (const spec of request.passes) {
     const pngBytes = Uint8Array.from(await request.render(spec));
     validatePng(pngBytes);
+    if (readUint32(pngBytes, 16) !== request.width || readUint32(pngBytes, 20) !== request.height) throw new Error("layered_render_png_invalid");
     const writeRequest: LayeredArtifactWriteRequest = { ...spec, stageId: request.stageId, shotId: request.shotId, pngBytes, width: request.width, height: request.height };
     const receipt = await request.writeArtifact(writeRequest);
     validateReceipt(receipt, writeRequest);
