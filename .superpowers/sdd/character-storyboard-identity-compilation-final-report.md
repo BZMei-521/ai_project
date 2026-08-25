@@ -67,11 +67,11 @@ Executed from the same worktree:
 $fieldMatches = @(rg -n "identityCompilationVersion|identityModule|characterRef|identityVersion|anchorRef|correspondenceVersion|correspondence|hasDiscrepancies|repairLayer|repairScope" 'C:\Users\Administrator\.codex\skills\novel-characters' '.agents\skills\novel-storyboard')
 $fieldExit = $LASTEXITCODE
 $taskForbidden = @(('T'+'BD'), ('TO'+'DO'), ('implement'+' later'), ('fill'+' in'), ('待'+'定'), ('以后'+'再做'))
-$placeholderMatches = @(Select-String -Path 'C:\Users\Administrator\.codex\skills\novel-characters\SKILL.md','C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md','.agents\skills\novel-storyboard\SKILL.md','.agents\skills\novel-storyboard\references\multimodal-correspondence.md','.agents\skills\novel-storyboard\references\generation-qa.md' -Pattern $taskForbidden)
-$placeholderExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+$placeholderMatches = @(Select-String -ErrorAction Stop -Path 'C:\Users\Administrator\.codex\skills\novel-characters\SKILL.md','C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md','.agents\skills\novel-storyboard\SKILL.md','.agents\skills\novel-storyboard\references\multimodal-correspondence.md','.agents\skills\novel-storyboard\references\generation-qa.md' -Pattern $taskForbidden)
 Write-Output "FIELD_RG_EXIT=$fieldExit"
 Write-Output "FIELD_RG_MATCH_COUNT=$($fieldMatches.Count)"
-Write-Output "PLACEHOLDER_SCAN_EXIT=$placeholderExit"
+Write-Output 'PLACEHOLDER_SCAN_OK=True'
 Write-Output "PLACEHOLDER_MATCH_COUNT=$($placeholderMatches.Count)"
 ```
 
@@ -80,11 +80,11 @@ Exact summary output:
 ```text
 FIELD_RG_EXIT=0
 FIELD_RG_MATCH_COUNT=167
-PLACEHOLDER_SCAN_EXIT=0
+PLACEHOLDER_SCAN_OK=True
 PLACEHOLDER_MATCH_COUNT=0
 ```
 
-The full scan has 167 matching lines across the producer skill, storyboard skill, contracts, validators, tests, and export projection. The intended ownership is consistent: identity-version fields are produced by `novel-characters` and consumed by correspondence; correspondence fields are storyboard-owned; QA fields are QA-owned. The forbidden scan intentionally targets only the five instructed contract files, so command text in this report is not part of its input set.
+The full scan has 167 matching lines across the producer skill, storyboard skill, contracts, validators, tests, and export projection. The intended ownership is consistent: identity-version fields are produced by `novel-characters` and consumed by correspondence; correspondence fields are storyboard-owned; QA fields are QA-owned. `PLACEHOLDER_SCAN_OK=True` means `Select-String -ErrorAction Stop` completed without a terminating error; it is a cmdlet success marker, not a native exit code. The forbidden scan intentionally targets only the five instructed contract files, so command text in this report is not part of its input set.
 
 ## Current file hashes
 
