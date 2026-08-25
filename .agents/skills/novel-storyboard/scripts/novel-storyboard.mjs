@@ -849,6 +849,9 @@ const QA_TYPES = new Set([
 const QA_SEVERITIES = new Set(['blocking', 'major', 'minor']);
 const QA_LAYERS = new Set(['characters', 'action-previs', 'art', 'storyboard', 'generation']);
 const QA_SCOPES = new Set(['masked-region', 'local-cut', 'segment', 'upstream']);
+const isPlainObject = (value) => value !== null && typeof value === 'object'
+  && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+const isNonEmptyString = (value) => typeof value === 'string' && Boolean(value.trim());
 
 export function validateGenerationQa(report, board) {
   const out = [];
@@ -865,20 +868,27 @@ export function validateGenerationQa(report, board) {
   }
   const ids = new Set();
   for (const finding of report.findings) {
-    const id = String(finding?.id ?? '');
-    if (!id || ids.has(id)) out.push(`finding id 缺失或重复：${id || '(空)'}`);
+    if (!isPlainObject(finding)) {
+      out.push('finding 必须是普通对象');
+      continue;
+    }
+    const id = isNonEmptyString(finding.id) ? finding.id : '';
+    if (!id) out.push('finding id 必须是非空字符串');
+    else if (ids.has(id)) out.push(`finding id 缺失或重复：${id}`);
     ids.add(id);
     if (!cuts.has(finding?.cutRef)) out.push(`${id} 的 cutRef 不存在：${finding?.cutRef}`);
     if (!QA_TYPES.has(finding?.type)) out.push(`${id} 的 type 无效`);
     if (!QA_SEVERITIES.has(finding?.severity)) out.push(`${id} 的 severity 无效`);
     if (!QA_LAYERS.has(finding?.repairLayer)) out.push(`${id} 的 repairLayer 无效`);
     if (!QA_SCOPES.has(finding?.repairScope)) out.push(`${id} 的 repairScope 无效`);
+    if (finding?.repairLayer === 'generation' && finding?.repairScope === 'upstream') out.push(`${id} 的 generation 层不能使用 upstream`);
     if (finding?.repairLayer !== 'generation' && finding?.repairScope !== 'upstream') out.push(`${id} 的上游问题 repairScope 必须为 upstream`);
     if (finding?.repairScope === 'masked-region' && finding?.repairLayer !== 'generation') out.push(`${id} 只有 generation 层允许 masked-region`);
     for (const field of ['sourceRef', 'expected', 'actual', 'correctionPrompt']) {
-      if (!String(finding?.[field] ?? '').trim()) out.push(`${id} 缺 ${field}`);
+      if (!isNonEmptyString(finding[field])) out.push(`${id} 的 ${field} 必须是非空字符串`);
     }
     if (!Array.isArray(finding?.preserve)) out.push(`${id} 的 preserve 必须是数组`);
+    else if (finding.preserve.some((value) => !isNonEmptyString(value))) out.push(`${id} 的 preserve 项必须是非空字符串`);
   }
   return out;
 }

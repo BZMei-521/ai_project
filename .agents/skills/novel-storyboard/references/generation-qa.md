@@ -48,7 +48,7 @@
 - `storyboard`：剧本认领、镜头边界、布局或连续性结构有误。
 - `generation`：上游全部正确，仅本次生成偏离批准结构。
 
-若 `repairLayer` 不是 `generation`，`repairScope` 必须是 `upstream`。上游修正完成后重新验证，再重新生成受影响的下游内容。
+`generation` 只能使用 `masked-region`、`local-cut` 或 `segment`，绝不能使用 `upstream`。`characters`、`action-previs`、`art` 与 `storyboard` 必须使用 `upstream`。上游修正完成后重新验证，再重新生成受影响的下游内容。
 
 ## 最小安全修复范围
 
