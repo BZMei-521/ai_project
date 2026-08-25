@@ -37,6 +37,19 @@ const invalidDepth = runSpatialPreflight({
 assert.equal(invalidDepth.ok, false);
 assert.ok(invalidDepth.errors.some((error) => error.code === "spatial_relation_behind_failed"));
 
+for (const bounds of [
+  { min: [-1, 0, Number.NaN], max: [1, 2, 5] },
+  { min: [-1, 0], max: [1, 2, 5] },
+  { min: [2, 0, 3], max: [1, 2, 5] }
+]) {
+  const invalidBounds = runSpatialPreflight({
+    ...input,
+    entities: { ...input.entities, actor: bounds }
+  });
+  assert.equal(invalidBounds.ok, false);
+  assert.ok(invalidBounds.errors.some((error) => error.code === "spatial_bounds_invalid:actor"));
+}
+
 const boundaryInside = runSpatialPreflight({
   ...input,
   contract: {
@@ -60,12 +73,26 @@ const outsideInside = runSpatialPreflight({
 assert.equal(outsideInside.ok, false);
 assert.ok(outsideInside.errors.some((error) => error.code === "spatial_relation_inside_failed"));
 
-const contactOverLimit = runSpatialPreflight({
-  ...input,
-  contacts: [{ ...input.contacts[0], distance: 0.031 }]
-});
-assert.equal(contactOverLimit.ok, false);
-assert.ok(contactOverLimit.errors.some((error) => error.code === "spatial_contact_failed"));
+for (const contact of [
+  null,
+  "not-an-object",
+  { ...input.contacts[0], distance: -1 },
+  { ...input.contacts[0], maxDistance: -1 },
+  { ...input.contacts[0], distance: Number.NaN },
+  { ...input.contacts[0], maxDistance: Number.POSITIVE_INFINITY },
+  { ...input.contacts[0], distance: 0.031 }
+]) {
+  let invalidContact;
+  assert.doesNotThrow(() => {
+    invalidContact = runSpatialPreflight({ ...input, contacts: [contact] });
+  });
+  assert.equal(invalidContact.ok, false);
+  assert.ok(invalidContact.errors.some((error) => error.code === "spatial_contact_failed"));
+}
+
+const missingSkeletonEvidence = runSpatialPreflight({ ...input, joints: [] });
+assert.equal(missingSkeletonEvidence.ok, false);
+assert.ok(missingSkeletonEvidence.errors.some((error) => error.code === "spatial_skeleton_evidence_missing"));
 
 const skeletonMissingJoint = runSpatialPreflight({
   ...input,
@@ -73,5 +100,24 @@ const skeletonMissingJoint = runSpatialPreflight({
 });
 assert.equal(skeletonMissingJoint.ok, false);
 assert.ok(skeletonMissingJoint.errors.some((error) => error.code === "spatial_skeleton_incomplete"));
+
+const independentFixture = runSpatialPreflight({
+  contract: {
+    shotId: "container-fixture",
+    cameraId: "container-camera",
+    layers: [
+      { id: "container", order: 0, role: "environment", entityIds: ["container"] },
+      { id: "occupant", order: 10, role: "subject", entityIds: ["occupant"] }
+    ],
+    relations: [{ kind: "inside", subjectEntityId: "occupant", targetEntityId: "container" }]
+  },
+  entities: {
+    container: { min: [-5, -2, 1], max: [5, 5, 10] },
+    occupant: { min: [-1, 0, 3], max: [1, 3, 7] }
+  },
+  contacts: [],
+  joints: [input.joints[0]]
+});
+assert.equal(independentFixture.ok, true);
 
 console.log("PASS generic spatial preflight");
