@@ -94,6 +94,7 @@ export async function verifyCharacterEvidenceReceipt(evidence: { trustedReceipt?
   } catch {
     return { valid: false, reason: "receipt_backend_unavailable" };
   }
+}
 export type SpatialControlArtifactKind = "color" | "depth" | "normal" | "character_id" | "prop_id" | "pose";
 export type WriteSpatialControlArtifactRequest = {
   projectAssetsDir: string;
