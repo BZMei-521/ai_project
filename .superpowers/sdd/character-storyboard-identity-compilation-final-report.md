@@ -183,7 +183,7 @@ BB263AB4628528D9B42AFA09203A88CF64B92B3AB4BA8187A2FE10BAECD95BF0  C:\Users\Admin
 930B90974DD6CDD9A9BE1DFC07F7243E7EE2801B2EE6F50015CCE478B23876C6  C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md
 5A88AEB76EC60B4DA94E115A4E45429FB82FBA06C0D955FCC5E9A8F6B35B13A1  C:\Users\Administrator\.codex\skills\novel-characters\references\schema.md
 9693A91A6A05475BE7775290F26416290D9DACEC74221CFE35EB1EFB6FF0F683  C:\Users\Administrator\.codex\skills\novel-characters\references\profile-pass.md
-F7016A869990F56ADE76096981C4D763C08D94EC1F34AE4BEFBEA4B2642C4D871  C:\Users\Administrator\.codex\skills\novel-characters\scripts\novel-characters.mjs
+7016A869990F56ADE76096981C4D763C08D94EC1F34AE4BEFBEA4B2642C4D871  C:\Users\Administrator\.codex\skills\novel-characters\scripts\novel-characters.mjs
 67030F5E8842A99C7DAFE9A7CB6A7DDB49D1CBE677F681D9396872926634A01B  C:\Users\Administrator\.codex\skills\novel-characters\scripts\selftest.mjs
 GET_FILE_HASH_STATUS=PASS
 ~~~
@@ -193,3 +193,16 @@ GET_FILE_HASH_STATUS=PASS
 The reviewed starting head is 17395fc. Repository changes in this remediation are limited to the local novel-storyboard skill, its committed selftests/references, and these two tracked evidence reports. The installed novel-characters edits remain outside Git and are represented by the six hashes above.
 
 This tracked report is included in the new fix commit and therefore cannot self-reference that commit SHA by construction. Immediately after committing, the exact new SHA is recorded in the ignored .superpowers\sdd\final-fix-report.md together with the final post-commit verification.
+
+## Final exact hash audit
+
+After correcting the accidental 65-character transcription, all external-file digest records in both tracked reports and the ignored fix report were compared with fresh `Get-FileHash -Algorithm SHA256` output. There are 24 recorded rows for six unique files (each file appears in four report blocks).
+
+~~~text
+RECORDED_DIGEST_COUNT=24
+UNIQUE_EXTERNAL_FILE_COUNT=6
+EVERY_DIGEST_64_HEX=True
+EVERY_DIGEST_EQUALS_CURRENT_FILE=True
+EVERY_FILE_RECORDED_IN_ALL_4_BLOCKS=True
+SIX_FILE_HASH_COMPARISON_PASS=True
+~~~
