@@ -280,6 +280,17 @@ try {
     assert.equal(reads, 41, "stream stops on the first chunk beyond 40 MiB"); assert.equal(cancelledStream, true); assert.equal(arrayBufferCalled, false, "streaming output never invokes unbounded arrayBuffer");
   }
 
+  let spawnedWorkerOptions;
+  const utf8Child = fakeChild({ closeOnEnd: true });
+  const utf8Client = createPersistentSiglip2Worker({
+    spawnImpl: (_command, _args, options) => { spawnedWorkerOptions = options; return utf8Child; },
+    python: "python",
+    workerPath: "worker.py",
+    closeTimeoutMs: 20
+  });
+  assert.equal(spawnedWorkerOptions.env?.PYTHONIOENCODING, "utf-8", "worker protocol must force UTF-8 for non-ASCII image paths on Windows");
+  await utf8Client.close();
+
   const orderedChild = fakeChild({ closeOnEnd: true }); const client = createPersistentSiglip2Worker({ spawnImpl: () => orderedChild, python: "python", workerPath: "worker.py", closeTimeoutMs: 20 });
   const firstRequest = client.request({ type: "embed", path: "a" }); const secondRequest = client.request({ type: "embed", path: "b" }); await new Promise((resolve) => setImmediate(resolve));
   const [firstId, secondId] = orderedChild.writes.map((line) => JSON.parse(line).id);

@@ -67,7 +67,12 @@ export function createPersistentSiglip2Worker({ spawnImpl = spawn, python = reso
   if (!Number.isFinite(closeTimeoutMs) || closeTimeoutMs <= 0) throw error("EWORKER", "SigLIP2 worker close timeout is invalid");
   const command = typeof python === "string" ? python : python.command;
   const prefix = typeof python === "string" ? [] : python.prefix ?? [];
-  const child = spawnImpl(command, [...prefix, workerPath], { cwd: path.resolve(MODULE_DIR, "../.."), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const child = spawnImpl(command, [...prefix, workerPath], {
+    cwd: path.resolve(MODULE_DIR, "../.."),
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" }
+  });
   child.stderr?.resume?.();
   const pending = new Map();
   let sequence = 0;

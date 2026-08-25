@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "assets": [
+      {
+        "id": "character-li-baozhu",
+        "projectId": "yingdi-manjv",
+        "type": "character",
+        "name": "李宝珠",
+        "filePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\李宝珠-sheet.png",
+        "characterFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-front.png",
+        "characterSidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-side.png",
+        "characterBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-back.png",
+        "characterFaceRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\face-master.png",
+        "characterDetailRefPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\李宝珠-sheet.png",
+        "characterIdentityPack": {
+          "version": "li-baozhu-sheet-v1",
+          "triggerWord": "char_li_baozhu_v1",
+          "species": "human",
+          "speciesTraits": [],
+          "styleContractId": "cinematic_3d_donghua_v1",
+          "styleContractVersion": "1.0.0",
+          "styleContractDigest": "27db8be0b246c9b931217e24caffc9606c0959b035f7a0d9714ed0c058828b88",
+          "faceMasterPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\face-master.png",
+          "faceLeftPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-side.png",
+          "faceRightPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-side.png",
+          "hairBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-back.png",
+          "bodyFrontPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-front.png",
+          "bodySidePath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-side.png",
+          "bodyBackPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\body-back.png",
+          "neutralExpressionPath": "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\consistency-test-refs\\face-master.png",
+          "immutableTraits": [
+            "young adult Han Chinese imperial princess with an oval face and sharp phoenix eyes",
+            "long black hair in a high Tang-inspired court coiffure",
+            "small gold phoenix hairpin with a dangling red-bead ornament",
+            "damaged crimson ceremonial robe with gold embroidery and a pale inner collar",
+            "dark brown ornate waist belt with a long gold tassel ornament",
+            "mud-darkened and torn robe hem"
+          ],
+          "forbiddenChanges": [
+            "preserve recognizable facial identity, eye shape, and adult female proportions",
+            "preserve black hair, high court bun, loose side locks, and phoenix hairpin",
+            "preserve the crimson damaged ceremonial robe, gold embroidery, pale inner collar, and dark belt",
+            "preserve the torn mud-stained hem and distressed sleeve edges",
+            "no modern clothing, armor, crown replacement, or color replacement",
+            "human anatomy only, no animal ears, tail, horns, or wings"
+          ],
+          "approvedHeroFramePaths": [
+            "C:\\Users\\Administrator\\Desktop\\ai_project\\影帝他总想对我图谋不轨_漫剧改编\\人物\\images\\李宝珠-sheet.png"
+          ],
+          "updatedAt": "2026-08-25T00:00:00+08:00"
+        }
+      }
+    ]
+  }
+}

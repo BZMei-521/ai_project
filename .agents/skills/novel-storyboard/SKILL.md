@@ -56,6 +56,7 @@ metadata:
 - `--outline` / `--cast`：提示词禁人名检查 + 报告里 C01 显示成人名
 - `--art`：报告里 S01 显示成场景名 + 批次单嵌场景设定图
 - `--actions`：可选的动作摘要；只提供动作事实与 `cameraIntent.mustShow`，不替代分镜的景别和运镜判断
+- 动作摘要含 `previs.required: true` 时，必须读取 [previsualization.md](references/previsualization.md)，把预演截图/片段作为空间与走位参考；它不能替代角色、场景和画风参考图
 
 **一次切几集**：跟剧本的批次走（剧本写到哪就分到哪），默认一批 ≤ 3 集。
 
@@ -76,6 +77,7 @@ node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 \
 - `{baseDir}/references/directing-continuity.md`（`seed` 默认开启 `continuityVersion: 1`；按这份契约做资产决策、关键场计划和分镜首尾边界）
 - 只有 storyboard 根层使用 `correspondenceVersion: 1` 时，再读 `{baseDir}/references/multimodal-correspondence.md`；按其权威顺序逐切填写对应快照和参考槽位
 - 只有需要高级运动、情绪镜头或动作镜头时，再读 `{baseDir}/references/camera-language.md`；普通场不必为使用词库而运动
+- 只有动作摘要要求预演时，再读 `{baseDir}/references/previsualization.md`；先核验端点和证据，再决定机位
 - 该集的 seedScenes 底稿 + 场景卡（art.json 的锚点与光照提示词）+ 角色卡（cast.json 的形象要点）
 
 流程：先把本集角色/造型/道具状态收敛成 `assetDecisions`；只给真正改变体验的关键场写 `scenePlans`；再**按剧情单元分段**（每段 9–15 秒、不跨场），**段内切 2–5 秒的分镜**。每切先写 `purpose`、`startBoundary`、`endBoundary`，后写分镜图与 H3 提示词。相邻镜头的边界必须相等；真正有意的跳切才用 `continuityOverride` 写明理由。
@@ -113,6 +115,7 @@ QA 按已批准分镜记录偏差、权威修复层、最小安全范围和必�
 
 - **没有 codex 就整步跳过**，只交提示词，报告显示占位不装有
 - **参考图是命根子**：`-i` 挂上该段场景设定图（该光照状态）+ 画内角色的设定图 + 涉及道具的设定图，提示词只负责取景和此刻的姿态
+- 角色有生产身份包时，按镜头朝向优先挂独立视图参考，不直接挂整张多宫格设定页；缺少反向侧面时，脸部和身体参考必须成对镜像并保留派生来源，不能给同一镜头相互冲突的方向信号
 - 一格一次调用绝不批量；输出 `./<段号>/f<切序>.png`（f1 = 主分镜图，每段一个文件夹）
 - **默认先出第一段的整套分镜图给用户看效果**（3–5 张），确认画风和正反打构图再往后补——一集约 30–40 格，错了浪费的是整批
 - 单个失败跳过不阻断，最后汇总说明
