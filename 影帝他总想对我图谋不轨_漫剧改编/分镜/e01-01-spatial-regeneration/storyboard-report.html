@@ -1,0 +1,1067 @@
+<!doctype html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>影帝他总想对我图谋不轨 · 分镜（第 1 集）</title>
+<style>
+:root{
+  --paper:#eceded; --panel:#f5f6f5; --side:#e4e6e3; --ink:#191d21; --ink-2:#5b636a; --ink-3:#8c9298;
+  --rule:#d2d5d0; --rule-2:#c2c6bf; --seal:#8a3324; --seal-2:#c56a4e; --seal-soft:#8a332412; --ok:#3d6b4f;
+  --serif:"Songti SC","STSong","Source Han Serif SC","Noto Serif CJK SC",Georgia,serif;
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+.page{max-width:1600px;margin:0 auto;padding:24px 32px 90px}
+h1,h2,h3{margin:0;font-weight:400}
+
+.hd{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:12px}
+.hd h1{font:400 28px/1.1 var(--serif);letter-spacing:.06em}
+.hd .sub{font-size:13px;color:var(--ink-2)}
+.hd .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.gatepill{display:inline-flex;align-items:center;gap:6px;font:500 12px/1 var(--sans);border-radius:99px;padding:6px 12px}
+.gatepill.pass{color:var(--ok);border:1px solid var(--ok)}
+.gatepill.fail{color:var(--seal);border:1px solid var(--seal);background:var(--seal-soft)}
+.expo{font:500 11px/1 var(--sans);color:var(--ink-2);background:var(--panel);
+  border:1px solid var(--rule-2);border-radius:2px;padding:7px 11px;cursor:pointer;transition:.15s}
+.expo:hover{border-color:var(--seal);color:var(--seal)}
+.expo:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0 6px}
+@media(max-width:980px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:11px 14px 9px}
+.kpi .l{font:500 10px/1 var(--sans);letter-spacing:.18em;color:var(--ink-3)}
+.kpi .v{font:400 28px/1.15 var(--serif);margin-top:5px}
+.kpi .v small{font:400 14px var(--serif);color:var(--ink-2)}
+.kpi .d{font-size:11px;color:var(--ink-2);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi.accent{border-top:2px solid var(--seal)}
+.galert{margin:14px 0 0;border:1px solid var(--seal);background:var(--seal-soft);border-radius:2px;
+  padding:10px 14px;font-size:13px}
+.galert b{color:var(--seal)}
+.galert span{display:block;font-size:12px;color:var(--ink-2)}
+
+section.top-sec{margin-top:34px}
+.sec-h{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--rule-2);padding-bottom:8px;margin-bottom:16px}
+.sec-h .no{font:500 12px/1 var(--mono);color:var(--seal)}
+.sec-h h2{font:400 20px/1.2 var(--serif);letter-spacing:.05em}
+.sec-h .note{margin-left:auto;font-size:12px;color:var(--ink-3)}
+
+/* 01 cut rhythm strip */
+.rhythm{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:16px 20px 10px}
+.rrow{display:grid;grid-template-columns:44px minmax(0,1fr) 150px;gap:12px;align-items:center;padding:5px 0}
+.rep{font:500 12px/1 var(--mono);color:var(--ink-2)}
+.rtrack{display:flex;height:22px;border:1px solid var(--rule);border-radius:2px;overflow:hidden;background:var(--paper)}
+.rseg{display:flex;border-right:2px solid var(--ink-2)}
+.rseg:last-child{border-right:0}
+.seg{display:block;border-right:1px solid var(--panel)}
+.rseg .seg:last-child{border-right:0}
+.seg:hover{outline:2px solid var(--ink);outline-offset:-2px}
+.rval{font:500 12px/1.5 var(--sans);color:var(--ink-2)}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--ink-2);margin:8px 0 2px;flex-wrap:wrap}
+.legend i{font-style:normal;display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px}
+
+/* 02 segment cards */
+.ep{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:18px 22px;margin-bottom:16px}
+.sceneplans{margin:14px 0 18px;padding:12px 14px;border-left:3px solid var(--seal);background:var(--seal-soft)}
+.sceneplans h3{margin:0 0 10px;font:600 15px/1.4 var(--serif)}
+.sceneplan{padding:8px 0;border-top:1px solid var(--rule-2)}
+.sceneplan p{display:grid;grid-template-columns:92px 1fr;gap:10px;margin:5px 0;font-size:12px;line-height:1.55}
+.sceneplan strong{color:var(--ink-2)}
+.ep-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--rule-2);padding-bottom:10px;margin-bottom:14px}
+.ep-n{font:400 22px/1 var(--serif);letter-spacing:.04em;color:var(--seal)}
+.ep-est{font-size:12.5px;color:var(--ink-2)}
+.shots{position:relative}
+.shots.clip{max-height:760px;overflow:hidden}
+.shots.clip::after{content:'';position:absolute;left:0;right:0;bottom:0;height:80px;
+  background:linear-gradient(180deg,transparent,var(--panel));pointer-events:none}
+.shmore{display:block;width:100%;margin-top:8px;font:500 11.5px/1 var(--sans);letter-spacing:.06em;
+  color:var(--ink-2);background:var(--paper);border:1px solid var(--rule-2);border-radius:2px;
+  padding:7px 0;cursor:pointer;transition:.15s}
+.shmore:hover{border-color:var(--seal);color:var(--seal)}
+.shmore:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+.seggrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+@media(max-width:1100px){.seggrid{grid-template-columns:minmax(0,1fr)}}
+.segcard{background:var(--paper);border:1px solid var(--rule);border-radius:2px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.seg-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.seg-h b{font:500 14px/1 var(--mono);color:var(--seal)}
+.sec-badge{font:500 11px/1 var(--mono);border:1px solid var(--seal);color:var(--seal);border-radius:99px;padding:2px 8px}
+.beatsref{margin-left:auto;font-size:10.5px;color:var(--ink-3)}
+.frame{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--rule-2);border-radius:2px;
+  cursor:zoom-in;display:block;background:var(--side)}
+.frame.ph{display:flex;flex-direction:column;gap:6px;padding:10px 12px;cursor:default;overflow:hidden}
+.frame.ph b{font:500 10px/1 var(--sans);letter-spacing:.14em;color:var(--ink-3)}
+.frame.ph span{font:400 10.5px/1.55 var(--mono);color:var(--ink-2);overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:5;-webkit-box-orient:vertical}
+.subs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.fquad{display:grid;grid-template-columns:1fr;gap:10px;margin:10px 0}
+.fquad .frame.ph{aspect-ratio:auto}
+.fquad .fcell{margin:0;min-height:0}
+.fcell-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+.fcell-h .copy.mini{margin:0;flex:none}
+.frame.ph .fprompt{font:400 10.5px/1.4 var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;display:block;
+  -webkit-line-clamp:none;-webkit-box-orient:vertical;overflow:visible}
+.subf{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--rule-2);border-radius:2px;
+  cursor:zoom-in;display:block;background:var(--side)}
+.subf.ph{display:flex;align-items:center;justify-content:center;cursor:default;
+  font:500 10px/1 var(--sans);color:var(--ink-3);letter-spacing:.08em}
+.duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start;border-top:1px solid var(--rule);padding-top:4px}
+@media(max-width:900px){.duo{grid-template-columns:minmax(0,1fr)}}
+.ppanel{border:1px solid var(--rule);border-radius:2px;background:var(--panel);margin-top:7px}
+.pp-h{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--rule)}
+.pp-h b{font:500 11px/1 var(--sans);letter-spacing:.08em;color:var(--ink-2);margin-right:auto}
+.pp{display:none;margin:0;padding:9px 12px;font:400 12px/1.8 var(--sans);color:var(--ink);
+  white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--rule-2) transparent}
+.pp.on{display:block}
+.pp::-webkit-scrollbar{width:6px}
+.pp::-webkit-scrollbar-thumb{background:var(--rule-2);border-radius:3px}
+.cuts{margin:0;padding:0;list-style:none}
+.cut{padding:7px 0;border-bottom:1px solid var(--rule)}
+.continuity{margin:7px 0 3px;border-top:1px dashed var(--rule-2);padding-top:6px}
+.continuity summary{cursor:pointer;color:var(--ink-2);font-size:12px}
+.continuity pre{white-space:pre-wrap;overflow:auto;max-height:360px;background:var(--paper);border:1px solid var(--rule-2);padding:10px;font:11px/1.45 var(--mono)}
+.cut:first-child{padding-top:11px}
+.cut:last-child{border-bottom:0}
+.cut-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.cut-h b{font:500 12px/1 var(--mono);color:var(--seal)}
+.cut-t{font:500 10.5px/1.6 var(--mono);color:var(--ink-3)}
+.cut-sc{font-size:11.5px;color:var(--ink-2)}
+.cut-h .copy{margin-left:auto;opacity:0;transition:.15s}
+.cut:hover .copy{opacity:1}
+.cut p{margin:3px 0 0;font-size:12px;line-height:1.6}
+.sact{color:var(--ink-2)}
+.sline{font-family:var(--serif)}
+.sline b{font-weight:500;margin-right:6px;color:var(--seal)}
+.chip{font:400 10.5px/1.6 var(--mono);border:1px solid var(--rule-2);border-radius:2px;
+  padding:0 6px;background:var(--panel);color:var(--ink-2);text-decoration:none}
+.chip.lite{border-color:var(--seal-2);color:var(--seal-2)}
+.chip.prop{border-color:var(--seal);color:var(--seal)}
+.chip.mono{font-family:var(--mono)}
+a.chip:hover{border-color:var(--seal);color:var(--seal)}
+.prompts{display:flex;gap:6px}
+.seg-note{margin:0;font-size:11px;color:var(--ink-3)}
+
+/* 03 generation batches */
+.batches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+@media(max-width:1100px){.batches{grid-template-columns:minmax(0,1fr)}}
+.batch{background:var(--panel);border:1px solid var(--rule);border-radius:2px;padding:14px 18px}
+.bimg{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--rule-2);border-radius:2px;
+  cursor:zoom-in;display:block;margin-bottom:10px}
+.batch-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.batch-h b{font:500 13px var(--serif);letter-spacing:.06em}
+.batch-shots{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.batch-need{margin:8px 0 0;font-size:12px;color:var(--ink-2)}
+
+/* 04 audio alignment */
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--rule);font-size:13px}
+th,td{padding:8px 12px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+th{font:500 11px/1 var(--sans);letter-spacing:.1em;color:var(--ink-3);background:var(--side)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-family:var(--mono);font-size:12px;white-space:nowrap}
+td a{color:var(--seal);text-decoration:none}
+td.serif{font-family:var(--serif)}
+
+.copy{flex:none;font:500 11px/1 var(--sans);color:var(--ink-2);background:var(--panel);
+  border:1px solid var(--rule-2);border-radius:2px;padding:5px 10px;cursor:pointer;transition:.15s}
+.copy:hover{border-color:var(--seal);color:var(--seal)}
+.copy:focus-visible{outline:2px solid var(--seal);outline-offset:2px}
+.copy[data-done]{border-color:var(--seal);color:var(--seal)}
+.copy.mini{padding:3px 7px;font-size:10px}
+.copy.h3{border-color:var(--seal-2);color:var(--seal-2);width:100%}
+.copy.h3:hover,.copy.h3[data-done]{border-color:var(--seal);color:var(--seal)}
+
+.gate{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:2px 28px}
+@media(max-width:900px){.gate{grid-template-columns:1fr}}
+.gate li{display:flex;gap:8px;padding:5px 0;font-size:12.5px;line-height:1.55}
+.gate .m{flex:none;font-weight:700}
+.gate li.ok .m{color:var(--ok)}
+.gate li.bad .m{color:var(--seal)}
+.gate li.bad{background:var(--seal-soft);border-radius:2px;padding-left:6px}
+.gate small{display:block;color:var(--ink-3)}
+.gsum{margin:10px 0 0;font-size:12px;color:var(--ink-2)}
+.gsum b{color:var(--seal)}
+
+.lightbox{position:fixed;inset:0;background:rgba(20,22,24,.88);display:none;align-items:center;
+  justify-content:center;z-index:9;cursor:zoom-out;padding:32px}
+.lightbox.on{display:flex}
+.lightbox img{max-width:96%;max-height:96%;border:1px solid #555;border-radius:2px}
+
+.foot{margin-top:40px;font-size:11px;color:var(--ink-3);border-top:1px solid var(--rule);padding-top:14px}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media print{
+  .expo,.copy,.shmore{display:none!important}
+  .pp{max-height:none;overflow:visible}
+  .duo{grid-template-columns:minmax(0,1fr)}
+  .shots.clip{max-height:none}
+  .shots.clip::after{display:none}
+  .seggrid,.batches{grid-template-columns:minmax(0,1fr)}
+  .page{max-width:none;padding:0}
+  section.top-sec,.segcard,.batch{page-break-inside:avoid}
+  body{background:#fff}
+}
+</style></head><body>
+<div class="page">
+
+<header class="hd">
+  <h1>影帝他总想对我图谋不轨</h1>
+  <span class="sub">分镜 · 第 1 集</span>
+  <span class="right">
+    <span class="gatepill pass">✓ 质量门 19 / 19</span>
+    <button class="expo" data-name="影帝他总想对我图谋不轨-storyboard.json">导出 JSON</button>
+  </span>
+</header>
+
+<div class="kpis">
+  <div class="kpi accent"><div class="l">生成段</div><div class="v">1 <small>段</small></div><div class="d">一段一次调用，上限 15 秒</div></div>
+  <div class="kpi"><div class="l">分镜</div><div class="v">5 <small>切</small></div><div class="d">平均 2.8 秒一切</div></div>
+  <div class="kpi"><div class="l">预估总时长</div><div class="v">0 分 14 秒</div><div class="d">目标 0 分 14 秒</div></div>
+  <div class="kpi"><div class="l">生成批次</div><div class="v">1</div><div class="d">同场景同光照共用环境参考图</div></div>
+  <div class="kpi"><div class="l">台词段</div><div class="v">1 <small>段</small></div><div class="d">其余是纯画面段</div></div>
+</div>
+
+
+<section class="top-sec" id="sec-rhythm">
+  <div class="sec-h"><span class="no">01</span><h2>分镜节奏带</h2><span class="note">粗分隔 = 生成段边界 · 段宽 = 分镜时长占比 · 颜色越深景别越近</span></div>
+  <div class="rhythm">
+    <div class="legend"><i><span class="sw" style="background:rgba(138,51,36,0.25)"></span>大远景</i><i><span class="sw" style="background:rgba(138,51,36,0.4)"></span>全景</i><i><span class="sw" style="background:rgba(138,51,36,0.58)"></span>中景</i><i><span class="sw" style="background:rgba(138,51,36,0.78)"></span>特写</i><i><span class="sw" style="background:rgba(138,51,36,1)"></span>大特写</i></div>
+<div class="rrow"><span class="rep">E01</span><div class="rtrack"><span class="rseg" style="width:100%"><a class="seg" href="#seg-E01-01" style="width:21.1%;background:rgba(138,51,36,0.78)" title="E01-01#1 · 3s · 特写 · Push In"></a><a class="seg" href="#seg-E01-01" style="width:18.3%;background:rgba(138,51,36,0.78)" title="E01-01#2 · 2.6s · 特写 · Static Shot"></a><a class="seg" href="#seg-E01-01" style="width:21.1%;background:rgba(138,51,36,1)" title="E01-01#3 · 3s · 大特写 · Shake Slightly"></a><a class="seg" href="#seg-E01-01" style="width:18.3%;background:rgba(138,51,36,0.78)" title="E01-01#4 · 2.6s · 特写 · Static Shot"></a><a class="seg" href="#seg-E01-01" style="width:21.1%;background:rgba(138,51,36,1)" title="E01-01#5 · 3s · 大特写 · Push In"></a></span></div><span class="rval">1 段 5 切 · 14.2s</span></div>
+  </div>
+</section>
+
+<section class="top-sec" id="sec-segments">
+  <div class="sec-h"><span class="no">02</span><h2>分集分镜表</h2><span class="note">一段 = 一次生成：主分镜图钉 0.00 秒，子分镜图钉各自切点</span></div>
+<section class="ep" id="ep-1">
+  <header class="ep-h">
+    <span class="ep-n">E01</span>
+    <span class="ep-est">1 段 5 切 · 共 14.2 秒 / 目标 14.2083 秒</span>
+  </header>
+  <section class="sceneplans"><h3>关键场次导演计划</h3><article class="sceneplan"><b>第 1 场 · E01-SC01-PLAN</b><p><strong>观众立场</strong>Stay physically trapped with the buried young woman; no outside rescuer or remembered figure becomes visible.</p><p><strong>信息时机</strong>Reveal wakefulness first, confinement through failed bracing and impact second, then identify the burial through silk and bronze.</p><p><strong>空间压力</strong>Coffin edges and the lid remain within arm reach, restricting shoulders, breath and every hand path.</p><p><strong>最强画面</strong>Two hands stop on opposite burial clues—silk below and a thick bronze nail above—while the whole body freezes.</p><p><strong>反应落点</strong>Land on the closed-mouth listening gaze and then on the final tactile freeze.</p><p><strong>声音策略</strong>Use breath, one muffled wood impact and close material sounds; thin the score into near-silence at recognition.</p></article></section>
+  <div class="shots clip">
+    <div class="seggrid">
+<article class="segcard" id="seg-E01-01">
+  <header class="seg-h">
+    <b>E01-01</b>
+    <span class="sec-badge">14.2s · 5 切</span>
+    <span class="chip">S01 S01</span>
+    
+    <span class="beatsref">第 1 场 第 1–5 拍</span>
+  </header>
+  <div class="fquad"><div class="frame ph fcell"><div class="fcell-h"><b>主分镜图 · #1 未生成</b><button class="copy mini" data-copy="close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; inside a pitch-dark sealed coffin, only a buried young woman is visible as her eyes snap open before her shoulders wedge against the silk-lined base, both bent elbows force her palms onto the lid with clear near-far asymmetry, compressed claustrophobic framing, no external person, no visual effects.">复制</button></div><span class="fprompt">close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; inside a pitch-dark sealed coffin, only a buried young woman is visible as her eyes snap open before her shoulders wedge against the silk-lined base, both bent elbows force her palms onto the lid with clear near-far asymmetry, compressed claustrophobic framing, no external person, no visual effects.</span></div>
+<div class="frame ph fcell"><div class="fcell-h"><b>子分镜 2 · #2 未生成</b><button class="copy mini" data-copy="close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible in the coffin as a ragged breath and cry strain her chest, her left palm stays planted on the lid for spatial orientation while her right palm withdraws less than a handspan and begins to lift for a strike, controlled handheld tension, no external person, no visual effects.">复制</button></div><span class="fprompt">close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible in the coffin as a ragged breath and cry strain her chest, her left palm stays planted on the lid for spatial orientation while her right palm withdraws less than a handspan and begins to lift for a strike, controlled handheld tension, no external person, no visual effects.</span></div>
+<div class="frame ph fcell"><div class="fcell-h"><b>子分镜 3 · #3 未生成</b><button class="copy mini" data-copy="extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile insert of the buried young woman’s right palm contacting the catalpa-wood lid, the wood surface compresses without shifting and releases a trace of real dry dust, her wrist recoils and fingers curl while the left hand remains outside this impact insert, no external person, no stylized visual effects.">复制</button></div><span class="fprompt">extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile insert of the buried young woman’s right palm contacting the catalpa-wood lid, the wood surface compresses without shifting and releases a trace of real dry dust, her wrist recoils and fingers curl while the left hand remains outside this impact insert, no external person, no stylized visual effects.</span></div>
+<div class="frame ph fcell"><div class="fcell-h"><b>子分镜 4 · #4 未生成</b><button class="copy mini" data-copy="close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible as all motion stops after the muffled impact, lips fully closed, gaze listening upward into blackness, lowered shoulders, clenched jaw and shallow breath exposing suppressed panic, no external person, no visual effects.">复制</button></div><span class="fprompt">close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible as all motion stops after the muffled impact, lips fully closed, gaze listening upward into blackness, lowered shoulders, clenched jaw and shallow breath exposing suppressed panic, no external person, no visual effects.</span></div>
+<div class="frame ph fcell"><div class="fcell-h"><b>子分镜 5 · #5 未生成</b><button class="copy mini" data-copy="extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile split-depth insert inside the coffin, the buried young woman’s left fingertips compress burial silk beneath her waist while her right fingertips locate a thick bronze nail above, both contacts lock at once and the visible tension freezes through her hands and body, no external person, no visual effects.">复制</button></div><span class="fprompt">extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile split-depth insert inside the coffin, the buried young woman’s left fingertips compress burial silk beneath her waist while her right fingertips locate a thick bronze nail above, both contacts lock at once and the visible tension freezes through her hands and body, no external person, no visual effects.</span></div></div>
+  
+  <div class="duo">
+    <ol class="cuts">
+<li class="cut">
+  <div class="cut-h">
+    <b>#1</b>
+    <span class="cut-t">0.00s 起 · 3s</span>
+    <span class="cut-sc">特写 · Push In</span>
+    <span class="chip">C01</span>
+    
+    <button class="copy mini" data-copy="close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; inside a pitch-dark sealed coffin, only a buried young woman is visible as her eyes snap open before her shoulders wedge against the silk-lined base, both bent elbows force her palms onto the lid with clear near-far asymmetry, compressed claustrophobic framing, no external person, no visual effects.">分镜图提示词</button>
+  </div>
+  <p class="sact">冷开场：李宝珠在黑暗中猛地睁眼，双手推向近在眼前的棺盖，身体却被狭窄棺木死死卡住。</p>
+  <details class="continuity"><summary>镜头动机：Tighten psychological distance as wakefulness becomes recognition of physical confinement.</summary><pre>{
+  &quot;purpose&quot;: &quot;Tighten psychological distance as wakefulness becomes recognition of physical confinement.&quot;,
+  &quot;path&quot;: &quot;push-in&quot;,
+  &quot;speed&quot;: &quot;slow&quot;,
+  &quot;amplitude&quot;: &quot;micro&quot;,
+  &quot;subjectRelation&quot;: &quot;approach the opening eyes and braced shoulders&quot;,
+  &quot;stabilization&quot;: &quot;stable&quot;,
+  &quot;foregroundOcclusion&quot;: &quot;coffin edges compress the frame&quot;,
+  &quot;startSize&quot;: &quot;close&quot;,
+  &quot;endSize&quot;: &quot;close&quot;
+}</pre></details>
+  
+  <details class="continuity"><summary>连续性边界 · 镜头目的：Make the awakening legible before the trapped body and asymmetrical bracing reveal that the lid will not yield.</summary><pre>{
+  &quot;startBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;双眼闭合，无明确注视&quot;,
+        &quot;leftHand&quot;: &quot;屈肘收在左肋旁，手掌未接触棺盖&quot;,
+        &quot;rightHand&quot;: &quot;屈肘收在右肋旁，手掌未接触棺盖&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  },
+  &quot;endBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;睁眼后固定在近在眼前的黑暗棺盖&quot;,
+        &quot;leftHand&quot;: &quot;左肘弯曲，左掌贴住头顶偏左棺盖内侧&quot;,
+        &quot;rightHand&quot;: &quot;右肘弯曲，右掌贴住头顶偏右棺盖内侧&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  }
+}</pre></details>
+</li>
+<li class="cut">
+  <div class="cut-h">
+    <b>#2</b>
+    <span class="cut-t">3.00s 起 · 2.6s</span>
+    <span class="cut-sc">特写 · Static Shot</span>
+    <span class="chip">C01</span>
+    
+    <button class="copy mini" data-copy="close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible in the coffin as a ragged breath and cry strain her chest, her left palm stays planted on the lid for spatial orientation while her right palm withdraws less than a handspan and begins to lift for a strike, controlled handheld tension, no external person, no visual effects.">分镜图提示词</button>
+  </div>
+  <p class="sline"><b>C01</b>放我出去！有人吗！</p>
+  <details class="continuity"><summary>镜头动机：Hold spatial orientation while breath and the cry separate the two hand functions.</summary><pre>{
+  &quot;purpose&quot;: &quot;Hold spatial orientation while breath and the cry separate the two hand functions.&quot;,
+  &quot;path&quot;: &quot;static&quot;,
+  &quot;speed&quot;: &quot;very-slow&quot;,
+  &quot;amplitude&quot;: &quot;micro&quot;,
+  &quot;subjectRelation&quot;: &quot;locked to the chest, left brace and right strike preparation&quot;,
+  &quot;stabilization&quot;: &quot;locked&quot;,
+  &quot;foregroundOcclusion&quot;: &quot;coffin edge partly masks the lower torso&quot;,
+  &quot;startSize&quot;: &quot;close&quot;,
+  &quot;endSize&quot;: &quot;close&quot;
+}</pre></details>
+  
+  <details class="continuity"><summary>连续性边界 · 镜头目的：Let breath and the exact cry lead while the two hands separate into orientation and strike preparation.</summary><pre>{
+  &quot;startBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;睁眼后固定在近在眼前的黑暗棺盖&quot;,
+        &quot;leftHand&quot;: &quot;左肘弯曲，左掌贴住头顶偏左棺盖内侧&quot;,
+        &quot;rightHand&quot;: &quot;右肘弯曲，右掌贴住头顶偏右棺盖内侧&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  },
+  &quot;endBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;固定在头顶棺盖&quot;,
+        &quot;leftHand&quot;: &quot;左肘弯曲，左掌持续撑住头顶偏左棺盖内侧&quot;,
+        &quot;rightHand&quot;: &quot;右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  }
+}</pre></details>
+</li>
+<li class="cut">
+  <div class="cut-h">
+    <b>#3</b>
+    <span class="cut-t">5.60s 起 · 3s</span>
+    <span class="cut-sc">大特写 · Shake Slightly</span>
+    <span class="chip">C01</span>
+    
+    <button class="copy mini" data-copy="extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile insert of the buried young woman’s right palm contacting the catalpa-wood lid, the wood surface compresses without shifting and releases a trace of real dry dust, her wrist recoils and fingers curl while the left hand remains outside this impact insert, no external person, no stylized visual effects.">分镜图提示词</button>
+  </div>
+  <p class="sact">她的手掌拍在梓木棺盖上，沉闷回声贴着耳边反弹。</p>
+  <details class="continuity"><summary>镜头动机：Let a restrained impact vibration register force without losing hand anatomy or contact geometry.</summary><pre>{
+  &quot;purpose&quot;: &quot;Let a restrained impact vibration register force without losing hand anatomy or contact geometry.&quot;,
+  &quot;path&quot;: &quot;impact micro-shake&quot;,
+  &quot;speed&quot;: &quot;fast&quot;,
+  &quot;amplitude&quot;: &quot;micro&quot;,
+  &quot;subjectRelation&quot;: &quot;locked to the right palm, wrist and lid contact point&quot;,
+  &quot;stabilization&quot;: &quot;handheld&quot;,
+  &quot;foregroundOcclusion&quot;: &quot;none across the five visible right-hand fingers&quot;,
+  &quot;startSize&quot;: &quot;extreme-close&quot;,
+  &quot;endSize&quot;: &quot;extreme-close&quot;
+}</pre></details>
+  
+  <details class="continuity"><summary>连续性边界 · 镜头目的：Isolate the right-palm contact, lid resistance and wrist recoil as physical proof of confinement.</summary><pre>{
+  &quot;startBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;固定在头顶棺盖&quot;,
+        &quot;leftHand&quot;: &quot;左肘弯曲，左掌持续撑住头顶偏左棺盖内侧&quot;,
+        &quot;rightHand&quot;: &quot;右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  },
+  &quot;endBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;随闷响固定在右掌击中的棺盖内侧&quot;,
+        &quot;leftHand&quot;: &quot;左肘弯曲，左掌持续撑住头顶偏左棺盖内侧&quot;,
+        &quot;rightHand&quot;: &quot;右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  }
+}</pre></details>
+</li>
+<li class="cut">
+  <div class="cut-h">
+    <b>#4</b>
+    <span class="cut-t">8.60s 起 · 2.6s</span>
+    <span class="cut-sc">特写 · Static Shot</span>
+    <span class="chip">C01</span>
+    
+    <button class="copy mini" data-copy="close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible as all motion stops after the muffled impact, lips fully closed, gaze listening upward into blackness, lowered shoulders, clenched jaw and shallow breath exposing suppressed panic, no external person, no visual effects.">分镜图提示词</button>
+  </div>
+  <p class="sline"><b>画外音</b>冷。这里不是寝殿。</p>
+  <details class="continuity"><summary>镜头动机：Hold perfectly still as outward struggle collapses into listening recognition.</summary><pre>{
+  &quot;purpose&quot;: &quot;Hold perfectly still as outward struggle collapses into listening recognition.&quot;,
+  &quot;path&quot;: &quot;static&quot;,
+  &quot;speed&quot;: &quot;very-slow&quot;,
+  &quot;amplitude&quot;: &quot;micro&quot;,
+  &quot;subjectRelation&quot;: &quot;locked to closed lips, listening gaze and lowered shoulder girdle&quot;,
+  &quot;stabilization&quot;: &quot;locked&quot;,
+  &quot;foregroundOcclusion&quot;: &quot;dark lid edge narrows the upper frame&quot;,
+  &quot;startSize&quot;: &quot;close&quot;,
+  &quot;endSize&quot;: &quot;close&quot;
+}</pre></details>
+  
+  <details class="continuity"><summary>连续性边界 · 镜头目的：Land the realization in a closed-mouth listening reaction where jaw and breath betray suppressed panic.</summary><pre>{
+  &quot;startBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;随闷响固定在右掌击中的棺盖内侧&quot;,
+        &quot;leftHand&quot;: &quot;左肘弯曲，左掌持续撑住头顶偏左棺盖内侧&quot;,
+        &quot;rightHand&quot;: &quot;右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  },
+  &quot;endBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;从接触点移向棺内四周的黑暗边缘&quot;,
+        &quot;leftHand&quot;: &quot;左掌仍贴头顶偏左棺盖内侧但手臂已经卸力&quot;,
+        &quot;rightHand&quot;: &quot;右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  }
+}</pre></details>
+</li>
+<li class="cut">
+  <div class="cut-h">
+    <b>#5</b>
+    <span class="cut-t">11.20s 起 · 3s</span>
+    <span class="cut-sc">大特写 · Push In</span>
+    <span class="chip">C01</span>
+    
+    <button class="copy mini" data-copy="extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile split-depth insert inside the coffin, the buried young woman’s left fingertips compress burial silk beneath her waist while her right fingertips locate a thick bronze nail above, both contacts lock at once and the visible tension freezes through her hands and body, no external person, no visual effects.">分镜图提示词</button>
+  </div>
+  <p class="sact">她摸到身下锦缎，又摸到头顶粗大的铜钉，动作突然停住。</p>
+  <details class="continuity"><summary>镜头动机：Push toward the exact single-nail fingertip contact that completes burial recognition.</summary><pre>{
+  &quot;purpose&quot;: &quot;Push toward the exact single-nail fingertip contact that completes burial recognition.&quot;,
+  &quot;path&quot;: &quot;push-in&quot;,
+  &quot;speed&quot;: &quot;very-slow&quot;,
+  &quot;amplitude&quot;: &quot;micro&quot;,
+  &quot;subjectRelation&quot;: &quot;approach the silk and single bronze-nail contact points&quot;,
+  &quot;stabilization&quot;: &quot;stable&quot;,
+  &quot;foregroundOcclusion&quot;: &quot;none across either visible hand&quot;,
+  &quot;startSize&quot;: &quot;extreme-close&quot;,
+  &quot;endSize&quot;: &quot;extreme-close&quot;
+}</pre></details>
+  
+  <details class="continuity"><summary>连续性边界 · 镜头目的：End on two tactile clues—silk below and bronze above—then freeze the whole body on recognition.</summary><pre>{
+  &quot;startBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;从接触点移向棺内四周的黑暗边缘&quot;,
+        &quot;leftHand&quot;: &quot;左掌仍贴头顶偏左棺盖内侧但手臂已经卸力&quot;,
+        &quot;rightHand&quot;: &quot;右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  },
+  &quot;endBoundary&quot;: {
+    &quot;spatialAnchor&quot;: &quot;sealed coffin interior beneath burial soil&quot;,
+    &quot;workingSide&quot;: &quot;A&quot;,
+    &quot;screenDirection&quot;: &quot;none&quot;,
+    &quot;characters&quot;: {
+      &quot;C01&quot;: {
+        &quot;position&quot;: &quot;仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎&quot;,
+        &quot;facing&quot;: &quot;面朝棺盖，头顶距离棺盖不足一掌&quot;,
+        &quot;gaze&quot;: &quot;黑暗中冻结在头顶铜钉方向&quot;,
+        &quot;leftHand&quot;: &quot;左手探至腰侧，指腹压住身下锦缎并停住&quot;,
+        &quot;rightHand&quot;: &quot;右手在头顶偏右处搜索后，指尖贴住粗大铜钉并停住&quot;,
+        &quot;lookRef&quot;: &quot;AS-C01-BURIED&quot;
+      },
+      &quot;C02&quot;: {
+        &quot;position&quot;: &quot;outside the sealed coffin beyond the burial soil, off screen&quot;,
+        &quot;facing&quot;: &quot;toward the buried coffin, off screen&quot;,
+        &quot;gaze&quot;: &quot;the buried coffin, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no contact inside the coffin&quot;,
+        &quot;lookRef&quot;: &quot;AS-C02-OFFSCREEN&quot;
+      },
+      &quot;C09&quot;: {
+        &quot;position&quot;: &quot;remote palace memory only, off screen&quot;,
+        &quot;facing&quot;: &quot;away from the current coffin space, off screen&quot;,
+        &quot;gaze&quot;: &quot;absent from the current physical scene, off screen&quot;,
+        &quot;leftHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;rightHand&quot;: &quot;off screen with no current contact&quot;,
+        &quot;lookRef&quot;: &quot;AS-C09-OFFSCREEN&quot;
+      }
+    },
+    &quot;props&quot;: {
+      &quot;coffin-shell&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;sealed around C01 without topology or scale change&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-SHELL&quot;
+      },
+      &quot;coffin-lid&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;fixed less than one palm above C01 and never displaced&quot;,
+        &quot;stateRef&quot;: &quot;AS-COFFIN-LID&quot;
+      },
+      &quot;white-silk&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;continuous beneath C01 from head through waist&quot;,
+        &quot;stateRef&quot;: &quot;AS-WHITE-SILK&quot;
+      },
+      &quot;bronze-nail&quot;: {
+        &quot;holder&quot;: &quot;environment&quot;,
+        &quot;position&quot;: &quot;exactly one nail fixed above C01's head&quot;,
+        &quot;stateRef&quot;: &quot;AS-BRONZE-NAIL&quot;
+      }
+    }
+  }
+}</pre></details>
+</li>
+    </ol>
+    <div class="ppanel">
+      <div class="pp-h">
+        <b>H3 提示词</b>
+        <button class="copy" data-copy="How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 2) aligns with the 3.00-second mark of the target video; Picture 3 (from Shot 3) aligns with the 5.60-second mark of the target video; Picture 4 (from Shot 4) aligns with the 8.60-second mark of the target video; Picture 5 (from Shot 5) aligns with the 11.20-second mark of the target video.
+
+integrated_multimodal_description:
+[Shot 1] Anchor exactly to &lt;Picture 1&gt;. In the close coffin interior, only the buried young woman is visible. Her eyes open first; her shoulders wedge against the silk-lined base; both bent arms brace upward and the two palms meet the lid with readable near-far asymmetry. A restrained Push In closes toward the eyes and trapped shoulders. The lid does not move.
+[Shot 2] At 00:03.000, the camera cuts to &lt;Picture 2&gt;: only the same buried young woman remains visible. A locked Static Shot preserves the exact coffin layout as breath and the cry lead; her left palm remains planted for orientation while her right palm withdraws less than a handspan and starts to lift for the strike. In a hoarse, forceful cry, she says: &lt;d&gt;[Chinese] 放我出去！有人吗！&lt;/d&gt;
+[Shot 3] At 00:05.600, the camera cuts to &lt;Picture 3&gt;: an extreme close tactile insert isolates only her right palm and the catalpa-wood lid; her left hand stays outside the insert. A restrained Shake Slightly micro-vibration registers the impact while preserving five anatomically correct fingers, wrist alignment and shoulder load, a momentary compression of the wood without lid displacement, a trace of real dry dust at the contact seam, and the wrist recoiling less than a handspan with fingers curling.
+[Shot 4] At 00:08.600, the camera cuts to &lt;Picture 4&gt;: only the same buried young woman is visible. Motion stops. A locked Static Shot holds on her fully closed lips, upward-listening gaze, tightening jaw and shallow controlled breath. Her restrained inner voice (S1) says in an off-screen voiceover while her lips remain completely closed: &lt;d&gt;[Chinese] 冷。这里不是寝殿。&lt;/d&gt;
+[Shot 5] At 00:11.200, the camera cuts to &lt;Picture 5&gt;: a very slow Push In approaches a tactile extreme close insert as her left fingertips compress the burial silk below her waist, then her right fingertips find the single thick bronze nail above. Both contacts stop at once, followed by a full-body freeze and a half-beat of held breath. No external person enters the frame, and no supernatural or stylized visual effect appears.
+
+overall_soundscape: Confined breath, cloth pressure and close wood creaks stay dry and intimate. The cry is followed by one muffled right-palm impact, a short wrist recoil, and a lid-level echo that decays beside the ear. The final silk rub and faint fingertip scrape against bronze stop abruptly with the held breath.
+
+non_diegetic_music: A nearly inaudible low string pressure enters beneath the first brace, thins after the impact, and cuts to a cold sustained tone at the bronze-nail recognition.">复制</button>
+      </div>
+      <pre class="pp on">How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 2) aligns with the 3.00-second mark of the target video; Picture 3 (from Shot 3) aligns with the 5.60-second mark of the target video; Picture 4 (from Shot 4) aligns with the 8.60-second mark of the target video; Picture 5 (from Shot 5) aligns with the 11.20-second mark of the target video.
+
+integrated_multimodal_description:
+[Shot 1] Anchor exactly to &lt;Picture 1&gt;. In the close coffin interior, only the buried young woman is visible. Her eyes open first; her shoulders wedge against the silk-lined base; both bent arms brace upward and the two palms meet the lid with readable near-far asymmetry. A restrained Push In closes toward the eyes and trapped shoulders. The lid does not move.
+[Shot 2] At 00:03.000, the camera cuts to &lt;Picture 2&gt;: only the same buried young woman remains visible. A locked Static Shot preserves the exact coffin layout as breath and the cry lead; her left palm remains planted for orientation while her right palm withdraws less than a handspan and starts to lift for the strike. In a hoarse, forceful cry, she says: &lt;d&gt;[Chinese] 放我出去！有人吗！&lt;/d&gt;
+[Shot 3] At 00:05.600, the camera cuts to &lt;Picture 3&gt;: an extreme close tactile insert isolates only her right palm and the catalpa-wood lid; her left hand stays outside the insert. A restrained Shake Slightly micro-vibration registers the impact while preserving five anatomically correct fingers, wrist alignment and shoulder load, a momentary compression of the wood without lid displacement, a trace of real dry dust at the contact seam, and the wrist recoiling less than a handspan with fingers curling.
+[Shot 4] At 00:08.600, the camera cuts to &lt;Picture 4&gt;: only the same buried young woman is visible. Motion stops. A locked Static Shot holds on her fully closed lips, upward-listening gaze, tightening jaw and shallow controlled breath. Her restrained inner voice (S1) says in an off-screen voiceover while her lips remain completely closed: &lt;d&gt;[Chinese] 冷。这里不是寝殿。&lt;/d&gt;
+[Shot 5] At 00:11.200, the camera cuts to &lt;Picture 5&gt;: a very slow Push In approaches a tactile extreme close insert as her left fingertips compress the burial silk below her waist, then her right fingertips find the single thick bronze nail above. Both contacts stop at once, followed by a full-body freeze and a half-beat of held breath. No external person enters the frame, and no supernatural or stylized visual effect appears.
+
+overall_soundscape: Confined breath, cloth pressure and close wood creaks stay dry and intimate. The cry is followed by one muffled right-palm impact, a short wrist recoil, and a lid-level echo that decays beside the ear. The final silk rub and faint fingertip scrape against bronze stop abruptly with the held breath.
+
+non_diegetic_music: A nearly inaudible low string pressure enters beneath the first brace, thins after the impact, and cuts to a cold sustained tone at the bronze-nail recognition.</pre>
+    </div>
+  </div>
+  <p class="seg-note">Official storyboard display timing is 3.0, 2.6, 3.0, 2.6 and 3.0 seconds so both exact Chinese lines satisfy dialogue-fit. Production timing remains authoritative at 72, 63, 72, 62 and 72 frames at 24 fps (341 frames total). Only C01 is visible, with no external visible people or visual effects.</p>
+</article>
+    </div>
+  </div>
+  <button class="shmore">▾ 展开全部段</button>
+</section>
+</section>
+
+<section class="top-sec" id="sec-batches">
+  <div class="sec-h"><span class="no">03</span><h2>生成批次单</h2><span class="note">自动汇总 · 同批段共用同一张环境参考图</span></div>
+  <div class="batches">
+<article class="batch">
+  
+  <header class="batch-h"><b>批次 01</b><span class="chip">S01 S01</span></header>
+  <div class="batch-shots"><a class="chip mono" href="#seg-E01-01">E01-01</a></div>
+  <p class="batch-need">需要：C01 的角色设定图</p>
+</article>
+  </div>
+</section>
+
+<section class="top-sec" id="sec-dialogue">
+  <div class="sec-h"><span class="no">04</span><h2>配音对齐单</h2><span class="note">自动汇总 · TTS 音频对到哪一段的第几切</span></div>
+  <table><thead><tr><th>段 · 切</th><th>说话人</th><th>台词</th><th>台词秒数</th></tr></thead>
+  <tbody>
+<tr><td><a href="#seg-E01-01">E01-01</a> #2</td><td>C01</td><td class="serif">放我出去！有人吗！</td><td>2.6</td></tr>
+<tr><td><a href="#seg-E01-01">E01-01</a> #4</td><td>画外音</td><td class="serif">冷。这里不是寝殿。</td><td>2.6</td></tr>
+  </tbody></table>
+</section>
+
+<section class="top-sec" id="sec-gates">
+  <div class="sec-h"><span class="no">05</span><h2>质量门</h2></div>
+  <ul class="gate">
+  <li class="ok"><span class="m">✓</span><span>剧本节拍被恰好一次、按顺序、连续认领（分镜级）</span></li>
+  <li class="ok"><span class="m">✓</span><span>每段 0 &lt; 总秒数 ≤ 15（一次生成的上限）</span></li>
+  <li class="ok"><span class="m">✓</span><span>每个分镜 2–5 秒——短剧的注意力节奏</span></li>
+  <li class="ok"><span class="m">✓</span><span>认领节拍的台词装得进分镜秒数</span></li>
+  <li class="ok"><span class="m">✓</span><span>每集总时长在剧本目标 ±15% 内</span></li>
+  <li class="ok"><span class="m">✓</span><span>单个分镜同框 ≤ 3 人，超了必须带拆解说明</span></li>
+  <li class="ok"><span class="m">✓</span><span>段号 E01-01 格式、按顺序连号</span></li>
+  <li class="ok"><span class="m">✓</span><span>景别短语写进分镜图提示词</span></li>
+  <li class="ok"><span class="m">✓</span><span>运镜用 H3 官方词表，且出现在自己的 [Shot k] 段落里</span></li>
+  <li class="ok"><span class="m">✓</span><span>可选镜头计划必须写清动机、路径、速度、幅度、主体关系、稳定方式、前景遮挡与首尾景别</span></li>
+  <li class="ok"><span class="m">✓</span><span>H3 首行对齐指令由分镜结构推导逐字对账，切点时刻逐个对</span></li>
+  <li class="ok"><span class="m">✓</span><span>认领节拍的台词逐字进 H3 提示词的 &lt;d&gt; 块</span></li>
+  <li class="ok"><span class="m">✓</span><span>H3 提示词语言与设定一致（promptLang=en，正文全英文、骨架 token 官方英文格式）</span></li>
+  <li class="ok"><span class="m">✓</span><span>分镜图风格短语统一（realistic：cinematic film still）——同剧不许画风漂</span></li>
+  <li class="ok"><span class="m">✓</span><span>分镜图提示词全英文且非空</span></li>
+  <li class="ok"><span class="m">✓</span><span>英文提示词不含角色名（分镜图提示词恒查；中文 H3 提示词放行）<small>未提供 outline/cast，本门跳过（视为通过）</small></span></li>
+  <li class="ok"><span class="m">✓</span><span>场次／人物／道具对账剧本</span></li>
+  <li class="ok"><span class="m">✓</span><span>关键场次有已选导演计划：观众立场、信息时机、空间压力、最强画面、反应落点与声音策略</span></li>
+  <li class="ok"><span class="m">✓</span><span>镜头首尾边界、资产状态引用与同场跨镜连续性一致</span></li>
+</ul>
+  <p class="gsum">全部通过</p>
+</section>
+
+<p class="foot">分镜由模型依据剧本切分：段 = 一次生成（≤15 秒），分镜 = 段内 2–5 秒的剪切，每个分镜一张关键帧图。对齐指令、切点时刻、台词、提示词纪律全部由脚本确定性对账。分镜图出图走 codex，环境与角色设定图当参考图。</p>
+</div>
+
+<div class="lightbox" id="lightbox"><img alt=""></div>
+
+<script type="application/json" id="storyboard-data">{"source":"影帝他总想对我图谋不轨","style":"realistic","promptLang":"en","continuityVersion":1,"assetDecisions":[{"id":"AS-C01-BURIED","asset":"C01","decision":"reuse","state":"buried in damaged ceremonial dress inside a sealed coffin","reason":"The complete five-cut segment stays inside the same sealed coffin and uses one continuous buried look.","identityReference":{"type":"character-sheet","characterId":"C01","path":"影帝他总想对我图谋不轨_漫剧改编/人物/images/李宝珠-sheet.png"}},{"id":"AS-C02-OFFSCREEN","asset":"C02","decision":"reuse","state":"physically outside the sealed coffin and not visible in this segment","reason":"The script scene lists C02, so continuity tracks the character without placing any external person on screen."},{"id":"AS-C09-OFFSCREEN","asset":"C09","decision":"reuse","state":"remote palace-memory presence only and not visible in this segment","reason":"The script scene lists C09, so continuity tracks the character without materializing a memory figure or visual effect."},{"id":"AS-COFFIN-SHELL","asset":"coffin-shell","decision":"reuse","state":"one sealed catalpa-wood coffin shell shared by all five shots"},{"id":"AS-COFFIN-LID","asset":"coffin-lid","decision":"reuse","state":"one rigid lid fixed within arm reach and never displaced"},{"id":"AS-WHITE-SILK","asset":"white-silk","decision":"reuse","state":"one continuous burial-silk lining beneath the body"},{"id":"AS-BRONZE-NAIL","asset":"bronze-nail","decision":"reuse","state":"exactly one thick bronze nail fixed above the head until fingertip contact in C05"}],"params":{"maxSegmentSeconds":15,"minCutSeconds":2,"maxCutSeconds":5,"maxOnScreen":3,"tolerance":0.15},"episodes":[{"ep":1,"directorCriticalScenes":[1],"scenePlans":[{"id":"E01-SC01-PLAN","sceneIndex":1,"audiencePosition":"Stay physically trapped with the buried young woman; no outside rescuer or remembered figure becomes visible.","informationTiming":"Reveal wakefulness first, confinement through failed bracing and impact second, then identify the burial through silk and bronze.","spatialPressure":"Coffin edges and the lid remain within arm reach, restricting shoulders, breath and every hand path.","strongestImage":"Two hands stop on opposite burial clues—silk below and a thick bronze nail above—while the whole body freezes.","reactionLanding":"Land on the closed-mouth listening gaze and then on the final tactile freeze.","soundStrategy":"Use breath, one muffled wood impact and close material sounds; thin the score into near-silence at recognition."}],"segments":[{"id":"E01-01","sceneIndex":1,"cuts":[{"beats":[1,1],"seconds":3,"size":"close","camera":"Push In","characters":["C01"],"props":[],"characterReferenceImages":[{"characterId":"C01","assetDecisionRef":"AS-C01-BURIED","path":"影帝他总想对我图谋不轨_漫剧改编/人物/images/李宝珠-sheet.png"}],"frame":"close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; inside a pitch-dark sealed coffin, only a buried young woman is visible as her eyes snap open before her shoulders wedge against the silk-lined base, both bent elbows force her palms onto the lid with clear near-far asymmetry, compressed claustrophobic framing, no external person, no visual effects.","purpose":"Make the awakening legible before the trapped body and asymmetrical bracing reveal that the lid will not yield.","startBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"双眼闭合，无明确注视","leftHand":"屈肘收在左肋旁，手掌未接触棺盖","rightHand":"屈肘收在右肋旁，手掌未接触棺盖","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"endBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"睁眼后固定在近在眼前的黑暗棺盖","leftHand":"左肘弯曲，左掌贴住头顶偏左棺盖内侧","rightHand":"右肘弯曲，右掌贴住头顶偏右棺盖内侧","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"actionRefs":["E01-S01-B01-A01"],"actionStateProjection":{"startState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"低位固定在棺底，躯干无侧移空间","gaze":"双眼闭合，无明确注视","leftHand":"屈肘收在左肋旁，手掌未接触棺盖","rightHand":"屈肘收在右肋旁，手掌未接触棺盖","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底"],"breath":"昏迷后的浅弱呼吸"}},"props":{}},"endState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"仍压在棺底，胸肩因撑顶短暂绷紧","gaze":"睁眼后固定在近在眼前的黑暗棺盖","leftHand":"左肘弯曲，左掌贴住头顶偏左棺盖内侧","rightHand":"右肘弯曲，右掌贴住头顶偏右棺盖内侧","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧","右掌/棺盖内侧"],"breath":"惊醒后的短促吸气转为受限急喘"}},"props":{}},"mustShow":["双眼从闭合到猛然睁开","弯曲双肘下双掌同时贴住棺盖","肩背被棺底限制且棺盖没有位移"]},"note":"Only C01 is visible; C02 and C09 remain boundary-tracked off screen, and no external people or visual effects appear.","cameraPlan":{"purpose":"Tighten psychological distance as wakefulness becomes recognition of physical confinement.","path":"push-in","speed":"slow","amplitude":"micro","subjectRelation":"approach the opening eyes and braced shoulders","stabilization":"stable","foregroundOcclusion":"coffin edges compress the frame","startSize":"close","endSize":"close"},"shotId":"E01-01-C01","beatId":"C01-Awake","cameraId":"E01-01-C01-camera","spatialSnapshotId":"E01-01-C01"},{"beats":[2,2],"seconds":2.6,"size":"close","camera":"Static Shot","characters":["C01"],"props":[],"characterReferenceImages":[{"characterId":"C01","assetDecisionRef":"AS-C01-BURIED","path":"影帝他总想对我图谋不轨_漫剧改编/人物/images/李宝珠-sheet.png"}],"frame":"close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible in the coffin as a ragged breath and cry strain her chest, her left palm stays planted on the lid for spatial orientation while her right palm withdraws less than a handspan and begins to lift for a strike, controlled handheld tension, no external person, no visual effects.","purpose":"Let breath and the exact cry lead while the two hands separate into orientation and strike preparation.","startBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"睁眼后固定在近在眼前的黑暗棺盖","leftHand":"左肘弯曲，左掌贴住头顶偏左棺盖内侧","rightHand":"右肘弯曲，右掌贴住头顶偏右棺盖内侧","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"endBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"固定在头顶棺盖","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"actionRefs":["E01-S01-B02-A01"],"actionStateProjection":{"startState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"仍压在棺底，胸肩因撑顶短暂绷紧","gaze":"睁眼后固定在近在眼前的黑暗棺盖","leftHand":"左肘弯曲，左掌贴住头顶偏左棺盖内侧","rightHand":"右肘弯曲，右掌贴住头顶偏右棺盖内侧","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧","右掌/棺盖内侧"],"breath":"惊醒后的短促吸气转为受限急喘"}},"props":{}},"endState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"肩背压在棺底，右肩略回收为拍击蓄力","gaze":"固定在头顶棺盖","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧"],"breath":"嘶哑呼救后气息断续，胸腔起伏受限"}},"props":{}},"mustShow":["嘶哑呼救时受限的胸腔起伏","左掌持续撑盖而右掌撤回拍击预备","右掌与棺盖之间不足一掌的狭窄距离"]},"note":"Only C01 is visible; C02 and C09 remain boundary-tracked off screen, and no external people or visual effects appear.","cameraPlan":{"purpose":"Hold spatial orientation while breath and the cry separate the two hand functions.","path":"static","speed":"very-slow","amplitude":"micro","subjectRelation":"locked to the chest, left brace and right strike preparation","stabilization":"locked","foregroundOcclusion":"coffin edge partly masks the lower torso","startSize":"close","endSize":"close"},"shotId":"E01-01-C02","beatId":"C02-Call","cameraId":"E01-01-C02-camera","spatialSnapshotId":"E01-01-C02"},{"beats":[3,3],"seconds":3,"size":"extreme-close","camera":"Shake Slightly","characters":["C01"],"props":[],"characterReferenceImages":[{"characterId":"C01","assetDecisionRef":"AS-C01-BURIED","path":"影帝他总想对我图谋不轨_漫剧改编/人物/images/李宝珠-sheet.png"}],"frame":"extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile insert of the buried young woman’s right palm contacting the catalpa-wood lid, the wood surface compresses without shifting and releases a trace of real dry dust, her wrist recoils and fingers curl while the left hand remains outside this impact insert, no external person, no stylized visual effects.","purpose":"Isolate the right-palm contact, lid resistance and wrist recoil as physical proof of confinement.","startBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"固定在头顶棺盖","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"endBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"随闷响固定在右掌击中的棺盖内侧","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"actionRefs":["E01-S01-B03-A01"],"actionStateProjection":{"startState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"肩背压在棺底，右肩略回收为拍击蓄力","gaze":"固定在头顶棺盖","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧"],"breath":"嘶哑呼救后气息断续，胸腔起伏受限"}},"props":{}},"endState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"击掌回弹后仍压在棺底，右肩随反力回落","gaze":"随闷响固定在右掌击中的棺盖内侧","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧"],"breath":"听见贴耳闷响后短促屏息，等待回声消退"}},"props":{}},"mustShow":["左掌持续撑住棺盖","右掌掌心准确击中梓木棺盖内侧","右掌被回弹震开不足一掌且五指微屈","棺盖没有位移"]},"note":"Only C01 is visible; C02 and C09 remain boundary-tracked off screen, and no external people or visual effects appear.","shotId":"E01-01-C03","beatId":"C03-Strike","cameraId":"E01-01-C03-camera","spatialSnapshotId":"E01-01-C03","cameraPlan":{"purpose":"Let a restrained impact vibration register force without losing hand anatomy or contact geometry.","path":"impact micro-shake","speed":"fast","amplitude":"micro","subjectRelation":"locked to the right palm, wrist and lid contact point","stabilization":"handheld","foregroundOcclusion":"none across the five visible right-hand fingers","startSize":"extreme-close","endSize":"extreme-close"}},{"beats":[4,4],"seconds":2.6,"size":"close","camera":"Static Shot","characters":["C01"],"props":[],"characterReferenceImages":[{"characterId":"C01","assetDecisionRef":"AS-C01-BURIED","path":"影帝他总想对我图谋不轨_漫剧改编/人物/images/李宝珠-sheet.png"}],"frame":"close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; only the buried young woman is visible as all motion stops after the muffled impact, lips fully closed, gaze listening upward into blackness, lowered shoulders, clenched jaw and shallow breath exposing suppressed panic, no external person, no visual effects.","purpose":"Land the realization in a closed-mouth listening reaction where jaw and breath betray suppressed panic.","startBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"随闷响固定在右掌击中的棺盖内侧","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"endBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"从接触点移向棺内四周的黑暗边缘","leftHand":"左掌仍贴头顶偏左棺盖内侧但手臂已经卸力","rightHand":"右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"actionRefs":["E01-S01-B04-A01"],"actionStateProjection":{"startState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"击掌回弹后仍压在棺底，右肩随反力回落","gaze":"随闷响固定在右掌击中的棺盖内侧","leftHand":"左肘弯曲，左掌持续撑住头顶偏左棺盖内侧","rightHand":"右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧"],"breath":"听见贴耳闷响后短促屏息，等待回声消退"}},"props":{}},"endState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"回落并稳定压在棺底，双肩不再持续撑顶","gaze":"从接触点移向棺内四周的黑暗边缘","leftHand":"左掌仍贴头顶偏左棺盖内侧但手臂已经卸力","rightHand":"右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧"],"breath":"强迫拉长呼气后恢复浅而受限的呼吸"}},"props":{}},"mustShow":["视线从击掌点转向四周黑暗","肩颈下降且左掌卸去撑顶力量","右手仍保留回弹后的五指微屈"]},"note":"Only C01 is visible; C02 and C09 remain boundary-tracked off screen, and no external people or visual effects appear.","cameraPlan":{"purpose":"Hold perfectly still as outward struggle collapses into listening recognition.","path":"static","speed":"very-slow","amplitude":"micro","subjectRelation":"locked to closed lips, listening gaze and lowered shoulder girdle","stabilization":"locked","foregroundOcclusion":"dark lid edge narrows the upper frame","startSize":"close","endSize":"close"},"shotId":"E01-01-C04","beatId":"C04-Listen","cameraId":"E01-01-C04-camera","spatialSnapshotId":"E01-01-C04"},{"beats":[5,5],"seconds":3,"size":"extreme-close","camera":"Push In","characters":["C01"],"props":[],"characterReferenceImages":[{"characterId":"C01","assetDecisionRef":"AS-C01-BURIED","path":"影帝他总想对我图谋不轨_漫剧改编/人物/images/李宝珠-sheet.png"}],"frame":"extreme close-up, cinematic film still, refined cinematic Chinese 3D animation, stylized animated-feature CG; tactile split-depth insert inside the coffin, the buried young woman’s left fingertips compress burial silk beneath her waist while her right fingertips locate a thick bronze nail above, both contacts lock at once and the visible tension freezes through her hands and body, no external person, no visual effects.","purpose":"End on two tactile clues—silk below and bronze above—then freeze the whole body on recognition.","startBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"从接触点移向棺内四周的黑暗边缘","leftHand":"左掌仍贴头顶偏左棺盖内侧但手臂已经卸力","rightHand":"右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"endBoundary":{"spatialAnchor":"sealed coffin interior beneath burial soil","workingSide":"A","screenDirection":"none","characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","facing":"面朝棺盖，头顶距离棺盖不足一掌","gaze":"黑暗中冻结在头顶铜钉方向","leftHand":"左手探至腰侧，指腹压住身下锦缎并停住","rightHand":"右手在头顶偏右处搜索后，指尖贴住粗大铜钉并停住","lookRef":"AS-C01-BURIED"},"C02":{"position":"outside the sealed coffin beyond the burial soil, off screen","facing":"toward the buried coffin, off screen","gaze":"the buried coffin, off screen","leftHand":"off screen with no contact inside the coffin","rightHand":"off screen with no contact inside the coffin","lookRef":"AS-C02-OFFSCREEN"},"C09":{"position":"remote palace memory only, off screen","facing":"away from the current coffin space, off screen","gaze":"absent from the current physical scene, off screen","leftHand":"off screen with no current contact","rightHand":"off screen with no current contact","lookRef":"AS-C09-OFFSCREEN"}},"props":{"coffin-shell":{"holder":"environment","position":"sealed around C01 without topology or scale change","stateRef":"AS-COFFIN-SHELL"},"coffin-lid":{"holder":"environment","position":"fixed less than one palm above C01 and never displaced","stateRef":"AS-COFFIN-LID"},"white-silk":{"holder":"environment","position":"continuous beneath C01 from head through waist","stateRef":"AS-WHITE-SILK"},"bronze-nail":{"holder":"environment","position":"exactly one nail fixed above C01's head","stateRef":"AS-BRONZE-NAIL"}}},"actionRefs":["E01-S01-B05-A01"],"actionStateProjection":{"startState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"回落并稳定压在棺底，双肩不再持续撑顶","gaze":"从接触点移向棺内四周的黑暗边缘","leftHand":"左掌仍贴头顶偏左棺盖内侧但手臂已经卸力","rightHand":"右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左掌/棺盖内侧"],"breath":"强迫拉长呼气后恢复浅而受限的呼吸"}},"props":{}},"endState":{"characters":{"C01":{"position":"仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎","orientation":"面朝棺盖，头顶距离棺盖不足一掌","support":"后脑、肩背、骨盆与双腿由棺底承托","centerOfMass":"稳定压在棺底，触认铜钉后全身冻结","gaze":"黑暗中冻结在头顶铜钉方向","leftHand":"左手探至腰侧，指腹压住身下锦缎并停住","rightHand":"右手在头顶偏右处搜索后，指尖贴住粗大铜钉并停住","contact":["后脑/棺底内衬","肩背/身下锦缎","骨盆与双腿/棺底","左手指腹/身下锦缎","右手指尖/头顶粗大铜钉"],"breath":"触认铜钉后屏息，胸腔骤停半拍"}},"props":{}},"mustShow":["左手从棺盖收回并以指腹确认身下锦缎","右手随后以指尖确认头顶粗大铜钉","双手分别停在锦缎与铜钉接触点","触认铜钉后肩颈与呼吸同时僵住"]},"note":"Only C01 is visible; C02 and C09 remain boundary-tracked off screen, and no external people or visual effects appear.","shotId":"E01-01-C05","beatId":"Nail-Found","cameraId":"E01-01-C05-camera","spatialSnapshotId":"E01-01-C05","cameraPlan":{"purpose":"Push toward the exact single-nail fingertip contact that completes burial recognition.","path":"push-in","speed":"very-slow","amplitude":"micro","subjectRelation":"approach the silk and single bronze-nail contact points","stabilization":"stable","foregroundOcclusion":"none across either visible hand","startSize":"extreme-close","endSize":"extreme-close"}}],"h3Prompt":"How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 2) aligns with the 3.00-second mark of the target video; Picture 3 (from Shot 3) aligns with the 5.60-second mark of the target video; Picture 4 (from Shot 4) aligns with the 8.60-second mark of the target video; Picture 5 (from Shot 5) aligns with the 11.20-second mark of the target video.\n\nintegrated_multimodal_description:\n[Shot 1] Anchor exactly to \u003cPicture 1>. In the close coffin interior, only the buried young woman is visible. Her eyes open first; her shoulders wedge against the silk-lined base; both bent arms brace upward and the two palms meet the lid with readable near-far asymmetry. A restrained Push In closes toward the eyes and trapped shoulders. The lid does not move.\n[Shot 2] At 00:03.000, the camera cuts to \u003cPicture 2>: only the same buried young woman remains visible. A locked Static Shot preserves the exact coffin layout as breath and the cry lead; her left palm remains planted for orientation while her right palm withdraws less than a handspan and starts to lift for the strike. In a hoarse, forceful cry, she says: \u003cd>[Chinese] 放我出去！有人吗！\u003c/d>\n[Shot 3] At 00:05.600, the camera cuts to \u003cPicture 3>: an extreme close tactile insert isolates only her right palm and the catalpa-wood lid; her left hand stays outside the insert. A restrained Shake Slightly micro-vibration registers the impact while preserving five anatomically correct fingers, wrist alignment and shoulder load, a momentary compression of the wood without lid displacement, a trace of real dry dust at the contact seam, and the wrist recoiling less than a handspan with fingers curling.\n[Shot 4] At 00:08.600, the camera cuts to \u003cPicture 4>: only the same buried young woman is visible. Motion stops. A locked Static Shot holds on her fully closed lips, upward-listening gaze, tightening jaw and shallow controlled breath. Her restrained inner voice (S1) says in an off-screen voiceover while her lips remain completely closed: \u003cd>[Chinese] 冷。这里不是寝殿。\u003c/d>\n[Shot 5] At 00:11.200, the camera cuts to \u003cPicture 5>: a very slow Push In approaches a tactile extreme close insert as her left fingertips compress the burial silk below her waist, then her right fingertips find the single thick bronze nail above. Both contacts stop at once, followed by a full-body freeze and a half-beat of held breath. No external person enters the frame, and no supernatural or stylized visual effect appears.\n\noverall_soundscape: Confined breath, cloth pressure and close wood creaks stay dry and intimate. The cry is followed by one muffled right-palm impact, a short wrist recoil, and a lid-level echo that decays beside the ear. The final silk rub and faint fingertip scrape against bronze stop abruptly with the held breath.\n\nnon_diegetic_music: A nearly inaudible low string pressure enters beneath the first brace, thins after the impact, and cuts to a cold sustained tone at the bronze-nail recognition.","note":"Official storyboard display timing is 3.0, 2.6, 3.0, 2.6 and 3.0 seconds so both exact Chinese lines satisfy dialogue-fit. Production timing remains authoritative at 72, 63, 72, 62 and 72 frames at 24 fps (341 frames total). Only C01 is visible, with no external visible people or visual effects.","spatialStageRef":{"path":"影帝他总想对我图谋不轨_漫剧改编/分镜/work/E01-01.spatial-stage.seed.json","stageId":"stage_segment_E01-01","stageRevision":1,"shots":[{"shotId":"E01-01-C01","beatId":"C01-Awake","snapshotId":"E01-01-C01","cameraId":"E01-01-C01-camera"},{"shotId":"E01-01-C02","beatId":"C02-Call","snapshotId":"E01-01-C02","cameraId":"E01-01-C02-camera"},{"shotId":"E01-01-C03","beatId":"C03-Strike","snapshotId":"E01-01-C03","cameraId":"E01-01-C03-camera"},{"shotId":"E01-01-C04","beatId":"C04-Listen","snapshotId":"E01-01-C04","cameraId":"E01-01-C04-camera"},{"shotId":"E01-01-C05","beatId":"Nail-Found","snapshotId":"E01-01-C05","cameraId":"E01-01-C05-camera"}]}}]}],"spatialGenerationPolicy":{"frameSize":[1280,720],"characterIdentityReference":"AS-C01-BURIED","sharedAssetDecisionRefs":["AS-COFFIN-SHELL","AS-COFFIN-LID","AS-WHITE-SILK","AS-BRONZE-NAIL"],"anatomy":"Every visible hand has exactly five fingers; shoulder girdle, clavicle, scapula, upper arm, wrist and hand connections remain credible.","localOnly":true,"cloudFallback":false}}</script>
+<script>
+const L = {"copied":"已复制","failed":"复制失败","show":"▾ 展开全部段","hide":"▴ 收起"};
+
+// 分集分镜表：段卡区默认最多 760px。不超高的集直接放开；超高的集点开/收起
+document.querySelectorAll('.shmore').forEach((btn) => {
+  const zone = btn.previousElementSibling;
+  if (zone.scrollHeight <= 780) {
+    zone.classList.remove('clip');
+    btn.remove();
+    return;
+  }
+  btn.addEventListener('click', () => {
+    const clipped = zone.classList.toggle('clip');
+    btn.textContent = clipped ? L.show : L.hide;
+    if (clipped) zone.closest('.ep').scrollIntoView({ block: 'nearest' });
+  });
+});
+
+// 点图放大（主分镜图 / 子分镜图 / 批次场景图）
+const lb = document.getElementById('lightbox');
+document.addEventListener('click', (e) => {
+  const img = e.target.closest('img.frame, img.subf, img.bimg');
+  if (img) {
+    lb.querySelector('img').src = img.src;
+    lb.classList.add('on');
+    return;
+  }
+  if (e.target.closest('#lightbox')) lb.classList.remove('on');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') lb.classList.remove('on');
+});
+
+// 复制提示词
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.copy');
+  if (!btn) return;
+  e.preventDefault();
+  const label = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.copy);
+    btn.textContent = L.copied;
+    btn.dataset.done = '1';
+  } catch {
+    btn.textContent = L.failed;
+  }
+  setTimeout(() => { btn.textContent = label; delete btn.dataset.done; }, 1600);
+});
+
+// 导出：报告自己带着完整的 storyboard.json，下载的是它原样
+document.querySelector('.expo').addEventListener('click', (e) => {
+  const btn = e.currentTarget;
+  const url = URL.createObjectURL(
+    new Blob([document.getElementById('storyboard-data').textContent], { type: 'application/json' }),
+  );
+  const a = Object.assign(document.createElement('a'), { href: url, download: btn.dataset.name });
+  a.click();
+  // 别立刻回收——Safari 会抢在下载读完之前撤掉 blob
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+});
+</script>
+</body></html>

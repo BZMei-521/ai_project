@@ -1,0 +1,80 @@
+{
+  "source": "影帝他总想对我图谋不轨",
+  "continuityVersion": 1,
+  "assetDecisions": [],
+  "episodes": [
+    {
+      "ep": 1,
+      "segments": [],
+      "directorCriticalScenes": [],
+      "scenePlans": [],
+      "seedScenes": [
+        {
+          "sceneIndex": 1,
+          "sceneId": "S01",
+          "lighting": "",
+          "characters": [
+            "C01",
+            "C02",
+            "C09"
+          ],
+          "props": [],
+          "beats": [
+            {
+              "n": 1,
+              "kind": "action",
+              "seconds": 3,
+              "text": "冷开场：李宝珠在黑暗中猛地睁眼，双手推向近在眼前的棺盖，身体却被狭窄棺木死死卡住。",
+              "actionRefs": [
+                "E01-S01-B01-A01"
+              ],
+              "actionIntent": "从昏迷中惊醒并本能撑向近在咫尺的棺盖"
+            },
+            {
+              "n": 2,
+              "kind": "line",
+              "seconds": 2.6,
+              "speaker": "C01",
+              "text": "放我出去！有人吗！",
+              "actionRefs": [
+                "E01-S01-B02-A01"
+              ],
+              "actionIntent": "在受限呼吸中呼救并把撑顶升级为拍击预备"
+            },
+            {
+              "n": 3,
+              "kind": "action",
+              "seconds": 3,
+              "text": "她的手掌拍在梓木棺盖上，沉闷回声贴着耳边反弹。",
+              "actionRefs": [
+                "E01-S01-B03-A01"
+              ],
+              "actionIntent": "以右掌击中棺盖并从闷响和回弹确认棺盖无法推动"
+            },
+            {
+              "n": 4,
+              "kind": "line",
+              "seconds": 2.6,
+              "speaker": "VO",
+              "text": "冷。这里不是寝殿。",
+              "actionRefs": [
+                "E01-S01-B04-A01"
+              ],
+              "actionIntent": "在回声后的静默中压住恐慌并辨认陌生寒冷环境"
+            },
+            {
+              "n": 5,
+              "kind": "action",
+              "seconds": 3,
+              "text": "她摸到身下锦缎，又摸到头顶粗大的铜钉，动作突然停住。",
+              "actionRefs": [
+                "E01-S01-B05-A01"
+              ],
+              "actionIntent": "以左手确认身下绸缎、右手确认头顶铜钉后僵住"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
