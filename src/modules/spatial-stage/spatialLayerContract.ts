@@ -11,10 +11,4 @@ export type SpatialShotContract = {
 };
 export type SpatialContractValidation = { valid: true } | { valid: false; reason: string };
 
-// The executable implementation is shared with the stock-Node focused check.
-// @ts-expect-error The JavaScript runtime is intentionally dependency-free.
-import { normalizeSpatialShotContract as runtimeNormalize, orderedLayerIds as runtimeOrderedLayerIds, validateSpatialShotContract as runtimeValidate } from "./spatialLayerContractRuntime.mjs";
-
-export const normalizeSpatialShotContract = runtimeNormalize as (value: unknown) => SpatialShotContract;
-export const orderedLayerIds = runtimeOrderedLayerIds as (contract: SpatialShotContract) => string[];
-export const validateSpatialShotContract = runtimeValidate as (contract: SpatialShotContract) => SpatialContractValidation;
+export { normalizeSpatialShotContract, orderedLayerIds, validateSpatialShotContract } from "./spatialLayerContractRuntime.mjs";

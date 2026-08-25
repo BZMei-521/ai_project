@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   normalizeSpatialShotContract,
   orderedLayerIds,
   validateSpatialShotContract
 } from "../src/modules/spatial-stage/spatialLayerContractRuntime.mjs";
+
+const typedWrapperSource = readFileSync(
+  fileURLToPath(new URL("../src/modules/spatial-stage/spatialLayerContract.ts", import.meta.url)),
+  "utf8"
+);
+assert.equal(/@ts-(?:ignore|expect-error)/.test(typedWrapperSource), false);
+assert.equal(/runtime(?:Normalize|OrderedLayerIds|Validate)\s+as/.test(typedWrapperSource), false);
 
 const contract = normalizeSpatialShotContract({
   schemaVersion: 1,
