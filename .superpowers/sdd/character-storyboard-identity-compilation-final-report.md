@@ -13,10 +13,17 @@ No network, generation model, provider API, automatic correction loop, applicati
 1. **Binding fail-closed:** correspondence v1 now requires plain binding objects, rejects duplicate characterRef values, requires string lookRef/startPosition/endPosition, validates complete start/end character boundary objects and fields, and diagnoses malformed/null bindings without throwing. Focused selftests cover null/array/string bindings, duplicates, empty and numeric fields, missing boundary entries, and incomplete boundary objects.
 2. **Action/evidence resolution:** non-empty cut.actionRefs requires action context; every ref resolves; binding actionRefs equals resolved participant actions; all supplied evidence belongs to referenced actions; every required action has its own evidence; no-action bindings reject evidence. Focused tests cover each branch.
 3. **Version I/O:** character absence remains legacy while present null/0/2/string "1" fails; assemble rejects them; HTML and actual CLI render/download preserve v1. Storyboard only treats a missing field as legacy; present null and other unsupported values create/fail the correspondence gate and structural validation.
-4. **Anchor provenance/workflow:** approved anchors match the owning escaped characterRef and exact identityVersion. Wrong-character, wrong-version, and malformed tests are committed in the installed skill. Documentation allocates stable refs before anchors and delays final v1 assembly/validation until Step 8.5 user approval.
+4. **Anchor provenance/workflow:** production v1 now requires top-level `identityManifests` approval snapshots in the existing asset-pack manifest shape. Each approved module has exactly one same-owner/version manifest with an approved, non-empty anchor id/file, and the manifest-derived anchor ref must exactly equal `anchorRef`; absent, duplicate, wrong-owner/version/status/file/id and unregistered anchors fail. Assemble/validate/HTML/CLI preserve provenance; legacy is unchanged.
 5. **Committed diagnostics:** wrong-version selftests assert exact E01-01#1 and C01 detail. Manifest tests compare against source correspondence and the JSON-serialized/deserialized manifest rather than object identity.
 6. **QA summary:** summary requires an actual non-empty string; numeric-summary regression is committed.
 7. **Character schema:** canonical example is legacy-compatible; opt-in v1 is separate.
+
+## Final re-review follow-up
+
+- **Important — approved anchor provenance:** fixed with top-level `identityManifests` snapshots reused from `asset-pack.md`; focused character tests cover every rejection and all assemble/render/HTML/CLI preservation paths.
+- **Minor — installed assertion wording:** removed the stale hard-coded count from SKILL.md; the selftest output is authoritative.
+- **Minor — malformed base collections:** exported `correspondenceProblems` now diagnoses non-array `cut.characters` and explicit non-array `cut.props` without throwing. Six focused null/object/string cases are committed.
+- **Docs/schema:** character production commands and schemas require the manifest snapshot; storyboard schemas explicitly state the base array contracts. No second registry, provider/UI behavior, or legacy requirement was introduced.
 
 ## TDD evidence
 
@@ -40,6 +47,12 @@ CHARACTER_RED3_EXIT=1
 
 AssertionError [ERR_ASSERTION]: HTML 下载数据保留 identityCompilationVersion: 1 — 期望 1，实际 undefined
 CHARACTER_RED4_EXIT=1
+
+AssertionError [ERR_ASSERTION]: v1 缺身份清单失败
+CHARACTER_PROVENANCE_RED_EXIT=1
+
+AssertionError [ERR_ASSERTION]: Missing expected exception: direct HTML render 对无 provenance 的 v1 cast fail closed
+CHARACTER_RENDER_PROVENANCE_RED_EXIT=1
 ~~~
 
 Storyboard RED command:
@@ -60,6 +73,9 @@ STORYBOARD_RED2_EXIT=1
 
 AssertionError [ERR_ASSERTION]: 显式 null correspondenceVersion 结构校验失败
 STORYBOARD_AFTER_STRUCTURE_EXIT=1
+
+AssertionError [ERR_ASSERTION]: null cut.characters 返回诊断且不抛错
+STORYBOARD_BASE_COLLECTION_RED_EXIT=1
 ~~~
 
 ## Fresh complete selftests and skill validation
@@ -75,8 +91,8 @@ Commands:
 Exact output/exits:
 
 ~~~text
-✓ 361 项自测全部通过
-✓ 300 项自测全部通过
+✓ 380 项自测全部通过
+✓ 306 项自测全部通过
 Skill is valid!
 CHARACTER_SELFTEST_EXIT=0
 STORYBOARD_SELFTEST_EXIT=0
@@ -153,22 +169,22 @@ The plan-specified rg field scan and Select-String forbidden-placeholder scan pr
 
 ~~~text
 FIELD_RG_EXIT=0
-FIELD_RG_MATCH_COUNT=235
+FIELD_RG_MATCH_COUNT=281
 PLACEHOLDER_SCAN_OK=True
 PLACEHOLDER_MATCH_COUNT=0
 ~~~
 
-The scan covers identityCompilationVersion, identityModule, characterRef, identityVersion, anchorRef, correspondenceVersion, correspondence, hasDiscrepancies, repairLayer, and repairScope in both skills. PLACEHOLDER_SCAN_OK is the PowerShell success marker; the material result is zero matches.
+The scan covers identityCompilationVersion, identityManifests, identityModule, characterRef, identityVersion, anchorRef, correspondenceVersion, correspondence, hasDiscrepancies, repairLayer, and repairScope in both skills. PLACEHOLDER_SCAN_OK is the PowerShell success marker; the material result is zero matches.
 
 ## User-level character hashes
 
 ~~~text
-BD784AE9D68BF1C8AD3AD45E45385CF66538A4EF2792839D5BD01F3D3CD1A9EE  C:\Users\Administrator\.codex\skills\novel-characters\SKILL.md
-247E5D8C469896991EAAD8B73A3859E2EFAC9BD35DAFB836F05BB5F80379BD90  C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md
-9187B9C50BAFEE8D99EB620687C334D7DA4808E2D42B5B69F234FB48B530D653  C:\Users\Administrator\.codex\skills\novel-characters\references\schema.md
-1D0DFFC1432AC8CDBEF91771B658B86D86DCA217D2A96321E7FB03E4997902D0  C:\Users\Administrator\.codex\skills\novel-characters\references\profile-pass.md
-7A03F6ED65FE39A31E5484142BA994D23847ABE89F8B54AC6E1E93A0ABB0FACB  C:\Users\Administrator\.codex\skills\novel-characters\scripts\novel-characters.mjs
-5461645244D9A087B64AD9CA15D5634A3DD6401E40FB19F10661F4890FB74804  C:\Users\Administrator\.codex\skills\novel-characters\scripts\selftest.mjs
+BB263AB4628528D9B42AFA09203A88CF64B92B3AB4BA8187A2FE10BAECD95BF0  C:\Users\Administrator\.codex\skills\novel-characters\SKILL.md
+930B90974DD6CDD9A9BE1DFC07F7243E7EE2801B2EE6F50015CCE478B23876C6  C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md
+5A88AEB76EC60B4DA94E115A4E45429FB82FBA06C0D955FCC5E9A8F6B35B13A1  C:\Users\Administrator\.codex\skills\novel-characters\references\schema.md
+9693A91A6A05475BE7775290F26416290D9DACEC74221CFE35EB1EFB6FF0F683  C:\Users\Administrator\.codex\skills\novel-characters\references\profile-pass.md
+F7016A869990F56ADE76096981C4D763C08D94EC1F34AE4BEFBEA4B2642C4D871  C:\Users\Administrator\.codex\skills\novel-characters\scripts\novel-characters.mjs
+67030F5E8842A99C7DAFE9A7CB6A7DDB49D1CBE677F681D9396872926634A01B  C:\Users\Administrator\.codex\skills\novel-characters\scripts\selftest.mjs
 GET_FILE_HASH_STATUS=PASS
 ~~~
 

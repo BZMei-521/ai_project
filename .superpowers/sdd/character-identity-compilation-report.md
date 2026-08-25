@@ -2,7 +2,7 @@
 
 ## Scope and result
 
-The installed user-level novel-characters skill now treats an omitted identity version as legacy and every explicitly supplied value as opt-in validation input. Only numeric 1 is accepted. Direct assembly rejects null, 0, 2, and string "1"; approved anchors must match the owning character and exact identity version; HTML/CLI render-download data retains identityCompilationVersion: 1.
+The installed user-level novel-characters skill now treats an omitted identity version as legacy and every explicitly supplied value as opt-in validation input. Only numeric 1 is accepted. Production v1 additionally requires top-level `identityManifests`, reusing the existing asset-pack manifest shape as approval snapshots. Every approved module must have exactly one matching owner/version manifest with approved, non-empty anchor id/file, and its derived anchor reference must equal `identityModule.anchorRef`; assemble, validate, HTML and CLI fail closed or preserve the snapshot end to end. Legacy remains unchanged.
 
 The production workflow is approval-safe: Step 6 may create a legacy/provisional cast, stable character refs are frozen before anchor generation, and final v1 assembly/validation occurs only after Step 8.5 anchor generation and explicit user approval. The canonical schema example is legacy-compatible, with opt-in v1 shown separately.
 
@@ -28,16 +28,22 @@ CHARACTER_RED3_EXIT=1
 
 AssertionError [ERR_ASSERTION]: HTML 下载数据保留 identityCompilationVersion: 1 — 期望 1，实际 undefined
 CHARACTER_RED4_EXIT=1
+
+AssertionError [ERR_ASSERTION]: v1 缺身份清单失败
+CHARACTER_PROVENANCE_RED_EXIT=1
+
+AssertionError [ERR_ASSERTION]: Missing expected exception: direct HTML render 对无 provenance 的 v1 cast fail closed
+CHARACTER_RENDER_PROVENANCE_RED_EXIT=1
 ~~~
 
 Fresh GREEN:
 
 ~~~text
-✓ 361 项自测全部通过
+✓ 380 项自测全部通过
 CHARACTER_SELFTEST_EXIT=0
 ~~~
 
-The 361 assertions include absence/null/supported/unsupported version cases, direct assemble rejection, wrong-character/wrong-version/malformed anchors, direct HTML embedded download round-trip, actual CLI render/download round-trip, and CLI validation of a top-level explicit null.
+The 380 assertions additionally cover missing/duplicate/wrong-owner/wrong-version/unapproved/missing-file/missing-id manifests, syntactically valid but unregistered anchors, direct and CLI assemble fail-closed behavior, CLI validation, direct/CLI render fail-closed behavior, and manifest preservation through direct HTML plus CLI render/download.
 
 ## Installed skill validation and legacy smoke
 
@@ -68,12 +74,12 @@ CHARACTER_LEGACY_EXIT=0
 These six files are intentionally outside the Git repository:
 
 ~~~text
-BD784AE9D68BF1C8AD3AD45E45385CF66538A4EF2792839D5BD01F3D3CD1A9EE  C:\Users\Administrator\.codex\skills\novel-characters\SKILL.md
-247E5D8C469896991EAAD8B73A3859E2EFAC9BD35DAFB836F05BB5F80379BD90  C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md
-9187B9C50BAFEE8D99EB620687C334D7DA4808E2D42B5B69F234FB48B530D653  C:\Users\Administrator\.codex\skills\novel-characters\references\schema.md
-1D0DFFC1432AC8CDBEF91771B658B86D86DCA217D2A96321E7FB03E4997902D0  C:\Users\Administrator\.codex\skills\novel-characters\references\profile-pass.md
-7A03F6ED65FE39A31E5484142BA994D23847ABE89F8B54AC6E1E93A0ABB0FACB  C:\Users\Administrator\.codex\skills\novel-characters\scripts\novel-characters.mjs
-5461645244D9A087B64AD9CA15D5634A3DD6401E40FB19F10661F4890FB74804  C:\Users\Administrator\.codex\skills\novel-characters\scripts\selftest.mjs
+BB263AB4628528D9B42AFA09203A88CF64B92B3AB4BA8187A2FE10BAECD95BF0  C:\Users\Administrator\.codex\skills\novel-characters\SKILL.md
+930B90974DD6CDD9A9BE1DFC07F7243E7EE2801B2EE6F50015CCE478B23876C6  C:\Users\Administrator\.codex\skills\novel-characters\references\identity-module.md
+5A88AEB76EC60B4DA94E115A4E45429FB82FBA06C0D955FCC5E9A8F6B35B13A1  C:\Users\Administrator\.codex\skills\novel-characters\references\schema.md
+9693A91A6A05475BE7775290F26416290D9DACEC74221CFE35EB1EFB6FF0F683  C:\Users\Administrator\.codex\skills\novel-characters\references\profile-pass.md
+F7016A869990F56ADE76096981C4D763C08D94EC1F34AE4BEFBEA4B2642C4D871  C:\Users\Administrator\.codex\skills\novel-characters\scripts\novel-characters.mjs
+67030F5E8842A99C7DAFE9A7CB6A7DDB49D1CBE677F681D9396872926634A01B  C:\Users\Administrator\.codex\skills\novel-characters\scripts\selftest.mjs
 GET_FILE_HASH_STATUS=PASS
 ~~~
 
@@ -81,8 +87,8 @@ GET_FILE_HASH_STATUS=PASS
 
 - Legacy four-argument validation remains unchanged through an undefined sentinel.
 - Present null is preserved by JSON loading and rejected instead of being coalesced away.
-- Approved anchor provenance is checked with an escaped characterRef and exact A-digits/version pattern.
-- Render output preserves the version without inventing it for legacy input.
+- Approved anchor provenance is not inferred from syntax: it is registered by an exact approved asset-pack manifest snapshot.
+- Assemble/render/HTML/CLI preserve both the version and approval snapshot without inventing either for legacy input.
 - No provider API, model-specific identity behavior, UI, or unrelated refactor was added.
 
 Limitation: the installed user-level skill has no repository history by design. Its evidence is the six hashes plus fresh deterministic test/validation output above. The repository commit that contains this report cannot self-name its own new SHA; the ignored final-fix-report.md records that SHA immediately after commit.

@@ -34,7 +34,7 @@
 ```
 
 - `sourceBeats.sceneIndex` 与 `sourceBeats.beats` 分别等于所在 `segment.sceneIndex` 与 `cut.beats`。
-- `characters`、每项的 `actionRefs` / `poseEvidenceRefs`、`propRefs` 和 `mustShow` 都是 **必填数组**；即使预期为空也必须写 `[]`，不得以缺字段表示空值。`characters` 中每个绑定必须是普通对象，每个 `characterRef` 只能绑定一次，绑定集合必须与 `cut.characters` 完全相同；每项只用该角色 approved identity module 的当前版本。
+- `cut.characters` 始终必须是数组；`cut.props` 可省略，但一旦出现也必须是数组。对应快照的 `characters`、每项 `actionRefs` / `poseEvidenceRefs`、`propRefs` 和 `mustShow` 都是 **必填数组**；即使预期为空也必须写 `[]`，不得以 `null`、对象、字符串或缺字段表示空值。`characters` 中每个绑定必须是普通对象，每个 `characterRef` 只能绑定一次，绑定集合必须与 `cut.characters` 完全相同；每项只用该角色 approved identity module 的当前版本。
 - 每个绑定的 `lookRef`、`startPosition`、`endPosition` 都必须是非空字符串。对应角色在 `startBoundary.characters` 与 `endBoundary.characters` 中都必须有完整普通对象状态；开始和结束边界各自的 `position`、`facing`、`gaze`、`leftHand`、`rightHand`、`lookRef` 均不可缺失或为空。绑定只复写开始边界 `lookRef` 与首尾 `position`，不能靠双方同时缺字段形成 `undefined === undefined` 的假一致。
 - 画内角色为零时，`characters: []` 且 `emptyCharacterShot: true`；只要画内有角色，`emptyCharacterShot` 必须为 `false`，不得借空镜逃过身份绑定。
 - `actionRefs` 只列该人物实际参与且已经解析的本切动作；没有则 `[]`。角色没有参与动作时 `poseEvidenceRefs` 必须为 `[]`。有动作时可以只引用这些动作列出的批准预演证据；不能引用未批准证据或其他动作的证据。多个 required 预演动作时，每个 required 动作都至少要有一条自己的批准证据被引用。

@@ -758,6 +758,18 @@ function withEmptyCorrespondenceCut() {
   delete binding.poseEvidenceRefs;
   ok(!gate(doc, 'multimodal-correspondence', { ...CTX, cast: IDENTITY_CAST }).ok, '角色缺 poseEvidenceRefs 数组失败');
 }
+for (const [malformed, label] of [[null, 'null'], [{ C01: true }, '对象'], ['C01', '字符串']]) {
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0].characters = malformed;
+  const problems = correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST });
+  ok(problems.some((x) => x.includes('cut.characters 必须是数组')), `${label} cut.characters 返回诊断且不抛错`);
+}
+for (const [malformed, label] of [[null, 'null'], [{ P01: true }, '对象'], ['P01', '字符串']]) {
+  const doc = withCorrespondence();
+  doc.episodes[0].segments[0].cuts[0].props = malformed;
+  const problems = correspondenceProblems(doc, { ...CTX, cast: IDENTITY_CAST });
+  ok(problems.some((x) => x.includes('cut.props 必须是数组')), `${label} cut.props 返回诊断且不抛错`);
+}
 for (const [malformed, label] of [[null, 'null'], [[], '数组'], ['C01', '字符串']]) {
   const doc = withCorrespondence();
   doc.episodes[0].segments[0].cuts[0].correspondence.characters[0] = malformed;

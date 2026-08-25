@@ -68,8 +68,8 @@
 | `seconds` | number | 分镜时长，2–5 秒——短剧的注意力节奏是硬门。认领节拍的台词秒数必须装得下 |
 | `size` | enum | 景别：`extreme-wide` 大远景 / `wide` 全景 / `medium` 中景 / `close` 特写 / `extreme-close` 大特写 |
 | `camera` | enum | 运镜，**直接用 H3 官方词表**（原样字符串）：`Static Shot` `Push In` `Pull Out` `Zoom In/Out` `Pan Left/Right` `Truck Left/Right` `Tilt Up/Down` `Pedestal Up/Down` `Arc Shot` `Tracking Shot` `Shake Slightly/Strongly` `POV` `Roll Clockwise/Counterclockwise` |
-| `characters` | string[] | 画内人物（C 编号），必须 ⊆ 剧本该场人物；空镜给空数组。> `maxOnScreen` 时必须带 `note` |
-| `props` | string[] | 画内道具（P 编号），必须 ⊆ 剧本该场道具。可省略 |
+| `characters` | string[] | 画内人物（C 编号），始终必须是数组且必须 ⊆ 剧本该场人物；空镜给 `[]`。超过 `maxOnScreen` 时必须带 `note` |
+| `props` | string[] | 画内道具（P 编号），必须 ⊆ 剧本该场道具。可省略；一旦出现就必须是数组，不能用 `null`、对象或字符串代替 |
 | `frame` | string | **分镜图英文提示词**：这一格关键帧的样子。景别英文短语必须在里面；禁角色名 |
 | `purpose` | string | v1 必填：观众必须注意/感受什么，这一切改变什么 |
 | `startBoundary` | object | v1 必填：镜头开始的完整物理状态 |

@@ -463,7 +463,8 @@ export function correspondenceProblems(board, ctx = {}) {
       const c = cut?.correspondence;
       if (!isPlainObject(c)) { out.push(`${where} 缺 correspondence`); continue; }
       if (c.sourceBeats?.sceneIndex !== seg.sceneIndex || stable(c.sourceBeats?.beats) !== stable(cut.beats)) out.push(`${where} sourceBeats 与分镜认领不一致`);
-      const refs = new Set(cut.characters ?? []);
+      if (!Array.isArray(cut.characters)) out.push(`${where} cut.characters 必须是数组`);
+      const refs = new Set(Array.isArray(cut.characters) ? cut.characters : []);
       if (!Array.isArray(c.characters)) out.push(`${where} characters 必须是数组`);
       const bindings = [];
       const bound = new Set();
@@ -547,7 +548,8 @@ export function correspondenceProblems(board, ctx = {}) {
       }
       if (!Array.isArray(c.propRefs)) out.push(`${where} propRefs 必须是数组`);
       const correspondenceProps = [...new Set(Array.isArray(c.propRefs) ? c.propRefs : [])].sort();
-      const cutProps = [...new Set(cut.props ?? [])].sort();
+      if (Object.hasOwn(cut, 'props') && !Array.isArray(cut.props)) out.push(`${where} cut.props 必须是数组`);
+      const cutProps = [...new Set(Array.isArray(cut.props) ? cut.props : [])].sort();
       if (stable(correspondenceProps) !== stable(cutProps)) out.push(`${where} propRefs 与 cut.props 不一致`);
       if (!String(c.sceneRef ?? '').trim()) out.push(`${where} 缺 sceneRef`);
       else if (c.sceneRef !== cut.startBoundary?.spatialAnchor) out.push(`${where} sceneRef 与开始边界空间锚点不一致`);
