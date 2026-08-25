@@ -13,3 +13,5 @@
 - SHA256 `selftest.mjs`: `8CCDD2412A233FE7C5B1B7E4BB9461856F8DCD8D07D7F8FB2674E6B572A88278`
 - Self-review: legacy four-argument validation remains opt-in; CLI rejects missing/non-integer/unsupported versions before assembly; malformed arrays return problems without throwing; anchor and invariants require actual strings.
 - Concern: user-level skill files are intentionally outside Git; only this evidence report is commit-eligible.
+- Exact selftest command: `& 'C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'C:\Users\Administrator\.codex\skills\novel-characters\scripts\selftest.mjs'`
+- Selftest output: `✓ 346 项自测全部通过`
