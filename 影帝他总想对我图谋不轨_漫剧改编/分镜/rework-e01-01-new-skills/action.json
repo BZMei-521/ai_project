@@ -1,0 +1,808 @@
+{
+  "version": 1,
+  "source": "影帝他总想对我图谋不轨",
+  "physicsProfile": "realistic",
+  "params": {
+    "maxMajorActionsPerBeat": 1,
+    "requireRecoveryPose": true
+  },
+  "ordinaryBeatsPreserved": true,
+  "episodes": [
+    {
+      "ep": 1,
+      "seedScenes": [
+        {
+          "sceneIndex": 1,
+          "index": 1,
+          "sceneId": "S01",
+          "lighting": "",
+          "characters": [
+            "C01",
+            "C02",
+            "C09"
+          ],
+          "props": [],
+          "beats": [
+            {
+              "n": 1,
+              "index": 1,
+              "action": "冷开场：李宝珠在黑暗中猛地睁眼，双手推向近在眼前的棺盖，身体却被狭窄棺木死死卡住。",
+              "kind": "action",
+              "text": "冷开场：李宝珠在黑暗中猛地睁眼，双手推向近在眼前的棺盖，身体却被狭窄棺木死死卡住。"
+            },
+            {
+              "n": 2,
+              "index": 2,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "嗓音嘶哑，用力拍打",
+              "text": "放我出去！有人吗！"
+            },
+            {
+              "n": 3,
+              "index": 3,
+              "action": "她的手掌拍在梓木棺盖上，沉闷回声贴着耳边反弹。",
+              "kind": "action",
+              "text": "她的手掌拍在梓木棺盖上，沉闷回声贴着耳边反弹。"
+            },
+            {
+              "n": 4,
+              "index": 4,
+              "kind": "line",
+              "speaker": "VO",
+              "delivery": "李宝珠心声，强迫自己辨认环境",
+              "text": "冷。这里不是寝殿。"
+            },
+            {
+              "n": 5,
+              "index": 5,
+              "action": "她摸到身下锦缎，又摸到头顶粗大的铜钉，动作突然停住。",
+              "kind": "action",
+              "text": "她摸到身下锦缎，又摸到头顶粗大的铜钉，动作突然停住。"
+            },
+            {
+              "n": 6,
+              "index": 6,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "声音发抖",
+              "text": "棺材……我在棺材里。"
+            },
+            {
+              "n": 7,
+              "index": 7,
+              "action": "记忆闪回：含元殿灯火通明，李宝珠端起一杯桂花酒。",
+              "kind": "action",
+              "text": "记忆闪回：含元殿灯火通明，李宝珠端起一杯桂花酒。"
+            },
+            {
+              "n": 8,
+              "index": 8,
+              "kind": "line",
+              "speaker": "C09",
+              "delivery": "记忆中的声音，恭敬又焦急",
+              "text": "殿下，酒只浅尝一口。"
+            },
+            {
+              "n": 9,
+              "index": 9,
+              "action": "记忆里的酒杯落地，她被蒙面人拖过冰冷石阶。",
+              "kind": "action",
+              "text": "记忆里的酒杯落地，她被蒙面人拖过冰冷石阶。"
+            },
+            {
+              "n": 10,
+              "index": 10,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "记忆与现实叠在一起",
+              "text": "父皇！救我！"
+            },
+            {
+              "n": 11,
+              "index": 11,
+              "action": "现实中，她用肩膀顶住棺盖，铜钉纹丝不动。",
+              "kind": "action",
+              "text": "现实中，她用肩膀顶住棺盖，铜钉纹丝不动。"
+            },
+            {
+              "n": 12,
+              "index": 12,
+              "kind": "line",
+              "speaker": "VO",
+              "delivery": "李宝珠心声，恐惧逐渐变成清醒",
+              "text": "他们不是绑我。他们要我死得无声无息。"
+            },
+            {
+              "n": 13,
+              "index": 13,
+              "action": "她拔下发簪，沿着棺缝一点点划动，木屑落在脸侧。",
+              "kind": "action",
+              "text": "她拔下发簪，沿着棺缝一点点划动，木屑落在脸侧。"
+            },
+            {
+              "n": 14,
+              "index": 14,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "咬住牙，一字一顿",
+              "text": "我不能死在这里。"
+            },
+            {
+              "n": 15,
+              "index": 15,
+              "action": "发簪折断，她的指尖被木刺划破，鲜血抹过棺缝。",
+              "kind": "action",
+              "text": "发簪折断，她的指尖被木刺划破，鲜血抹过棺缝。"
+            },
+            {
+              "n": 16,
+              "index": 16,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "短暂失神",
+              "text": "晚翠……你还活着吗？"
+            },
+            {
+              "n": 17,
+              "index": 17,
+              "action": "她重新用拳头敲击棺盖，一次比一次重。",
+              "kind": "action",
+              "text": "她重新用拳头敲击棺盖，一次比一次重。"
+            },
+            {
+              "n": 18,
+              "index": 18,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "撑起公主威仪",
+              "text": "外面的人听着，我是万寿公主！"
+            },
+            {
+              "n": 19,
+              "index": 19,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "声音越来越弱",
+              "text": "救我出去，黄金、爵位，我都给你！"
+            },
+            {
+              "n": 20,
+              "index": 20,
+              "action": "没有回应。她的手慢慢滑下，呼出的白气贴在棺盖内侧。",
+              "kind": "action",
+              "text": "没有回应。她的手慢慢滑下，呼出的白气贴在棺盖内侧。"
+            },
+            {
+              "n": 21,
+              "index": 21,
+              "kind": "line",
+              "speaker": "VO",
+              "delivery": "李宝珠心声，意识模糊仍在推算",
+              "text": "父皇病重，储位未定。我的死会让谁得利？"
+            },
+            {
+              "n": 22,
+              "index": 22,
+              "action": "她闭上眼，手指仍机械地在木板上轻敲。",
+              "kind": "action",
+              "text": "她闭上眼，手指仍机械地在木板上轻敲。"
+            },
+            {
+              "n": 23,
+              "index": 23,
+              "action": "墓室外忽然传来一声重击，棺盖上的尘土落在她额头。",
+              "kind": "action",
+              "text": "墓室外忽然传来一声重击，棺盖上的尘土落在她额头。"
+            },
+            {
+              "n": 24,
+              "index": 24,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "瞬间惊醒，用尽力气",
+              "text": "有人！我在这里！"
+            },
+            {
+              "n": 25,
+              "index": 25,
+              "action": "第二声重击落下，铜钉松动，细碎冷光从棺缝钻进来。",
+              "kind": "action",
+              "text": "第二声重击落下，铜钉松动，细碎冷光从棺缝钻进来。"
+            },
+            {
+              "n": 26,
+              "index": 26,
+              "kind": "line",
+              "speaker": "C02",
+              "delivery": "隔着棺盖，低沉警惕",
+              "text": "里面有人？"
+            },
+            {
+              "n": 27,
+              "index": 27,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "贴近缝隙，气息断续",
+              "text": "我还活着。求你，开棺。"
+            },
+            {
+              "n": 28,
+              "index": 28,
+              "action": "外面沉默片刻，匕首插进棺缝，棺盖缓慢抬起。",
+              "kind": "action",
+              "text": "外面沉默片刻，匕首插进棺缝，棺盖缓慢抬起。"
+            },
+            {
+              "n": 29,
+              "index": 29,
+              "kind": "line",
+              "speaker": "C02",
+              "delivery": "命令简短",
+              "text": "退到一边。"
+            },
+            {
+              "n": 30,
+              "index": 30,
+              "action": "李宝珠尽力侧身，强光涌入，她抬手遮住眼睛。",
+              "kind": "action",
+              "text": "李宝珠尽力侧身，强光涌入，她抬手遮住眼睛。"
+            },
+            {
+              "n": 31,
+              "index": 31,
+              "action": "逆光中，黑衣男人俯视棺内，手上拿着盗墓用的短铲。",
+              "kind": "action",
+              "text": "逆光中，黑衣男人俯视棺内，手上拿着盗墓用的短铲。"
+            },
+            {
+              "n": 32,
+              "index": 32,
+              "kind": "line",
+              "speaker": "C01",
+              "delivery": "看见兵器后仍不敢松气",
+              "text": "你是来救我的？"
+            },
+            {
+              "n": 33,
+              "index": 33,
+              "kind": "line",
+              "speaker": "C02",
+              "delivery": "没有回答她的问题",
+              "text": "我来找一样东西。"
+            },
+            {
+              "n": 34,
+              "index": 34,
+              "action": "韦训越过她看向棺底，目光落在一块凤凰纹暗板上。",
+              "kind": "action",
+              "text": "韦训越过她看向棺底，目光落在一块凤凰纹暗板上。"
+            },
+            {
+              "n": 35,
+              "index": 35,
+              "kind": "line",
+              "speaker": "C02",
+              "delivery": "低声确认",
+              "text": "凤凰胎，果然在这座墓里。"
+            },
+            {
+              "n": 36,
+              "index": 36,
+              "action": "李宝珠望向他的短铲，又看向自己胸前的凤凰玉佩，刚伸出的手停在半空。",
+              "kind": "action",
+              "text": "李宝珠望向他的短铲，又看向自己胸前的凤凰玉佩，刚伸出的手停在半空。"
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "E01-S01-B01-A01",
+          "sceneIndex": 1,
+          "beat": 1,
+          "kind": "performance",
+          "intent": "从昏迷中惊醒并本能撑向近在咫尺的棺盖",
+          "participants": ["C01"],
+          "propRefs": [],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 1,
+            "kind": "action",
+            "text": "冷开场：李宝珠在黑暗中猛地睁眼，双手推向近在眼前的棺盖，身体却被狭窄棺木死死卡住。"
+          },
+          "startState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "低位固定在棺底，躯干无侧移空间",
+                "gaze": "双眼闭合，无明确注视",
+                "leftHand": "屈肘收在左肋旁，手掌未接触棺盖",
+                "rightHand": "屈肘收在右肋旁，手掌未接触棺盖",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底"],
+                "breath": "昏迷后的浅弱呼吸"
+              }
+            },
+            "props": {}
+          },
+          "performance": {
+            "trigger": "黑暗中意识突然恢复，眼前立刻被近在咫尺的硬质棺盖截断",
+            "gazeTarget": "头顶近在眼前的棺盖内侧",
+            "control": "意识尚未清醒，身体先以撑顶动作本能求生",
+            "channels": [
+              "眼睑猛然撑开，注视从失焦迅速锁定头顶",
+              "呼吸由浅弱转为一次短促吸气",
+              "肩背骤然绷紧但被棺壁限制",
+              "双掌同时向上贴住棺盖"
+            ],
+            "leak": "双肘因空间不足保持弯曲，胸肩在棺盖与棺底之间僵住",
+            "release": "撑顶无位移后保持双掌贴盖，转为受限急喘"
+          },
+          "phases": [
+            {
+              "phase": "setup",
+              "subject": "C01",
+              "support": "后脑、肩背、骨盆与双腿压在棺底",
+              "gaze": "双眼闭合",
+              "breath": "浅弱"
+            },
+            {
+              "phase": "anticipation",
+              "subject": "C01",
+              "head": "后脑仍贴棺底，下颌在短促吸气时微收",
+              "gaze": "猛地睁眼并锁定头顶棺盖",
+              "breath": "短促吸气"
+            },
+            {
+              "phase": "action",
+              "subject": "C01",
+              "support": "肩背和骨盆保持棺底支撑",
+              "weightShift": "重心无法抬起，只由胸肩向上发力",
+              "hands": "左右肘保持弯曲，双掌同步推向并贴住棺盖内侧",
+              "response": "棺盖不动，身体被狭窄棺木卡住"
+            },
+            {
+              "phase": "reaction",
+              "subject": "C01",
+              "torso": "胸肩绷紧后回落在棺底",
+              "breath": "急喘受棺内空间限制"
+            },
+            {
+              "phase": "recovery",
+              "subject": "C01",
+              "stablePose": "仰卧受限，肩背与骨盆贴底，双肘弯曲、双掌稳定贴住头顶棺盖",
+              "gaze": "固定在棺盖内侧",
+              "breath": "短促急喘"
+            }
+          ],
+          "endState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "仍压在棺底，胸肩因撑顶短暂绷紧",
+                "gaze": "睁眼后固定在近在眼前的黑暗棺盖",
+                "leftHand": "左肘弯曲，左掌贴住头顶偏左棺盖内侧",
+                "rightHand": "右肘弯曲，右掌贴住头顶偏右棺盖内侧",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧", "右掌/棺盖内侧"],
+                "breath": "惊醒后的短促吸气转为受限急喘"
+              }
+            },
+            "props": {}
+          },
+          "cameraIntent": {
+            "mustShow": ["双眼从闭合到猛然睁开", "弯曲双肘下双掌同时贴住棺盖", "肩背被棺底限制且棺盖没有位移"]
+          },
+          "generationRisk": ["cramped-occlusion"],
+          "summaryConsistency": {"contradictions": []}
+        },
+        {
+          "id": "E01-S01-B02-A01",
+          "sceneIndex": 1,
+          "beat": 2,
+          "kind": "performance",
+          "intent": "在受限呼吸中呼救并把撑顶升级为拍击预备",
+          "participants": ["C01"],
+          "propRefs": [],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 2,
+            "kind": "line",
+            "speaker": "C01",
+            "delivery": "嗓音嘶哑，用力拍打",
+            "text": "放我出去！有人吗！"
+          },
+          "startState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "仍压在棺底，胸肩因撑顶短暂绷紧",
+                "gaze": "睁眼后固定在近在眼前的黑暗棺盖",
+                "leftHand": "左肘弯曲，左掌贴住头顶偏左棺盖内侧",
+                "rightHand": "右肘弯曲，右掌贴住头顶偏右棺盖内侧",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧", "右掌/棺盖内侧"],
+                "breath": "惊醒后的短促吸气转为受限急喘"
+              }
+            },
+            "props": {}
+          },
+          "performance": {
+            "trigger": "双掌撑顶没有带来任何位移，棺内急喘又迅速耗尽一口气",
+            "gazeTarget": "头顶棺盖与可能传出声音的上方",
+            "control": "强迫嘶哑嗓音形成清楚呼救，同时保留左掌支撑并让右手准备拍击",
+            "channels": [
+              "视线持续固定在上方，不因黑暗移开",
+              "喉口挤出两段嘶哑呼救",
+              "胸腔起伏短促且受限",
+              "右肩回收带动右掌撤开不足一掌"
+            ],
+            "leak": "第二句尾音发虚，右手回收幅度被狭窄空间压缩",
+            "release": "呼救结束后左掌继续撑住，右掌悬停在拍击预备位"
+          },
+          "phases": [
+            {
+              "phase": "setup",
+              "subject": "C01",
+              "support": "后脑、肩背、骨盆与双腿保持棺底支撑",
+              "hands": "双掌贴住棺盖",
+              "breath": "短促急喘"
+            },
+            {
+              "phase": "action",
+              "subject": "C01",
+              "gaze": "固定上方",
+              "breath": "以受限气息喊出‘放我出去！有人吗！’",
+              "torso": "胸腔在每段呼声中有限起伏"
+            },
+            {
+              "phase": "anticipation",
+              "subject": "C01",
+              "support": "左掌与肩背维持支撑",
+              "weightShift": "右肩向棺底回收半拍",
+              "hands": "左掌继续贴盖，右掌撤开不足一掌、掌心朝上准备拍击"
+            },
+            {
+              "phase": "recovery",
+              "subject": "C01",
+              "stablePose": "仰卧贴底，左肘弯曲撑住棺盖，右肘回收、右掌在棺盖下不足一掌处稳定悬停",
+              "gaze": "仍盯住棺盖",
+              "breath": "呼救后气息断续"
+            }
+          ],
+          "endState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "肩背压在棺底，右肩略回收为拍击蓄力",
+                "gaze": "固定在头顶棺盖",
+                "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+                "rightHand": "右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧"],
+                "breath": "嘶哑呼救后气息断续，胸腔起伏受限"
+              }
+            },
+            "props": {}
+          },
+          "cameraIntent": {
+            "mustShow": ["嘶哑呼救时受限的胸腔起伏", "左掌持续撑盖而右掌撤回拍击预备", "右掌与棺盖之间不足一掌的狭窄距离"]
+          },
+          "generationRisk": ["cramped-occlusion"],
+          "summaryConsistency": {"contradictions": []}
+        },
+        {
+          "id": "E01-S01-B03-A01",
+          "sceneIndex": 1,
+          "beat": 3,
+          "kind": "performance",
+          "intent": "以右掌击中棺盖并从闷响和回弹确认棺盖无法推动",
+          "participants": ["C01"],
+          "propRefs": [],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 3,
+            "kind": "action",
+            "text": "她的手掌拍在梓木棺盖上，沉闷回声贴着耳边反弹。"
+          },
+          "startState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "肩背压在棺底，右肩略回收为拍击蓄力",
+                "gaze": "固定在头顶棺盖",
+                "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+                "rightHand": "右掌从棺盖撤回不足一掌，掌心朝上，屈肘作拍击预备",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧"],
+                "breath": "嘶哑呼救后气息断续，胸腔起伏受限"
+              }
+            },
+            "props": {}
+          },
+          "performance": {
+            "trigger": "呼救没有即时回应，已回收的右掌正对头顶棺盖",
+            "gazeTarget": "右掌即将击中的棺盖内侧接触点",
+            "control": "在不足一掌的行程内集中右肩与前臂发力，同时让左掌维持身体稳定",
+            "channels": [
+              "视线锁定右掌接触点",
+              "右肩和前臂短促绷紧",
+              "右掌击中后被硬质回弹震开",
+              "闷响贴耳反弹时呼吸骤停半拍"
+            ],
+            "leak": "右掌回弹后五指微屈，右肩随反力落回棺底",
+            "release": "保持左掌撑盖，右掌悬停在接触点下方等待回声消退"
+          },
+          "phases": [
+            {
+              "phase": "setup",
+              "subject": "C01",
+              "support": "后脑、肩背、骨盆与双腿压在棺底，左掌撑住棺盖",
+              "hands": "左掌贴盖，右掌在棺盖下不足一掌处蓄力"
+            },
+            {
+              "phase": "anticipation",
+              "subject": "C01",
+              "weightShift": "右肩进一步压向棺底以获得短行程支撑",
+              "gaze": "锁定右掌接触点",
+              "hands": "右腕保持中立、五指并拢，掌心朝向棺盖"
+            },
+            {
+              "phase": "action",
+              "subject": "C01",
+              "hands": "右掌沿不足一掌的直线路径向上拍击，左掌维持贴盖稳定",
+              "path": "右掌由胸前上方短距离直达头顶偏右棺盖内侧",
+              "fineFinger": true
+            },
+            {
+              "phase": "contact",
+              "subject": "C01",
+              "contactPoint": "右掌掌心/梓木棺盖内侧",
+              "hands": "右掌完整击中棺盖，左掌仍贴住头顶偏左位置",
+              "response": "棺盖没有位移，沉闷回声贴耳反弹"
+            },
+            {
+              "phase": "reaction",
+              "subject": "C01",
+              "hands": "右掌被回弹震开不足一掌，五指微屈；左掌保持接触",
+              "torso": "右肩随反力回落棺底",
+              "breath": "听见闷响时屏息半拍"
+            },
+            {
+              "phase": "recovery",
+              "subject": "C01",
+              "stablePose": "仰卧贴底，左掌继续撑盖，右掌在击中点下方不足一掌处稳定悬停、五指微屈",
+              "gaze": "固定在右掌接触点",
+              "breath": "屏息等待回声消退"
+            }
+          ],
+          "endState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "击掌回弹后仍压在棺底，右肩随反力回落",
+                "gaze": "随闷响固定在右掌击中的棺盖内侧",
+                "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+                "rightHand": "右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧"],
+                "breath": "听见贴耳闷响后短促屏息，等待回声消退"
+              }
+            },
+            "props": {}
+          },
+          "cameraIntent": {
+            "mustShow": ["左掌持续撑住棺盖", "右掌掌心准确击中梓木棺盖内侧", "右掌被回弹震开不足一掌且五指微屈", "棺盖没有位移"]
+          },
+          "generationRisk": ["fine-finger", "cramped-occlusion"],
+          "summaryConsistency": {"contradictions": []}
+        },
+        {
+          "id": "E01-S01-B04-A01",
+          "sceneIndex": 1,
+          "beat": 4,
+          "kind": "performance",
+          "intent": "在回声后的静默中压住恐慌并辨认陌生寒冷环境",
+          "participants": ["C01"],
+          "propRefs": [],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 4,
+            "kind": "line",
+            "speaker": "VO",
+            "delivery": "李宝珠心声，强迫自己辨认环境",
+            "text": "冷。这里不是寝殿。"
+          },
+          "startState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "击掌回弹后仍压在棺底，右肩随反力回落",
+                "gaze": "随闷响固定在右掌击中的棺盖内侧",
+                "leftHand": "左肘弯曲，左掌持续撑住头顶偏左棺盖内侧",
+                "rightHand": "右掌击中头顶偏右棺盖后被回弹震开不足一掌，五指微屈",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧"],
+                "breath": "听见贴耳闷响后短促屏息，等待回声消退"
+              }
+            },
+            "props": {}
+          },
+          "performance": {
+            "trigger": "沉闷回声消退后只剩封闭静默与贴身寒意",
+            "gazeTarget": "棺内四周无法辨清的黑暗边缘",
+            "control": "压住继续拍击的冲动，强迫自己先用寒冷、距离和触感辨认环境",
+            "channels": [
+              "注视从右掌接触点缓慢扫向四周黑暗",
+              "呼气被刻意拉长但仍受限",
+              "肩颈从拍击后的绷紧下降半分",
+              "左掌贴盖但逐渐卸力"
+            ],
+            "leak": "判断‘这里不是寝殿’时眨眼延迟，右手仍保持回弹后的防御性微屈",
+            "release": "完成辨认后停止无效撑顶，维持仰卧并准备以双手触查周围"
+          },
+          "phases": [
+            {
+              "phase": "setup",
+              "subject": "C01",
+              "gaze": "停在右掌击中点",
+              "hands": "左掌贴盖，右掌悬停且五指微屈",
+              "breath": "短促屏息"
+            },
+            {
+              "phase": "reaction",
+              "subject": "C01",
+              "gaze": "从接触点缓慢扫向棺内四周黑暗",
+              "breath": "强迫拉长一次呼气",
+              "torso": "肩颈下降半分，肩背仍由棺底承托",
+              "hands": "左掌继续贴盖但卸去撑顶力量，右手保持悬停"
+            },
+            {
+              "phase": "recovery",
+              "subject": "C01",
+              "stablePose": "仰卧贴底，左掌卸力贴在头顶偏左棺盖，右掌在头顶偏右处悬停，双肩不再持续撑顶",
+              "gaze": "停在棺内黑暗边缘",
+              "breath": "浅而受控"
+            }
+          ],
+          "endState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "回落并稳定压在棺底，双肩不再持续撑顶",
+                "gaze": "从接触点移向棺内四周的黑暗边缘",
+                "leftHand": "左掌仍贴头顶偏左棺盖内侧但手臂已经卸力",
+                "rightHand": "右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧"],
+                "breath": "强迫拉长呼气后恢复浅而受限的呼吸"
+              }
+            },
+            "props": {}
+          },
+          "cameraIntent": {
+            "mustShow": ["视线从击掌点转向四周黑暗", "肩颈下降且左掌卸去撑顶力量", "右手仍保留回弹后的五指微屈"]
+          },
+          "generationRisk": ["cramped-occlusion"],
+          "summaryConsistency": {"contradictions": []}
+        },
+        {
+          "id": "E01-S01-B05-A01",
+          "sceneIndex": 1,
+          "beat": 5,
+          "kind": "performance",
+          "intent": "以左手确认身下绸缎、右手确认头顶铜钉后僵住",
+          "participants": ["C01"],
+          "propRefs": [],
+          "sourceBeat": {
+            "ep": 1,
+            "sceneIndex": 1,
+            "beat": 5,
+            "kind": "action",
+            "text": "她摸到身下锦缎，又摸到头顶粗大的铜钉，动作突然停住。"
+          },
+          "startState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "回落并稳定压在棺底，双肩不再持续撑顶",
+                "gaze": "从接触点移向棺内四周的黑暗边缘",
+                "leftHand": "左掌仍贴头顶偏左棺盖内侧但手臂已经卸力",
+                "rightHand": "右掌在头顶偏右棺盖下不足一掌处悬停，五指微屈",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左掌/棺盖内侧"],
+                "breath": "强迫拉长呼气后恢复浅而受限的呼吸"
+              }
+            },
+            "props": {}
+          },
+          "performance": {
+            "trigger": "视觉无法穿透黑暗，身体寒冷且周围触感与寝殿完全不符",
+            "gazeTarget": "先随左手触查腰侧，再转向右手搜索到的头顶铜钉方向",
+            "control": "按先身下、后头顶的顺序用双手收集触觉证据，不让恐慌先于判断爆发",
+            "channels": [
+              "左手指腹先压住身下锦缎并沿纹理短促确认",
+              "右手随后向头顶搜索并触到粗大铜钉",
+              "视线在黑暗中随左右手先后转移",
+              "触到铜钉后呼吸与肩颈同时冻结半拍"
+            ],
+            "leak": "右手指尖贴住铜钉后无法立即收回，左手也停在绸缎上",
+            "release": "双手保持各自接触点，整个人在确认结果后僵住"
+          },
+          "phases": [
+            {
+              "phase": "setup",
+              "subject": "C01",
+              "support": "后脑、肩背、骨盆与双腿由棺底承托",
+              "hands": "左掌卸力贴在棺盖，右掌在头顶偏右处悬停"
+            },
+            {
+              "phase": "action",
+              "subject": "C01",
+              "hands": "左手先从棺盖沿左侧收回并探至腰侧，指腹摸到身下锦缎；右手随后在头顶短距离搜索",
+              "path": "左手沿左侧下移至腰侧，右手沿头顶偏右区域小幅横向探查",
+              "fineFinger": true
+            },
+            {
+              "phase": "contact",
+              "subject": "C01",
+              "contactPoint": "左手指腹/身下锦缎；右手指尖/头顶粗大铜钉",
+              "hands": "左手指腹压住锦缎纹理完成确认，右手指尖随后抵住粗大铜钉完成确认",
+              "response": "确认铜钉的瞬间双手停止移动"
+            },
+            {
+              "phase": "reaction",
+              "subject": "C01",
+              "gaze": "在黑暗中冻结于头顶铜钉方向",
+              "breath": "骤停半拍",
+              "torso": "肩颈僵住，肩背与骨盆仍贴棺底",
+              "hands": "左手停在锦缎上，右手停在铜钉上，均不收回"
+            },
+            {
+              "phase": "recovery",
+              "subject": "C01",
+              "stablePose": "仰卧贴底，左手指腹稳定压住腰侧身下锦缎，右手指尖稳定贴住头顶粗大铜钉，肩颈与呼吸僵住",
+              "gaze": "固定在头顶铜钉方向",
+              "breath": "屏息半拍后仍极浅"
+            }
+          ],
+          "endState": {
+            "characters": {
+              "C01": {
+                "position": "仰卧于封闭棺木中央，肩背和髋部贴住身下锦缎",
+                "orientation": "面朝棺盖，头顶距离棺盖不足一掌",
+                "support": "后脑、肩背、骨盆与双腿由棺底承托",
+                "centerOfMass": "稳定压在棺底，触认铜钉后全身冻结",
+                "gaze": "黑暗中冻结在头顶铜钉方向",
+                "leftHand": "左手探至腰侧，指腹压住身下锦缎并停住",
+                "rightHand": "右手在头顶偏右处搜索后，指尖贴住粗大铜钉并停住",
+                "contact": ["后脑/棺底内衬", "肩背/身下锦缎", "骨盆与双腿/棺底", "左手指腹/身下锦缎", "右手指尖/头顶粗大铜钉"],
+                "breath": "触认铜钉后屏息，胸腔骤停半拍"
+              }
+            },
+            "props": {}
+          },
+          "cameraIntent": {
+            "mustShow": ["左手从棺盖收回并以指腹确认身下锦缎", "右手随后以指尖确认头顶粗大铜钉", "双手分别停在锦缎与铜钉接触点", "触认铜钉后肩颈与呼吸同时僵住"]
+          },
+          "generationRisk": ["fine-finger", "cramped-occlusion"],
+          "summaryConsistency": {"contradictions": []}
+        }
+      ]
+    }
+  ]
+}

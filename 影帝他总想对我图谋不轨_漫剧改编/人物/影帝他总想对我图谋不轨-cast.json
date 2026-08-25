@@ -1,0 +1,403 @@
+{
+  "source": "影帝他总想对我图谋不轨",
+  "lang": "zh",
+  "style": "cinematic3d",
+  "summary": "架空大唐永安二十七年，万寿公主李宝珠在宫宴后遭人活埋，被潜入陵墓寻找奇药的江湖剑客韦训意外救出。两人为躲避权臣追杀前往幽州投奔韶王李元瑛，却发现庇护之地同样布满试探与交易。忠诚、利用和真心彼此纠缠，几个人由此被卷进一场牵动皇位与天下的阴谋。",
+  "characters": [
+    {
+      "name": "李宝珠",
+      "aliases": [
+        "万寿公主",
+        "公主"
+      ],
+      "importance": "protagonist",
+      "oneLiner": "从棺中爬回人间的万寿公主，把被夺走的命一步步变成执掌天下的权柄。",
+      "persona": {
+        "gender": "女",
+        "ageRange": "二十岁上下（推断）",
+        "identity": "大唐万寿公主，后期女皇（目录推断）",
+        "appearance": "汉族年轻女子，鹅蛋脸与清锐凤眼，乌黑长发；前期穿沾泥破损的绯红公主礼服，逃亡期换粗布衣，登基后着黑金女帝衮服（后两阶段为改编设计）。",
+        "personality": [
+          "聪慧",
+          "高傲",
+          "坚韧",
+          "戒备",
+          "重情"
+        ],
+        "temperament": "受礼制教养，措辞克制而有分量；恐惧时也强迫自己保持体面，掌权后语速更慢、命令更短。",
+        "motivation": "查清活埋真相、保住性命与皇室秩序，最终把命运握回自己手里。",
+        "arc": "从受宠却缺乏实战经验的公主，经背叛与权争淬炼为敢承担天下代价的女皇。",
+        "relationships": [
+          {
+            "name": "韦训",
+            "relation": "救命恩人、互相利用的盟友与最终爱人"
+          },
+          {
+            "name": "李元瑛",
+            "relation": "皇叔与政治庇护者，彼此也有权力试探"
+          },
+          {
+            "name": "李林甫",
+            "relation": "谋害嫌疑人与早期主要政敌"
+          }
+        ],
+        "evidence": [
+          "他们要活埋她！",
+          "我去幽州，投奔韶王皇叔。",
+          "你的真心，我承受不起。"
+        ]
+      },
+      "image": {
+        "style": "电影级 3D 国漫，黑红金主色，动画长片级面部与衣料设计",
+        "prompt": "Refined cinematic 3D donghua character render of a young Han Chinese imperial princess in an alternate Tang-inspired Chang'an court, around twenty, slender but upright, oval face, sharp phoenix eyes, straight brows, pale matte stylized skin, long black hair in a high court coiffure with a small gold phoenix hairpin. She wears a damaged crimson silk ceremonial robe with dark soil at the hem and one torn sleeve, holding a broken copper coffin nail. Three-quarter waist-up portrait, neutral background, restrained defiance after surviving burial. Clean matte translucent stylized skin with designed facial planes, layered expressive eyes, grouped glossy hair, premium simplified silk and metal materials. Soft key light, cool fill, restrained rim light, controlled animated-film contrast. Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action.",
+        "promptLocal": "电影级3D国漫角色：约二十岁的汉族皇室少女，鹅蛋脸、清锐凤眼、乌黑高髻与小型金凤簪，穿沾泥破损的绯红礼服，手握断裂铜棺钉，神情克制而不屈。",
+        "negativePrompt": "photorealistic live-action, realistic game-CG, visible pores, sweat or oily sheen, blemish or scar microtexture, childlike doll proportions, malformed anatomy, text, watermark, signature, busy background",
+        "tags": [
+          "cinematic 3D donghua",
+          "stylized CG",
+          "character sheet",
+          "animated-feature lighting",
+          "imperial heroine"
+        ],
+        "sheet": "Character model sheet of one young Han Chinese imperial princess from an alternate Tang-inspired Chang'an court on ONE 16:9 landscape canvas. Divide with thin hairline rules. LEFT ZONE about 34% of the canvas width: one front-facing bust portrait with both shoulders visible, oval face, sharp phoenix eyes, straight brows, long black hair in a court coiffure, small gold phoenix hairpin, damaged crimson ceremonial robe. RIGHT-TOP ZONE: front, left profile, and back FULL-BODY orthographic views of the SAME face and costume. PROPORTIONS ARE CRITICAL: equal height, correct limbs, shared ground line, no stretching or squashing. RIGHT-BOTTOM ZONE: small studies of phoenix hairpin, broken copper coffin nail, embroidered collar, mud-stained hem, and later black-gold imperial crown. If crowded, the detail studies give way, not the figures. Pure white background. Clean matte/translucent stylized skin, layered eyes, grouped hair, premium simplified silk and metal. Soft key, cool fill, restrained rim light; right-side orthographic views clean and measurable. Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action."
+      },
+      "voice": {
+        "timbre": "清亮偏冷的青年女中音，内里有韧性",
+        "pitch": "中音",
+        "pace": "平时从容，危急时短促但不尖叫",
+        "accent": "标准中原官话，咬字端正",
+        "emotion": "克制、警觉，偶尔泄出少女式脆弱",
+        "referenceHint": "像把恐惧压进每个停顿里的年轻统治者",
+        "prompt": "Young adult female Chinese voice, cool clear mezzo register, firm central resonance, precise courtly diction, measured pace, restrained energy, minimal breathiness, controlled emotion with a hidden vulnerable edge, authoritative without sounding mature or maternal.",
+        "promptLocal": "青年女声，清冷女中音，中央共鸣稳，宫廷咬字端正，语速克制，气声少，威严中藏着未完全褪去的脆弱。"
+      }
+    },
+    {
+      "name": "韦训",
+      "aliases": [
+        "韦兄",
+        "壮士"
+      ],
+      "importance": "protagonist",
+      "oneLiner": "为奇药闯入皇陵的银面剑客，最初把公主当线索，最后把命押给她。",
+      "persona": {
+        "gender": "男",
+        "ageRange": "二十七八岁",
+        "identity": "江湖游侠、剑客，寻找凤凰胎之人",
+        "appearance": "汉族青年男子，麦色皮肤、眉骨利落、眼神深沉，黑发高束；常穿无纹黑色劲装与旧披风，佩窄刃长剑，银色半面具为改编视觉锚点。",
+        "personality": [
+          "冷静",
+          "警觉",
+          "果断",
+          "隐忍",
+          "护短"
+        ],
+        "temperament": "话少，先观察再回答；承诺只说一次，真正焦急时声音反而更低。",
+        "motivation": "找到凤凰胎解决自身隐疾或旧债（用途推断），同时保护自己亲手救出的李宝珠。",
+        "arc": "从只相信交易的孤狼，经过隐瞒暴露与失去信任，学会以真实身份承担爱与政治后果。",
+        "relationships": [
+          {
+            "name": "李宝珠",
+            "relation": "救助对象、线索、盟友与爱人"
+          },
+          {
+            "name": "李元瑛",
+            "relation": "互相识破却暂时合作"
+          },
+          {
+            "name": "李林甫",
+            "relation": "追杀链条背后的敌人"
+          }
+        ],
+        "evidence": [
+          "那好，我送你去幽州。",
+          "别怕，有我在。",
+          "宝珠，我知道，我对不起你。"
+        ]
+      },
+      "image": {
+        "style": "电影级 3D 国漫，玄黑银灰主色，克制冷光与侠客剪影",
+        "prompt": "Refined cinematic 3D donghua character render of a twenty-eight-year-old Han Chinese wandering swordsman in an alternate Tang-inspired northern China, tall lean athletic build, wheat-toned matte stylized skin, angular jaw, straight nose, deep-set dark eyes, black hair tied high with loose grouped strands. He wears a plain black fitted travel robe, worn charcoal cloak, leather bracers, a narrow straight sword, and a brushed-silver half mask hanging at his belt. Three-quarter waist-up portrait, neutral background, guarded expression with quiet protective intent. Clean matte/translucent stylized skin, designed facial planes, layered eyes, grouped hair, premium simplified leather and fabric. Soft key light, cool fill, restrained silver rim light. Refined cinematic 3D donghua, stylized animated-feature CG, unmistakably animation rather than live action.",
+        "promptLocal": "电影级3D国漫角色：二十八岁汉族游侠，身形高瘦矫健，麦色皮肤、利落下颌、深沉眼睛，黑发高束；穿玄黑劲装与旧披风，佩窄刃长剑，银色半面具挂在腰间。",
+        "negativePrompt": "photorealistic live-action, realistic game-CG, visible pores, sweat or oily sheen, blemish or scar microtexture, childlike doll proportions, malformed anatomy, text, watermark, signature, busy background",
+        "tags": [
+          "cinematic 3D donghua",
+          "stylized CG",
+          "character sheet",
+          "animated-feature lighting",
+          "silver masked swordsman"
+        ],
+        "sheet": "Character model sheet of one twenty-eight-year-old Han Chinese wandering swordsman from alternate Tang-inspired northern China on ONE 16:9 landscape canvas, divided by thin hairline rules. LEFT ZONE about 34%: front bust portrait, both shoulders visible, wheat-toned face, angular jaw, deep-set eyes, high-tied black hair, black travel robe. RIGHT-TOP ZONE: front, left profile, and back FULL-BODY orthographic views of the SAME face and costume with narrow sword and silver half mask. PROPORTIONS ARE CRITICAL: equal heights, natural anatomy, shared ground line, no stretching or squashing. RIGHT-BOTTOM ZONE: silver half mask, sword hilt, leather bracer, cloak clasp, medicine map. If crowded, the detail studies give way, not the figures. Pure white background. Clean matte stylized surfaces, grouped hair, premium simplified leather and cloth, soft key, cool fill, restrained rim light; orthographic views clean and measurable. Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action."
+      },
+      "voice": {
+        "timbre": "低沉干净的青年男中音，金属感很轻",
+        "pitch": "中低",
+        "pace": "慢而短，句尾收得利落",
+        "accent": "中原官话，江湖口吻不粗俗",
+        "emotion": "平静戒备，保护欲藏在低声里",
+        "referenceHint": "像拔剑前只说一句话的人",
+        "prompt": "Adult male Chinese voice, late twenties, clean low baritone with a faint metallic edge, compact chest resonance, slow concise delivery, clipped endings, standard central Chinese accent, low energy but high control, guarded calm with protective warmth appearing only in softened volume.",
+        "promptLocal": "二十七八岁男声，干净低男中音，带极轻金属感；语速慢、句子短、收尾利落，平静戒备，保护欲只在压低音量时显露。"
+      }
+    },
+    {
+      "name": "李元瑛",
+      "aliases": [
+        "韶王",
+        "皇叔"
+      ],
+      "importance": "major",
+      "oneLiner": "被贬幽州的贤名皇叔，伸出的援手始终同时握着一枚政治筹码。",
+      "persona": {
+        "gender": "男",
+        "ageRange": "四十岁上下（推断）",
+        "identity": "韶王、幽州都督、宗室亲王",
+        "appearance": "汉族中年亲王，修长端正，眼尾略垂而目光审慎；黑发束王冠，鬓边少量灰发；穿深青亲王常服与暗金革带。",
+        "personality": [
+          "沉稳",
+          "审慎",
+          "有城府",
+          "顾全大局",
+          "克制"
+        ],
+        "temperament": "语气温和但从不把话说满，习惯停顿后再给决定；发怒时仍保持礼貌。",
+        "motivation": "保全宗室与幽州，同时借公主案制衡权臣，避免天下失序。",
+        "arc": "从以大局衡量亲情的旁观者，转为承担公开政治风险的盟友；其野心始终保留暧昧。",
+        "relationships": [
+          {
+            "name": "李宝珠",
+            "relation": "侄女、需要保护也可能改变权局的变量"
+          },
+          {
+            "name": "韦训",
+            "relation": "能力可用但身份危险的江湖人"
+          },
+          {
+            "name": "李林甫",
+            "relation": "长期政敌"
+          }
+        ],
+        "evidence": [
+          "沈墨，带他们去后院的静院住下，没有我的命令，任何人不得打扰。"
+        ]
+      },
+      "image": {
+        "style": "电影级 3D 国漫，深青暗金主色，亲王式克制威仪",
+        "prompt": "Refined cinematic 3D donghua character render of a Han Chinese prince and frontier governor around forty in an alternate Tang-inspired Youzhou, tall composed build, long balanced face, slightly downturned eyes with an appraising gaze, black hair under a restrained dark-gold princely crown with a few grey strands at the temples. Deep teal court robe, subtle dark-gold woven borders, black leather belt with jade plaque. Three-quarter waist-up portrait, neutral background, courteous expression that conceals calculation. Clean matte translucent stylized skin, layered eyes, grouped hair, premium simplified silk, jade and metal. Soft key, cool fill, restrained warm rim. Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action.",
+        "promptLocal": "电影级3D国漫角色：约四十岁的汉族亲王兼幽州都督，修长端正、眼尾略垂而目光审慎，鬓边微霜；穿深青亲王袍、暗金织边与玉牌革带。",
+        "negativePrompt": "photorealistic live-action, realistic game-CG, visible pores, sweat or oily sheen, blemish or scar microtexture, childlike doll proportions, malformed anatomy, text, watermark, signature, busy background",
+        "tags": [
+          "cinematic 3D donghua",
+          "stylized CG",
+          "character sheet",
+          "animated-feature lighting",
+          "frontier prince"
+        ],
+        "sheet": "Character model sheet of one Han Chinese prince and frontier governor around forty from alternate Tang-inspired Youzhou on ONE 16:9 landscape canvas with thin hairline rules. LEFT ZONE about 34%: front bust portrait, both shoulders visible, long balanced face, appraising downturned eyes, dark-gold princely crown, deep teal robe. RIGHT-TOP ZONE: front, left profile, back FULL-BODY orthographic views of the SAME face and costume. PROPORTIONS ARE CRITICAL: equal height, correct anatomy, common ground line, no stretch or squash. RIGHT-BOTTOM ZONE: crown, jade belt plaque, sleeve border, military seal, folded memorial. If crowded, the detail studies give way, not the figures. Pure white background, cinematic 3D donghua, clean stylized materials, soft key, cool fill, restrained rim; orthographic views clean and measurable. Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action."
+      },
+      "voice": {
+        "timbre": "温润厚实的中年男中音",
+        "pitch": "中低",
+        "pace": "从容，重要决定前有短停顿",
+        "accent": "标准官话，带宗室教养",
+        "emotion": "温和审慎，情绪不外露",
+        "referenceHint": "像每句话都留了半步退路的亲王",
+        "prompt": "Middle-aged male Chinese voice, warm full baritone, smooth chest resonance, measured pace with deliberate pauses before decisions, refined court diction, low emotional display, courteous and reassuring surface with a quiet calculating undertone.",
+        "promptLocal": "中年男声，温润厚实的男中音，胸腔共鸣平稳；语速从容，决定前停顿，官话雅正，礼貌表层下带审慎盘算。"
+      }
+    },
+    {
+      "name": "李林甫",
+      "aliases": [
+        "李大人",
+        "宰相"
+      ],
+      "importance": "major",
+      "oneLiner": "笑意从不抵达眼底的权相，把皇室血亲和边镇兵权都当成棋盘。",
+      "persona": {
+        "gender": "男",
+        "ageRange": "五十余岁（推断）",
+        "identity": "当朝宰相、前期权力敌手",
+        "appearance": "汉族老练权臣，面颊偏瘦、眉长眼窄，唇角常有礼貌笑意；黑灰长须修整齐整，着紫黑高阶文官袍与金鱼袋。",
+        "personality": [
+          "圆滑",
+          "狠辣",
+          "耐心",
+          "多疑",
+          "擅长伪装"
+        ],
+        "temperament": "声线柔和、辞令周全，从不直接威胁；越是要杀人，话越客气。",
+        "motivation": "维持对朝堂与储位的控制，清除会动摇其网络的皇室成员和证据。",
+        "arc": "从隐藏在活埋案后的权相，成为女主权力觉醒的第一块磨刀石；后续余党造成长期回响（改编）。",
+        "relationships": [
+          {
+            "name": "李宝珠",
+            "relation": "必须消失的皇室变量"
+          },
+          {
+            "name": "李元瑛",
+            "relation": "被贬仍未失去威胁的政敌"
+          },
+          {
+            "name": "韦训",
+            "relation": "破坏计划且掌握线索的江湖人"
+          }
+        ],
+        "evidence": []
+      },
+      "image": {
+        "style": "电影级 3D 国漫，紫黑黯金主色，文官威压与温笑反差",
+        "prompt": "Refined cinematic 3D donghua character render of a Han Chinese grand chancellor in his mid-fifties in an alternate Tang-inspired Chang'an court, lean dignified build, narrow eyes beneath long brows, thin cheeks, neatly groomed black-and-grey long beard, courteous half-smile that never reaches the eyes. Dark purple-black ministerial robe with muted gold rank motifs, tall black court hat, gold fish-pouch ornament. Three-quarter waist-up portrait, neutral background, hands folded inside sleeves. Clean matte stylized skin, layered eyes, grouped beard and hair, premium simplified silk and metal. Soft key light, cool fill, restrained amber rim, cinematic animated-film contrast.",
+        "promptLocal": "电影级3D国漫角色：五十余岁的汉族权相，瘦削面颊、长眉窄眼、黑灰长须修整齐整，礼貌笑意不达眼底；着紫黑高阶文官袍、黯金纹与高冠。",
+        "negativePrompt": "photorealistic live-action, realistic game-CG, visible pores, sweat or oily sheen, blemish or scar microtexture, childlike doll proportions, malformed anatomy, text, watermark, signature, busy background",
+        "tags": [
+          "cinematic 3D donghua",
+          "stylized CG",
+          "character sheet",
+          "animated-feature lighting",
+          "court antagonist"
+        ],
+        "sheet": "Character model sheet of one Han Chinese grand chancellor in his mid-fifties from alternate Tang-inspired Chang'an on ONE 16:9 landscape canvas divided by thin hairline rules. LEFT ZONE about 34%: front bust portrait, both shoulders visible, narrow eyes, long brows, groomed black-grey beard, courteous cold smile, purple-black robe and tall court hat. RIGHT-TOP ZONE: front, left profile, back FULL-BODY views of the SAME face and costume. PROPORTIONS ARE CRITICAL: equal height, natural anatomy, shared ground line, no stretch or squash. RIGHT-BOTTOM ZONE: court hat, gold fish pouch, signet ring, memorial scroll, hidden poison vial. If crowded, the detail studies give way, not the figures. Pure white background, clean stylized materials, soft key, cool fill, restrained rim; orthographic views clean and measurable. Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action."
+      },
+      "voice": {
+        "timbre": "柔润偏薄的中老年男中音",
+        "pitch": "中音偏低",
+        "pace": "缓慢，句尾轻轻上扬",
+        "accent": "京畿官话，字音圆滑",
+        "emotion": "和气、疏离，威胁藏在礼貌里",
+        "referenceHint": "像笑着替人整理衣领时已经宣判死刑",
+        "prompt": "Older male Chinese voice, mid-fifties, smooth light baritone, controlled nasal resonance, slow polished delivery, gently rising phrase endings, refined capital-court accent, courteous low energy, never openly angry, menace carried by excessive softness and exact diction.",
+        "promptLocal": "五十余岁男声，柔润偏薄的男中音，鼻腔共鸣克制；语速慢、句尾微扬，京畿官话圆滑，从不显怒，威胁藏在过分和气里。"
+      }
+    },
+    {
+      "name": "苏慕言",
+      "aliases": [
+        "苏先生",
+        "白衣男子"
+      ],
+      "importance": "supporting",
+      "oneLiner": "韶王身边的白衣谋士，剑法与心思一样干净利落，却对公主保留一分不合时宜的温柔。",
+      "persona": {
+        "gender": "男",
+        "ageRange": "二十五岁上下（推断）",
+        "identity": "韶王谋士、武艺高强的护卫者",
+        "appearance": "汉族青年，肤色冷白、细长眼、气质清峻，黑发以白玉簪束起，常着素白窄袖长袍。",
+        "personality": [
+          "清冷",
+          "敏锐",
+          "忠诚",
+          "克制",
+          "怜悯"
+        ],
+        "temperament": "说话简短平直，极少解释自己；面对李宝珠时会放轻声音。",
+        "motivation": "完成韶王交付的保护和查案任务，并维持自己认可的正义边界。",
+        "arc": "从忠实执行者逐渐成为会独立判断的盟友（改编）。",
+        "relationships": [
+          {
+            "name": "李元瑛",
+            "relation": "主君与谋主"
+          },
+          {
+            "name": "李宝珠",
+            "relation": "奉命保护且产生怜惜的公主"
+          },
+          {
+            "name": "韦训",
+            "relation": "能力相当、立场未明的潜在对手"
+          }
+        ],
+        "evidence": [
+          "我是韶王殿下的谋士。殿下担心你的安危，派我出来寻找你。"
+        ]
+      },
+      "image": {
+        "style": "电影级 3D 国漫，月白青灰主色，清冷文武双修气质",
+        "prompt": "Refined cinematic 3D donghua character render of a twenty-five-year-old Han Chinese strategist and martial retainer in alternate Tang-inspired Youzhou, slender graceful build, cool pale matte stylized skin, long narrow eyes, fine straight nose, black hair secured with a white jade pin. Plain moon-white narrow-sleeved robe over pale grey inner layers, hidden wrist blade and folded fan. Three-quarter waist-up portrait, neutral background, calm distant expression softened by restrained concern. Clean stylized skin, layered eyes, grouped hair, premium simplified silk and jade. Soft key, cool fill, restrained pale rim. Cinematic 3D donghua animated-feature CG.",
+        "promptLocal": "电影级3D国漫角色：二十五岁左右的汉族白衣谋士，身形修长、肤色冷白、细长眼，黑发以白玉簪束起；月白窄袖袍内藏腕刃，清冷中有克制关切。",
+        "negativePrompt": "photorealistic live-action, realistic game-CG, visible pores, sweat or oily sheen, blemish or scar microtexture, childlike doll proportions, malformed anatomy, text, watermark, signature, busy background",
+        "tags": [
+          "cinematic 3D donghua",
+          "stylized CG",
+          "character sheet",
+          "animated-feature lighting",
+          "white-robed strategist"
+        ],
+        "sheet": "Character model sheet of one twenty-five-year-old Han Chinese strategist and martial retainer from alternate Tang-inspired Youzhou on ONE 16:9 landscape canvas with thin hairline rules. LEFT ZONE about 34%: bust portrait. RIGHT-TOP ZONE: front, side, back FULL-BODY views of the SAME face and costume. PROPORTIONS ARE CRITICAL, equal heights and shared ground line. RIGHT-BOTTOM ZONE: jade pin, folded fan, wrist blade, sleeve knot. If crowded, the detail studies give way, not the figures. Pure white background, clean measurable orthographic views, Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action."
+      },
+      "voice": {
+        "timbre": "清冷轻质的青年男中音",
+        "pitch": "中音",
+        "pace": "平稳简短",
+        "accent": "标准官话",
+        "emotion": "疏离克制，偶尔温柔",
+        "referenceHint": "像月光落在刀刃上",
+        "prompt": "Young adult male Chinese voice, light cool baritone, clear head-and-chest balance, even restrained pace, precise standard diction, low energy, emotionally distant by default with rare gentle softening, no rasp and no theatrical flourish.",
+        "promptLocal": "青年男声，清冷轻质男中音，共鸣干净；语速平稳、咬字准确，默认疏离，极少数时刻轻柔下来。"
+      }
+    },
+    {
+      "name": "沈墨",
+      "aliases": [
+        "沈参军"
+      ],
+      "importance": "supporting",
+      "oneLiner": "韶王府里最可靠的执行者，负责把主君含而不露的决定变成可落地的安排。",
+      "persona": {
+        "gender": "男",
+        "ageRange": "三十岁上下（推断）",
+        "identity": "韶王府参军",
+        "appearance": "汉族青年军官，肩背宽阔，眉浓眼正，肤色健康；穿深褐短袍与轻甲，腰悬令牌和横刀。",
+        "personality": [
+          "可靠",
+          "务实",
+          "谨慎",
+          "忠诚",
+          "直率"
+        ],
+        "temperament": "军人式简洁，应答明确；离开公务时略显随和。",
+        "motivation": "保护韶王府与幽州秩序，执行隐蔽安置和情报调度。",
+        "arc": "从幕后办事人转为女皇政权与边军之间的重要接口（改编）。",
+        "relationships": [
+          {
+            "name": "李元瑛",
+            "relation": "主君"
+          },
+          {
+            "name": "李宝珠",
+            "relation": "奉命安置保护的皇室成员"
+          },
+          {
+            "name": "韦训",
+            "relation": "保持戒备但认可能力的江湖人"
+          }
+        ],
+        "evidence": []
+      },
+      "image": {
+        "style": "电影级 3D 国漫，深褐铁灰主色，实用边军质感",
+        "prompt": "Refined cinematic 3D donghua character render of a thirty-year-old Han Chinese military secretary in alternate Tang-inspired Youzhou, broad-shouldered practical build, healthy tan matte stylized skin, strong brows, direct eyes, black hair in a compact military topknot. Dark brown short robe beneath light lamellar shoulder armor, command token and horizontal saber at the belt. Three-quarter waist-up portrait, neutral background, alert dependable expression. Clean stylized skin, layered eyes, grouped hair, premium simplified leather, iron and cloth. Soft key, cool fill, restrained rim. Cinematic 3D donghua animated-feature CG.",
+        "promptLocal": "电影级3D国漫角色：三十岁左右汉族参军，宽肩、浓眉正眼、健康肤色，黑发束紧；穿深褐短袍与轻甲，腰悬令牌、横刀，神态警醒可靠。",
+        "negativePrompt": "photorealistic live-action, realistic game-CG, visible pores, sweat or oily sheen, blemish or scar microtexture, childlike doll proportions, malformed anatomy, text, watermark, signature, busy background",
+        "tags": [
+          "cinematic 3D donghua",
+          "stylized CG",
+          "character sheet",
+          "animated-feature lighting",
+          "frontier officer"
+        ],
+        "sheet": "Character model sheet of one thirty-year-old Han Chinese military secretary from alternate Tang-inspired Youzhou on ONE 16:9 landscape canvas with thin hairline rules. LEFT ZONE about 34%: bust portrait. RIGHT-TOP ZONE: front, side, back FULL-BODY views of the SAME face and costume. PROPORTIONS ARE CRITICAL, equal heights, correct anatomy, shared ground line. RIGHT-BOTTOM ZONE: command token, saber hilt, lamellar plate, document pouch. If crowded, the detail studies give way, not the figures. Pure white background, clean measurable views, Refined cinematic 3D donghua character render, stylized animated-feature CG with sculpted graphic forms and premium art direction, unmistakably animation rather than live action."
+      },
+      "voice": {
+        "timbre": "结实明快的青年男中音",
+        "pitch": "中低",
+        "pace": "利落，军令式停顿",
+        "accent": "北地官话轻微口音",
+        "emotion": "稳重直接",
+        "referenceHint": "像一句令下就会立刻去办的人",
+        "prompt": "Adult male Chinese voice, around thirty, solid straightforward baritone, firm chest resonance, brisk pace with military pauses, slight northern frontier accent, medium energy, dependable and practical, emotions plain rather than concealed.",
+        "promptLocal": "三十岁男声，结实直接的男中音，胸腔共鸣稳；语速利落，有军令式停顿，略带北地口音，可靠务实。"
+      }
+    }
+  ]
+}

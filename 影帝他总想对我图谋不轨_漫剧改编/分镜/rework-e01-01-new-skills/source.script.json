@@ -1,0 +1,56 @@
+{
+  "source": "影帝他总想对我图谋不轨",
+  "params": {
+    "charsPerSecond": 3.5,
+    "actionSeconds": 3,
+    "tolerance": 0.15,
+    "maxLineChars": 35,
+    "hookWindow": 3
+  },
+  "episodes": [
+    {
+      "ep": 1,
+      "targetSeconds": 14.2083,
+      "hook": "一位金枝玉叶为何会被当作死人下葬",
+      "cliff": "开棺之人究竟是救命者还是盗墓者",
+      "beatsClaimed": [
+        "绝境求生"
+      ],
+      "hookBeat": [
+        1,
+        1
+      ],
+      "scenes": [
+        {
+          "sceneId": "S01",
+          "characters": [
+            "C01",
+            "C02",
+            "C09"
+          ],
+          "flow": [
+            {
+              "action": "冷开场：李宝珠在黑暗中猛地睁眼，双手推向近在眼前的棺盖，身体却被狭窄棺木死死卡住。"
+            },
+            {
+              "speaker": "C01",
+              "line": "放我出去！有人吗！",
+              "delivery": "嗓音嘶哑，用力拍打"
+            },
+            {
+              "action": "她的手掌拍在梓木棺盖上，沉闷回声贴着耳边反弹。"
+            },
+            {
+              "speaker": "VO",
+              "line": "冷。这里不是寝殿。",
+              "delivery": "李宝珠心声，强迫自己辨认环境"
+            },
+            {
+              "action": "她摸到身下锦缎，又摸到头顶粗大的铜钉，动作突然停住。"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
