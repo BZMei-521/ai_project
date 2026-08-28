@@ -733,41 +733,6 @@ fn unique_temp_sibling(final_path: &Path) -> Result<PathBuf, String> {
     Ok(final_path.with_file_name(format!(".{name}.tmp-{}-{nonce}", std::process::id())))
 }
 
-#[cfg(test)]
-fn publish_json<T: Serialize>(path: &Path, value: &T, exists_code: &str) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
-    publish_bytes(path, &bytes, exists_code)
-}
-
-#[cfg(test)]
-fn publish_bytes(path: &Path, bytes: &[u8], exists_code: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "codex_storyboard_publish_failed".to_string())?;
-    reject_symlink(parent, "codex_storyboard_path_escape")?;
-    let temporary = unique_temp_sibling(path)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
-    drop(file);
-    let link_result = fs::hard_link(&temporary, path);
-    let _ = fs::remove_file(&temporary);
-    if link_result.is_err() {
-        return if fs::symlink_metadata(path).is_ok() {
-            Err(exists_code.to_string())
-        } else {
-            Err("codex_storyboard_publish_failed".to_string())
-        };
-    }
-    Ok(())
-}
-
 fn publish_bytes_at(
     directory: &CapabilityDir,
     path: &Path,
@@ -1109,6 +1074,7 @@ fn prepare_at_roots(
         || {},
         || {},
         || {},
+        || {},
     )
 }
 
@@ -1126,6 +1092,7 @@ fn prepare_at_roots_with_copy_hook<F: FnMut(usize)>(
         authority,
         request,
         before_copy,
+        || {},
         || {},
         || {},
         || {},
@@ -1149,6 +1116,7 @@ fn prepare_at_roots_with_layout_hook<F: FnOnce()>(
         before_publish,
         || {},
         || {},
+        || {},
     )
 }
 
@@ -1169,7 +1137,29 @@ fn prepare_at_roots_with_publish_hooks<P: FnOnce(), A: FnOnce()>(
         |_| {},
         before_publish,
         || {},
+        || {},
         after_request_publish,
+    )
+}
+
+#[cfg(test)]
+fn prepare_at_roots_with_authority_open_hook<H: FnOnce()>(
+    project: &Path,
+    assets: &Path,
+    authority: &Path,
+    request: PrepareCodexStoryboardJobRequest,
+    before_authority_capability_open: H,
+) -> Result<CodexStoryboardExportReceipt, String> {
+    prepare_at_roots_inner(
+        project,
+        assets,
+        authority,
+        request,
+        |_| {},
+        || {},
+        before_authority_capability_open,
+        || {},
+        || {},
     )
 }
 
@@ -1189,18 +1179,26 @@ fn prepare_at_roots_with_request_publish_hooks<B: FnOnce(), A: FnOnce()>(
         request,
         |_| {},
         || {},
+        || {},
         before_request_publish,
         after_request_publish,
     )
 }
 
-fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()>(
+fn prepare_at_roots_inner<
+    F: FnMut(usize),
+    P: FnOnce(),
+    H: FnOnce(),
+    B: FnOnce(),
+    A: FnOnce(),
+>(
     project: &Path,
     assets: &Path,
     authority: &Path,
     request: PrepareCodexStoryboardJobRequest,
     mut before_copy: F,
     before_publish: P,
+    before_authority_capability_open: H,
     before_request_publish: B,
     after_request_publish: A,
 ) -> Result<CodexStoryboardExportReceipt, String> {
@@ -1217,6 +1215,8 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     let project = project_root.canonical_path.clone();
     let assets = assets_root.canonical_path.clone();
     let authority = canonical_authority_root(authority)?;
+    let authority_root =
+        capture_stable_directory(&authority, "codex_storyboard_authority_invalid")?;
     let project_capability =
         open_capability_directory(&project, "codex_storyboard_project_root_invalid")?;
     let assets_capability = if assets == project {
@@ -1243,8 +1243,14 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         &assets_root,
         "codex_storyboard_prepare_layout_changed",
     )?;
+    before_authority_capability_open();
     let authority_capability =
         open_capability_directory(&authority, "codex_storyboard_authority_invalid")?;
+    bind_capability_directory(
+        &authority_capability,
+        &authority_root,
+        "codex_storyboard_authority_invalid",
+    )?;
     let requested_project = fs::canonicalize(Path::new(&request.project_path))
         .map_err(|_| "codex_storyboard_project_path_invalid".to_string())?;
     if requested_project != project {
@@ -1509,6 +1515,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         canonical_package_path: package.to_string_lossy().to_string(),
     };
     let authority_key = project_authority_key(&project, &request.project_id)?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     let exports_capability = ensure_capability_child(
         &authority_capability,
         Path::new("exports"),
@@ -1522,6 +1529,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     let authority_record_name = PathBuf::from(format!("{}.json", request.job_id));
     before_publish();
     revalidate_prepare_layout(&layout)?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
     publish_json_at(
         &export_project_capability,
@@ -1530,10 +1538,12 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         "codex_storyboard_authority_record_exists",
     )?;
     revalidate_prepare_layout(&layout)?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
     let request_path = package.join("request.json");
     let request_relative = Path::new("request.json");
     revalidate_prepare_layout(&layout)?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     before_request_publish();
     publish_bytes_at(
         &package_capability,
@@ -1543,6 +1553,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     )?;
     after_request_publish();
     revalidate_prepare_layout(&layout)?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     let published_request = read_stable_file_at(
         &package_capability,
         &layout.package,
@@ -1576,6 +1587,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     };
     let ready_name = PathBuf::from(format!("{}.ready.json", request.job_id));
     revalidate_prepare_layout(&layout)?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
     revalidate_stable_file_at(
         &published_request,
@@ -1593,6 +1605,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         &ready_record,
         "codex_storyboard_ready_marker_exists",
     )?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     revalidate_stable_file_at(
         &published_request,
         &package_capability,
@@ -1609,6 +1622,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         request_relative,
         "codex_storyboard_request_changed_during_publication",
     )?;
+    revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
     Ok(CodexStoryboardExportReceipt {
         schema_version: 1,
         job_id: request.job_id,
@@ -2859,6 +2873,64 @@ mod tests {
     }
 
     #[test]
+    fn prepare_rejects_authority_root_replacement_before_capability_open() {
+        let fixture = fixture("authority-root-replaced");
+        let displaced = fixture.authority.with_file_name("authority-root-displaced");
+        let authority = fixture.authority.clone();
+        let result = prepare_at_roots_with_authority_open_hook(
+            &fixture.project,
+            &fixture.assets,
+            &fixture.authority,
+            fixture.request.clone(),
+            || {
+                fs::rename(&authority, &displaced).unwrap();
+                fs::create_dir(&authority).unwrap();
+            },
+        );
+        assert_eq!(result.unwrap_err(), "codex_storyboard_authority_invalid");
+        assert_eq!(fs::read_dir(&authority).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&displaced).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn prepare_rejects_authority_root_replacement_before_first_authority_publish() {
+        let fixture = fixture("authority-root-first-publish-replaced");
+        let displaced = fixture.authority.with_file_name("authority-root-first-publish-displaced");
+        let authority = fixture.authority.clone();
+        let authority_key = project_authority_key(&fixture.project, &fixture.request.project_id).unwrap();
+        let swapped = Cell::new(false);
+        let result = prepare_at_roots_with_layout_hook(
+            &fixture.project,
+            &fixture.assets,
+            &fixture.authority,
+            fixture.request.clone(),
+            || {
+                if fs::rename(&authority, &displaced).is_ok() {
+                    swapped.set(true);
+                    fs::create_dir(&authority).unwrap();
+                }
+            },
+        );
+        if swapped.get() {
+            assert_eq!(result.unwrap_err(), "codex_storyboard_authority_invalid");
+            assert_eq!(fs::read_dir(&authority).unwrap().count(), 0);
+            assert!(!displaced
+                .join("exports")
+                .join(authority_key)
+                .join(format!("{}.json", fixture.request.job_id))
+                .exists());
+            assert!(!displaced
+                .join("exports")
+                .join(project_authority_key(&fixture.project, &fixture.request.project_id).unwrap())
+                .join(format!("{}.ready.json", fixture.request.job_id))
+                .exists());
+        } else {
+            eprintln!("SKIP swap branch: retained authority handle denied rename");
+            assert_eq!(result.unwrap().status, "exported");
+        }
+    }
+
+    #[test]
     fn fixed_root_read_rejects_instant_external_junction_even_when_root_is_restored() {
         let fixture = fixture("fixed-root-instant-junction");
         let fixed_root = capture_stable_directory(
@@ -3373,21 +3445,27 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_no_replace_publish_and_import_have_one_winner() {
+    fn concurrent_capability_publish_and_import_have_one_winner() {
         use std::sync::{Arc, Barrier};
         use std::thread;
 
         let publish_root = unique_root("concurrent-publish");
         fs::create_dir_all(&publish_root).unwrap();
         let final_path = publish_root.join("final.json");
+        let capability = open_capability_directory(&publish_root, "capability-open").unwrap();
         let barrier = Arc::new(Barrier::new(8));
         let publish_handles = (0..8)
             .map(|index| {
                 let barrier = Arc::clone(&barrier);
-                let path = final_path.clone();
+                let directory = capability.try_clone().unwrap();
                 thread::spawn(move || {
                     barrier.wait();
-                    publish_json(&path, &json!({ "winner": index }), "exists")
+                    publish_json_at(
+                        &directory,
+                        Path::new("final.json"),
+                        &json!({ "winner": index }),
+                        "exists",
+                    )
                 })
             })
             .collect::<Vec<_>>();
@@ -3404,6 +3482,13 @@ mod tests {
         );
         let published: Value = serde_json::from_slice(&fs::read(&final_path).unwrap()).unwrap();
         assert!(published["winner"].as_u64().unwrap() < 8);
+        assert!(fs::read_dir(&publish_root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".final.json.tmp-")
+        }));
 
         let fixture = fixture("concurrent-import");
         let receipt = prepare_at_roots(
