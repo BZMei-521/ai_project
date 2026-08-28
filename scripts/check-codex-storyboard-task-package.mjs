@@ -61,6 +61,17 @@ assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, referen
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, references: request.references.map((item, index) => index === 0 ? { ...item, instruction: "" } : item) }), /instruction_invalid/);
 assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, shotId: "other" }, request), /identity_mismatch/);
 
+const validatedRequest = runtime.validateCodexStoryboardRequest(request);
+assert.throws(() => validatedRequest.references.push(request.references[0]), /read only|not extensible/i);
+assert.throws(() => validatedRequest.references.reverse(), /read only/i);
+assert.throws(() => { validatedRequest.references[0].sha256 = sha("f"); }, /read only/i);
+assert.throws(() => { validatedRequest.references[0].usage = "style_only"; }, /read only/i);
+assert.throws(() => { validatedRequest.references[0].instruction = "Rewrite blocking."; }, /read only/i);
+
+const validatedResult = runtime.validateCodexStoryboardResult(result, request);
+assert.throws(() => { validatedResult.output.sha256 = sha("f"); }, /read only/i);
+assert.throws(() => { validatedResult.referenceDigests[0].sha256 = sha("f"); }, /read only/i);
+
 const provider = new CodexTaskPackageProvider({
   exportStoryboardJob: async () => ({ jobId: request.jobId, packagePath: "C:/project/codex-storyboard-jobs/job-1", requestDigest: "a".repeat(64) })
 });

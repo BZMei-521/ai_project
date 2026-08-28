@@ -16,6 +16,12 @@ const canonicalize = (value) => Array.isArray(value)
   : isPlainObject(value)
     ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]))
     : value;
+const deepFreeze = (value, seen = new WeakSet()) => {
+  if (!value || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) deepFreeze(value[key], seen);
+  return Object.freeze(value);
+};
 
 export function validateCodexStoryboardRequest(value) {
   exactKeys(value, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "createdAt", "prompt", "references", "acceptedImagePath", "expectedOutput"], "codex_storyboard_request_keys_invalid");
@@ -37,7 +43,7 @@ export function validateCodexStoryboardRequest(value) {
   if (value.acceptedImagePath !== null && typeof value.acceptedImagePath !== "string") fail("codex_storyboard_accepted_path_invalid");
   exactKeys(value.expectedOutput, ["candidatePath", "resultPath", "mimeTypes"], "codex_storyboard_expected_output_invalid");
   if (value.expectedOutput.candidatePath !== "outputs/candidate.png" || value.expectedOutput.resultPath !== "outputs/result.json" || JSON.stringify(value.expectedOutput.mimeTypes) !== JSON.stringify(["image/png"])) fail("codex_storyboard_expected_output_invalid");
-  return Object.freeze(structuredClone(value));
+  return deepFreeze(structuredClone(value));
 }
 
 export function canonicalCodexStoryboardRequest(value) {
@@ -57,5 +63,5 @@ export function validateCodexStoryboardResult(result, requestValue) {
   for (const field of ["jobId", "projectId", "episodeId", "shotId"]) if (result[field] !== request[field]) fail("codex_storyboard_result_identity_mismatch");
   if (!digest(result.requestDigest) || JSON.stringify(result.referenceDigests) !== JSON.stringify(request.references.map(({ id, sha256 }) => ({ id, sha256 })))) fail("codex_storyboard_result_lineage_mismatch");
   if (result.output?.relativePath !== "outputs/candidate.png" || !digest(result.output?.sha256) || !Number.isSafeInteger(result.output?.width) || result.output.width <= 0 || !Number.isSafeInteger(result.output?.height) || result.output.height <= 0 || result.output?.mimeType !== "image/png") fail("codex_storyboard_result_output_invalid");
-  return Object.freeze(structuredClone(result));
+  return deepFreeze(structuredClone(result));
 }
