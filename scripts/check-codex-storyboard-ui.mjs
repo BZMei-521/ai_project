@@ -15,6 +15,18 @@ assert.match(panel, /使用说明/);
 assert.match(panel, /moveCodexReference/);
 assert.match(panel, /acceptGenerationTaskCandidate/);
 assert.match(panel, /Codex.*不会自动发布/);
+assert.match(panel, /const \[selectedCodexTaskId, setSelectedCodexTaskId\] = useState/);
+assert.match(panel, /codexTasksForSelectedShot/);
+assert.match(panel, /Codex 任务历史/);
+assert.match(panel, /value=\{selectedCodexTaskId\}/);
+assert.match(panel, /setSelectedCodexTaskId\(jobId\)/, "a new export becomes the explicit selected history task");
+assert.match(panel, /const \[isCodexExporting, setIsCodexExporting\] = useState\(false\)/);
+assert.match(panel, /const \[isCodexImporting, setIsCodexImporting\] = useState\(false\)/);
+assert.match(panel, /if \(codexExportLockRef\.current\) return/);
+assert.match(panel, /if \(codexImportLockRef\.current\) return/);
+assert.match(panel, /selectedCodexTaskCanImport/);
+assert.match(panel, /stage === "exported"[\s\S]{0,120}status === "queued"/);
+assert.match(panel, /markGenerationTaskNeedsReview\([\s\S]{0,420}expectedReviewTransition/);
 assert.match(panel, /codex_storyboard_requires_tauri_runtime/);
 assert.match(panel, /codex_storyboard_project_path_missing/);
 assert.match(app, /<AdvancedPipelinePanel[^>]*projectPath=\{activeWorkspacePath\}/);
@@ -39,5 +51,26 @@ assert.doesNotMatch(panel, /generatedImagePath[^\n]{0,160}spatial_authority|spat
 const codexBranch = panel.match(/\/\* CODEX_TASK_PACKAGE_BRANCH_START \*\/[\s\S]*?\/\* CODEX_TASK_PACKAGE_BRANCH_END \*\//)?.[0];
 assert.ok(codexBranch, "Codex task-package branch is explicit and auditable");
 assert.doesNotMatch(codexBranch, /inspectWorkflowDependencies\(|queuePrompt\(|imageWorkflowJson\s*:/, "Codex mode must not invoke or substitute a Comfy workflow");
+
+const handlerBlock = (name, nextName) => {
+  const start = panel.indexOf(`const ${name} = async`);
+  const end = panel.indexOf(`const ${nextName} = async`, start + 1);
+  assert.ok(start >= 0 && end > start, `${name} handler block is extractable`);
+  return panel.slice(start, end);
+};
+assert.match(handlerBlock("queueCurrentStoryboardShot", "queueStoryboardShots"), /if \(codexTaskPackageMode\) return/);
+assert.match(handlerBlock("queueStoryboardShots", "storyboardGenerationPreflight"), /if \(codexTaskPackageMode\) return/);
+assert.match(handlerBlock("storyboardGenerationPreflight", "retryFailedStoryboardShots"), /codex_storyboard_comfy_action_disabled/);
+assert.match(handlerBlock("retryFailedStoryboardShots", "redrawSelectedCharacter"), /if \(codexTaskPackageMode\) return/);
+assert.match(handlerBlock("onGenerateImages", "onGenerateVideos"), /if \(codexTaskPackageMode\) return false/);
+assert.match(panel, /kind === "image" && codexTaskPackageMode[\s\S]{0,80}return false/, "single-image generation is hard guarded");
+assert.match(panel, /const redrawSelectedCharacter = async \([\s\S]{0,220}if \(codexTaskPackageMode\) return/);
+assert.match(panel, /const onGenerateAll = async \(\) => \{[\s\S]{0,220}if \(codexTaskPackageMode\) return/);
+assert.match(handlerBlock("onInspectWorkflows", "onCheckModelHealth"), /if \(codexTaskPackageMode\) return/);
+assert.match(panel, /disabled=\{codexTaskPackageMode \|\| phase === "running" \|\| scriptImportActive\}[\s\S]{0,180}onGenerateImages\(\)/);
+assert.match(panel, /disabled=\{codexTaskPackageMode \|\| phase === "running" \|\| scopedShots\.length === 0\}[\s\S]{0,180}queueCurrentStoryboardShot/);
+assert.match(panel, /disabled=\{codexTaskPackageMode \|\| phase === "running"\}[\s\S]{0,180}onGenerateSingle\("image"/);
+assert.match(panel, /const disabled = codexTaskPackageMode \|\| phase === "running" \|\| redrawActive !== null/);
+assert.match(panel, /disabled=\{codexTaskPackageMode \|\| phase === "running" \|\| runAllActive \|\| scriptImportActive\}[\s\S]{0,180}onGenerateAll\(\)/);
 
 console.log("codex storyboard UI checks passed");

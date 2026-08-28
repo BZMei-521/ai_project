@@ -5177,6 +5177,11 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
     }
   ]);
   const [codexTaskMessage, setCodexTaskMessage] = useState("");
+  const [selectedCodexTaskId, setSelectedCodexTaskId] = useState("");
+  const [isCodexExporting, setIsCodexExporting] = useState(false);
+  const [isCodexImporting, setIsCodexImporting] = useState(false);
+  const codexExportLockRef = useRef(false);
+  const codexImportLockRef = useRef(false);
   const checkingRef = useRef(false);
   const characterModelVisible = useMemo(() => {
     const selected = settings.characterAssetModelName?.trim();
@@ -5209,6 +5214,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
     [skyboxAssetWorkflowMode, settings.skyboxAssetModelName]
   );
   const storyboardImageWorkflowMode = settings.storyboardImageWorkflowMode ?? DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
+  const codexTaskPackageMode = storyboardImageWorkflowMode === "codex_task_package";
   const storyboardModelVisible = useMemo(() => {
     const selected = settings.storyboardImageModelName?.trim();
     if (!selected) return null;
@@ -5304,18 +5310,37 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
     () => sequences.find((sequence) => sequence.id === currentSequenceId) ?? null,
     [currentSequenceId, sequences]
   );
-  const latestCodexTask = useMemo(
+  const codexTasksForSelectedShot = useMemo(
     () => generationTasks
       .filter((task) => task.shotId === selectedShot?.id && task.externalProvider === "codex_task_package")
       .slice()
-      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0] ?? null,
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     [generationTasks, selectedShot?.id]
   );
+  const selectedCodexTask = useMemo(
+    () => codexTasksForSelectedShot.find((task) => task.id === selectedCodexTaskId) ?? codexTasksForSelectedShot[0] ?? null,
+    [codexTasksForSelectedShot, selectedCodexTaskId]
+  );
+  useEffect(() => {
+    setSelectedCodexTaskId((previous) => (
+      codexTasksForSelectedShot.some((task) => task.id === previous)
+        ? previous
+        : codexTasksForSelectedShot[0]?.id ?? ""
+    ));
+  }, [codexTasksForSelectedShot, selectedShot?.id]);
   const codexDesktopError = !projectPath.trim()
     ? "codex_storyboard_project_path_missing"
     : !isTauriRuntime()
       ? "codex_storyboard_requires_tauri_runtime"
       : "";
+  const selectedCodexTaskCanImport = Boolean(
+    selectedCodexTask &&
+    selectedCodexTask.stage === "exported" &&
+    selectedCodexTask.status === "queued" &&
+    selectedCodexTask.outputPath?.trim() &&
+    !isCodexImporting &&
+    !codexDesktopError
+  );
   const selectedCharacterLayers = useMemo(
     () => selectedShot
       ? layers.filter((layer) => layer.shotId === selectedShot.id && Boolean(layer.characterGenerationMetadata))
@@ -5385,6 +5410,9 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
   };
 
   const exportSelectedCodexJob = async () => {
+    if (codexExportLockRef.current) return;
+    codexExportLockRef.current = true;
+    setIsCodexExporting(true);
     try {
       if (codexDesktopError) throw new Error(codexDesktopError);
       if (!selectedShot) throw new Error("codex_storyboard_shot_missing");
@@ -5423,21 +5451,25 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         externalRequestDigest: receipt.requestDigest,
         startedAt: request.createdAt
       });
+      setSelectedCodexTaskId(jobId);
       setCodexTaskMessage(`已导出 ${receipt.jobId}：${receipt.packagePath}`);
       pushToast("Codex 任务包已导出", "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setCodexTaskMessage(message);
       pushToast(message, "error");
+    } finally {
+      codexExportLockRef.current = false;
+      setIsCodexExporting(false);
     }
   };
 
   const copyCodexJobInstruction = async () => {
-    if (!latestCodexTask?.outputPath) return;
+    if (!selectedCodexTask?.outputPath) return;
     const instruction = [
       "请在当前 Codex 任务中处理这个分镜任务包。",
-      `任务 ID：${latestCodexTask.externalJobId ?? latestCodexTask.id}`,
-      `任务包目录：${latestCodexTask.outputPath}`,
+      `任务 ID：${selectedCodexTask.externalJobId ?? selectedCodexTask.id}`,
+      `任务包目录：${selectedCodexTask.outputPath}`,
       "按 request.json 中的图片顺序和使用说明生成 outputs/candidate.png 与 outputs/result.json。",
       "返回应用后只进入 needs_review；Codex 候选图不会自动发布，必须由用户显式接受。"
     ].join("\n");
@@ -5450,49 +5482,76 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
   };
 
   const importSelectedCodexResult = async () => {
+    if (codexImportLockRef.current) return;
+    if (!selectedCodexTaskCanImport || !selectedCodexTask?.outputPath) return;
+    const taskId = selectedCodexTask.id;
+    const packagePath = selectedCodexTask.outputPath;
+    const expectedReviewTransition = {
+      stage: selectedCodexTask.stage,
+      status: selectedCodexTask.status,
+      outputPath: packagePath,
+      shotId: selectedCodexTask.shotId,
+      externalProvider: selectedCodexTask.externalProvider,
+      externalJobId: selectedCodexTask.externalJobId
+    } as const;
+    codexImportLockRef.current = true;
+    setIsCodexImporting(true);
     try {
       if (codexDesktopError) throw new Error(codexDesktopError);
-      if (!selectedShot || !currentSequence || !latestCodexTask?.outputPath) {
+      if (!selectedShot || !currentSequence) {
         throw new Error("codex_storyboard_exported_task_missing");
       }
       const receipt = await importCodexStoryboardResult({
         schemaVersion: 1,
-        jobId: latestCodexTask.externalJobId ?? latestCodexTask.id,
+        jobId: selectedCodexTask.externalJobId ?? selectedCodexTask.id,
         projectId: project.id,
         episodeId: currentSequence.id,
         shotId: selectedShot.id,
         provider: "codex_task_package",
         projectPath: projectPath.trim(),
-        taskStatus: latestCodexTask.status === "cancelled"
-          ? "cancelled"
-          : latestCodexTask.status === "completed"
-            ? "accepted"
-            : "queued"
+        taskStatus: "queued"
       });
-      markGenerationTaskNeedsReview(latestCodexTask.id, receipt.candidatePath, ["codex_candidate"]);
-      setCodexTaskMessage(`候选图已导入，等待审查：${receipt.candidatePath}`);
-      pushToast("Codex 候选图已导入，等待人工审查", "success");
+      markGenerationTaskNeedsReview(
+        taskId,
+        receipt.candidatePath,
+        ["codex_candidate"],
+        expectedReviewTransition
+      );
+      const transitioned = useStoryboardStore.getState().generationTasks.find((task) => task.id === taskId);
+      if (transitioned?.stage === "needs_review" && transitioned.status === "needs_review") {
+        setCodexTaskMessage(`候选图已导入，等待审查：${receipt.candidatePath}`);
+        pushToast("Codex 候选图已导入，等待人工审查", "success");
+      } else {
+        setCodexTaskMessage("codex_storyboard_import_receipt_stale");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setCodexTaskMessage(message);
       pushToast(message, "error");
+    } finally {
+      codexImportLockRef.current = false;
+      setIsCodexImporting(false);
     }
   };
 
   const queueCurrentStoryboardShot = async () => {
+    if (codexTaskPackageMode) return;
     const shot = scopedShots.find((item) => item.id === useStoryboardStore.getState().selectedShotId) ?? scopedShots[0];
     if (!shot) return;
     await queueStoryboardShot({ settings, shot, index: Math.max(0, shot.order - 1), allShots: scopedShots, assets, stageAWorkflowJson: settings.imageWorkflowJson, stageBWorkflowJson: STORYBOARD_IMAGE_STAGE_B_WORKFLOW_JSON, preflight: storyboardGenerationPreflight });
   };
   const queueStoryboardShots = async () => {
+    if (codexTaskPackageMode) return;
     await queueStoryboardBatch(scopedShots.map((shot, index) => ({ settings, shot, index, allShots: scopedShots, assets, stageAWorkflowJson: settings.imageWorkflowJson, stageBWorkflowJson: STORYBOARD_IMAGE_STAGE_B_WORKFLOW_JSON })), { settings, preflight: storyboardGenerationPreflight });
   };
   const storyboardGenerationPreflight = async () => {
+    if (codexTaskPackageMode) throw new Error("codex_storyboard_comfy_action_disabled");
     const report = await inspectWorkflowDependencies(settings.baseUrl, settings.imageWorkflowJson);
     const blocking = report.diagnostics?.find((item) => item.code === "offline" || item.code === "missing_node" || item.code === "missing_model");
     if (blocking) throw Object.assign(new Error(blocking.message), { errorCode: "preflight_failed" });
   };
   const retryFailedStoryboardShots = async () => {
+    if (codexTaskPackageMode) return;
     for (const task of generationTasks.filter((item) => item.status === "failed")) {
       await retryStoryboardTask(task.id, settings, {
         preflight: task.retrySnapshot?.preflightRequired ? storyboardGenerationPreflight : undefined
@@ -5602,6 +5661,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
     characterAssetId: string,
     scope: CharacterRedrawScope
   ): Promise<void> => {
+    if (codexTaskPackageMode) return;
     if (!selectedShot) return;
     const missingProtectedLayer = selectedCharacterLayers.find((layer) => {
       const metadata = layer.characterGenerationMetadata;
@@ -13612,6 +13672,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
   };
 
   const onInspectWorkflows = async () => {
+    if (codexTaskPackageMode) return;
     try {
       setPipelineState("体检工作流依赖中");
       appendLog("开始体检工作流依赖（图片 + 视频 + 配音）");
@@ -14439,6 +14500,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
     signal?: AbortSignal,
     seedOffset = 0
   ) => {
+    if (kind === "image" && codexTaskPackageMode) return false;
     const latestScopedShots = getScopedShotsSnapshot();
     const shot = latestScopedShots.find((item) => item.id === shotId)!;
     if (!shot) return false;
@@ -14863,6 +14925,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
     skipProvision = false,
     forceRegenerateAll = false
   ): Promise<boolean> => {
+    if (codexTaskPackageMode) return false;
     const ownership = acquireSequentialControllerOwner(storyboardGenerationAbortControllerRef);
     const generationController = ownership.controller;
     if (!ownership.acquired) {
@@ -15560,6 +15623,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
   };
 
   const onGenerateAll = async () => {
+    if (codexTaskPackageMode) return;
     if (phase === "running" || runAllActive) {
       pushToast("已有生成任务在运行中，请稍后再试", "warning");
       appendLog("一键生成整片被忽略：已有任务在运行中", "error");
@@ -16083,54 +16147,80 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
                 </div>
               ))}
             </div>
+            <label>
+              Codex 任务历史
+              <select
+                onChange={(event) => setSelectedCodexTaskId(event.target.value)}
+                value={selectedCodexTaskId}
+              >
+                {codexTasksForSelectedShot.length === 0 && <option value="">当前镜头暂无任务</option>}
+                {codexTasksForSelectedShot.map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.externalJobId ?? task.id} · {task.status} · {new Date(task.startedAt).toLocaleString()}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="comfy-asset-diagnostic-list">
+              {codexTasksForSelectedShot.map((task) => (
+                <button
+                  className={task.id === selectedCodexTask?.id ? "btn-secondary" : "btn-ghost"}
+                  key={task.id}
+                  onClick={() => setSelectedCodexTaskId(task.id)}
+                  type="button"
+                >
+                  {task.externalJobId ?? task.id} · {task.status} · {task.startedAt} · {task.outputPath ?? "无记录路径"}
+                </button>
+              ))}
+            </div>
             <div className="timeline-actions">
               <button
-                disabled={Boolean(codexDesktopError) || !selectedShot}
+                disabled={isCodexExporting || Boolean(codexDesktopError) || !selectedShot}
                 onClick={() => void exportSelectedCodexJob()}
                 type="button"
               >
-                导出 Codex 任务包
+                {isCodexExporting ? "正在导出…" : "导出 Codex 任务包"}
               </button>
               <button
-                disabled={!latestCodexTask?.outputPath}
+                disabled={!selectedCodexTask?.outputPath}
                 onClick={() => void copyCodexJobInstruction()}
                 type="button"
               >
                 复制 Codex 处理指令
               </button>
               <button
-                disabled={!latestCodexTask?.outputPath || Boolean(codexDesktopError)}
+                disabled={!selectedCodexTaskCanImport}
                 onClick={() => void importSelectedCodexResult()}
                 type="button"
               >
-                检查并导入结果
+                {isCodexImporting ? "正在检查…" : "检查并导入结果"}
               </button>
             </div>
-            {latestCodexTask && (
+            {selectedCodexTask && (
               <div className="comfy-asset-diagnostic-grid">
                 <div>Job ID</div>
-                <div>{latestCodexTask.externalJobId ?? latestCodexTask.id}</div>
-                <div>导出路径</div>
-                <div>{latestCodexTask.outputPath ?? "尚未导出"}</div>
+                <div>{selectedCodexTask.externalJobId ?? selectedCodexTask.id}</div>
+                <div>记录路径</div>
+                <div>{selectedCodexTask.outputPath ?? "尚未导出"}</div>
                 <div>状态</div>
-                <div>{latestCodexTask.status}</div>
+                <div>{selectedCodexTask.status}</div>
               </div>
             )}
             {codexTaskMessage && <div className="timeline-meta">{codexTaskMessage}</div>}
-            {latestCodexTask?.status === "needs_review" && latestCodexTask.bestPreviewPath && (
+            {selectedCodexTask?.bestPreviewPath && (
               <div className="comfy-asset-mode-card">
-                <strong>Codex 候选图（等待人工审查）</strong>
-                <a href={toDesktopMediaSource(latestCodexTask.bestPreviewPath)} rel="noreferrer" target="_blank">
+                <strong>Codex 候选证据（{selectedCodexTask.status}）</strong>
+                <a href={toDesktopMediaSource(selectedCodexTask.bestPreviewPath)} rel="noreferrer" target="_blank">
                   <img
                     alt="Codex 候选分镜图"
                     className="comfy-shot-preview"
-                    src={toDesktopMediaSource(latestCodexTask.bestPreviewPath)}
+                    src={toDesktopMediaSource(selectedCodexTask.bestPreviewPath)}
                   />
                 </a>
-                <div className="timeline-actions">
+                {selectedCodexTask.status === "needs_review" && <div className="timeline-actions">
                   <button
                     onClick={() => {
-                      acceptGenerationTaskCandidate(latestCodexTask.id);
+                      acceptGenerationTaskCandidate(selectedCodexTask.id);
                       setCodexTaskMessage("Codex 候选图已接受并发布到当前镜头");
                     }}
                     type="button"
@@ -16140,9 +16230,9 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
                   <button
                     className="btn-danger"
                     onClick={() => {
-                      markGenerationTaskCancelled(latestCodexTask.id, {
-                        bestPreviewPath: latestCodexTask.bestPreviewPath,
-                        reviewReasons: latestCodexTask.reviewReasons,
+                      markGenerationTaskCancelled(selectedCodexTask.id, {
+                        bestPreviewPath: selectedCodexTask.bestPreviewPath,
+                        reviewReasons: selectedCodexTask.reviewReasons,
                         errorMessage: "codex_candidate_rejected"
                       });
                       setCodexTaskMessage("Codex 候选图已拒绝；候选证据仍保留在任务记录中");
@@ -16151,7 +16241,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
                   >
                     拒绝候选图
                   </button>
-                </div>
+                </div>}
               </div>
             )}
           </div>
@@ -18556,7 +18646,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         )}
         <div className="comfy-primary-actions">
           <button className="btn-ghost" disabled={scriptImportActive} onClick={() => void onImportScript()} type="button">导入镜头脚本</button>
-          <button className="btn-primary comfy-action-main" disabled={phase === "running" || runAllActive || scriptImportActive} onClick={() => void onGenerateAll()} type="button">
+          <button className="btn-primary comfy-action-main" disabled={codexTaskPackageMode || phase === "running" || runAllActive || scriptImportActive} onClick={() => void onGenerateAll()} type="button">
             一键生成整片
           </button>
           <label className="timeline-snap-toggle">
@@ -18586,7 +18676,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
               {selectedCharacterLayers.map((layer) => {
                 const metadata = layer.characterGenerationMetadata!;
                 const asset = assets.find((item) => item.id === metadata.characterAssetId);
-                const disabled = phase === "running" || redrawActive !== null;
+                const disabled = codexTaskPackageMode || phase === "running" || redrawActive !== null;
                 return (
                   <article className="character-redraw-item" key={layer.id}>
                     <div>
@@ -18631,12 +18721,12 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         <details className="export-panel comfy-advanced-tools">
           <summary>高级动作（单步生成 / 重试 / 环境体检）</summary>
           <div className="timeline-actions comfy-main-actions">
-            <button className="btn-ghost" disabled={phase === "running" || scriptImportActive} onClick={() => void onGenerateImages()} type="button">
+            <button className="btn-ghost" disabled={codexTaskPackageMode || phase === "running" || scriptImportActive} onClick={() => void onGenerateImages()} type="button">
               生成分镜图
             </button>
             <button
               className="btn-ghost"
-              disabled={phase === "running" || scriptImportActive}
+              disabled={codexTaskPackageMode || phase === "running" || scriptImportActive}
               onClick={() => void onGenerateImages(false, false, true)}
               type="button"
             >
@@ -18657,7 +18747,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
               生成环境/音效
             </button>
             <button className="btn-ghost" onClick={() => void onConcatVideos()} type="button">拼接整片预览</button>
-            <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateImages(true)} type="button">
+            <button className="btn-ghost" disabled={codexTaskPackageMode || phase === "running"} onClick={() => void onGenerateImages(true)} type="button">
               重试失败分镜图
             </button>
             <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateVideos(true)} type="button">
@@ -18669,10 +18759,10 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
             <button className="btn-ghost" disabled={phase === "running"} onClick={() => void onGenerateSoundDesign(true)} type="button">
               重试失败环境/音效
             </button>
-            <button className="btn-ghost" onClick={() => void onInspectWorkflows()} type="button">体检工作流依赖</button>
-            <button className="btn-ghost" disabled={phase === "running" || scopedShots.length === 0} onClick={() => void queueCurrentStoryboardShot()} type="button">测试当前镜头</button>
-            <button className="btn-ghost" disabled={phase === "running" || scopedShots.length === 0} onClick={() => void queueStoryboardShots()} type="button">批量生成分镜图</button>
-            <button className="btn-ghost" disabled={phase === "running" || !generationTasks.some((item) => item.status === "failed")} onClick={() => void retryFailedStoryboardShots()} type="button">仅重试失败</button>
+            <button className="btn-ghost" disabled={codexTaskPackageMode} onClick={() => void onInspectWorkflows()} type="button">体检工作流依赖</button>
+            <button className="btn-ghost" disabled={codexTaskPackageMode || phase === "running" || scopedShots.length === 0} onClick={() => void queueCurrentStoryboardShot()} type="button">测试当前镜头</button>
+            <button className="btn-ghost" disabled={codexTaskPackageMode || phase === "running" || scopedShots.length === 0} onClick={() => void queueStoryboardShots()} type="button">批量生成分镜图</button>
+            <button className="btn-ghost" disabled={codexTaskPackageMode || phase === "running" || !generationTasks.some((item) => item.status === "failed")} onClick={() => void retryFailedStoryboardShots()} type="button">仅重试失败</button>
             <button className="btn-ghost" onClick={() => void onInstallSuggestedPlugins()} type="button">一键安装建议插件</button>
             <button className="btn-ghost" onClick={() => void onCheckModelHealth()} type="button">体检模型文件</button>
             <button className="btn-ghost" onClick={() => void onCopyModelChecklist()} type="button">复制模型下载清单</button>
@@ -18979,7 +19069,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
                   <div className="timeline-actions">
                     <button
                       className="btn-ghost"
-                      disabled={phase === "running"}
+                      disabled={codexTaskPackageMode || phase === "running"}
                       onClick={() => void onGenerateSingle("image", shot.id, true)}
                       type="button"
                     >

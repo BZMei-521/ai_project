@@ -85,6 +85,11 @@ export type Stroke = {
   layerId?: string;
 };
 
+export type GenerationTaskReviewTransitionExpectation = Pick<
+  StoryboardGenerationTask,
+  "stage" | "status" | "shotId" | "outputPath" | "externalProvider" | "externalJobId"
+>;
+
 type CanvasToolState = {
   mode: "draw" | "select" | "erase";
   brushColor: string;
@@ -397,7 +402,12 @@ type StoryboardState = {
     id: string,
     review?: Pick<StoryboardGenerationTask, "bestPreviewPath" | "reviewReasons" | "errorMessage">
   ) => void;
-  markGenerationTaskNeedsReview: (id: string, bestPreviewPath: string, reviewReasons: string[]) => void;
+  markGenerationTaskNeedsReview: (
+    id: string,
+    bestPreviewPath: string,
+    reviewReasons: string[],
+    expected?: GenerationTaskReviewTransitionExpectation
+  ) => void;
   completeGenerationTask: (id: string, outputPath: string) => void;
   acceptGenerationTaskCandidate: (id: string) => void;
   createSpatialStage: (sceneId: string) => string;
@@ -2594,10 +2604,27 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       };
     }),
 
-  markGenerationTaskNeedsReview: (id, bestPreviewPath, reviewReasons) =>
+  markGenerationTaskNeedsReview: (id, bestPreviewPath, reviewReasons, expected) =>
     set((state) => {
       const task = state.generationTasks.find((item) => item.id === id);
       if (!task) throw new Error(`Cannot review unknown generation task: ${id}`);
+      const canEnterReview =
+        (task.status === "queued" || task.status === "running") &&
+        task.stage !== "needs_review" &&
+        task.stage !== "completed" &&
+        task.stage !== "cancelled" &&
+        task.stage !== "failed";
+      if (!canEnterReview) return state;
+      if (expected && (
+        task.stage !== expected.stage ||
+        task.status !== expected.status ||
+        task.shotId !== expected.shotId ||
+        task.outputPath !== expected.outputPath ||
+        task.externalProvider !== expected.externalProvider ||
+        task.externalJobId !== expected.externalJobId
+      )) {
+        return state;
+      }
       return {
         generationTasks: state.generationTasks.map((item) =>
           item.id === id

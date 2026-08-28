@@ -111,6 +111,124 @@ try {
   );
   assert.ok(acceptedExportTask?.finishedAt);
 
+  const lateTransitionExpectation = (candidateTask) => ({
+    stage: "exported",
+    status: "queued",
+    outputPath: candidateTask.outputPath,
+    shotId: candidateTask.shotId,
+    externalProvider: "codex_task_package",
+    externalJobId: candidateTask.externalJobId
+  });
+  const lateCandidatePath = "C:/project/codex-storyboard-jobs/late/outputs/candidate.png";
+
+  const cancelledDuringImport = {
+    ...exportedTask,
+    id: "generation_task_import_cancelled",
+    externalJobId: "job-import-cancelled"
+  };
+  useStoryboardStore.getState().upsertGenerationTask(cancelledDuringImport);
+  const cancelledExpectation = lateTransitionExpectation(cancelledDuringImport);
+  useStoryboardStore.getState().markGenerationTaskCancelled(cancelledDuringImport.id, {
+    bestPreviewPath: "C:/project/codex-storyboard-jobs/late/evidence-before-import.png",
+    reviewReasons: ["user_cancelled_during_import"]
+  });
+  const cancelledDecision = structuredClone(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === cancelledDuringImport.id)
+  );
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(
+    cancelledDuringImport.id,
+    lateCandidatePath,
+    ["codex_candidate"],
+    cancelledExpectation
+  );
+  assert.deepEqual(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === cancelledDuringImport.id),
+    cancelledDecision,
+    "a late import receipt must not resurrect a cancelled task"
+  );
+
+  const acceptedDuringImport = {
+    ...exportedTask,
+    id: "generation_task_import_accepted",
+    externalJobId: "job-import-accepted"
+  };
+  useStoryboardStore.getState().upsertGenerationTask(acceptedDuringImport);
+  const acceptedExpectation = lateTransitionExpectation(acceptedDuringImport);
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(
+    acceptedDuringImport.id,
+    "C:/project/codex-storyboard-jobs/accepted/outputs/candidate.png",
+    ["codex_candidate"],
+    acceptedExpectation
+  );
+  useStoryboardStore.getState().acceptGenerationTaskCandidate(acceptedDuringImport.id);
+  const acceptedDecision = structuredClone(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === acceptedDuringImport.id)
+  );
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(
+    acceptedDuringImport.id,
+    lateCandidatePath,
+    ["late_receipt"],
+    acceptedExpectation
+  );
+  assert.deepEqual(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === acceptedDuringImport.id),
+    acceptedDecision,
+    "a late import receipt must not overwrite an accepted decision"
+  );
+
+  const duplicateImportTask = {
+    ...exportedTask,
+    id: "generation_task_import_duplicate",
+    externalJobId: "job-import-duplicate"
+  };
+  useStoryboardStore.getState().upsertGenerationTask(duplicateImportTask);
+  const duplicateExpectation = lateTransitionExpectation(duplicateImportTask);
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(
+    duplicateImportTask.id,
+    "C:/project/codex-storyboard-jobs/duplicate/outputs/first.png",
+    ["codex_candidate"],
+    duplicateExpectation
+  );
+  const firstReviewDecision = structuredClone(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === duplicateImportTask.id)
+  );
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(
+    duplicateImportTask.id,
+    "C:/project/codex-storyboard-jobs/duplicate/outputs/second.png",
+    ["duplicate_receipt"],
+    duplicateExpectation
+  );
+  assert.deepEqual(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === duplicateImportTask.id),
+    firstReviewDecision,
+    "a repeated import receipt must not overwrite the first review transition"
+  );
+
+  const mismatchedImportTask = {
+    ...exportedTask,
+    id: "generation_task_import_mismatch",
+    externalJobId: "job-import-mismatch"
+  };
+  useStoryboardStore.getState().upsertGenerationTask(mismatchedImportTask);
+  const beforeMismatchedReceipt = structuredClone(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === mismatchedImportTask.id)
+  );
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(
+    mismatchedImportTask.id,
+    lateCandidatePath,
+    ["codex_candidate"],
+    {
+      ...lateTransitionExpectation(mismatchedImportTask),
+      outputPath: "C:/project/codex-storyboard-jobs/other-package",
+      externalJobId: "other-job"
+    }
+  );
+  assert.deepEqual(
+    useStoryboardStore.getState().generationTasks.find((item) => item.id === mismatchedImportTask.id),
+    beforeMismatchedReceipt,
+    "identity or package-path mismatch must fail closed"
+  );
+
   const reviewTask = { ...task, id: "generation_task_review", stage: "stageB", status: "running" };
   useStoryboardStore.getState().upsertGenerationTask(reviewTask);
   const acceptedPathBeforeReview = useStoryboardStore.getState().shots.find((shot) => shot.id === firstShot.id)?.generatedImagePath;
