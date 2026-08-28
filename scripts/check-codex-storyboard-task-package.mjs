@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -25,6 +25,13 @@ const providerSource = await readFile(
   new URL("../src/services/generation-providers/codexTaskPackageProvider.ts", import.meta.url),
   "utf8"
 );
+const cliSource = await readFile(new URL("./run-codex-storyboard-job.mjs", import.meta.url), "utf8");
+assert.match(cliSource, /const MAX_IMAGE_BYTES = 64 \* 1024 \* 1024/);
+assert.match(cliSource, /const MAX_IMAGE_PIXELS = 64 \* 1024 \* 1024/);
+const preReadLimit = cliSource.indexOf("before.size > MAX_IMAGE_BYTES");
+const imageRead = cliSource.indexOf("readFile(filePath)", preReadLimit);
+const postReadCheck = cliSource.indexOf("bytes.length !== before.size", imageRead);
+assert.ok(preReadLimit >= 0 && imageRead > preReadLimit && postReadCheck > imageRead);
 const providerModule = await import(`data:text/javascript,${encodeURIComponent(
   typescript.transpileModule(providerSource, {
     compilerOptions: { target: typescript.ScriptTarget.ES2020, module: typescript.ModuleKind.ESNext }
@@ -338,6 +345,11 @@ try {
   assert.equal(mutated.status, 11);
   assert.match(mutated.stderr, /codex_storyboard_cli_reference_digest_mismatch/);
   await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), tinyPng);
+  const oversizedReference = path.join(fixturePackage, cliRequest.references[1].relativePath);
+  await truncate(oversizedReference, 64 * 1024 * 1024 + 1);
+  const oversized = runCli("inspect", "--package", fixturePackage);
+  assert.equal(oversized.status, 11, oversized.stderr);
+  await writeFile(oversizedReference, tinyPng);
 
   await rm(path.join(fixturePackage, "request.json"));
   const missingRequest = runCli("inspect", "--package", fixturePackage);

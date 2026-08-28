@@ -51,7 +51,8 @@ const canonicalize = (value) => Array.isArray(value)
 const canonicalRequestDigest = (request) => sha256(Buffer.from(JSON.stringify(canonicalize(request))));
 const hasContainedPath = (root, target) => target === root || target.startsWith(`${root}${path.sep}`);
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-const MAX_IMAGE_BYTES = 512 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 64 * 1024 * 1024;
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
@@ -128,6 +129,7 @@ function inspectPng(bytes, invalidCode, exitCode) {
       const bitDepth = data[8];
       const colorType = data[9];
       if (!width || !height || data[10] !== 0 || data[11] !== 0 || data[12] !== 0) fail(invalidCode, exitCode);
+      if (!Number.isSafeInteger(width * height) || width * height > MAX_IMAGE_PIXELS) fail(invalidCode, exitCode);
       const samples = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
       const allowedDepths = colorType === 3 ? [1, 2, 4, 8] : [8, 16];
       if (!samples || !allowedDepths.includes(bitDepth)) fail(invalidCode, exitCode);
@@ -204,6 +206,7 @@ function inspectJpeg(bytes, invalidCode, exitCode) {
       const width = bytes.readUInt16BE(dataStart + 3);
       const components = bytes[dataStart + 5];
       if (!width || !height || !components || length !== 8 + components * 3) fail(invalidCode, exitCode);
+      if (!Number.isSafeInteger(width * height) || width * height > MAX_IMAGE_PIXELS) fail(invalidCode, exitCode);
       if (dimensions && (dimensions.width !== width || dimensions.height !== height)) fail(invalidCode, exitCode);
       dimensions = { width, height };
     }
@@ -244,9 +247,11 @@ async function stableRead(filePath, root, code, exitCode) {
     await assertNoLinkComponents(filePath, "codex_storyboard_cli_reference_path_invalid", EXIT.path, true);
     const before = await lstat(filePath);
     if (!before.isFile() || before.isSymbolicLink()) fail(code, exitCode);
+    if (!Number.isSafeInteger(before.size) || before.size < 0 || before.size > MAX_IMAGE_BYTES) fail(code, exitCode);
     const canonical = await realpath(filePath);
     if (!hasContainedPath(root, canonical)) fail("codex_storyboard_cli_reference_path_invalid", EXIT.path);
     const bytes = await readFile(filePath);
+    if (bytes.length !== before.size || bytes.length > MAX_IMAGE_BYTES) fail(code, exitCode);
     const after = await lstat(filePath);
     if (!after.isFile() || after.isSymbolicLink() || !sameIdentity(before, after) || before.size !== after.size || before.mtimeMs !== after.mtimeMs) fail(code, exitCode);
     await assertNoLinkComponents(filePath, "codex_storyboard_cli_reference_path_invalid", EXIT.path);

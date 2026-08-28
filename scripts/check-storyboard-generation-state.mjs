@@ -110,6 +110,9 @@ try {
     "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png"
   );
   assert.ok(acceptedExportTask?.finishedAt);
+  useStoryboardStore.getState().completeGenerationTask(exportedTask.id, "C:/attacker/late-complete.png");
+  assert.equal(useStoryboardStore.getState().generationTasks.find((item) => item.id === exportedTask.id)?.outputPath, "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png", "accepted task is terminal against ordinary late completion");
+  assert.equal(useStoryboardStore.getState().shots.find((item) => item.id === firstShot.id)?.generatedImagePath, "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png");
 
   const rejectedTask = { ...exportedTask, id: "generation_task_rejected", externalJobId: "job-rejected" };
   useStoryboardStore.getState().upsertGenerationTask(rejectedTask);

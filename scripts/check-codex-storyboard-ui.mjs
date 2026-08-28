@@ -19,6 +19,7 @@ assert.match(panel, /moveCodexReference/);
 assert.match(panel, /acceptGenerationTaskCandidate/);
 assert.match(panel, /rejectGenerationTaskCandidate/);
 assert.match(panel, /transitionCodexStoryboardLifecycle/);
+assert.match(panel, /codex_storyboard_local_transition_stale/);
 assert.match(types, /\| "rejected"/);
 assert.match(store, /rejectGenerationTaskCandidate/);
 assert.doesNotMatch(bridge, /taskStatus:/);

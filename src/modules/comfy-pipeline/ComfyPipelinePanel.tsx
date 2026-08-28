@@ -5540,6 +5540,11 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
 
   const transitionSelectedCodexTask = async (expectedState: "queued" | "needs_review", nextState: "cancelled" | "rejected" | "accepted") => {
     if (!selectedCodexTask || !selectedShot || !currentSequence) return;
+    const liveTask = useStoryboardStore.getState().generationTasks.find((task) => task.id === selectedCodexTask.id);
+    const localMatchesExpected = expectedState === "queued"
+      ? liveTask?.stage === "exported" && liveTask.status === "queued"
+      : liveTask?.stage === "needs_review" && liveTask.status === "needs_review";
+    if (!localMatchesExpected) throw new Error("codex_storyboard_local_transition_stale");
     await transitionCodexStoryboardLifecycle({
       schemaVersion: 1,
       jobId: selectedCodexTask.externalJobId ?? selectedCodexTask.id,

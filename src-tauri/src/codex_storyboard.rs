@@ -137,6 +137,8 @@ struct CodexStoryboardLifecycleRecord {
     version: u32,
     previous_state: Option<String>,
     state: String,
+    result_digest: Option<String>,
+    candidate_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1064,13 +1066,22 @@ fn read_lifecycle_record(
     Ok(record)
 }
 
-fn cas_lifecycle_transition(
+fn cas_lifecycle_transition_bound(
     job_capability: &CapabilityDir,
     job_path: &Path,
     expected: &str,
     next: &str,
+    result_digest: Option<&str>,
+    candidate_digest: Option<&str>,
 ) -> Result<CodexStoryboardLifecycleRecord, String> {
     let current = read_lifecycle_record(job_capability, job_path)?;
+    if current.state == next && lifecycle_transition_allowed(expected, next) {
+        if result_digest.is_some_and(|digest| current.result_digest.as_deref() != Some(digest))
+            || candidate_digest.is_some_and(|digest| current.candidate_digest.as_deref() != Some(digest)) {
+            return Err("codex_storyboard_lifecycle_conflict".to_string());
+        }
+        return Ok(current);
+    }
     if current.state != expected || !lifecycle_transition_allowed(expected, next) {
         return Err("codex_storyboard_lifecycle_conflict".to_string());
     }
@@ -1078,10 +1089,33 @@ fn cas_lifecycle_transition(
         version: current.version + 1,
         previous_state: Some(current.state.clone()),
         state: next.to_string(),
+        result_digest: result_digest.map(str::to_string).or(current.result_digest.clone()),
+        candidate_digest: candidate_digest.map(str::to_string).or(current.candidate_digest.clone()),
         ..current
     };
-    publish_json_at(job_capability, Path::new(&format!("{:06}.json", next_record.version)), &next_record, "codex_storyboard_lifecycle_conflict")?;
-    Ok(next_record)
+    match publish_json_at(job_capability, Path::new(&format!("{:06}.json", next_record.version)), &next_record, "codex_storyboard_lifecycle_conflict") {
+        Ok(()) => Ok(next_record),
+        Err(error) if error == "codex_storyboard_lifecycle_conflict" => {
+            let winner = read_lifecycle_record(job_capability, job_path)?;
+            if winner.state == next
+                && result_digest.is_none_or(|digest| winner.result_digest.as_deref() == Some(digest))
+                && candidate_digest.is_none_or(|digest| winner.candidate_digest.as_deref() == Some(digest)) {
+                Ok(winner)
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn cas_lifecycle_transition(
+    job_capability: &CapabilityDir,
+    job_path: &Path,
+    expected: &str,
+    next: &str,
+) -> Result<CodexStoryboardLifecycleRecord, String> {
+    cas_lifecycle_transition_bound(job_capability, job_path, expected, next, None, None)
 }
 
 fn write_bytes_create_new_at(
@@ -1768,6 +1802,8 @@ fn prepare_at_roots_inner<
         version: 0,
         previous_state: None,
         state: "queued".to_string(),
+        result_digest: None,
+        candidate_digest: None,
     };
     publish_json_at(&lifecycle_capability, Path::new("000000.json"), &lifecycle, "codex_storyboard_lifecycle_exists")?;
     Ok(CodexStoryboardExportReceipt {
@@ -1916,18 +1952,18 @@ fn write_import_ledger_create_new_at(
 ) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(receipt)
         .map_err(|_| "codex_storyboard_authority_invalid".to_string())?;
-    let mut options = CapabilityOpenOptions::new();
-    options.write(true).create_new(true);
-    let mut file = match directory.open_with(path, &options) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            return Err("codex_storyboard_result_already_imported".to_string())
+    match publish_bytes_at(directory, path, &bytes, "codex_storyboard_result_already_imported") {
+        Ok(()) => Ok(()),
+        Err(error) if error == "codex_storyboard_result_already_imported" => {
+            let mut existing = directory.open(path).map_err(|_| "codex_storyboard_authority_invalid".to_string())?;
+            let metadata = existing.metadata().map_err(|_| "codex_storyboard_authority_invalid".to_string())?;
+            if metadata.len() > MAX_IMAGE_BYTES as u64 { return Err("codex_storyboard_authority_invalid".to_string()); }
+            let mut existing_bytes = Vec::with_capacity(metadata.len() as usize);
+            existing.read_to_end(&mut existing_bytes).map_err(|_| "codex_storyboard_authority_invalid".to_string())?;
+            return if existing_bytes == bytes { Ok(()) } else { Err("codex_storyboard_authority_invalid".to_string()) };
         }
-        Err(_) => return Err("codex_storyboard_authority_invalid".to_string()),
-    };
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "codex_storyboard_authority_invalid".to_string())
+        Err(_) => Err("codex_storyboard_authority_invalid".to_string()),
+    }
 }
 
 fn revalidate_reference_snapshot_files(
@@ -1953,7 +1989,7 @@ fn import_at_roots(
     authority: &Path,
     request: ImportCodexStoryboardResultRequest,
 ) -> Result<CodexStoryboardImportReceipt, String> {
-    import_at_roots_inner(project, assets, authority, request, || {}, || {}, || {})
+    import_at_roots_inner(project, assets, authority, request, || {}, || {}, || Ok(()), || {})
 }
 
 #[cfg(test)]
@@ -1971,6 +2007,7 @@ fn import_at_roots_with_candidate_hook<F: FnOnce()>(
         request,
         after_candidate_read,
         || {},
+        || Ok(()),
         || {},
     )
 }
@@ -1991,6 +2028,7 @@ fn import_at_roots_with_reference_hooks<B: FnOnce(), A: FnOnce()>(
         request,
         || {},
         before_ledger,
+        || Ok(()),
         after_ledger,
     )
 }
@@ -2011,17 +2049,30 @@ fn import_at_roots_with_layout_hooks<B: FnOnce(), A: FnOnce()>(
         request,
         || {},
         before_ledger,
+        || Ok(()),
         after_ledger,
     )
 }
 
-fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
+#[cfg(test)]
+fn import_at_roots_with_lifecycle_commit_hook<L: FnOnce() -> Result<(), String>>(
+    project: &Path,
+    assets: &Path,
+    authority: &Path,
+    request: ImportCodexStoryboardResultRequest,
+    after_lifecycle_commit: L,
+) -> Result<CodexStoryboardImportReceipt, String> {
+    import_at_roots_inner(project, assets, authority, request, || {}, || {}, after_lifecycle_commit, || {})
+}
+
+fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), L: FnOnce() -> Result<(), String>, A: FnOnce()>(
     project: &Path,
     assets: &Path,
     authority: &Path,
     request: ImportCodexStoryboardResultRequest,
     after_candidate_read: C,
     before_ledger: B,
+    after_lifecycle_commit: L,
     after_ledger: A,
 ) -> Result<CodexStoryboardImportReceipt, String> {
     validate_import_request(&request)?;
@@ -2211,12 +2262,12 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     if lifecycle.project_id != request.project_id || lifecycle.episode_id != request.episode_id || lifecycle.shot_id != request.shot_id || lifecycle.job_id != request.job_id || lifecycle.request_digest != canonical_request_digest {
         return Err("codex_storyboard_lifecycle_invalid".to_string());
     }
-    if lifecycle.state != "queued" {
+    let lifecycle_already_committed = lifecycle.state == "needs_review";
+    if lifecycle.state != "queued" && !lifecycle_already_committed {
         return Err(match lifecycle.state.as_str() {
             "cancelled" => "codex_storyboard_task_cancelled",
             "rejected" => "codex_storyboard_task_rejected",
             "accepted" => "codex_storyboard_task_already_accepted",
-            "needs_review" => "codex_storyboard_result_already_imported",
             _ => "codex_storyboard_lifecycle_conflict",
         }.to_string());
     }
@@ -2327,6 +2378,14 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     {
         return Err("codex_storyboard_candidate_metadata_mismatch".to_string());
     }
+    let result_file_digest = sha256_bytes(&result_stable.bytes);
+    let candidate_file_digest = sha256_bytes(&candidate.bytes);
+    if lifecycle_already_committed
+        && (lifecycle.result_digest.as_deref() != Some(&result_file_digest)
+            || lifecycle.candidate_digest.as_deref() != Some(&candidate_file_digest))
+    {
+        return Err("codex_storyboard_lifecycle_conflict".to_string());
+    }
 
     after_candidate_read();
     before_ledger();
@@ -2401,8 +2460,18 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         "{}-{}.json",
         request.job_id, authority_record.request_digest
     ));
+    if !lifecycle_already_committed {
+        cas_lifecycle_transition_bound(
+            &lifecycle_capability,
+            &lifecycle_path,
+            "queued",
+            "needs_review",
+            Some(&result_file_digest),
+            Some(&candidate_file_digest),
+        )?;
+    }
+    after_lifecycle_commit()?;
     write_import_ledger_create_new_at(&import_project_capability, &ledger_name, &receipt)?;
-    cas_lifecycle_transition(&lifecycle_capability, &lifecycle_path, "queued", "needs_review")?;
     after_ledger();
     revalidate_import_layout(&project, &import_layout)?;
     revalidate_reference_snapshot_files(
@@ -2417,8 +2486,8 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         "codex_storyboard_package_audit_exists",
     );
 
-    // The private ledger is deliberately fail-closed: if anything changes after
-    // its CAS succeeds, reject the import while leaving the ledger consumed.
+    // Lifecycle evidence is the authoritative commit. Revalidate after the
+    // idempotent audit-ledger publication so recovery never accepts changed bytes.
     revalidate_stable_file_at(
         &candidate,
         &outputs_capability,
@@ -3004,16 +3073,14 @@ mod tests {
             b"attacker-prebuilt-marker"
         );
         fs::remove_file(&package_marker).unwrap();
-        assert_eq!(
-            import_at_roots(
+        let replay = import_at_roots(
                 &fixture.project,
                 &fixture.assets,
                 &fixture.authority,
                 import_request(&fixture, "queued"),
-            )
-            .unwrap_err(),
-            "codex_storyboard_result_already_imported"
-        );
+            ).unwrap();
+        assert_eq!(replay.result.request_digest, imported.result.request_digest);
+        assert_eq!(replay.candidate_path, imported.candidate_path);
         assert!(authority_import_ledger_path(
             &fixture.authority,
             &fixture.project,
@@ -3735,15 +3802,8 @@ mod tests {
             .into_iter()
             .map(|handle| handle.join().unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-        assert_eq!(
-            results
-                .iter()
-                .filter_map(|result| result.as_ref().err())
-                .filter(|error| error.as_str() == "codex_storyboard_result_already_imported")
-                .count(),
-            7
-        );
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 8);
+        assert!(results.iter().all(|result| result.as_ref().unwrap().result.request_digest == receipt.request_digest));
     }
 
     #[test]
@@ -3845,16 +3905,13 @@ mod tests {
                 .join("outputs/result.json")
                 .to_string_lossy()
         );
-        assert_eq!(
-            import_at_roots(
+        let replay = import_at_roots(
                 &valid_fixture.project,
                 &valid_fixture.assets,
                 &valid_fixture.authority,
                 import_request(&valid_fixture, "queued"),
-            )
-            .unwrap_err(),
-            "codex_storyboard_result_already_imported"
-        );
+            ).unwrap();
+        assert_eq!(replay.candidate_path, valid_import.candidate_path);
     }
 
     #[test]
@@ -3884,7 +3941,7 @@ mod tests {
             schema_version: 1, job_id: cancelled.request.job_id.clone(), project_id: cancelled.request.project_id.clone(), episode_id: cancelled.request.episode_id.clone(), shot_id: cancelled.request.shot_id.clone(), provider: PROVIDER.to_string(), project_path: cancelled.project.to_string_lossy().to_string(), expected_state: "queued".to_string(), next_state: "cancelled".to_string()
         };
         assert_eq!(transition_at_roots(&cancelled.project, &cancelled.authority, transition.clone()).unwrap().state, "cancelled");
-        assert_eq!(transition_at_roots(&cancelled.project, &cancelled.authority, transition).unwrap_err(), "codex_storyboard_lifecycle_conflict");
+        assert_eq!(transition_at_roots(&cancelled.project, &cancelled.authority, transition).unwrap().state, "cancelled");
 
         let rejected = fixture("lifecycle-reject");
         let receipt = prepare_at_roots(&rejected.project, &rejected.assets, &rejected.authority, rejected.request.clone()).unwrap();
@@ -3894,7 +3951,48 @@ mod tests {
             schema_version: 1, job_id: rejected.request.job_id.clone(), project_id: rejected.request.project_id.clone(), episode_id: rejected.request.episode_id.clone(), shot_id: rejected.request.shot_id.clone(), provider: PROVIDER.to_string(), project_path: rejected.project.to_string_lossy().to_string(), expected_state: "needs_review".to_string(), next_state: "rejected".to_string()
         };
         assert_eq!(transition_at_roots(&rejected.project, &rejected.authority, rejection.clone()).unwrap().state, "rejected");
-        assert_eq!(transition_at_roots(&rejected.project, &rejected.authority, rejection).unwrap_err(), "codex_storyboard_lifecycle_conflict");
+        assert_eq!(transition_at_roots(&rejected.project, &rejected.authority, rejection).unwrap().state, "rejected");
+
+        let accepted = fixture("lifecycle-accept");
+        let receipt = prepare_at_roots(&accepted.project, &accepted.assets, &accepted.authority, accepted.request.clone()).unwrap();
+        publish_result(&receipt, |_| {});
+        import_at_roots(&accepted.project, &accepted.assets, &accepted.authority, import_request(&accepted, "queued")).unwrap();
+        let acceptance = TransitionCodexStoryboardLifecycleRequest {
+            schema_version: 1, job_id: accepted.request.job_id.clone(), project_id: accepted.request.project_id.clone(), episode_id: accepted.request.episode_id.clone(), shot_id: accepted.request.shot_id.clone(), provider: PROVIDER.to_string(), project_path: accepted.project.to_string_lossy().to_string(), expected_state: "needs_review".to_string(), next_state: "accepted".to_string()
+        };
+        assert_eq!(transition_at_roots(&accepted.project, &accepted.authority, acceptance.clone()).unwrap().state, "accepted");
+        assert_eq!(transition_at_roots(&accepted.project, &accepted.authority, acceptance).unwrap().state, "accepted");
+    }
+
+    #[test]
+    fn import_recovers_after_lifecycle_commit_before_replay_ledger() {
+        let crash_fixture = fixture("lifecycle-ledger-crash");
+        let receipt = prepare_at_roots(&crash_fixture.project, &crash_fixture.assets, &crash_fixture.authority, crash_fixture.request.clone()).unwrap();
+        publish_result(&receipt, |_| {});
+        assert_eq!(import_at_roots_with_lifecycle_commit_hook(
+            &crash_fixture.project, &crash_fixture.assets, &crash_fixture.authority, import_request(&crash_fixture, "queued"),
+            || Err("codex_storyboard_test_crash_after_lifecycle".to_string()),
+        ).unwrap_err(), "codex_storyboard_test_crash_after_lifecycle");
+        let ledger = authority_import_ledger_path(&crash_fixture.authority, &crash_fixture.project, &crash_fixture.request.project_id, &crash_fixture.request.job_id, &receipt.request_digest).unwrap();
+        assert!(!ledger.exists());
+        let recovered = import_at_roots(&crash_fixture.project, &crash_fixture.assets, &crash_fixture.authority, import_request(&crash_fixture, "queued")).unwrap();
+        assert_eq!(recovered.status, "needs_review");
+        assert!(ledger.is_file());
+
+        let tampered = fixture("lifecycle-ledger-crash-tampered");
+        let tampered_receipt = prepare_at_roots(&tampered.project, &tampered.assets, &tampered.authority, tampered.request.clone()).unwrap();
+        publish_result(&tampered_receipt, |_| {});
+        assert_eq!(import_at_roots_with_lifecycle_commit_hook(
+            &tampered.project, &tampered.assets, &tampered.authority, import_request(&tampered, "queued"),
+            || Err("codex_storyboard_test_crash_after_lifecycle".to_string()),
+        ).unwrap_err(), "codex_storyboard_test_crash_after_lifecycle");
+        let candidate_path = Path::new(&tampered_receipt.package_path).join("outputs/candidate.png");
+        write_png(&candidate_path, [99, 88, 77, 255]);
+        let result_path = Path::new(&tampered_receipt.package_path).join("outputs/result.json");
+        let mut rewritten: Value = serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+        rewritten["output"]["sha256"] = json!(digest(&candidate_path));
+        fs::write(&result_path, serde_json::to_vec_pretty(&rewritten).unwrap()).unwrap();
+        assert_eq!(import_at_roots(&tampered.project, &tampered.assets, &tampered.authority, import_request(&tampered, "queued")).unwrap_err(), "codex_storyboard_lifecycle_conflict");
     }
 
     #[test]
