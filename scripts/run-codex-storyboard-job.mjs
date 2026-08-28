@@ -4,9 +4,13 @@ import { chmod, lstat, link, mkdir, mkdtemp, opendir, readFile, realpath, rm, st
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 
 const PROVIDER = "codex_task_package";
+const CARGO_MANIFEST = fileURLToPath(new URL("../src-tauri/Cargo.toml", import.meta.url));
+const TARGET_ROOT = fileURLToPath(new URL("../src-tauri/target/", import.meta.url));
+const HELPER_BASENAME = process.platform === "win32" ? "codex-storyboard-operator.exe" : "codex-storyboard-operator";
 const USAGES = new Set([
   "spatial_authority", "pose_reference", "face_identity", "body_costume",
   "prop_detail", "style_only", "lighting_only", "negative_example"
@@ -303,7 +307,21 @@ async function stageSnapshots(job) {
       if (sha256(stagedBytes) !== snapshot.reference.sha256 || image.width !== snapshot.reference.width || image.height !== snapshot.reference.height || image.mimeType !== snapshot.reference.mimeType) fail("codex_storyboard_cli_reference_snapshot_invalid", EXIT.reference);
       referencedImagePaths.push(stagedPath);
     }
-    return { inspectionRoot: canonicalInspectionRoot, referencedImagePaths };
+    const compiledPrompt = compilePrompt(job.request);
+    const manifestPath = path.join(canonicalInspectionRoot, "inspection-manifest.json");
+    const manifest = {
+      schemaVersion: 1,
+      jobId: job.request.jobId,
+      packagePath: job.packagePath,
+      requestDigest: job.requestDigest,
+      references: job.snapshots.map(({ reference }, index) => ({ id: reference.id, sha256: reference.sha256, stagedPath: referencedImagePaths[index] })),
+      compiledPrompt,
+      promptDigest: sha256(Buffer.from(compiledPrompt)),
+      createdAt: new Date().toISOString()
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx", mode: 0o400 });
+    await chmod(manifestPath, 0o400);
+    return { inspectionRoot: canonicalInspectionRoot, referencedImagePaths, manifestPath };
   } catch (error) {
     await rm(inspectionRoot, { recursive: true, force: true }).catch(() => {});
     throw error;
@@ -385,21 +403,59 @@ async function rollbackPublishedCandidate(guard, candidate) {
   }
 }
 
+async function validatedHelperOverride(argument) {
+  if (!path.isAbsolute(argument ?? "")) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+  try {
+    await assertNoLinkComponents(argument, "codex_storyboard_cli_helper_invalid", EXIT.publish);
+    const [canonical, targetRoot] = await Promise.all([realpath(argument), realpath(TARGET_ROOT)]);
+    const details = await lstat(canonical);
+    if (!details.isFile() || details.isSymbolicLink() || path.basename(canonical) !== HELPER_BASENAME || !hasContainedPath(targetRoot, canonical)) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+    return canonical;
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+  }
+}
+
+async function verifyHelperSuccess(stdout, job, candidateBytes, candidateImage, manifest) {
+  let handoff;
+  try { handoff = JSON.parse(stdout.trim()); } catch { fail("codex_storyboard_cli_helper_invalid", EXIT.publish); }
+  exactKeys(handoff, ["jobId", "requestDigest", "candidatePath", "resultPath"], "codex_storyboard_cli_helper_invalid", EXIT.publish);
+  if (handoff.jobId !== job.request.jobId || handoff.requestDigest !== job.requestDigest || !path.isAbsolute(handoff.candidatePath ?? "") || !path.isAbsolute(handoff.resultPath ?? "")) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+  try {
+    const expectedOutputs = path.join(job.packagePath, "outputs");
+    await assertNoLinkComponents(expectedOutputs, "codex_storyboard_cli_helper_invalid", EXIT.publish);
+    const [outputsRoot, candidatePath, resultPath] = await Promise.all([realpath(expectedOutputs), realpath(handoff.candidatePath), realpath(handoff.resultPath)]);
+    if (!hasContainedPath(job.packagePath, outputsRoot) || candidatePath !== path.join(outputsRoot, "candidate.png") || resultPath !== path.join(outputsRoot, "result.json")) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+    await Promise.all([assertNoLinkComponents(candidatePath, "codex_storyboard_cli_helper_invalid", EXIT.publish), assertNoLinkComponents(resultPath, "codex_storyboard_cli_helper_invalid", EXIT.publish)]);
+    const [candidateDetails, resultDetails, publishedCandidate, resultBytes] = await Promise.all([lstat(candidatePath), lstat(resultPath), readFile(candidatePath), readFile(resultPath)]);
+    if (!candidateDetails.isFile() || candidateDetails.isSymbolicLink() || !resultDetails.isFile() || resultDetails.isSymbolicLink() || sha256(publishedCandidate) !== sha256(candidateBytes)) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+    const publishedImage = inspectImage(publishedCandidate, "codex_storyboard_cli_helper_invalid", EXIT.publish);
+    if (publishedImage.mimeType !== "image/png" || publishedImage.width !== candidateImage.width || publishedImage.height !== candidateImage.height) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+    const result = JSON.parse(resultBytes.toString("utf8"));
+    if (result.jobId !== job.request.jobId || result.requestDigest !== job.requestDigest || result.finalPrompt !== manifest.compiledPrompt || result.output?.relativePath !== "outputs/candidate.png" || result.output?.sha256 !== sha256(candidateBytes) || result.output?.width !== candidateImage.width || result.output?.height !== candidateImage.height || result.output?.mimeType !== "image/png" || JSON.stringify(result.referenceDigests) !== JSON.stringify(job.request.references.map(({ id, sha256: digest }) => ({ id, sha256: digest })))) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+    return handoff;
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+  }
+}
+
 function parseArguments(argv) {
   const [command, ...rest] = argv;
   const options = {};
   for (let index = 0; index < rest.length; index += 2) {
     const key = rest[index];
     const value = rest[index + 1];
-    if (!/^--(?:package|candidate)$/.test(key ?? "") || !value || options[key]) fail("codex_storyboard_cli_usage", EXIT.usage);
+    if (!/^--(?:package|candidate|inspection-manifest)$/.test(key ?? "") || !value || options[key]) fail("codex_storyboard_cli_usage", EXIT.usage);
     options[key] = value;
   }
-  if (!command || !options["--package"] || (command === "complete" && !options["--candidate"]) || (command === "inspect" && options["--candidate"]) || !["inspect", "complete"].includes(command)) fail("codex_storyboard_cli_usage", EXIT.usage);
-  return { command, packageArgument: options["--package"], candidateArgument: options["--candidate"] };
+  if (!command || !options["--package"] || (command === "complete" && (!options["--candidate"] || !options["--inspection-manifest"])) || (command === "inspect" && (options["--candidate"] || options["--inspection-manifest"])) || !["inspect", "complete"].includes(command)) fail("codex_storyboard_cli_usage", EXIT.usage);
+  return { command, packageArgument: options["--package"], candidateArgument: options["--candidate"], manifestArgument: options["--inspection-manifest"] };
 }
 
 async function main() {
-  const { command, packageArgument, candidateArgument } = parseArguments(process.argv.slice(2));
+  const { command, packageArgument, candidateArgument, manifestArgument } = parseArguments(process.argv.slice(2));
   const job = await loadPackage(packageArgument);
   const compiledPrompt = compilePrompt(job.request);
   if (command === "inspect") {
@@ -411,6 +467,7 @@ async function main() {
       shotId: job.request.shotId,
       requestDigest: job.requestDigest,
       inspectionRoot: staged.inspectionRoot,
+      manifestPath: staged.manifestPath,
       inspectionCleanup: "Delete inspectionRoot after built-in image generation finishes; it contains immutable staged snapshots for this handoff.",
       referencedImagePaths: staged.referencedImagePaths,
       referenceUsages: job.request.references.map(({ usage }) => usage),
@@ -420,9 +477,17 @@ async function main() {
     return;
   }
   if (!path.isAbsolute(candidateArgument)) fail("codex_storyboard_cli_candidate_path_invalid", EXIT.candidate);
-  let candidate;
+  let manifest;
+  let manifestPath;
   try {
-    const candidatePath = await realpath(candidateArgument);
+    manifestPath = await realpath(manifestArgument);
+    manifest = JSON.parse((await stableRead(manifestPath, path.dirname(manifestPath), "codex_storyboard_cli_manifest_invalid", EXIT.request)).toString("utf8"));
+  } catch { fail("codex_storyboard_cli_manifest_invalid", EXIT.request); }
+  if (!isPlainObject(manifest) || manifest.schemaVersion !== 1 || manifest.jobId !== job.request.jobId || manifest.packagePath !== job.packagePath || manifest.requestDigest !== job.requestDigest || manifest.compiledPrompt !== compiledPrompt || manifest.promptDigest !== sha256(Buffer.from(compiledPrompt)) || JSON.stringify(manifest.references?.map(({ id, sha256: digest, stagedPath }) => ({ id, sha256: digest, stagedPath }))) !== JSON.stringify(job.request.references.map(({ id, sha256: digest }, index) => ({ id, sha256: digest, stagedPath: manifest.references?.[index]?.stagedPath })))) fail("codex_storyboard_cli_manifest_invalid", EXIT.request);
+  let candidate;
+  let candidatePath;
+  try {
+    candidatePath = await realpath(candidateArgument);
     candidate = await stableRead(candidatePath, path.dirname(candidatePath), "codex_storyboard_cli_candidate_missing", EXIT.candidate);
   } catch {
     fail("codex_storyboard_cli_candidate_missing", EXIT.candidate);
@@ -430,19 +495,21 @@ async function main() {
   const image = inspectImage(candidate, "codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   if (image.mimeType !== "image/png") fail("codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   const helper = process.env.CODEX_STORYBOARD_OPERATOR_BIN;
-  const helperCommand = helper || "cargo";
+  const helperCommand = helper ? await validatedHelperOverride(helper) : "cargo";
   const helperArguments = helper
-    ? ["complete", "--package", job.packagePath, "--candidate", candidateArgument]
-    : ["run", "--offline", "--quiet", "--manifest-path", path.join(process.cwd(), "src-tauri", "Cargo.toml"), "--bin", "codex-storyboard-operator", "--", "complete", "--package", job.packagePath, "--candidate", candidateArgument];
+    ? ["complete", "--package", job.packagePath, "--candidate", candidatePath, "--inspection-manifest", manifestPath]
+    : ["run", "--offline", "--quiet", "--manifest-path", CARGO_MANIFEST, "--bin", "codex-storyboard-operator", "--", "complete", "--package", job.packagePath, "--candidate", candidatePath, "--inspection-manifest", manifestPath];
   const helperResult = spawnSync(helperCommand, helperArguments, { encoding: "utf8", env: process.env });
   if (helperResult.error) fail("codex_storyboard_cli_publish_failed", EXIT.publish);
-  if (helperResult.stdout) process.stdout.write(helperResult.stdout);
   if (helperResult.status !== 0) {
     const outputExists = /codex_storyboard_operator_(?:replay|output_exists)/.test(helperResult.stderr ?? "");
-    process.stderr.write(outputExists ? "codex_storyboard_cli_output_exists\n" : helperResult.stderr || "codex_storyboard_cli_publish_failed\n");
-    process.exitCode = outputExists ? EXIT.outputExists : helperResult.status || EXIT.publish;
+    const knownFailure = /^codex_storyboard_operator_[a-z_]+\s*$/.test(helperResult.stderr ?? "") ? helperResult.stderr.trim() : "codex_storyboard_cli_publish_failed";
+    process.stderr.write(`${outputExists ? "codex_storyboard_cli_output_exists" : knownFailure}\n`);
+    process.exitCode = outputExists ? EXIT.outputExists : EXIT.publish;
     return;
   }
+  await verifyHelperSuccess(helperResult.stdout, job, candidate, image, manifest);
+  process.stdout.write(helperResult.stdout);
   return;
 }
 
