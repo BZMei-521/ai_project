@@ -348,7 +348,12 @@ async function stageCandidate(candidateBytes, candidateImage) {
 }
 
 function compilePrompt(request) {
-  return [...request.references.map((reference, index) => `Picture ${index + 1} [${reference.usage}]: ${reference.instruction}`), request.prompt.primaryRequest].join("\n");
+  const hard = request.prompt?.hardConstraints ?? {};
+  const subjectCount = Number.isSafeInteger(hard.subjectCount) && hard.subjectCount > 0 ? hard.subjectCount : 1;
+  const anatomy = typeof hard.visibleAnatomy === "string" && hard.visibleAnatomy.trim() ? hard.visibleAnatomy.trim() : "both arms, both hands, and all required fingers must remain visible and anatomically separate";
+  const framing = typeof hard.cameraFramingLock === "string" && hard.cameraFramingLock.trim() ? hard.cameraFramingLock.trim() : request.references.find((item) => item.usage === "spatial_authority")?.instruction;
+  const mandatory = ["MANDATORY HARD CONSTRAINTS:", `- Exact subject count: ${subjectCount}. Do not add, duplicate, merge, or remove subjects.`, `- Visible anatomy: ${anatomy}. No fused, missing, duplicated, or malformed limbs/hands.`, `- Camera and framing lock: ${framing}`, "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.", "- No text, captions, logos, signatures, or watermarks."].join("\n");
+  return [...request.references.map((reference, index) => `Picture ${index + 1} [${reference.usage}]: ${reference.instruction}`), mandatory, request.prompt.primaryRequest].join("\n");
 }
 
 async function pathExists(filePath) {
@@ -459,7 +464,7 @@ async function verifyHelperSuccess(stdout, job, candidateBytes, candidateImage, 
     })) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
     if (result.schemaVersion !== 1 || result.provider !== PROVIDER || result.generationMode !== "codex_builtin_imagegen" || result.state !== "completed"
       || result.jobId !== job.request.jobId || result.projectId !== job.request.projectId || result.episodeId !== job.request.episodeId || result.shotId !== job.request.shotId
-      || result.requestDigest !== job.requestDigest || result.finalPrompt !== manifest.compiledPrompt || typeof result.completedAt !== "string" || !result.completedAt.trim()
+      || result.requestDigest !== job.requestDigest || result.finalPrompt !== manifest.compiledPrompt || typeof result.completedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(result.completedAt) || !Number.isFinite(Date.parse(result.completedAt)) || new Date(result.completedAt).toISOString() !== result.completedAt
       || result.output.relativePath !== "outputs/candidate.png" || result.output.sha256 !== sha256(candidateBytes) || result.output.width !== candidateImage.width || result.output.height !== candidateImage.height || result.output.mimeType !== "image/png"
       || JSON.stringify(result.referenceDigests) !== JSON.stringify(job.request.references.map(({ id, sha256: digest }) => ({ id, sha256: digest })))) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
     return handoff;

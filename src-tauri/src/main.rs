@@ -3965,6 +3965,7 @@ fn main() {
             concat_video_segments,
             codex_storyboard::prepare_codex_storyboard_job,
             codex_storyboard::import_codex_storyboard_result,
+            codex_storyboard::transition_codex_storyboard_lifecycle,
             video_continuity::prepare_runninghub_handoff,
             video_continuity::record_runninghub_submission,
             video_continuity::import_runninghub_result,

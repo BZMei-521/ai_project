@@ -1,19 +1,19 @@
 import type { CodexStoryboardExportReceipt, CodexStoryboardRequest } from "./codexTaskPackage";
 import type { GenerationProvider, JobResult, ProviderJobKind, ProviderJobPayload } from "./providerContracts";
 
-export type CodexTaskPackageProviderOptions = { exportStoryboardJob: (request: CodexStoryboardRequest) => Promise<CodexStoryboardExportReceipt> };
+export type CodexTaskPackageProviderOptions<TRequest = CodexStoryboardRequest> = { exportStoryboardJob: (request: TRequest) => Promise<CodexStoryboardExportReceipt> };
 
-export class CodexTaskPackageProvider implements GenerationProvider {
-  private readonly exportStoryboardJob: CodexTaskPackageProviderOptions["exportStoryboardJob"];
+export class CodexTaskPackageProvider<TRequest = CodexStoryboardRequest> implements GenerationProvider {
+  private readonly exportStoryboardJob: CodexTaskPackageProviderOptions<TRequest>["exportStoryboardJob"];
 
-  constructor({ exportStoryboardJob }: CodexTaskPackageProviderOptions) { this.exportStoryboardJob = exportStoryboardJob; }
+  constructor({ exportStoryboardJob }: CodexTaskPackageProviderOptions<TRequest>) { this.exportStoryboardJob = exportStoryboardJob; }
 
   private unsupported(kind: Exclude<ProviderJobKind, "storyboard">): Promise<JobResult> {
     return Promise.reject(new Error(`codex_task_package_unsupported_job_kind:${kind}`));
   }
 
   async storyboard(payload: ProviderJobPayload): Promise<JobResult> {
-    const receipt = await this.exportStoryboardJob(payload.request as CodexStoryboardRequest);
+    const receipt = await this.exportStoryboardJob(payload.request as TRequest);
     return { jobId: receipt.jobId, status: "queued", outputPath: receipt.packagePath, metadata: { provider: "codex_task_package", requestDigest: receipt.requestDigest } };
   }
 

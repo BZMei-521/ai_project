@@ -22,6 +22,28 @@ const deepFreeze = (value, seen = new WeakSet()) => {
   for (const key of Reflect.ownKeys(value)) deepFreeze(value[key], seen);
   return Object.freeze(value);
 };
+const validIsoTimestamp = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const promptConstraintValue = (prompt, key, fallback) => {
+  const value = prompt?.hardConstraints?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+};
+
+function mandatoryHardConstraints(request) {
+  const prompt = request.prompt;
+  const subjectCount = Number.isSafeInteger(prompt?.hardConstraints?.subjectCount) && prompt.hardConstraints.subjectCount > 0
+    ? prompt.hardConstraints.subjectCount
+    : 1;
+  const anatomy = promptConstraintValue(prompt, "visibleAnatomy", "both arms, both hands, and all required fingers must remain visible and anatomically separate");
+  const framing = promptConstraintValue(prompt, "cameraFramingLock", request.references.find((item) => item.usage === "spatial_authority")?.instruction ?? "preserve the spatial-authority camera and framing exactly");
+  return [
+    "MANDATORY HARD CONSTRAINTS:",
+    `- Exact subject count: ${subjectCount}. Do not add, duplicate, merge, or remove subjects.`,
+    `- Visible anatomy: ${anatomy}. No fused, missing, duplicated, or malformed limbs/hands.`,
+    `- Camera and framing lock: ${framing}`,
+    "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.",
+    "- No text, captions, logos, signatures, or watermarks."
+  ].join("\n");
+}
 
 export function validateCodexStoryboardRequest(value) {
   exactKeys(value, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "createdAt", "prompt", "references", "acceptedImagePath", "expectedOutput"], "codex_storyboard_request_keys_invalid");
@@ -53,7 +75,7 @@ export function canonicalCodexStoryboardRequest(value) {
 export function compileCodexStoryboardImageSpec(value) {
   const request = validateCodexStoryboardRequest(value);
   const pictureInstructions = request.references.map((item, index) => `Picture ${index + 1} [${item.usage}]: ${item.instruction}`);
-  return Object.freeze({ taxonomy: "stylized-concept", assetType: "AI comic-drama storyboard frame", referenceUsages: request.references.map((item) => item.usage), referencedRelativePaths: request.references.map((item) => item.relativePath), compiledPrompt: [...pictureInstructions, request.prompt.primaryRequest].join("\n") });
+  return Object.freeze({ taxonomy: "stylized-concept", assetType: "AI comic-drama storyboard frame", referenceUsages: request.references.map((item) => item.usage), referencedRelativePaths: request.references.map((item) => item.relativePath), compiledPrompt: [...pictureInstructions, mandatoryHardConstraints(request), request.prompt.primaryRequest].join("\n") });
 }
 
 export function validateCodexStoryboardResult(result, requestValue) {
@@ -62,6 +84,8 @@ export function validateCodexStoryboardResult(result, requestValue) {
   if (result.schemaVersion !== 1 || result.provider !== CODEX_STORYBOARD_PROVIDER_ID || result.generationMode !== "codex_builtin_imagegen" || result.state !== "completed") fail("codex_storyboard_result_invalid");
   for (const field of ["jobId", "projectId", "episodeId", "shotId"]) if (result[field] !== request[field]) fail("codex_storyboard_result_identity_mismatch");
   if (!digest(result.requestDigest) || JSON.stringify(result.referenceDigests) !== JSON.stringify(request.references.map(({ id, sha256 }) => ({ id, sha256 })))) fail("codex_storyboard_result_lineage_mismatch");
+  if (result.finalPrompt !== compileCodexStoryboardImageSpec(request).compiledPrompt) fail("codex_storyboard_result_prompt_mismatch");
+  if (!validIsoTimestamp(result.completedAt)) fail("codex_storyboard_result_completed_at_invalid");
   if (result.output?.relativePath !== "outputs/candidate.png" || !digest(result.output?.sha256) || !Number.isSafeInteger(result.output?.width) || result.output.width <= 0 || !Number.isSafeInteger(result.output?.height) || result.output.height <= 0 || result.output?.mimeType !== "image/png") fail("codex_storyboard_result_output_invalid");
   return deepFreeze(structuredClone(result));
 }

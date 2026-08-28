@@ -199,7 +199,7 @@ const result = {
   requestDigest: sha("f"),
   referenceDigests: request.references.map(({ id, sha256 }) => ({ id, sha256 })),
   generationMode: "codex_builtin_imagegen",
-  finalPrompt: "A dramatic storyboard frame.",
+  finalPrompt: runtime.compileCodexStoryboardImageSpec(request).compiledPrompt,
   output: { relativePath: "outputs/candidate.png", sha256: sha("0"), width: 1920, height: 1080, mimeType: "image/png" },
   completedAt: "2026-08-28T00:01:00.000Z",
   state: "completed"
@@ -210,12 +210,22 @@ assert.equal(runtime.canonicalCodexStoryboardRequest(request), runtime.canonical
 assert.deepEqual(runtime.compileCodexStoryboardImageSpec(request).referenceUsages, [
   "spatial_authority", "body_costume", "face_identity", "style_only", "style_only"
 ]);
-assert.match(runtime.compileCodexStoryboardImageSpec(request).compiledPrompt, /Picture 5.*style_only/s);
+const mandatoryPrompt = runtime.compileCodexStoryboardImageSpec(request).compiledPrompt;
+assert.match(mandatoryPrompt, /Picture 5.*style_only/s);
+assert.match(mandatoryPrompt, /MANDATORY HARD CONSTRAINTS/);
+assert.match(mandatoryPrompt, /Exact subject count: 1/);
+assert.match(mandatoryPrompt, /Visible anatomy: both arms, both hands/);
+assert.match(mandatoryPrompt, /Camera and framing lock:/);
+assert.match(mandatoryPrompt, /No pose, composition, camera, framing, projection, or occlusion drift/);
+assert.match(mandatoryPrompt, /No text, captions, logos, signatures, or watermarks/);
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, provider: "comfy" }), /provider_mismatch/);
 assert.equal(runtime.validateCodexStoryboardRequest({ ...request, prompt: { ...request.prompt, metadata: { lens: "35mm", locked: true } } }).prompt.metadata.lens, "35mm");
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, references: request.references.map((item, index) => index === 0 ? { ...item, relativePath: "../escape.png" } : item) }), /path_invalid/);
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, references: request.references.map((item, index) => index === 0 ? { ...item, instruction: "" } : item) }), /instruction_invalid/);
 assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, shotId: "other" }, request), /identity_mismatch/);
+assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, finalPrompt: "attacker prompt" }, request), /prompt_mismatch/);
+assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, completedAt: "not-a-time" }, request), /completed_at_invalid/);
+assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, completedAt: "2026-02-31T00:00:00.000Z" }, request), /completed_at_invalid/);
 
 const validatedRequest = runtime.validateCodexStoryboardRequest(request);
 assert.throws(() => validatedRequest.references.push(request.references[0]), /read only|not extensible/i);

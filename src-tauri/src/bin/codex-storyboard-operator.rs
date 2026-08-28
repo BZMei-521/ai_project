@@ -2,7 +2,7 @@ use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
 };
-use image::{GenericImageView, ImageFormat};
+use image::ImageFormat;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -15,6 +15,8 @@ use std::{
 };
 
 const PROVIDER: &str = "codex_task_package";
+const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_IMAGE_PIXELS: u64 = 64 * 1024 * 1024;
 
 fn fail<T>(code: &str) -> Result<T, String> {
     Err(code.to_string())
@@ -155,7 +157,8 @@ fn stable_ambient_read(path: &Path, code: &str) -> Result<Vec<u8>, String> {
     }
     let mut file = fs::File::open(path).map_err(|_| code.to_string())?;
     let identity = file_identity(&file).ok_or_else(|| code.to_string())?;
-    let mut bytes = Vec::new();
+    if before.len() > MAX_IMAGE_BYTES as u64 { return fail(code); }
+    let mut bytes = Vec::with_capacity(before.len() as usize);
     file.read_to_end(&mut bytes).map_err(|_| code.to_string())?;
     let after = file.metadata().map_err(|_| code.to_string())?;
     let current = fs::File::open(path).map_err(|_| code.to_string())?;
@@ -338,7 +341,8 @@ fn stable_read(dir: &Dir, root: &Path, relative: &str, code: &str) -> Result<Vec
     }
     let mut file = dir.open(relative).map_err(|_| code.to_string())?.into_std();
     let before = file.metadata().map_err(|_| code.to_string())?;
-    let mut bytes = Vec::new();
+    if before.len() > MAX_IMAGE_BYTES as u64 { return fail(code); }
+    let mut bytes = Vec::with_capacity(before.len() as usize);
     file.read_to_end(&mut bytes).map_err(|_| code.to_string())?;
     let after = file.metadata().map_err(|_| code.to_string())?;
     if before.len() != after.len() || bytes.len() as u64 != after.len() {
@@ -394,6 +398,7 @@ fn usage(value: &str) -> bool {
     )
 }
 fn inspect_image(bytes: &[u8], expected: Option<&str>) -> Result<(u32, u32, String), String> {
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES { return fail("codex_storyboard_operator_image_invalid"); }
     let format = image::guess_format(bytes)
         .map_err(|_| "codex_storyboard_operator_image_invalid".to_string())?;
     let mime = match format {
@@ -404,9 +409,9 @@ fn inspect_image(bytes: &[u8], expected: Option<&str>) -> Result<(u32, u32, Stri
     if expected.is_some() && expected != Some(mime) {
         return fail("codex_storyboard_operator_image_invalid");
     }
-    let image = image::load_from_memory_with_format(bytes, format)
-        .map_err(|_| "codex_storyboard_operator_image_invalid".to_string())?;
-    let (width, height) = image.dimensions();
+    let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(bytes), format).into_dimensions().map_err(|_| "codex_storyboard_operator_image_invalid".to_string())?;
+    if u64::from(width).saturating_mul(u64::from(height)) > MAX_IMAGE_PIXELS { return fail("codex_storyboard_operator_image_invalid"); }
+    image::load_from_memory_with_format(bytes, format).map_err(|_| "codex_storyboard_operator_image_invalid".to_string())?;
     if width == 0 || height == 0 {
         return fail("codex_storyboard_operator_image_invalid");
     }
@@ -791,16 +796,40 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
             string(m, "instruction")?
         ));
     }
-    parts.push(
-        string(
-            o.get("prompt")
-                .and_then(Value::as_object)
-                .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?,
-            "primaryRequest",
-        )?
-        .to_string(),
-    );
+    let prompt = o.get("prompt").and_then(Value::as_object).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    let hard = prompt.get("hardConstraints").and_then(Value::as_object);
+    let count = hard.and_then(|v| v.get("subjectCount")).and_then(Value::as_u64).filter(|v| *v > 0).unwrap_or(1);
+    let anatomy = hard.and_then(|v| v.get("visibleAnatomy")).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).unwrap_or("both arms, both hands, and all required fingers must remain visible and anatomically separate");
+    let framing = hard.and_then(|v| v.get("cameraFramingLock")).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).or_else(|| refs.iter().find(|r| r.get("usage").and_then(Value::as_str) == Some("spatial_authority")).and_then(|r| r.get("instruction")).and_then(Value::as_str)).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    parts.push(format!("MANDATORY HARD CONSTRAINTS:\n- Exact subject count: {count}. Do not add, duplicate, merge, or remove subjects.\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.\n- No text, captions, logos, signatures, or watermarks."));
+    parts.push(string(prompt, "primaryRequest")?.to_string());
     Ok(parts.join("\n"))
+}
+
+fn utc_rfc3339_now() -> Result<String, String> {
+    let duration = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
+    let seconds = duration.as_secs();
+    let days = (seconds / 86_400) as i64;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    let sod = seconds % 86_400;
+    Ok(format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z", sod / 3600, (sod % 3600) / 60, sod % 60, duration.subsec_millis()))
+}
+
+fn valid_rfc3339_utc(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if value.len() != 24 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') || bytes.get(10) != Some(&b'T') || bytes.get(13) != Some(&b':') || bytes.get(16) != Some(&b':') || bytes.get(19) != Some(&b'.') || bytes.last() != Some(&b'Z') { return false; }
+    let Ok(year) = value[..4].parse::<u16>() else { return false; }; let Ok(month) = value[5..7].parse::<u8>() else { return false; }; let Ok(day) = value[8..10].parse::<u8>() else { return false; };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0); let max_day = match month { 1|3|5|7|8|10|12 => 31, 4|6|9|11 => 30, 2 if leap => 29, 2 => 28, _ => return false };
+    day >= 1 && day <= max_day && value[11..13].parse::<u8>().is_ok_and(|v| v < 24) && value[14..16].parse::<u8>().is_ok_and(|v| v < 60) && value[17..19].parse::<u8>().is_ok_and(|v| v < 60) && value[20..23].bytes().all(|b| b.is_ascii_digit())
 }
 fn checked_manifest(
     path: &str,
@@ -850,7 +879,7 @@ fn checked_manifest(
         || m.get("promptDigest").and_then(Value::as_str) != Some(sha(prompt.as_bytes()).as_str())
         || m.get("createdAt")
             .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
+            .filter(|value| valid_rfc3339_utc(value))
             .is_none()
     {
         return fail("codex_storyboard_operator_manifest_invalid");
@@ -1067,7 +1096,8 @@ fn complete(
         .iter()
         .map(|r| json!({"id":r["id"],"sha256":r["sha256"]}))
         .collect();
-    let mut result = json!({"schemaVersion":1,"jobId":o["jobId"],"projectId":o["projectId"],"episodeId":o["episodeId"],"shotId":o["shotId"],"provider":PROVIDER,"requestDigest":request_digest,"referenceDigests":references,"generationMode":"codex_builtin_imagegen","finalPrompt":manifest_prompt,"output":{"relativePath":"outputs/candidate.png","sha256":candidate_digest,"width":width,"height":height,"mimeType":"image/png"},"completedAt":"1970-01-01T00:00:00.000Z","state":"completed"});
+    let completed_at = utc_rfc3339_now()?;
+    let mut result = json!({"schemaVersion":1,"jobId":o["jobId"],"projectId":o["projectId"],"episodeId":o["episodeId"],"shotId":o["shotId"],"provider":PROVIDER,"requestDigest":request_digest,"referenceDigests":references,"generationMode":"codex_builtin_imagegen","finalPrompt":manifest_prompt,"output":{"relativePath":"outputs/candidate.png","sha256":candidate_digest,"width":width,"height":height,"mimeType":"image/png"},"completedAt":completed_at,"state":"completed"});
     validate_result(
         &result,
         &request,

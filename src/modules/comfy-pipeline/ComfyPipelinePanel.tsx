@@ -8,11 +8,13 @@ import {
   isTauriRuntime,
   isWebBridgeRuntime,
   prepareCodexStoryboardJob,
+  transitionCodexStoryboardLifecycle,
   toDesktopMediaSource
 } from "../platform/desktopBridge";
 import {
   CODEX_STORYBOARD_REFERENCE_USAGES
 } from "../../services/generation-providers/codexTaskPackage";
+import { CodexTaskPackageProvider } from "../../services/generation-providers/codexTaskPackageProvider";
 import {
   checkComfyModelHealth,
   concatShotVideos,
@@ -93,6 +95,7 @@ const STORYBOARD_IMAGE_WORKFLOW_JSON = STORYBOARD_KLEIN_REFERENCE_WORKFLOW_JSON;
 const STORYBOARD_IMAGE_STAGE_B_WORKFLOW_JSON = JSON.stringify(STORYBOARD_IMAGE_STAGE_B_WORKFLOW_OBJECT);
 const STORYBOARD_COMPOSER_IMAGE_WORKFLOW_JSON = JSON.stringify(STORYBOARD_COMPOSER_IMAGE_WORKFLOW_OBJECT);
 const DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_JSON = JSON.stringify(DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_OBJECT, null, 2);
+const codexTaskPackageProvider = new CodexTaskPackageProvider({ exportStoryboardJob: prepareCodexStoryboardJob });
 const LEGACY_MIXED_STORYBOARD_WORKFLOW_ID = "90596592-7443-4610-984d-a080d1daa650";
 type CharacterAssetWorkflowMode = "advanced_multiview";
 type SkyboxAssetWorkflowMode = "basic_builtin" | "advanced_panorama";
@@ -5122,6 +5125,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
   const upsertGenerationTask = useStoryboardStore((state) => state.upsertGenerationTask);
   const markGenerationTaskNeedsReview = useStoryboardStore((state) => state.markGenerationTaskNeedsReview);
   const markGenerationTaskCancelled = useStoryboardStore((state) => state.markGenerationTaskCancelled);
+  const rejectGenerationTaskCandidate = useStoryboardStore((state) => state.rejectGenerationTaskCandidate);
   const acceptGenerationTaskCandidate = useStoryboardStore((state) => state.acceptGenerationTaskCandidate);
   const [storyText, setStoryText] = useState("");
   const [scriptText, setScriptText] = useState(DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_JSON);
@@ -5436,7 +5440,8 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         references: codexReferences.map((reference) => ({ ...reference })),
         createdAt: new Date(now).toISOString()
       });
-      const receipt = await prepareCodexStoryboardJob(request);
+      const receipt = await codexTaskPackageProvider.storyboard({ request });
+      if (!receipt.outputPath || !receipt.metadata?.requestDigest) throw new Error("codex_storyboard_export_receipt_invalid");
       upsertGenerationTask({
         id: jobId,
         batchId: jobId,
@@ -5444,15 +5449,15 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         workflowId: "codex_task_package",
         stage: "exported",
         status: "queued",
-        promptHash: receipt.requestDigest,
-        outputPath: receipt.packagePath,
+        promptHash: receipt.metadata.requestDigest,
+        outputPath: receipt.outputPath,
         externalProvider: "codex_task_package",
         externalJobId: receipt.jobId,
-        externalRequestDigest: receipt.requestDigest,
+        externalRequestDigest: receipt.metadata.requestDigest,
         startedAt: request.createdAt
       });
       setSelectedCodexTaskId(jobId);
-      setCodexTaskMessage(`已导出 ${receipt.jobId}：${receipt.packagePath}`);
+      setCodexTaskMessage(`已导出 ${receipt.jobId}：${receipt.outputPath}`);
       pushToast("Codex 任务包已导出", "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -5508,8 +5513,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         episodeId: currentSequence.id,
         shotId: selectedShot.id,
         provider: "codex_task_package",
-        projectPath: projectPath.trim(),
-        taskStatus: "queued"
+        projectPath: projectPath.trim()
       });
       markGenerationTaskNeedsReview(
         taskId,
@@ -5532,6 +5536,24 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
       codexImportLockRef.current = false;
       setIsCodexImporting(false);
     }
+  };
+
+  const transitionSelectedCodexTask = async (expectedState: "queued" | "needs_review", nextState: "cancelled" | "rejected" | "accepted") => {
+    if (!selectedCodexTask || !selectedShot || !currentSequence) return;
+    await transitionCodexStoryboardLifecycle({
+      schemaVersion: 1,
+      jobId: selectedCodexTask.externalJobId ?? selectedCodexTask.id,
+      projectId: project.id,
+      episodeId: currentSequence.id,
+      shotId: selectedShot.id,
+      provider: "codex_task_package",
+      projectPath: projectPath.trim(),
+      expectedState,
+      nextState
+    });
+    if (nextState === "accepted") acceptGenerationTaskCandidate(selectedCodexTask.id);
+    else if (nextState === "rejected") rejectGenerationTaskCandidate(selectedCodexTask.id);
+    else markGenerationTaskCancelled(selectedCodexTask.id, { errorMessage: "Generation cancelled" });
   };
 
   const queueCurrentStoryboardShot = async () => {
@@ -16195,6 +16217,11 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
               >
                 {isCodexImporting ? "正在检查…" : "检查并导入结果"}
               </button>
+              {selectedCodexTask?.status === "queued" && <button
+                className="btn-danger"
+                onClick={() => void transitionSelectedCodexTask("queued", "cancelled").then(() => setCodexTaskMessage("Codex 任务已取消"), (error) => setCodexTaskMessage(error instanceof Error ? error.message : String(error)))}
+                type="button"
+              >取消任务</button>}
             </div>
             {selectedCodexTask && (
               <div className="comfy-asset-diagnostic-grid">
@@ -16219,24 +16246,14 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
                 </a>
                 {selectedCodexTask.status === "needs_review" && <div className="timeline-actions">
                   <button
-                    onClick={() => {
-                      acceptGenerationTaskCandidate(selectedCodexTask.id);
-                      setCodexTaskMessage("Codex 候选图已接受并发布到当前镜头");
-                    }}
+                    onClick={() => void transitionSelectedCodexTask("needs_review", "accepted").then(() => setCodexTaskMessage("Codex 候选图已接受并发布到当前镜头"), (error) => setCodexTaskMessage(error instanceof Error ? error.message : String(error)))}
                     type="button"
                   >
                     接受候选图
                   </button>
                   <button
                     className="btn-danger"
-                    onClick={() => {
-                      markGenerationTaskCancelled(selectedCodexTask.id, {
-                        bestPreviewPath: selectedCodexTask.bestPreviewPath,
-                        reviewReasons: selectedCodexTask.reviewReasons,
-                        errorMessage: "codex_candidate_rejected"
-                      });
-                      setCodexTaskMessage("Codex 候选图已拒绝；候选证据仍保留在任务记录中");
-                    }}
+                    onClick={() => void transitionSelectedCodexTask("needs_review", "rejected").then(() => setCodexTaskMessage("Codex 候选图已拒绝；候选证据仍保留在任务记录中"), (error) => setCodexTaskMessage(error instanceof Error ? error.message : String(error)))}
                     type="button"
                   >
                     拒绝候选图

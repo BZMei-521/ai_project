@@ -75,6 +75,7 @@ const imported = bridge.createImportCodexStoryboardResultRequest({
   requestDigest: "attacker-controlled",
 });
 assert.equal(Object.hasOwn(imported, "requestDigest"), false);
+assert.equal(Object.hasOwn(imported, "taskStatus"), false, "renderer taskStatus must not cross the IPC boundary");
 await assert.rejects(
   bridge.prepareCodexStoryboardJob(request(2)),
   { message: "codex_storyboard_requires_tauri_runtime" }

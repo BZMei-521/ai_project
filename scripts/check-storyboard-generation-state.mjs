@@ -111,6 +111,24 @@ try {
   );
   assert.ok(acceptedExportTask?.finishedAt);
 
+  const rejectedTask = { ...exportedTask, id: "generation_task_rejected", externalJobId: "job-rejected" };
+  useStoryboardStore.getState().upsertGenerationTask(rejectedTask);
+  useStoryboardStore.getState().markGenerationTaskNeedsReview(rejectedTask.id, "C:/project/codex-storyboard-jobs/job-rejected/outputs/candidate.png", ["codex_candidate"]);
+  useStoryboardStore.getState().rejectGenerationTaskCandidate(rejectedTask.id);
+  const rejectedState = useStoryboardStore.getState();
+  const rejectedRecord = rejectedState.generationTasks.find((item) => item.id === rejectedTask.id);
+  assert.equal(rejectedRecord?.stage, "rejected");
+  assert.equal(rejectedRecord?.status, "rejected");
+  assert.equal(rejectedRecord?.bestPreviewPath, "C:/project/codex-storyboard-jobs/job-rejected/outputs/candidate.png");
+  assert.equal(rejectedState.shots.find((item) => item.id === firstShot.id)?.generatedImagePath, "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png", "rejection preserves accepted output");
+  useStoryboardStore.getState().completeGenerationTask(rejectedTask.id, "C:/attacker/late.png");
+  assert.equal(useStoryboardStore.getState().generationTasks.find((item) => item.id === rejectedTask.id)?.status, "rejected", "rejected task is terminal against late completion");
+  assert.equal(useStoryboardStore.getState().shots.find((item) => item.id === firstShot.id)?.generatedImagePath, "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png");
+  useStoryboardStore.getState().markGenerationTaskCancelled(rejectedTask.id);
+  assert.equal(useStoryboardStore.getState().generationTasks.find((item) => item.id === rejectedTask.id)?.status, "rejected", "rejected task is terminal against late cancellation");
+  useStoryboardStore.getState().markGenerationTaskCancelled(exportedTask.id);
+  assert.equal(useStoryboardStore.getState().generationTasks.find((item) => item.id === exportedTask.id)?.status, "completed", "accepted task is terminal against late cancellation");
+
   const lateTransitionExpectation = (candidateTask) => ({
     stage: "exported",
     status: "queued",

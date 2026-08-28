@@ -526,7 +526,15 @@ export function buildCodexStoryboardPackageRequest(input: {
     provider: "codex_task_package",
     createdAt: input.createdAt,
     projectPath: input.projectPath,
-    prompt: { useCase: "stylized-concept", primaryRequest },
+    prompt: {
+      useCase: "stylized-concept",
+      primaryRequest,
+      hardConstraints: {
+        subjectCount: Math.max(1, referencedCharacterNames.length),
+        visibleAnatomy: "both arms, both hands, and all required fingers must remain visible and anatomically separate",
+        cameraFramingLock: `Preserve shot ${input.shot.order} camera, framing, projection, blocking, pose, and occlusion exactly as supplied by the spatial-authority reference; output ${input.project.width}x${input.project.height}.`
+      }
+    },
     references: input.references.map((reference) => ({ ...reference })),
     acceptedImagePath: input.shot.generatedImagePath?.trim() || null
   });

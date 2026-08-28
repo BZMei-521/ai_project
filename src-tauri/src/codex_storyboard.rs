@@ -1,4 +1,3 @@
-use image::GenericImageView;
 use cap_std::{
     ambient_authority,
     fs::{Dir as CapabilityDir, OpenOptions as CapabilityOpenOptions},
@@ -15,6 +14,8 @@ use tauri::Manager;
 
 const PROVIDER: &str = "codex_task_package";
 const MAX_REFERENCES: usize = 16;
+const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_IMAGE_PIXELS: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -99,7 +100,43 @@ pub struct ImportCodexStoryboardResultRequest {
     pub shot_id: String,
     pub provider: String,
     pub project_path: String,
-    pub task_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransitionCodexStoryboardLifecycleRequest {
+    pub schema_version: u8,
+    pub job_id: String,
+    pub project_id: String,
+    pub episode_id: String,
+    pub shot_id: String,
+    pub provider: String,
+    pub project_path: String,
+    pub expected_state: String,
+    pub next_state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodexStoryboardLifecycleReceipt {
+    pub schema_version: u8,
+    pub job_id: String,
+    pub state: String,
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CodexStoryboardLifecycleRecord {
+    schema_version: u8,
+    project_id: String,
+    episode_id: String,
+    shot_id: String,
+    job_id: String,
+    request_digest: String,
+    version: u32,
+    previous_state: Option<String>,
+    state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,7 +580,8 @@ fn read_stable_file_within(root: &Path, path: &Path, code: &str) -> Result<Stabl
     let canonical_before = canonical_existing_file_within(&root, path, code)?;
     let mut file = open_read_no_follow(path).map_err(|_| code.to_string())?;
     let before = opened_file_fingerprint(&file).map_err(|_| code.to_string())?;
-    let mut bytes = Vec::new();
+    if before.len > MAX_IMAGE_BYTES as u64 { return Err(code.to_string()); }
+    let mut bytes = Vec::with_capacity(before.len as usize);
     file.read_to_end(&mut bytes).map_err(|_| code.to_string())?;
     let after = opened_file_fingerprint(&file).map_err(|_| code.to_string())?;
     if before != after || bytes.len() as u64 != after.len {
@@ -588,7 +626,8 @@ fn read_stable_file_at(
         .map_err(|_| code.to_string())?
         .into_std();
     let before = opened_file_fingerprint(&file).map_err(|_| code.to_string())?;
-    let mut bytes = Vec::new();
+    if before.len > MAX_IMAGE_BYTES as u64 { return Err(code.to_string()); }
+    let mut bytes = Vec::with_capacity(before.len as usize);
     file.read_to_end(&mut bytes).map_err(|_| code.to_string())?;
     let after = opened_file_fingerprint(&file).map_err(|_| code.to_string())?;
     if before != after || bytes.len() as u64 != after.len {
@@ -680,6 +719,9 @@ fn inspect_image_bytes(
     bytes: &[u8],
     invalid_code: &str,
 ) -> Result<(u32, u32, String, &'static str), String> {
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return Err(invalid_code.to_string());
+    }
     let (format, mime, extension) = if bytes.starts_with(&[137, 80, 78, 71, 13, 10, 26, 10]) {
         (image::ImageFormat::Png, "image/png".to_string(), "png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
@@ -687,12 +729,17 @@ fn inspect_image_bytes(
     } else {
         return Err(invalid_code.to_string());
     };
-    let dimensions = image::load_from_memory_with_format(bytes, format)
+    let dimensions = image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+        .into_dimensions()
         .map_err(|_| invalid_code.to_string())?
-        .dimensions();
+        ;
     if dimensions.0 == 0 || dimensions.1 == 0 {
         return Err(invalid_code.to_string());
     }
+    if u64::from(dimensions.0).saturating_mul(u64::from(dimensions.1)) > MAX_IMAGE_PIXELS {
+        return Err(invalid_code.to_string());
+    }
+    image::load_from_memory_with_format(bytes, format).map_err(|_| invalid_code.to_string())?;
     Ok((dimensions.0, dimensions.1, mime, extension))
 }
 
@@ -719,6 +766,26 @@ fn canonical_request_bytes(request: &CodexStoryboardRequest) -> Result<Vec<u8>, 
 
 fn request_digest(request: &CodexStoryboardRequest) -> Result<String, String> {
     Ok(sha256_bytes(&canonical_request_bytes(request)?))
+}
+
+fn compiled_prompt(request: &CodexStoryboardRequest) -> Result<String, String> {
+    let prompt = request.prompt.as_object().ok_or_else(|| "codex_storyboard_prompt_invalid".to_string())?;
+    let hard = prompt.get("hardConstraints").and_then(Value::as_object);
+    let count = hard.and_then(|value| value.get("subjectCount")).and_then(Value::as_u64).filter(|value| *value > 0).unwrap_or(1);
+    let anatomy = hard.and_then(|value| value.get("visibleAnatomy")).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).unwrap_or("both arms, both hands, and all required fingers must remain visible and anatomically separate");
+    let framing = hard.and_then(|value| value.get("cameraFramingLock")).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).or_else(|| request.references.iter().find(|reference| reference.usage == "spatial_authority").map(|reference| reference.instruction.as_str())).ok_or_else(|| "codex_storyboard_prompt_invalid".to_string())?;
+    let mut parts = request.references.iter().enumerate().map(|(index, reference)| format!("Picture {} [{}]: {}", index + 1, reference.usage, reference.instruction)).collect::<Vec<_>>();
+    parts.push(format!("MANDATORY HARD CONSTRAINTS:\n- Exact subject count: {count}. Do not add, duplicate, merge, or remove subjects.\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.\n- No text, captions, logos, signatures, or watermarks."));
+    parts.push(prompt.get("primaryRequest").and_then(Value::as_str).ok_or_else(|| "codex_storyboard_prompt_invalid".to_string())?.to_string());
+    Ok(parts.join("\n"))
+}
+
+fn valid_rfc3339_utc(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if value.len() != 24 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') || bytes.get(10) != Some(&b'T') || bytes.get(13) != Some(&b':') || bytes.get(16) != Some(&b':') || bytes.get(19) != Some(&b'.') || bytes.last() != Some(&b'Z') { return false; }
+    let Ok(year) = value[..4].parse::<u16>() else { return false; }; let Ok(month) = value[5..7].parse::<u8>() else { return false; }; let Ok(day) = value[8..10].parse::<u8>() else { return false; };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0); let max_day = match month { 1|3|5|7|8|10|12 => 31, 4|6|9|11 => 30, 2 if leap => 29, 2 => 28, _ => return false };
+    day >= 1 && day <= max_day && value[11..13].parse::<u8>().is_ok_and(|v| v < 24) && value[14..16].parse::<u8>().is_ok_and(|v| v < 60) && value[17..19].parse::<u8>().is_ok_and(|v| v < 60) && value[20..23].bytes().all(|b| b.is_ascii_digit())
 }
 
 fn unique_temp_sibling(final_path: &Path) -> Result<PathBuf, String> {
@@ -955,6 +1022,66 @@ fn authority_import_ledger_path(
         .join("imports")
         .join(key)
         .join(format!("{job_id}-{request_digest}.json")))
+}
+
+fn lifecycle_transition_allowed(from: &str, to: &str) -> bool {
+    matches!((from, to),
+        ("queued", "needs_review") | ("queued", "cancelled") |
+        ("needs_review", "accepted") | ("needs_review", "rejected"))
+}
+
+fn lifecycle_job_capability(
+    authority_capability: &CapabilityDir,
+    authority: &Path,
+    project: &Path,
+    project_id: &str,
+    job_id: &str,
+    create: bool,
+) -> Result<(CapabilityDir, PathBuf), String> {
+    let key = project_authority_key(project, project_id)?;
+    let lifecycle = if create { ensure_capability_child(authority_capability, Path::new("lifecycle"), "codex_storyboard_authority_invalid")? } else { open_capability_child(authority_capability, Path::new("lifecycle"), "codex_storyboard_authority_invalid")? };
+    let project_cap = if create { ensure_capability_child(&lifecycle, Path::new(&key), "codex_storyboard_authority_invalid")? } else { open_capability_child(&lifecycle, Path::new(&key), "codex_storyboard_authority_invalid")? };
+    let job_cap = if create { ensure_capability_child(&project_cap, Path::new(job_id), "codex_storyboard_authority_invalid")? } else { open_capability_child(&project_cap, Path::new(job_id), "codex_storyboard_authority_invalid")? };
+    Ok((job_cap, authority.join("lifecycle").join(key).join(job_id)))
+}
+
+fn read_lifecycle_record(
+    job_capability: &CapabilityDir,
+    job_path: &Path,
+) -> Result<CodexStoryboardLifecycleRecord, String> {
+    let mut versions = fs::read_dir(job_path).map_err(|_| "codex_storyboard_lifecycle_invalid".to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str().and_then(|name| name.strip_suffix(".json")).and_then(|stem| stem.parse::<u32>().ok()).map(|version| (version, entry.file_name())))
+        .collect::<Vec<_>>();
+    versions.sort_by_key(|(version, _)| *version);
+    if versions.is_empty() || versions[0].0 != 0 || versions.iter().enumerate().any(|(index, (version, _))| *version != index as u32) {
+        return Err("codex_storyboard_lifecycle_invalid".to_string());
+    }
+    let (version, name) = versions.last().unwrap();
+    let bytes = read_stable_file_at(job_capability, &capture_stable_directory(job_path, "codex_storyboard_lifecycle_invalid")?, Path::new(name), "codex_storyboard_lifecycle_invalid")?.bytes;
+    let record: CodexStoryboardLifecycleRecord = serde_json::from_slice(&bytes).map_err(|_| "codex_storyboard_lifecycle_invalid".to_string())?;
+    if record.schema_version != 1 || record.version != *version || record.state.is_empty() { return Err("codex_storyboard_lifecycle_invalid".to_string()); }
+    Ok(record)
+}
+
+fn cas_lifecycle_transition(
+    job_capability: &CapabilityDir,
+    job_path: &Path,
+    expected: &str,
+    next: &str,
+) -> Result<CodexStoryboardLifecycleRecord, String> {
+    let current = read_lifecycle_record(job_capability, job_path)?;
+    if current.state != expected || !lifecycle_transition_allowed(expected, next) {
+        return Err("codex_storyboard_lifecycle_conflict".to_string());
+    }
+    let next_record = CodexStoryboardLifecycleRecord {
+        version: current.version + 1,
+        previous_state: Some(current.state.clone()),
+        state: next.to_string(),
+        ..current
+    };
+    publish_json_at(job_capability, Path::new(&format!("{:06}.json", next_record.version)), &next_record, "codex_storyboard_lifecycle_conflict")?;
+    Ok(next_record)
 }
 
 fn write_bytes_create_new_at(
@@ -1623,6 +1750,26 @@ fn prepare_at_roots_inner<
         "codex_storyboard_request_changed_during_publication",
     )?;
     revalidate_stable_directory(&authority_root, "codex_storyboard_authority_invalid")?;
+    let (lifecycle_capability, _) = lifecycle_job_capability(
+        &authority_capability,
+        &authority,
+        &project,
+        &request.project_id,
+        &request.job_id,
+        true,
+    )?;
+    let lifecycle = CodexStoryboardLifecycleRecord {
+        schema_version: 1,
+        project_id: request.project_id.clone(),
+        episode_id: immutable.episode_id.clone(),
+        shot_id: immutable.shot_id.clone(),
+        job_id: request.job_id.clone(),
+        request_digest: digest.clone(),
+        version: 0,
+        previous_state: None,
+        state: "queued".to_string(),
+    };
+    publish_json_at(&lifecycle_capability, Path::new("000000.json"), &lifecycle, "codex_storyboard_lifecycle_exists")?;
     Ok(CodexStoryboardExportReceipt {
         schema_version: 1,
         job_id: request.job_id,
@@ -1657,15 +1804,6 @@ fn validate_import_request(request: &ImportCodexStoryboardResultRequest) -> Resu
         if !valid_identifier(value, 96) {
             return Err("codex_storyboard_import_identity_invalid".to_string());
         }
-    }
-    match request.task_status.as_str() {
-        "cancelled" => return Err("codex_storyboard_task_cancelled".to_string()),
-        "rejected" => return Err("codex_storyboard_task_rejected".to_string()),
-        "accepted" | "completed" => {
-            return Err("codex_storyboard_task_already_accepted".to_string())
-        }
-        "queued" | "exported" | "running" => {}
-        _ => return Err("codex_storyboard_task_state_invalid".to_string()),
     }
     Ok(())
 }
@@ -2061,6 +2199,27 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     if canonical_request_digest != authority_record.request_digest {
         return Err("codex_storyboard_request_digest_mismatch".to_string());
     }
+    let (lifecycle_capability, lifecycle_path) = lifecycle_job_capability(
+        &authority_capability,
+        &authority,
+        &project,
+        &request.project_id,
+        &request.job_id,
+        false,
+    )?;
+    let lifecycle = read_lifecycle_record(&lifecycle_capability, &lifecycle_path)?;
+    if lifecycle.project_id != request.project_id || lifecycle.episode_id != request.episode_id || lifecycle.shot_id != request.shot_id || lifecycle.job_id != request.job_id || lifecycle.request_digest != canonical_request_digest {
+        return Err("codex_storyboard_lifecycle_invalid".to_string());
+    }
+    if lifecycle.state != "queued" {
+        return Err(match lifecycle.state.as_str() {
+            "cancelled" => "codex_storyboard_task_cancelled",
+            "rejected" => "codex_storyboard_task_rejected",
+            "accepted" => "codex_storyboard_task_already_accepted",
+            "needs_review" => "codex_storyboard_result_already_imported",
+            _ => "codex_storyboard_lifecycle_conflict",
+        }.to_string());
+    }
     if immutable_stable.bytes != canonical_request
         || canonical_request_digest != ready_record.request_sha256
         || immutable_stable.fingerprint.identity_a != ready_record.request_identity_a
@@ -2141,7 +2300,8 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     }
     if result.generation_mode != "codex_builtin_imagegen"
         || result.state != "completed"
-        || result.final_prompt.trim().is_empty()
+        || result.final_prompt != compiled_prompt(&immutable)?
+        || !valid_rfc3339_utc(&result.completed_at)
         || result.output.relative_path != "outputs/candidate.png"
         || result.output.mime_type != "image/png"
     {
@@ -2242,6 +2402,7 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         request.job_id, authority_record.request_digest
     ));
     write_import_ledger_create_new_at(&import_project_capability, &ledger_name, &receipt)?;
+    cas_lifecycle_transition(&lifecycle_capability, &lifecycle_path, "queued", "needs_review")?;
     after_ledger();
     revalidate_import_layout(&project, &import_layout)?;
     revalidate_reference_snapshot_files(
@@ -2383,6 +2544,49 @@ pub fn import_codex_storyboard_result(
     let project = active_project_path(&app, &request.project_path)?;
     let authority = app_authority_root(&app)?;
     import_at_roots(&project, &project, &authority, request)
+}
+
+fn transition_at_roots(
+    project: &Path,
+    authority: &Path,
+    request: TransitionCodexStoryboardLifecycleRequest,
+) -> Result<CodexStoryboardLifecycleReceipt, String> {
+    if request.schema_version != 1 || request.provider != PROVIDER || !valid_identifier(&request.job_id, 96) || !valid_identifier(&request.project_id, 96) || !valid_identifier(&request.episode_id, 96) || !valid_identifier(&request.shot_id, 96) {
+        return Err("codex_storyboard_import_identity_invalid".to_string());
+    }
+    let project = canonical_directory(project, "codex_storyboard_project_root_invalid")?;
+    let requested = fs::canonicalize(&request.project_path).map_err(|_| "codex_storyboard_project_path_invalid".to_string())?;
+    if requested != project { return Err("codex_storyboard_project_identity_mismatch".to_string()); }
+    let authority = canonical_authority_root(authority)?;
+    let authority_root = capture_stable_directory(&authority, "codex_storyboard_authority_invalid")?;
+    let authority_capability = open_capability_directory(&authority, "codex_storyboard_authority_invalid")?;
+    bind_capability_directory(&authority_capability, &authority_root, "codex_storyboard_authority_invalid")?;
+    let key = project_authority_key(&project, &request.project_id)?;
+    let exports = open_capability_child(&authority_capability, Path::new("exports"), "codex_storyboard_authority_invalid")?;
+    let export_project = open_capability_child(&exports, Path::new(&key), "codex_storyboard_authority_invalid")?;
+    let export_path = authority.join("exports").join(&key);
+    let export_root = capture_stable_directory(&export_path, "codex_storyboard_authority_invalid")?;
+    let authority_record: CodexStoryboardAuthorityRecord = parse_stable_json_at(&export_project, &export_root, Path::new(&format!("{}.json", request.job_id)), "codex_storyboard_authority_invalid")?.0;
+    if authority_record.project_id != request.project_id || authority_record.job_id != request.job_id || authority_record.canonical_project_path != project.to_string_lossy() {
+        return Err("codex_storyboard_authority_mismatch".to_string());
+    }
+    let (lifecycle_capability, lifecycle_path) = lifecycle_job_capability(&authority_capability, &authority, &project, &request.project_id, &request.job_id, false)?;
+    let current = read_lifecycle_record(&lifecycle_capability, &lifecycle_path)?;
+    if current.project_id != request.project_id || current.episode_id != request.episode_id || current.shot_id != request.shot_id || current.job_id != request.job_id || current.request_digest != authority_record.request_digest {
+        return Err("codex_storyboard_lifecycle_invalid".to_string());
+    }
+    let next = cas_lifecycle_transition(&lifecycle_capability, &lifecycle_path, &request.expected_state, &request.next_state)?;
+    Ok(CodexStoryboardLifecycleReceipt { schema_version: 1, job_id: request.job_id, state: next.state, version: next.version })
+}
+
+#[tauri::command]
+pub fn transition_codex_storyboard_lifecycle(
+    app: tauri::AppHandle,
+    request: TransitionCodexStoryboardLifecycleRequest,
+) -> Result<CodexStoryboardLifecycleReceipt, String> {
+    let project = active_project_path(&app, &request.project_path)?;
+    let authority = app_authority_root(&app)?;
+    transition_at_roots(&project, &authority, request)
 }
 
 #[cfg(test)]
@@ -2532,6 +2736,8 @@ mod tests {
         let package = Path::new(&receipt.package_path);
         let request: Value =
             serde_json::from_slice(&fs::read(&receipt.request_path).unwrap()).unwrap();
+        let typed_request: CodexStoryboardRequest = serde_json::from_value(request.clone()).unwrap();
+        let final_prompt = compiled_prompt(&typed_request).unwrap();
         let candidate = package.join("outputs/candidate.png");
         write_png(&candidate, [12, 34, 56, 255]);
         let references = request["references"]
@@ -2555,7 +2761,7 @@ mod tests {
             "requestDigest": receipt.request_digest,
             "referenceDigests": references,
             "generationMode": "codex_builtin_imagegen",
-            "finalPrompt": "final prompt",
+            "finalPrompt": final_prompt,
             "output": {
                 "relativePath": "outputs/candidate.png",
                 "sha256": digest(&candidate),
@@ -2600,6 +2806,19 @@ mod tests {
     }
 
     fn import_request(fixture: &Fixture, task_status: &str) -> ImportCodexStoryboardResultRequest {
+        if task_status == "cancelled" {
+            transition_at_roots(&fixture.project, &fixture.authority, TransitionCodexStoryboardLifecycleRequest {
+                schema_version: 1,
+                job_id: fixture.request.job_id.clone(),
+                project_id: fixture.request.project_id.clone(),
+                episode_id: fixture.request.episode_id.clone(),
+                shot_id: fixture.request.shot_id.clone(),
+                provider: PROVIDER.to_string(),
+                project_path: fixture.project.to_string_lossy().to_string(),
+                expected_state: "queued".to_string(),
+                next_state: "cancelled".to_string(),
+            }).unwrap();
+        }
         ImportCodexStoryboardResultRequest {
             schema_version: 1,
             job_id: fixture.request.job_id.clone(),
@@ -2608,7 +2827,6 @@ mod tests {
             shot_id: fixture.request.shot_id.clone(),
             provider: fixture.request.provider.clone(),
             project_path: fixture.request.project_path.clone(),
-            task_status: task_status.to_string(),
         }
     }
 
@@ -3637,6 +3855,46 @@ mod tests {
             .unwrap_err(),
             "codex_storyboard_result_already_imported"
         );
+    }
+
+    #[test]
+    fn import_recomputes_prompt_and_rejects_invalid_completion_timestamp() {
+        for (suffix, mutate) in [
+            ("prompt-tamper", "prompt"),
+            ("timestamp-tamper", "timestamp"),
+        ] {
+            let fixture = fixture(suffix);
+            let receipt = prepare_at_roots(&fixture.project, &fixture.assets, &fixture.authority, fixture.request.clone()).unwrap();
+            publish_result(&receipt, |result| {
+                if mutate == "prompt" { result["finalPrompt"] = json!("attacker prompt"); }
+                else { result["completedAt"] = json!("2026-02-31T00:00:00.000Z"); }
+            });
+            assert_eq!(import_at_roots(&fixture.project, &fixture.assets, &fixture.authority, import_request(&fixture, "queued")).unwrap_err(), "codex_storyboard_result_invalid");
+        }
+    }
+
+    #[test]
+    fn private_lifecycle_is_cas_bound_and_renderer_status_is_rejected() {
+        let spoof = json!({"schemaVersion":1,"jobId":"job","projectId":"project","episodeId":"episode","shotId":"shot","provider":PROVIDER,"projectPath":"C:/project","taskStatus":"queued"});
+        assert!(serde_json::from_value::<ImportCodexStoryboardResultRequest>(spoof).is_err());
+
+        let cancelled = fixture("lifecycle-cancel");
+        prepare_at_roots(&cancelled.project, &cancelled.assets, &cancelled.authority, cancelled.request.clone()).unwrap();
+        let transition = TransitionCodexStoryboardLifecycleRequest {
+            schema_version: 1, job_id: cancelled.request.job_id.clone(), project_id: cancelled.request.project_id.clone(), episode_id: cancelled.request.episode_id.clone(), shot_id: cancelled.request.shot_id.clone(), provider: PROVIDER.to_string(), project_path: cancelled.project.to_string_lossy().to_string(), expected_state: "queued".to_string(), next_state: "cancelled".to_string()
+        };
+        assert_eq!(transition_at_roots(&cancelled.project, &cancelled.authority, transition.clone()).unwrap().state, "cancelled");
+        assert_eq!(transition_at_roots(&cancelled.project, &cancelled.authority, transition).unwrap_err(), "codex_storyboard_lifecycle_conflict");
+
+        let rejected = fixture("lifecycle-reject");
+        let receipt = prepare_at_roots(&rejected.project, &rejected.assets, &rejected.authority, rejected.request.clone()).unwrap();
+        publish_result(&receipt, |_| {});
+        import_at_roots(&rejected.project, &rejected.assets, &rejected.authority, import_request(&rejected, "queued")).unwrap();
+        let rejection = TransitionCodexStoryboardLifecycleRequest {
+            schema_version: 1, job_id: rejected.request.job_id.clone(), project_id: rejected.request.project_id.clone(), episode_id: rejected.request.episode_id.clone(), shot_id: rejected.request.shot_id.clone(), provider: PROVIDER.to_string(), project_path: rejected.project.to_string_lossy().to_string(), expected_state: "needs_review".to_string(), next_state: "rejected".to_string()
+        };
+        assert_eq!(transition_at_roots(&rejected.project, &rejected.authority, rejection.clone()).unwrap().state, "rejected");
+        assert_eq!(transition_at_roots(&rejected.project, &rejected.authority, rejection).unwrap_err(), "codex_storyboard_lifecycle_conflict");
     }
 
     #[test]

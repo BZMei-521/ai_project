@@ -22,7 +22,7 @@ export type DirectorNodeViewState = {
 };
 
 export type DirectorGenerationTaskInput = {
-  status?: "queued" | "running" | "completed" | "failed" | "cancelled" | "needs_review";
+  status?: "queued" | "running" | "completed" | "failed" | "cancelled" | "needs_review" | "rejected";
   outputPath?: string;
   generatedImagePath?: string;
   generatedVideoPath?: string;
@@ -68,7 +68,7 @@ function hasRunningTask(tasks: readonly DirectorGenerationTaskInput[]): boolean 
 }
 
 function hasFailedTask(tasks: readonly DirectorGenerationTaskInput[]): boolean {
-  return tasks.some((task) => task.status === "failed" || task.status === "cancelled" || task.status === "needs_review");
+  return tasks.some((task) => task.status === "failed" || task.status === "cancelled" || task.status === "needs_review" || task.status === "rejected");
 }
 
 function hasCompletedTask(tasks: readonly DirectorGenerationTaskInput[]): boolean {

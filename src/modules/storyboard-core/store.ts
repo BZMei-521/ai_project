@@ -410,6 +410,7 @@ type StoryboardState = {
   ) => void;
   completeGenerationTask: (id: string, outputPath: string) => void;
   acceptGenerationTaskCandidate: (id: string) => void;
+  rejectGenerationTaskCandidate: (id: string, reason?: string) => void;
   createSpatialStage: (sceneId: string) => string;
   updateSpatialScene: (scene: SpatialScene) => void;
   setSelectedSpatialObject: (objectId: string | null) => void;
@@ -2586,6 +2587,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => {
       const task = state.generationTasks.find((item) => item.id === id);
       if (!task) throw new Error(`Cannot cancel unknown generation task: ${id}`);
+      if (["completed", "cancelled", "rejected", "needs_review"].includes(task.status)) return state;
       return {
         generationTasks: state.generationTasks.map((item) =>
           item.id === id
@@ -2645,7 +2647,7 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => {
       const task = state.generationTasks.find((item) => item.id === id);
       if (!task) throw new Error(`Cannot complete unknown generation task: ${id}`);
-      if (task.stage === "needs_review" || task.status === "needs_review" || task.status === "cancelled") {
+      if (task.stage === "needs_review" || task.status === "needs_review" || task.status === "cancelled" || task.status === "rejected") {
         return state;
       }
       if (!state.shots.some((shot) => shot.id === task.shotId)) {
@@ -2702,6 +2704,25 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
               }
             : item
         )
+      };
+    }),
+
+  rejectGenerationTaskCandidate: (id, reason = "codex_candidate_rejected") =>
+    set((state) => {
+      const task = state.generationTasks.find((item) => item.id === id);
+      if (!task) throw new Error(`Cannot reject unknown generation task: ${id}`);
+      if (task.stage !== "needs_review" || task.status !== "needs_review") {
+        throw new Error(`Cannot reject generation task that is not needs_review: ${id}`);
+      }
+      return {
+        generationTasks: state.generationTasks.map((item) => item.id === id ? {
+          ...item,
+          stage: "rejected",
+          status: "rejected",
+          errorCode: "rejected",
+          errorMessage: reason,
+          finishedAt: new Date().toISOString()
+        } : item)
       };
     }),
 

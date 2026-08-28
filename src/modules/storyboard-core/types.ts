@@ -103,6 +103,7 @@ export type StoryboardGenerationStage =
   | "stageB"
   | "fallback"
   | "needs_review"
+  | "rejected"
   | "completed"
   | "cancelled"
   | "failed";
@@ -133,7 +134,7 @@ export type StoryboardGenerationTask = {
   shotId: string;
   workflowId: string;
   stage: StoryboardGenerationStage;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "needs_review";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "needs_review" | "rejected";
   promptHash: string;
   outputPath?: string;
   bestPreviewPath?: string;

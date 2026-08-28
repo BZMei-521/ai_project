@@ -95,6 +95,7 @@ export type CodexStoryboardTaskStatus =
   | "queued"
   | "exported"
   | "running"
+  | "needs_review"
   | "cancelled"
   | "rejected"
   | "accepted"
@@ -108,7 +109,11 @@ export type ImportCodexStoryboardResultRequest = {
   shotId: string;
   provider: "codex_task_package";
   projectPath: string;
-  taskStatus: CodexStoryboardTaskStatus;
+};
+
+export type TransitionCodexStoryboardLifecycleRequest = Omit<ImportCodexStoryboardResultRequest, never> & {
+  expectedState: CodexStoryboardTaskStatus;
+  nextState: CodexStoryboardTaskStatus;
 };
 
 export type TauriCodexStoryboardExportReceipt = CoreCodexStoryboardExportReceipt & {
@@ -235,12 +240,6 @@ export function createImportCodexStoryboardResultRequest(
   if (request.schemaVersion !== 1 || request.provider !== "codex_task_package") {
     throw new Error("codex_storyboard_provider_mismatch");
   }
-  const allowedStatuses: readonly CodexStoryboardTaskStatus[] = [
-    "queued", "exported", "running", "cancelled", "rejected", "accepted", "completed"
-  ];
-  if (!allowedStatuses.includes(request.taskStatus)) {
-    throw new Error("codex_storyboard_task_state_invalid");
-  }
   return {
     schemaVersion: 1,
     jobId: requireCodexIdentifier(request.jobId, "jobId"),
@@ -248,9 +247,15 @@ export function createImportCodexStoryboardResultRequest(
     episodeId: requireCodexIdentifier(request.episodeId, "episodeId"),
     shotId: requireCodexIdentifier(request.shotId, "shotId"),
     provider: "codex_task_package",
-    projectPath: requireCodexAbsolutePath(request.projectPath, "codex_storyboard_project_path_missing"),
-    taskStatus: request.taskStatus
+    projectPath: requireCodexAbsolutePath(request.projectPath, "codex_storyboard_project_path_missing")
   };
+}
+
+export function createTransitionCodexStoryboardLifecycleRequest(request: TransitionCodexStoryboardLifecycleRequest): TransitionCodexStoryboardLifecycleRequest {
+  const identity = createImportCodexStoryboardResultRequest(request);
+  const allowed: readonly CodexStoryboardTaskStatus[] = ["queued", "exported", "running", "needs_review", "cancelled", "rejected", "accepted", "completed"];
+  if (!allowed.includes(request.expectedState) || !allowed.includes(request.nextState)) throw new Error("codex_storyboard_task_state_invalid");
+  return { ...identity, expectedState: request.expectedState, nextState: request.nextState };
 }
 
 export async function prepareCodexStoryboardJob(
@@ -269,6 +274,11 @@ export async function importCodexStoryboardResult(
   return invokeDesktopCommand("import_codex_storyboard_result", {
     request: createImportCodexStoryboardResultRequest(request)
   });
+}
+
+export async function transitionCodexStoryboardLifecycle(request: TransitionCodexStoryboardLifecycleRequest): Promise<{ schemaVersion: 1; jobId: string; state: CodexStoryboardTaskStatus; version: number }> {
+  if (!isTauriRuntime()) throw new Error("codex_storyboard_requires_tauri_runtime");
+  return invokeDesktopCommand("transition_codex_storyboard_lifecycle", { request: createTransitionCodexStoryboardLifecycleRequest(request) });
 }
 
 export type TrustedCharacterReferenceBytes = {
