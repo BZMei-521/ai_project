@@ -109,7 +109,6 @@ export type ImportCodexStoryboardResultRequest = {
   provider: "codex_task_package";
   projectPath: string;
   taskStatus: CodexStoryboardTaskStatus;
-  requestDigest: string;
 };
 
 export type TauriCodexStoryboardExportReceipt = CoreCodexStoryboardExportReceipt & {
@@ -140,10 +139,28 @@ function requireCodexAbsolutePath(value: string, missingCode: string): string {
 }
 
 function duplicatePathKey(value: string): string {
-  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
-  return /^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("//")
-    ? normalized.toLowerCase()
-    : normalized;
+  const normalized = value.replace(/\\/g, "/");
+  const prefix = normalized.startsWith("//")
+    ? "//"
+    : normalized.startsWith("/")
+      ? "/"
+      : /^[a-zA-Z]:\//.test(normalized)
+        ? normalized.slice(0, 3)
+        : "";
+  const segments = normalized.slice(prefix.length).split("/");
+  const collapsed: string[] = [];
+  for (const segment of segments) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (collapsed.length > 0) collapsed.pop();
+      continue;
+    }
+    collapsed.push(segment);
+  }
+  const canonical = `${prefix}${collapsed.join("/")}`.replace(/\/+$/, "");
+  return /^[a-zA-Z]:\//.test(canonical) || canonical.startsWith("//")
+    ? canonical.toLowerCase()
+    : canonical;
 }
 
 export function createPrepareCodexStoryboardJobRequest(
@@ -224,9 +241,6 @@ export function createImportCodexStoryboardResultRequest(
   if (!allowedStatuses.includes(request.taskStatus)) {
     throw new Error("codex_storyboard_task_state_invalid");
   }
-  if (!/^[a-f0-9]{64}$/.test(request.requestDigest ?? "")) {
-    throw new Error("codex_storyboard_request_digest_invalid");
-  }
   return {
     schemaVersion: 1,
     jobId: requireCodexIdentifier(request.jobId, "jobId"),
@@ -235,8 +249,7 @@ export function createImportCodexStoryboardResultRequest(
     shotId: requireCodexIdentifier(request.shotId, "shotId"),
     provider: "codex_task_package",
     projectPath: requireCodexAbsolutePath(request.projectPath, "codex_storyboard_project_path_missing"),
-    taskStatus: request.taskStatus,
-    requestDigest: request.requestDigest
+    taskStatus: request.taskStatus
   };
 }
 
