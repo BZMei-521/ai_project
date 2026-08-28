@@ -95,6 +95,29 @@ fn dir_identity(dir: &Dir) -> Option<(u64, u64)> {
     use std::os::windows::io::AsRawHandle;
     raw_handle_identity(dir.as_raw_handle())
 }
+#[cfg(windows)]
+fn open_deny_delete_dir(path: &Path, expected: (u64, u64), code: &str) -> Result<fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    check_absolute_components(path, code)?;
+    let guard = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|_| code.to_string())?;
+    if !guard.metadata().map_err(|_| code.to_string())?.is_dir()
+        || file_identity(&guard) != Some(expected)
+    {
+        return fail(code);
+    }
+    check_absolute_components(path, code)?;
+    Ok(guard)
+}
 #[cfg(unix)]
 fn file_identity(file: &fs::File) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
@@ -150,21 +173,49 @@ struct PackageCap {
     path: PathBuf,
     identity: (u64, u64),
     dir: Dir,
-    anchor: Dir,
-    relative_from_anchor: PathBuf,
+    parent_path: PathBuf,
+    parent_identity: (u64, u64),
+    parent: Dir,
+    name: PathBuf,
+    #[cfg(windows)]
+    _parent_rename_guard: fs::File,
+    #[cfg(windows)]
+    _package_rename_guard: fs::File,
 }
-fn filesystem_root(path: &Path) -> Result<PathBuf, String> {
-    let mut root = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir => root.push(component.as_os_str()),
-            _ => break,
-        }
+fn open_stable_child_dir(
+    parent: &Dir,
+    name: &Path,
+    expected: Option<(u64, u64)>,
+    code: &str,
+) -> Result<(Dir, (u64, u64)), String> {
+    if name.components().count() != 1
+        || !matches!(name.components().next(), Some(Component::Normal(_)))
+    {
+        return fail(code);
     }
-    if root.as_os_str().is_empty() {
-        return fail("codex_storyboard_operator_package_invalid");
+    let before = parent
+        .symlink_metadata(name)
+        .map_err(|_| code.to_string())?;
+    if !before.is_dir() || !cap_no_link(&before) {
+        return fail(code);
     }
-    Ok(root)
+    let dir = parent.open_dir(name).map_err(|_| code.to_string())?;
+    let identity = dir_identity(&dir).ok_or_else(|| code.to_string())?;
+    if expected.is_some_and(|value| value != identity) {
+        return fail(code);
+    }
+    let after = parent
+        .symlink_metadata(name)
+        .map_err(|_| code.to_string())?;
+    let current = parent.open_dir(name).map_err(|_| code.to_string())?;
+    if !after.is_dir()
+        || !cap_no_link(&after)
+        || dir_identity(&current) != Some(identity)
+        || dir_identity(&dir) != Some(identity)
+    {
+        return fail(code);
+    }
+    Ok((dir, identity))
 }
 fn revalidate_package(package: &PackageCap) -> Result<(), String> {
     let code = "codex_storyboard_operator_package_invalid";
@@ -172,9 +223,13 @@ fn revalidate_package(package: &PackageCap) -> Result<(), String> {
     if fs::canonicalize(&package.path).map_err(|_| code.to_string())? != package.path {
         return fail(code);
     }
-    let current =
-        Dir::open_ambient_dir(&package.path, ambient_authority()).map_err(|_| code.to_string())?;
-    if dir_identity(&current) != Some(package.identity)
+    let current_parent = Dir::open_ambient_dir(&package.parent_path, ambient_authority())
+        .map_err(|_| code.to_string())?;
+    let (current, _) =
+        open_stable_child_dir(&package.parent, &package.name, Some(package.identity), code)?;
+    if dir_identity(&current_parent) != Some(package.parent_identity)
+        || dir_identity(&package.parent) != Some(package.parent_identity)
+        || dir_identity(&current) != Some(package.identity)
         || dir_identity(&package.dir) != Some(package.identity)
     {
         return fail(code);
@@ -230,26 +285,31 @@ fn acquire_package(argument: &Path) -> Result<PackageCap, String> {
         }
         return fail(code);
     }
-    let dir = Dir::open_ambient_dir(&path, ambient_authority()).map_err(|_| code.to_string())?;
-    if dir_identity(&dir) != Some(identity) {
+    let parent_path = path.parent().ok_or_else(|| code.to_string())?.to_path_buf();
+    let name = PathBuf::from(path.file_name().ok_or_else(|| code.to_string())?);
+    let parent =
+        Dir::open_ambient_dir(&parent_path, ambient_authority()).map_err(|_| code.to_string())?;
+    let parent_identity = dir_identity(&parent).ok_or_else(|| code.to_string())?;
+    let (dir, opened_identity) = open_stable_child_dir(&parent, &name, Some(identity), code)?;
+    if opened_identity != identity {
         return fail(code);
     }
-    let anchor_path = filesystem_root(&path)?;
-    let relative_from_anchor = path
-        .strip_prefix(&anchor_path)
-        .map_err(|_| code.to_string())?
-        .to_path_buf();
-    if relative_from_anchor.as_os_str().is_empty() {
-        return fail(code);
-    }
-    let anchor =
-        Dir::open_ambient_dir(&anchor_path, ambient_authority()).map_err(|_| code.to_string())?;
+    #[cfg(windows)]
+    let parent_rename_guard = open_deny_delete_dir(&parent_path, parent_identity, code)?;
+    #[cfg(windows)]
+    let package_rename_guard = open_deny_delete_dir(&path, identity, code)?;
     let package = PackageCap {
         path,
         identity,
         dir,
-        anchor,
-        relative_from_anchor,
+        parent_path,
+        parent_identity,
+        parent,
+        name,
+        #[cfg(windows)]
+        _parent_rename_guard: parent_rename_guard,
+        #[cfg(windows)]
+        _package_rename_guard: package_rename_guard,
     };
     revalidate_package(&package)?;
     Ok(package)
@@ -396,10 +456,7 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
         .get("prompt")
         .and_then(Value::as_object)
         .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
-    let prompt_keys = ["useCase", "primaryRequest"];
-    if prompt.len() != prompt_keys.len()
-        || prompt_keys.iter().any(|key| !prompt.contains_key(*key))
-        || prompt.get("useCase").and_then(Value::as_str) != Some("stylized-concept")
+    if prompt.get("useCase").and_then(Value::as_str) != Some("stylized-concept")
         || string(prompt, "primaryRequest").is_err()
     {
         return fail("codex_storyboard_operator_request_invalid");
@@ -498,12 +555,18 @@ struct OutputCap {
     path: PathBuf,
     identity: (u64, u64),
     dir: Dir,
+    #[cfg(windows)]
+    _rename_guard: fs::File,
 }
 fn revalidate_outputs(package: &PackageCap, outputs: &OutputCap) -> Result<(), String> {
     revalidate_package(package)?;
     check_absolute_components(&outputs.path, "codex_storyboard_operator_publish_failed")?;
-    let current = Dir::open_ambient_dir(&outputs.path, ambient_authority())
-        .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
+    let (current, _) = open_stable_child_dir(
+        &package.dir,
+        Path::new("outputs"),
+        Some(outputs.identity),
+        "codex_storyboard_operator_publish_failed",
+    )?;
     if dir_identity(&current) != Some(outputs.identity)
         || dir_identity(&outputs.dir) != Some(outputs.identity)
     {
@@ -512,8 +575,7 @@ fn revalidate_outputs(package: &PackageCap, outputs: &OutputCap) -> Result<(), S
     Ok(())
 }
 fn output_dir(package: &PackageCap) -> Result<OutputCap, String> {
-    let output_relative = package.relative_from_anchor.join("outputs");
-    match package.anchor.create_dir(&output_relative) {
+    match package.dir.create_dir("outputs") {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return fail("codex_storyboard_operator_publish_failed"),
@@ -524,16 +586,24 @@ fn output_dir(package: &PackageCap) -> Result<OutputCap, String> {
         "outputs",
         "codex_storyboard_operator_publish_failed",
     )?;
-    let dir = package
-        .anchor
-        .open_dir(&output_relative)
-        .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
-    let identity =
-        dir_identity(&dir).ok_or_else(|| "codex_storyboard_operator_publish_failed".to_string())?;
+    let (dir, identity) = open_stable_child_dir(
+        &package.dir,
+        Path::new("outputs"),
+        None,
+        "codex_storyboard_operator_publish_failed",
+    )?;
+    #[cfg(windows)]
+    let rename_guard = open_deny_delete_dir(
+        &package.path.join("outputs"),
+        identity,
+        "codex_storyboard_operator_publish_failed",
+    )?;
     let outputs = OutputCap {
         path: package.path.join("outputs"),
         identity,
         dir,
+        #[cfg(windows)]
+        _rename_guard: rename_guard,
     };
     revalidate_outputs(package, &outputs)?;
     Ok(outputs)
@@ -551,37 +621,73 @@ fn temp_name(name: &str) -> String {
             .as_nanos()
     )
 }
-fn test_move_before_candidate_link(
+#[cfg(windows)]
+fn test_directory_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+#[cfg(unix)]
+fn test_directory_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+fn test_replace_after_validate_before_link(
     package: &PackageCap,
     outputs: &OutputCap,
     name: &str,
 ) -> Result<(), String> {
-    if env::var("NODE_ENV").ok().as_deref() != Some("test") || name != "candidate.png" {
+    if env::var("NODE_ENV").ok().as_deref() != Some("test") {
         return Ok(());
     }
-    if let Ok(target) = env::var("CODEX_STORYBOARD_TEST_MOVE_OUTPUTS_BEFORE_CANDIDATE_LINK") {
+    let stage = if name == "candidate.png" {
+        "CANDIDATE"
+    } else if name == "result.json" {
+        "RESULT"
+    } else {
+        return Ok(());
+    };
+    let outputs_key = format!(
+        "CODEX_STORYBOARD_TEST_REPLACE_OUTPUTS_AFTER_VALIDATE_BEFORE_{stage}_LINK"
+    );
+    if let Ok(target) = env::var(outputs_key) {
         let target = Path::new(&target);
         if !target.is_absolute() || target.exists() {
             return fail("codex_storyboard_operator_publish_failed");
         }
         fs::rename(&outputs.path, target)
             .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
+        test_directory_link(target, &outputs.path)
+            .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     }
-    if let Ok(target) = env::var("CODEX_STORYBOARD_TEST_MOVE_PACKAGE_BEFORE_CANDIDATE_LINK") {
+    let package_key = format!(
+        "CODEX_STORYBOARD_TEST_REPLACE_PACKAGE_AFTER_VALIDATE_BEFORE_{stage}_LINK"
+    );
+    if let Ok(target) = env::var(package_key) {
         let target = Path::new(&target);
         if !target.is_absolute() || target.exists() {
             return fail("codex_storyboard_operator_publish_failed");
         }
         fs::rename(&package.path, target)
             .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
+        test_directory_link(target, &package.path)
+            .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     }
     Ok(())
 }
-fn anchored_exists(package: &PackageCap, name: &str) -> bool {
-    package
-        .anchor
-        .symlink_metadata(package.relative_from_anchor.join("outputs").join(name))
-        .is_ok()
+fn anchored_exists(outputs: &OutputCap, name: &str) -> bool {
+    outputs.dir.symlink_metadata(name).is_ok()
+}
+fn test_mark_link_attempt() -> Result<(), String> {
+    if env::var("NODE_ENV").ok().as_deref() != Some("test") {
+        return Ok(());
+    }
+    let Ok(marker) = env::var("CODEX_STORYBOARD_TEST_LINK_ATTEMPT_MARKER") else {
+        return Ok(());
+    };
+    let marker = Path::new(&marker);
+    if !marker.is_absolute() || marker.exists() {
+        return fail("codex_storyboard_operator_publish_failed");
+    }
+    fs::write(marker, b"link-attempted")
+        .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())
 }
 fn publish(
     package: &PackageCap,
@@ -590,7 +696,7 @@ fn publish(
     bytes: &[u8],
     inject: bool,
 ) -> Result<(), String> {
-    if anchored_exists(package, name) {
+    if anchored_exists(outputs, name) {
         return fail("codex_storyboard_operator_output_exists");
     }
     let temp = temp_name(name);
@@ -604,24 +710,41 @@ fn publish(
         .and_then(|_| file.sync_all())
         .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     drop(file);
-    if let Err(code) = test_move_before_candidate_link(package, outputs, name) {
-        let _ = outputs.dir.remove_file(&temp);
-        return Err(code);
-    }
     if inject {
         let _ = outputs.dir.remove_file(&temp);
         return fail("codex_storyboard_operator_publish_failed");
     }
-    let temp_relative = package.relative_from_anchor.join("outputs").join(&temp);
-    let final_relative = package.relative_from_anchor.join("outputs").join(name);
-    let linked = package
-        .anchor
-        .hard_link(&temp_relative, &package.anchor, &final_relative);
-    let _ = outputs.dir.remove_file(&temp);
+    if let Err(code) = revalidate_outputs(package, outputs) {
+        let _ = outputs.dir.remove_file(&temp);
+        return Err(code);
+    }
+    if let Err(code) = test_replace_after_validate_before_link(package, outputs, name) {
+        let _ = outputs.dir.remove_file(&temp);
+        return Err(code);
+    }
+    if let Err(code) = test_mark_link_attempt() {
+        let _ = outputs.dir.remove_file(&temp);
+        return Err(code);
+    }
+    let linked = outputs.dir.hard_link(&temp, &outputs.dir, name);
     match linked {
-        Ok(()) => Ok(()),
-        Err(_) if anchored_exists(package, name) => fail("codex_storyboard_operator_output_exists"),
-        Err(_) => fail("codex_storyboard_operator_publish_failed"),
+        Ok(()) => {
+            if let Err(code) = revalidate_outputs(package, outputs) {
+                let _ = outputs.dir.remove_file(name);
+                let _ = outputs.dir.remove_file(&temp);
+                return Err(code);
+            }
+            let _ = outputs.dir.remove_file(&temp);
+            Ok(())
+        }
+        Err(_) if anchored_exists(outputs, name) => {
+            let _ = outputs.dir.remove_file(&temp);
+            fail("codex_storyboard_operator_output_exists")
+        }
+        Err(_) => {
+            let _ = outputs.dir.remove_file(&temp);
+            fail("codex_storyboard_operator_publish_failed")
+        }
     }
 }
 fn verify_candidate(

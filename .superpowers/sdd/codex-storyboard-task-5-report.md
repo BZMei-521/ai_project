@@ -76,3 +76,21 @@ Complete. Commit: `e39b0d8bed9086a64dd13fbe53ef0d6c0df05908` (`feat: add Codex s
 - `node scripts/check-codex-storyboard-ui.mjs` — PASS.
 - `npm run build` — PASS; existing Vite large-chunk advisory only.
 - Generated schemas and `tsconfig.app.tsbuildinfo` restored to HEAD after build.
+
+## R5 review closure
+
+- Removed the filesystem-root publication authority. The helper now retains a package-parent capability plus bound parent/package/output identities, opens only single normal child components, rejects reparse points, and publishes through the retained outputs capability. For this Windows desktop workflow it also holds explicit `FILE_FLAG_OPEN_REPARSE_POINT` directory guards without `FILE_SHARE_DELETE` for the package parent, package, and outputs directory, so rename/junction replacement fails before the final-link operation.
+- Added exact post-temp-write hooks for candidate and result publication across both outputs-directory and package-directory move-plus-junction/symlink replacement. All four cases fail closed and cannot create the stage's final artifact outside the package.
+- Aligned the Rust prompt contract with the runtime/Node validator: `useCase` and `primaryRequest` remain required and typed, while runtime-valid extra prompt metadata is preserved in canonical request/manifest verification and accepted through inspect and complete.
+
+## R5 verification
+
+- RED: after prompt alignment, `node scripts/check-codex-storyboard-task-package.mjs` reliably failed at the first new replacement-window assertion with `0 !== 15` against the root-anchor implementation.
+- `cargo test --bin codex-storyboard-operator` — PASS (3/3).
+- `cargo build --bin codex-storyboard-operator` — PASS.
+- `node scripts/check-codex-storyboard-task-package.mjs` — PASS, including four move-plus-link windows, metadata compatibility, candidate-only resume, and the eight-process race.
+- `node scripts/check-storyboard-generation-flow.mjs` — PASS.
+- `node scripts/check-storyboard-generation-state.mjs` — PASS.
+- `node scripts/check-codex-storyboard-ui.mjs` — PASS.
+- `npm run build` — PASS; existing Vite large-chunk advisory only.
+- Generated schemas and `tsconfig.app.tsbuildinfo` restored to HEAD after build.

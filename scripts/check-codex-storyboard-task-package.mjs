@@ -212,6 +212,7 @@ assert.deepEqual(runtime.compileCodexStoryboardImageSpec(request).referenceUsage
 ]);
 assert.match(runtime.compileCodexStoryboardImageSpec(request).compiledPrompt, /Picture 5.*style_only/s);
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, provider: "comfy" }), /provider_mismatch/);
+assert.equal(runtime.validateCodexStoryboardRequest({ ...request, prompt: { ...request.prompt, metadata: { lens: "35mm", locked: true } } }).prompt.metadata.lens, "35mm");
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, references: request.references.map((item, index) => index === 0 ? { ...item, relativePath: "../escape.png" } : item) }), /path_invalid/);
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, references: request.references.map((item, index) => index === 0 ? { ...item, instruction: "" } : item) }), /instruction_invalid/);
 assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, shotId: "other" }, request), /identity_mismatch/);
@@ -250,7 +251,7 @@ const makeFixtureRequest = () => ({
   shotId: "shot-cli-1",
   provider: "codex_task_package",
   createdAt: "2026-08-28T00:00:00.000Z",
-  prompt: { useCase: "stylized-concept", primaryRequest: "A locked storyboard frame." },
+  prompt: { useCase: "stylized-concept", primaryRequest: "A locked storyboard frame.", metadata: { lens: "35mm", locked: true } },
   references: [
     ["stage", "spatial_authority", "Preserve geometry and composition."],
     ["body", "body_costume", "Preserve body and costume."],
@@ -287,6 +288,11 @@ const runCliAsync = (args, env = {}) => new Promise((resolve, reject) => {
 });
 const exists = async (filePath) => {
   try { await lstat(filePath); return true; } catch (error) { if (error.code === "ENOENT") return false; throw error; }
+};
+const restoreMovedDirectory = async (original, moved) => {
+  if (!await exists(moved)) return;
+  if (await exists(original)) await rm(original, { recursive: true, force: true });
+  await rename(moved, original);
 };
 
 try {
@@ -366,7 +372,6 @@ try {
 
   const malformedRequestCases = [
     ["empty createdAt", (value) => { value.createdAt = ""; }],
-    ["prompt unknown key", (value) => { value.prompt.unknown = true; }],
     ["acceptedImagePath wrong type", (value) => { value.acceptedImagePath = 42; }],
     ["expectedOutput unknown key", (value) => { value.expectedOutput.unknown = true; }],
     ["expectedOutput candidate path", (value) => { value.expectedOutput.candidatePath = "outputs/other.png"; }],
@@ -399,20 +404,50 @@ try {
   assert.match(helperRejectsCaptureOpenSwap.stderr, /codex_storyboard_operator_package_invalid/);
   assert.equal(await exists(path.join(fixturePackage, "request.json")), true, "package swap test hook restores the original fixture");
 
-  const movedOutputs = path.join(fixtureRoot, "moved-outputs");
-  const helperRejectsMovedOutputs = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_MOVE_OUTPUTS_BEFORE_CANDIDATE_LINK: movedOutputs }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  const movedOutputs = path.join(fixtureRoot, "moved-outputs-candidate");
+  const movedOutputsMarker = path.join(fixtureRoot, "moved-outputs-candidate-link-attempted");
+  const helperRejectsMovedOutputs = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_LINK_ATTEMPT_MARKER: movedOutputsMarker, CODEX_STORYBOARD_TEST_REPLACE_OUTPUTS_AFTER_VALIDATE_BEFORE_CANDIDATE_LINK: movedOutputs }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(helperRejectsMovedOutputs.status, 15, helperRejectsMovedOutputs.stderr);
-  assert.equal(await exists(path.join(movedOutputs, "candidate.png")), false, "retained outputs move cannot publish candidate externally");
-  assert.equal(await exists(path.join(movedOutputs, "result.json")), false, "retained outputs move cannot publish result externally");
-  if (await exists(movedOutputs)) await rename(movedOutputs, path.join(fixturePackage, "outputs"));
+  assert.equal(await exists(movedOutputsMarker), false, "outputs replacement must fail before candidate hard-link execution");
+  if (process.platform === "win32") assert.equal(await exists(movedOutputs), false, "retained outputs handle must deny the post-validation rename on Windows");
+  assert.equal(await exists(path.join(movedOutputs, "candidate.png")), false, "outputs junction replacement cannot publish candidate externally");
+  assert.equal(await exists(path.join(movedOutputs, "result.json")), false, "outputs junction replacement cannot publish result externally");
+  await restoreMovedDirectory(path.join(fixturePackage, "outputs"), movedOutputs);
   await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
 
-  const movedPackage = path.join(fixtureRoot, "moved-package");
-  const helperRejectsMovedPackage = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_MOVE_PACKAGE_BEFORE_CANDIDATE_LINK: movedPackage }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  const movedPackage = path.join(fixtureRoot, "moved-package-candidate");
+  const movedPackageMarker = path.join(fixtureRoot, "moved-package-candidate-link-attempted");
+  const helperRejectsMovedPackage = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_LINK_ATTEMPT_MARKER: movedPackageMarker, CODEX_STORYBOARD_TEST_REPLACE_PACKAGE_AFTER_VALIDATE_BEFORE_CANDIDATE_LINK: movedPackage }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(helperRejectsMovedPackage.status, 15, helperRejectsMovedPackage.stderr);
-  assert.equal(await exists(path.join(movedPackage, "outputs", "candidate.png")), false, "retained package move cannot publish candidate externally");
-  assert.equal(await exists(path.join(movedPackage, "outputs", "result.json")), false, "retained package move cannot publish result externally");
-  if (await exists(movedPackage)) await rename(movedPackage, fixturePackage);
+  assert.equal(await exists(movedPackageMarker), false, "package replacement must fail before candidate hard-link execution");
+  if (process.platform === "win32") assert.equal(await exists(movedPackage), false, "retained package handle must deny the post-validation rename on Windows");
+  assert.equal(await exists(path.join(movedPackage, "outputs", "candidate.png")), false, "package junction replacement cannot publish candidate externally");
+  assert.equal(await exists(path.join(movedPackage, "outputs", "result.json")), false, "package junction replacement cannot publish result externally");
+  await restoreMovedDirectory(fixturePackage, movedPackage);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const candidateOnlyForOutputsResult = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_TEST_FAIL_RESULT_PUBLISH: "1", CODEX_STORYBOARD_OPERATOR_BIN: helperPath }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(candidateOnlyForOutputsResult.status, 15, candidateOnlyForOutputsResult.stderr);
+  const movedOutputsResult = path.join(fixtureRoot, "moved-outputs-result");
+  const movedOutputsResultMarker = path.join(fixtureRoot, "moved-outputs-result-link-attempted");
+  const helperRejectsMovedOutputsResult = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_LINK_ATTEMPT_MARKER: movedOutputsResultMarker, CODEX_STORYBOARD_TEST_REPLACE_OUTPUTS_AFTER_VALIDATE_BEFORE_RESULT_LINK: movedOutputsResult }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(helperRejectsMovedOutputsResult.status, 15, helperRejectsMovedOutputsResult.stderr);
+  assert.equal(await exists(movedOutputsResultMarker), false, "outputs replacement must fail before result hard-link execution");
+  if (process.platform === "win32") assert.equal(await exists(movedOutputsResult), false, "retained outputs handle must deny the post-validation result rename on Windows");
+  assert.equal(await exists(path.join(movedOutputsResult, "result.json")), false, "outputs junction replacement cannot publish result externally");
+  await restoreMovedDirectory(path.join(fixturePackage, "outputs"), movedOutputsResult);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const candidateOnlyForPackageResult = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_TEST_FAIL_RESULT_PUBLISH: "1", CODEX_STORYBOARD_OPERATOR_BIN: helperPath }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(candidateOnlyForPackageResult.status, 15, candidateOnlyForPackageResult.stderr);
+  const movedPackageResult = path.join(fixtureRoot, "moved-package-result");
+  const movedPackageResultMarker = path.join(fixtureRoot, "moved-package-result-link-attempted");
+  const helperRejectsMovedPackageResult = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_LINK_ATTEMPT_MARKER: movedPackageResultMarker, CODEX_STORYBOARD_TEST_REPLACE_PACKAGE_AFTER_VALIDATE_BEFORE_RESULT_LINK: movedPackageResult }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(helperRejectsMovedPackageResult.status, 15, helperRejectsMovedPackageResult.stderr);
+  assert.equal(await exists(movedPackageResultMarker), false, "package replacement must fail before result hard-link execution");
+  if (process.platform === "win32") assert.equal(await exists(movedPackageResult), false, "retained package handle must deny the post-validation result rename on Windows");
+  assert.equal(await exists(path.join(movedPackageResult, "outputs", "result.json")), false, "package junction replacement cannot publish result externally");
+  await restoreMovedDirectory(fixturePackage, movedPackageResult);
   await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
 
   const replacementSource = path.join(fixtureRoot, "replacement-source.png");
