@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { build } from "esbuild";
 import typescript from "typescript";
 import * as runtime from "../src/services/generation-providers/codexTaskPackageRuntime.mjs";
@@ -231,7 +231,7 @@ const cliPath = fileURLToPath(new URL("./run-codex-storyboard-job.mjs", import.m
 const fixtureRoot = await mkdtemp(path.join(tmpdir(), "codex-storyboard-contract-fixture-"));
 const fixturePackage = path.join(fixtureRoot, "package");
 const fixtureCandidate = path.join(fixtureRoot, "candidate.png");
-const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M/wHwAFAAH/e+m+7wAAAABJRU5ErkJggg==", "base64");
+const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg==", "base64");
 const hashBytes = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const canonicalizeForDigest = (value) => Array.isArray(value)
   ? value.map(canonicalizeForDigest)
@@ -267,21 +267,42 @@ const writeFixturePackage = async () => {
   return request;
 };
 const runCli = (...args) => spawnSync(process.execPath, [cliPath, ...args], { encoding: "utf8" });
+const runCliWithEnv = (env, ...args) => spawnSync(process.execPath, [cliPath, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+const runCliAsync = (...args) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.on("error", reject);
+  child.on("close", (status) => resolve({ status, stdout, stderr }));
+});
+const exists = async (filePath) => {
+  try { await lstat(filePath); return true; } catch (error) { if (error.code === "ENOENT") return false; throw error; }
+};
 
 try {
   const cliRequest = await writeFixturePackage();
+  const linkedPackage = path.join(fixtureRoot, "linked-package");
+  await symlink(fixturePackage, linkedPackage, "junction");
+  const symlinkedPackage = runCli("inspect", "--package", linkedPackage);
+  assert.equal(symlinkedPackage.status, 12);
+  assert.match(symlinkedPackage.stderr, /codex_storyboard_cli_package_invalid/);
   const inspected = runCli("inspect", "--package", fixturePackage);
   assert.equal(inspected.status, 0, inspected.stderr);
   const inspection = JSON.parse(inspected.stdout);
   assert.equal(inspection.jobId, cliRequest.jobId);
   assert.equal(inspection.shotId, cliRequest.shotId);
   assert.equal(inspection.requestDigest, hashBytes(Buffer.from(JSON.stringify(canonicalizeForDigest(cliRequest)))));
-  assert.deepEqual(inspection.referencedImagePaths, await Promise.all(cliRequest.references.map((reference) => realpath(path.join(fixturePackage, reference.relativePath)))));
+  assert.deepEqual(inspection.referencedImagePaths.map((filePath) => path.basename(filePath)), cliRequest.references.map((reference, index) => `${String(index + 1).padStart(2, "0")}-${reference.id}.${reference.mimeType === "image/jpeg" ? "jpg" : "png"}`));
   assert.deepEqual(inspection.referenceUsages, cliRequest.references.map((reference) => reference.usage));
   assert.deepEqual(inspection.referenceInstructions, cliRequest.references.map((reference) => reference.instruction));
   assert.match(inspection.compiledPrompt, /Picture 5 \[style_only\]: Use only the cool-blue lighting palette\./);
+  assert.match(inspection.inspectionRoot, /codex-storyboard-inspection-/);
+  assert.ok(inspection.referencedImagePaths.every((filePath) => filePath.startsWith(inspection.inspectionRoot)), "inspect exposes staged immutable snapshots rather than source paths");
+  assert.ok((await Promise.all(inspection.referencedImagePaths.map((filePath) => lstat(filePath)))).every((entry) => !entry.isSymbolicLink()), "inspect never emits a symlink path");
 
-  await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), Buffer.concat([tinyPng, Buffer.from("mutated")]));
+  await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==", "base64"));
   const mutated = runCli("inspect", "--package", fixturePackage);
   assert.equal(mutated.status, 11);
   assert.match(mutated.stderr, /codex_storyboard_cli_reference_digest_mismatch/);
@@ -301,7 +322,55 @@ try {
   assert.match(escapedPath.stderr, /codex_storyboard_cli_reference_path_invalid/);
   await writeFixturePackage();
 
+  const malformedReferenceCases = [
+    [Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1]), "24-byte pseudo PNG"],
+    [Buffer.concat([tinyPng.subarray(0, -1), Buffer.from([tinyPng.at(-1) ^ 1])]), "bad PNG CRC"],
+    [Buffer.concat([tinyPng.subarray(0, tinyPng.indexOf(Buffer.from("IDAT")) - 4), tinyPng.subarray(tinyPng.indexOf(Buffer.from("IEND")) - 4)]), "missing IDAT"],
+    [tinyPng.subarray(0, tinyPng.indexOf(Buffer.from("IEND")) - 4), "missing IEND"],
+    [Buffer.concat([tinyPng, Buffer.from([0])]), "trailing PNG bytes"],
+    [Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]), "truncated JPEG"]
+  ];
+  for (const [malformed, label] of malformedReferenceCases) {
+    await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), malformed);
+    const malformedReference = runCli("inspect", "--package", fixturePackage);
+    assert.equal(malformedReference.status, 11, label);
+    assert.match(malformedReference.stderr, /codex_storyboard_cli_reference_image_invalid/, label);
+  }
+  await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), tinyPng);
+
   await writeFile(fixtureCandidate, tinyPng);
+  await writeFile(fixtureCandidate, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1]));
+  const malformedCandidate = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(malformedCandidate.status, 14);
+  assert.match(malformedCandidate.stderr, /codex_storyboard_cli_candidate_invalid/);
+  await writeFile(fixtureCandidate, tinyPng);
+
+  await mkdir(path.join(fixturePackage, "outputs"), { recursive: true });
+  await writeFile(path.join(fixturePackage, "outputs", "result.json"), "preexisting");
+  const preexistingResult = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(preexistingResult.status, 13);
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), false, "a preexisting result must not leave an orphan candidate");
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const injectedResultFailure = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_TEST_FAIL_RESULT_PUBLISH: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(injectedResultFailure.status, 15);
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), false, "a result publication failure rolls back only its candidate");
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "result.json")), false);
+
+  const writeWindowSwap = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_TEST_SWAP_OUTPUTS_BEFORE_LINK: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(writeWindowSwap.status, 15);
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), false, "a replaced outputs directory cannot receive a candidate");
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "result.json")), false, "a replaced outputs directory cannot receive a receipt");
+
+  const concurrent = await Promise.all([
+    runCliAsync("complete", "--package", fixturePackage, "--candidate", fixtureCandidate),
+    runCliAsync("complete", "--package", fixturePackage, "--candidate", fixtureCandidate)
+  ]);
+  assert.equal(concurrent.filter((entry) => entry.status === 0).length, 1, JSON.stringify(concurrent));
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), true);
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "result.json")), true);
+
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
   const completed = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(completed.status, 0, completed.stderr);
   const completedResult = JSON.parse(await readFile(path.join(fixturePackage, "outputs", "result.json"), "utf8"));
@@ -314,6 +383,7 @@ try {
   const existingOutput = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(existingOutput.status, 13);
   assert.match(existingOutput.stderr, /codex_storyboard_cli_output_exists/);
+  await rm(inspection.inspectionRoot, { recursive: true, force: true });
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true });
 }

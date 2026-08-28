@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { lstat, link, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, link, mkdir, mkdtemp, opendir, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { inflateSync } from "node:zlib";
 
 const PROVIDER = "codex_task_package";
 const USAGES = new Set([
@@ -43,6 +45,18 @@ const canonicalize = (value) => Array.isArray(value)
     : value;
 const canonicalRequestDigest = (request) => sha256(Buffer.from(JSON.stringify(canonicalize(request))));
 const hasContainedPath = (root, target) => target === root || target.startsWith(`${root}${path.sep}`);
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const MAX_IMAGE_BYTES = 512 * 1024 * 1024;
+const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
+  return value >>> 0;
+});
+const crc32 = (bytes) => {
+  let value = 0xffffffff;
+  for (const byte of bytes) value = crcTable[(value ^ byte) & 0xff] ^ (value >>> 8);
+  return (value ^ 0xffffffff) >>> 0;
+};
 
 function validateRequest(value) {
   exactKeys(value, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "createdAt", "prompt", "references", "acceptedImagePath", "expectedOutput"], "codex_storyboard_cli_request_invalid");
@@ -77,46 +91,155 @@ function validateRequest(value) {
   return value;
 }
 
-function inspectImage(bytes, invalidCode, exitCode) {
-  if (bytes.length >= 24 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-    && bytes.readUInt32BE(8) === 13 && bytes.subarray(12, 16).toString("ascii") === "IHDR") {
-    const width = bytes.readUInt32BE(16);
-    const height = bytes.readUInt32BE(20);
-    if (width > 0 && height > 0) return { width, height, mimeType: "image/png" };
+function inspectPng(bytes, invalidCode, exitCode) {
+  if (bytes.length < 8 || !bytes.subarray(0, 8).equals(PNG_SIGNATURE)) fail(invalidCode, exitCode);
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let expectedScanlines = 0;
+  let seenIhdr = false;
+  let seenIdat = false;
+  let seenIend = false;
+  const idat = [];
+  while (offset < bytes.length) {
+    if (offset + 12 > bytes.length) fail(invalidCode, exitCode);
+    const length = bytes.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const crcEnd = dataEnd + 4;
+    if (dataEnd < dataStart || crcEnd > bytes.length) fail(invalidCode, exitCode);
+    const type = bytes.subarray(typeStart, dataStart).toString("ascii");
+    if (!/^[A-Za-z]{4}$/.test(type) || crc32(bytes.subarray(typeStart, dataEnd)) !== bytes.readUInt32BE(dataEnd)) fail(invalidCode, exitCode);
+    const data = bytes.subarray(dataStart, dataEnd);
+    if (!seenIhdr && type !== "IHDR") fail(invalidCode, exitCode);
+    if (type === "IHDR") {
+      if (seenIhdr || length !== 13) fail(invalidCode, exitCode);
+      seenIhdr = true;
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      const bitDepth = data[8];
+      const colorType = data[9];
+      if (!width || !height || data[10] !== 0 || data[11] !== 0 || data[12] !== 0) fail(invalidCode, exitCode);
+      const samples = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
+      const allowedDepths = colorType === 3 ? [1, 2, 4, 8] : [8, 16];
+      if (!samples || !allowedDepths.includes(bitDepth)) fail(invalidCode, exitCode);
+      const rowBytes = Math.ceil((width * samples * bitDepth) / 8);
+      expectedScanlines = height * (rowBytes + 1);
+      if (!Number.isSafeInteger(expectedScanlines) || expectedScanlines > MAX_IMAGE_BYTES) fail(invalidCode, exitCode);
+    } else if (type === "IDAT") {
+      if (!seenIhdr || seenIend) fail(invalidCode, exitCode);
+      seenIdat = true;
+      idat.push(data);
+    } else if (type === "IEND") {
+      if (!seenIhdr || !seenIdat || seenIend || length !== 0 || crcEnd !== bytes.length) fail(invalidCode, exitCode);
+      seenIend = true;
+    } else if (seenIend) {
+      fail(invalidCode, exitCode);
+    }
+    offset = crcEnd;
   }
-  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
-    let offset = 2;
-    while (offset + 9 < bytes.length) {
-      if (bytes[offset] !== 0xff) break;
-      const marker = bytes[offset + 1];
-      offset += 2;
-      while (marker === 0xff && bytes[offset] === 0xff) offset += 1;
-      if (marker === 0xd8 || marker === 0xd9) continue;
-      if (offset + 2 > bytes.length) break;
-      const length = bytes.readUInt16BE(offset);
-      if (length < 2 || offset + length > bytes.length) break;
-      if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
-        const height = bytes.readUInt16BE(offset + 3);
-        const width = bytes.readUInt16BE(offset + 5);
-        if (width > 0 && height > 0) return { width, height, mimeType: "image/jpeg" };
-        break;
+  if (!seenIhdr || !seenIdat || !seenIend || offset !== bytes.length) fail(invalidCode, exitCode);
+  try {
+    if (inflateSync(Buffer.concat(idat), { maxOutputLength: expectedScanlines }).length !== expectedScanlines) fail(invalidCode, exitCode);
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    fail(invalidCode, exitCode);
+  }
+  return { width, height, mimeType: "image/png" };
+}
+
+const isSof = (marker) => (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf);
+function inspectJpeg(bytes, invalidCode, exitCode) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) fail(invalidCode, exitCode);
+  let offset = 2;
+  let inEntropy = false;
+  let sawSos = false;
+  let dimensions = null;
+  while (offset < bytes.length) {
+    if (inEntropy) {
+      while (offset < bytes.length && bytes[offset] !== 0xff) offset += 1;
+      if (offset + 1 >= bytes.length) fail(invalidCode, exitCode);
+      while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+      if (offset >= bytes.length) fail(invalidCode, exitCode);
+      const entropyMarker = bytes[offset];
+      offset += 1;
+      if (entropyMarker === 0x00 || (entropyMarker >= 0xd0 && entropyMarker <= 0xd7)) continue;
+      if (entropyMarker === 0xd9) {
+        if (offset !== bytes.length || !dimensions || !sawSos) fail(invalidCode, exitCode);
+        return { ...dimensions, mimeType: "image/jpeg" };
       }
-      offset += length;
+      offset -= 2;
+      inEntropy = false;
+      continue;
+    }
+    if (bytes[offset] !== 0xff) fail(invalidCode, exitCode);
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) fail(invalidCode, exitCode);
+    const marker = bytes[offset++];
+    if (marker === 0x00 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) fail(invalidCode, exitCode);
+    if (marker === 0xd9) {
+      if (offset !== bytes.length || !dimensions || !sawSos) fail(invalidCode, exitCode);
+      return { ...dimensions, mimeType: "image/jpeg" };
+    }
+    if (marker === 0x01) continue;
+    if (offset + 2 > bytes.length) fail(invalidCode, exitCode);
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) fail(invalidCode, exitCode);
+    const dataStart = offset + 2;
+    const dataEnd = offset + length;
+    if (isSof(marker)) {
+      if (length < 8) fail(invalidCode, exitCode);
+      const height = bytes.readUInt16BE(dataStart + 1);
+      const width = bytes.readUInt16BE(dataStart + 3);
+      const components = bytes[dataStart + 5];
+      if (!width || !height || !components || length !== 8 + components * 3) fail(invalidCode, exitCode);
+      if (dimensions && (dimensions.width !== width || dimensions.height !== height)) fail(invalidCode, exitCode);
+      dimensions = { width, height };
+    }
+    offset = dataEnd;
+    if (marker === 0xda) {
+      if (!dimensions || length < 6) fail(invalidCode, exitCode);
+      sawSos = true;
+      inEntropy = true;
     }
   }
   fail(invalidCode, exitCode);
 }
 
+function inspectImage(bytes, invalidCode, exitCode) {
+  return bytes.subarray(0, 8).equals(PNG_SIGNATURE)
+    ? inspectPng(bytes, invalidCode, exitCode)
+    : inspectJpeg(bytes, invalidCode, exitCode);
+}
+
+async function assertNoLinkComponents(filePath, code, exitCode, allowMissingLeaf = false) {
+  const parsed = path.parse(path.resolve(filePath));
+  let current = parsed.root;
+  const components = path.relative(parsed.root, path.resolve(filePath)).split(path.sep).filter(Boolean);
+  for (const [index, component] of components.entries()) {
+    current = path.join(current, component);
+    let details;
+    try { details = await lstat(current); } catch (error) {
+      if (allowMissingLeaf && index === components.length - 1 && error?.code === "ENOENT") return;
+      fail(code, exitCode);
+    }
+    if (details.isSymbolicLink()) fail(code, exitCode);
+  }
+}
+
+const sameIdentity = (left, right) => left.dev === right.dev && left.ino === right.ino;
 async function stableRead(filePath, root, code, exitCode) {
-  let before;
   try {
-    before = await stat(filePath);
-    if (!before.isFile()) fail(code, exitCode);
+    await assertNoLinkComponents(filePath, "codex_storyboard_cli_reference_path_invalid", EXIT.path, true);
+    const before = await lstat(filePath);
+    if (!before.isFile() || before.isSymbolicLink()) fail(code, exitCode);
     const canonical = await realpath(filePath);
     if (!hasContainedPath(root, canonical)) fail("codex_storyboard_cli_reference_path_invalid", EXIT.path);
     const bytes = await readFile(filePath);
-    const after = await stat(filePath);
-    if (!after.isFile() || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs) fail(code, exitCode);
+    const after = await lstat(filePath);
+    if (!after.isFile() || after.isSymbolicLink() || !sameIdentity(before, after) || before.size !== after.size || before.mtimeMs !== after.mtimeMs) fail(code, exitCode);
+    await assertNoLinkComponents(filePath, "codex_storyboard_cli_reference_path_invalid", EXIT.path);
     return bytes;
   } catch (error) {
     if (error instanceof CliError) throw error;
@@ -128,8 +251,10 @@ async function loadPackage(packageArgument) {
   if (!path.isAbsolute(packageArgument ?? "")) fail("codex_storyboard_cli_package_invalid", EXIT.path);
   let packagePath;
   try {
+    await assertNoLinkComponents(packageArgument, "codex_storyboard_cli_package_invalid", EXIT.path);
     packagePath = await realpath(packageArgument);
-    if (!(await stat(packagePath)).isDirectory()) fail("codex_storyboard_cli_package_invalid", EXIT.path);
+    const packageDetails = await lstat(packagePath);
+    if (!packageDetails.isDirectory() || packageDetails.isSymbolicLink()) fail("codex_storyboard_cli_package_invalid", EXIT.path);
   } catch (error) {
     if (error instanceof CliError) throw error;
     fail("codex_storyboard_cli_package_invalid", EXIT.path);
@@ -156,6 +281,29 @@ async function loadPackage(packageArgument) {
   return { packagePath, request, snapshots, requestDigest: canonicalRequestDigest(request) };
 }
 
+async function stageSnapshots(job) {
+  const inspectionRoot = await mkdtemp(path.join(tmpdir(), "codex-storyboard-inspection-"));
+  try {
+    await chmod(inspectionRoot, 0o700);
+    const canonicalInspectionRoot = await realpath(inspectionRoot);
+    const referencedImagePaths = [];
+    for (const [index, snapshot] of job.snapshots.entries()) {
+      const extension = snapshot.reference.mimeType === "image/jpeg" ? ".jpg" : ".png";
+      const stagedPath = path.join(canonicalInspectionRoot, `${String(index + 1).padStart(2, "0")}-${snapshot.reference.id}${extension}`);
+      await writeFile(stagedPath, snapshot.bytes, { flag: "wx", mode: 0o400 });
+      await chmod(stagedPath, 0o400);
+      const stagedBytes = await stableRead(stagedPath, canonicalInspectionRoot, "codex_storyboard_cli_reference_snapshot_invalid", EXIT.reference);
+      const image = inspectImage(stagedBytes, "codex_storyboard_cli_reference_snapshot_invalid", EXIT.reference);
+      if (sha256(stagedBytes) !== snapshot.reference.sha256 || image.width !== snapshot.reference.width || image.height !== snapshot.reference.height || image.mimeType !== snapshot.reference.mimeType) fail("codex_storyboard_cli_reference_snapshot_invalid", EXIT.reference);
+      referencedImagePaths.push(stagedPath);
+    }
+    return { inspectionRoot: canonicalInspectionRoot, referencedImagePaths };
+  } catch (error) {
+    await rm(inspectionRoot, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 function compilePrompt(request) {
   return [...request.references.map((reference, index) => `Picture ${index + 1} [${reference.usage}]: ${reference.instruction}`), request.prompt.primaryRequest].join("\n");
 }
@@ -164,12 +312,26 @@ async function pathExists(filePath) {
   try { await lstat(filePath); return true; } catch (error) { if (error?.code === "ENOENT") return false; throw error; }
 }
 
-async function publishExclusive(directory, filename, bytes) {
+async function assertStableOutputs(guard) {
+  await assertNoLinkComponents(guard.outputPath, "codex_storyboard_cli_publish_failed", EXIT.publish);
+  const details = await lstat(guard.outputPath);
+  if (!details.isDirectory() || details.isSymbolicLink() || !sameIdentity(details, guard.identity) || !hasContainedPath(guard.packagePath, await realpath(guard.outputPath))) fail("codex_storyboard_cli_publish_failed", EXIT.publish);
+}
+
+async function publishExclusive(guard, filename, bytes, injectFailure = false) {
+  const { outputPath: directory } = guard;
   const finalPath = path.join(directory, filename);
+  await assertStableOutputs(guard);
   if (await pathExists(finalPath)) fail("codex_storyboard_cli_output_exists", EXIT.outputExists);
   const temporary = path.join(directory, `.${filename}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
   try {
-    await writeFile(temporary, bytes, { flag: "wx" });
+    await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
+    if (process.env.NODE_ENV === "test" && process.env.CODEX_STORYBOARD_TEST_SWAP_OUTPUTS_BEFORE_LINK === "1" && filename === "candidate.png") {
+      await rm(directory, { recursive: true, force: true });
+      await mkdir(directory, { recursive: false, mode: 0o700 });
+    }
+    await assertStableOutputs(guard);
+    if (injectFailure) fail("codex_storyboard_cli_publish_failed", EXIT.publish);
     try {
       await link(temporary, finalPath);
     } catch (error) {
@@ -182,19 +344,38 @@ async function publishExclusive(directory, filename, bytes) {
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
   }
-  return finalPath;
+  await assertStableOutputs(guard);
+  const identity = await lstat(finalPath);
+  if (!identity.isFile() || identity.isSymbolicLink() || sha256(await readFile(finalPath)) !== sha256(bytes)) fail("codex_storyboard_cli_publish_failed", EXIT.publish);
+  return { finalPath, identity, digest: sha256(bytes) };
 }
 
 async function ensureOutputs(packagePath) {
   const outputPath = path.join(packagePath, "outputs");
   try {
     await mkdir(outputPath, { recursive: true });
+    await assertNoLinkComponents(outputPath, "codex_storyboard_cli_publish_failed", EXIT.publish);
     const details = await lstat(outputPath);
     if (!details.isDirectory() || details.isSymbolicLink() || !hasContainedPath(packagePath, await realpath(outputPath))) fail("codex_storyboard_cli_publish_failed", EXIT.publish);
-    return outputPath;
+    const directory = await opendir(outputPath);
+    return { packagePath, outputPath, identity: details, directory };
   } catch (error) {
     if (error instanceof CliError) throw error;
     fail("codex_storyboard_cli_publish_failed", EXIT.publish);
+  }
+}
+
+async function rollbackPublishedCandidate(guard, candidate) {
+  try {
+    await assertStableOutputs(guard);
+    const current = await lstat(candidate.finalPath);
+    if (!current.isFile() || current.isSymbolicLink() || !sameIdentity(current, candidate.identity)) return;
+    if (sha256(await readFile(candidate.finalPath)) !== candidate.digest) return;
+    await assertStableOutputs(guard);
+    const beforeDelete = await lstat(candidate.finalPath);
+    if (sameIdentity(beforeDelete, candidate.identity) && sha256(await readFile(candidate.finalPath)) === candidate.digest) await unlink(candidate.finalPath);
+  } catch {
+    // A changed output path or candidate belongs to another writer; never delete it.
   }
 }
 
@@ -216,13 +397,15 @@ async function main() {
   const job = await loadPackage(packageArgument);
   const compiledPrompt = compilePrompt(job.request);
   if (command === "inspect") {
+    const staged = await stageSnapshots(job);
     process.stdout.write(`${JSON.stringify({
       jobId: job.request.jobId,
       projectId: job.request.projectId,
       episodeId: job.request.episodeId,
       shotId: job.request.shotId,
       requestDigest: job.requestDigest,
-      referencedImagePaths: job.snapshots.map(({ filePath }) => filePath),
+      inspectionRoot: staged.inspectionRoot,
+      referencedImagePaths: staged.referencedImagePaths,
       referenceUsages: job.request.references.map(({ usage }) => usage),
       referenceInstructions: job.request.references.map(({ instruction }) => instruction),
       compiledPrompt
@@ -232,14 +415,18 @@ async function main() {
   if (!path.isAbsolute(candidateArgument)) fail("codex_storyboard_cli_candidate_path_invalid", EXIT.candidate);
   let candidate;
   try {
-    candidate = await readFile(candidateArgument);
+    const candidatePath = await realpath(candidateArgument);
+    candidate = await stableRead(candidatePath, path.dirname(candidatePath), "codex_storyboard_cli_candidate_missing", EXIT.candidate);
   } catch {
     fail("codex_storyboard_cli_candidate_missing", EXIT.candidate);
   }
   const image = inspectImage(candidate, "codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   if (image.mimeType !== "image/png") fail("codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   const outputs = await ensureOutputs(job.packagePath);
-  await publishExclusive(outputs, "candidate.png", candidate);
+  try {
+    await assertStableOutputs(outputs);
+    if (await pathExists(path.join(outputs.outputPath, "candidate.png")) || await pathExists(path.join(outputs.outputPath, "result.json"))) fail("codex_storyboard_cli_output_exists", EXIT.outputExists);
+    const publishedCandidate = await publishExclusive(outputs, "candidate.png", candidate);
   const result = {
     schemaVersion: 1,
     jobId: job.request.jobId,
@@ -255,8 +442,17 @@ async function main() {
     completedAt: new Date().toISOString(),
     state: "completed"
   };
-  await publishExclusive(outputs, "result.json", Buffer.from(`${JSON.stringify(result, null, 2)}\n`));
-  process.stdout.write(`${JSON.stringify({ jobId: result.jobId, resultPath: path.join(outputs, "result.json") })}\n`);
+    try {
+      await publishExclusive(outputs, "result.json", Buffer.from(`${JSON.stringify(result, null, 2)}\n`), process.env.NODE_ENV === "test" && process.env.CODEX_STORYBOARD_TEST_FAIL_RESULT_PUBLISH === "1");
+    } catch (error) {
+      await rollbackPublishedCandidate(outputs, publishedCandidate);
+      throw error;
+    }
+    await assertStableOutputs(outputs);
+    process.stdout.write(`${JSON.stringify({ jobId: result.jobId, resultPath: path.join(outputs.outputPath, "result.json") })}\n`);
+  } finally {
+    await outputs.directory.close().catch(() => {});
+  }
 }
 
 main().catch((error) => {
