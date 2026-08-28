@@ -1620,7 +1620,7 @@ export function App() {
           </header>
           <div className="aux-drawer-body">
             <LazyAuxPanelContent
-              pipelineContent={pipelinePanelMounted ? <AdvancedPipelinePanel hidden={auxPanelSection !== "pipeline"} /> : undefined}
+              pipelineContent={pipelinePanelMounted ? <AdvancedPipelinePanel hidden={auxPanelSection !== "pipeline"} projectPath={activeWorkspacePath} /> : undefined}
               section={auxPanelSection}
             />
           </div>
@@ -1653,7 +1653,7 @@ export function App() {
 
   return (
     <WorkbenchShell
-      advancedTools={<AdvancedToolsView>{advancedTools}</AdvancedToolsView>}
+      advancedTools={<AdvancedToolsView projectPath={activeWorkspacePath}>{advancedTools}</AdvancedToolsView>}
       advancedToolsOpen={advancedToolsOpen}
       attentionStages={attentionStages}
       commands={directorCommands}

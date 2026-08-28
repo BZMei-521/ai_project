@@ -2,7 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { selectShotStartFrame, useStoryboardStore } from "../storyboard-core/store";
 import type { Asset, AudioTrack, Shot } from "../storyboard-core/types";
 import { pushToast } from "../ui/toastStore";
-import { invokeDesktopCommand, isWebBridgeRuntime, toDesktopMediaSource } from "../platform/desktopBridge";
+import {
+  importCodexStoryboardResult,
+  invokeDesktopCommand,
+  isTauriRuntime,
+  isWebBridgeRuntime,
+  prepareCodexStoryboardJob,
+  toDesktopMediaSource
+} from "../platform/desktopBridge";
+import {
+  CODEX_STORYBOARD_REFERENCE_USAGES
+} from "../../services/generation-providers/codexTaskPackage";
 import {
   checkComfyModelHealth,
   concatShotVideos,
@@ -37,7 +47,10 @@ import {
   stripLocalMotionPresetToken,
   validateWorkflowJsonSyntax,
   validateWorkflowTemplate,
+  buildCodexStoryboardPackageRequest,
+  buildDefaultCodexStoryboardReferenceSelections,
   type ComfySettings,
+  type CodexStoryboardReferenceSelection,
   type CharacterRedrawScope,
   type CharacterGenerationPreflightReport,
   type LocalMotionPreset,
@@ -87,7 +100,8 @@ type StoryboardImageWorkflowMode =
   | "builtin_klein_reference"
   | "builtin_zimage"
   | "builtin_qwen"
-  | "mature_asset_guided";
+  | "mature_asset_guided"
+  | "codex_task_package";
 
 type AssetWorkflowModeSpec = {
   label: string;
@@ -97,6 +111,19 @@ type AssetWorkflowModeSpec = {
   recommendedPlugins: string[];
   notes: string[];
 };
+
+export function createCodexStoryboardJobId(input: {
+  shotId: string;
+  now: number;
+  randomBytes: Uint32Array;
+}): string {
+  const shotId = input.shotId.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 48);
+  if (!shotId) throw new Error("codex_storyboard_shotId_invalid");
+  if (!Number.isSafeInteger(input.now) || input.now < 0) throw new Error("codex_storyboard_created_at_invalid");
+  if (input.randomBytes.length !== 2) throw new Error("codex_storyboard_random_bytes_invalid");
+  const randomHex = Array.from(input.randomBytes, (value) => value.toString(16).padStart(8, "0")).join("");
+  return `codex-${shotId}-${input.now.toString(36)}-${randomHex}`;
+}
 
 const DEFAULT_CHARACTER_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
 const DEFAULT_SKYBOX_ASSET_MODEL = "sd_xl_base_1.0.safetensors";
@@ -696,6 +723,19 @@ function workflowNeedsBuiltinMatureStoryboardRewrite(workflowJson: string): bool
 }
 
 function buildStoryboardImageModeSpec(mode: StoryboardImageWorkflowMode): AssetWorkflowModeSpec {
+  if (mode === "codex_task_package") {
+    return {
+      label: "Codex 生图任务包",
+      summary: "导出当前镜头及有序参考图，由当前 Codex 任务显式处理并回传候选图。",
+      requiredNodes: [],
+      requiredModels: [],
+      recommendedPlugins: [],
+      notes: [
+        "需要在 Tauri 桌面版中导出和导入任务包。",
+        "需要一个当前 Codex 任务处理导出目录；导入候选图后仍需人工接受或拒绝。"
+      ]
+    };
+  }
   if (mode === "builtin_klein_reference") {
     return {
       label: "FLUX.2 Klein 三视图身份分镜流程",
@@ -2885,7 +2925,8 @@ function loadSettings(): ComfySettings {
       parsed.storyboardImageWorkflowMode === "builtin_klein_reference" ||
       parsed.storyboardImageWorkflowMode === "builtin_zimage" ||
       parsed.storyboardImageWorkflowMode === "builtin_qwen" ||
-      parsed.storyboardImageWorkflowMode === "mature_asset_guided"
+      parsed.storyboardImageWorkflowMode === "mature_asset_guided" ||
+      parsed.storyboardImageWorkflowMode === "codex_task_package"
         ? parsed.storyboardImageWorkflowMode
         : DEFAULT_STORYBOARD_IMAGE_WORKFLOW_MODE;
     const effectiveCharacterMode = resolvedCharacterMode;
@@ -5059,9 +5100,10 @@ function normalizeImportedCharacterProfilesFromShots(parsed: {
   return collected;
 }
 
-export function ComfyPipelinePanel() {
+export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
   const currentBuildId = useMemo(() => getCurrentStoryboardBuildId(), []);
   const project = useStoryboardStore((state) => state.project);
+  const sequences = useStoryboardStore((state) => state.sequences);
   const shots = useStoryboardStore((state) => state.shots);
   const generationTasks = useStoryboardStore((state) => state.generationTasks);
   const layers = useStoryboardStore((state) => state.layers);
@@ -5077,6 +5119,10 @@ export function ComfyPipelinePanel() {
   const upsertAudioTrack = useStoryboardStore((state) => state.upsertAudioTrack);
   const updateAudioTrack = useStoryboardStore((state) => state.updateAudioTrack);
   const removeAudioTrack = useStoryboardStore((state) => state.removeAudioTrack);
+  const upsertGenerationTask = useStoryboardStore((state) => state.upsertGenerationTask);
+  const markGenerationTaskNeedsReview = useStoryboardStore((state) => state.markGenerationTaskNeedsReview);
+  const markGenerationTaskCancelled = useStoryboardStore((state) => state.markGenerationTaskCancelled);
+  const acceptGenerationTaskCandidate = useStoryboardStore((state) => state.acceptGenerationTaskCandidate);
   const [storyText, setStoryText] = useState("");
   const [scriptText, setScriptText] = useState(DEFAULT_RIVER_CONTINUITY_TEST_SCRIPT_JSON);
   const [autoProvisionAssets, setAutoProvisionAssets] = useState(true);
@@ -5121,6 +5167,16 @@ export function ComfyPipelinePanel() {
   const [characterWorkflowDiagnostic, setCharacterWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const [skyboxWorkflowDiagnostic, setSkyboxWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
   const [storyboardWorkflowDiagnostic, setStoryboardWorkflowDiagnostic] = useState<AssetWorkflowDiagnostic | null>(null);
+  const [codexSpatialFramePath, setCodexSpatialFramePath] = useState("");
+  const [codexReferences, setCodexReferences] = useState<CodexStoryboardReferenceSelection[]>([
+    {
+      id: "spatial-authority",
+      sourcePath: "",
+      usage: "spatial_authority",
+      instruction: "Use this image as the spatial authority for camera, blocking, poses, framing, and composition."
+    }
+  ]);
+  const [codexTaskMessage, setCodexTaskMessage] = useState("");
   const checkingRef = useRef(false);
   const characterModelVisible = useMemo(() => {
     const selected = settings.characterAssetModelName?.trim();
@@ -5244,12 +5300,184 @@ export function ComfyPipelinePanel() {
     () => scopedShots.find((shot) => shot.id === selectedShotId) ?? null,
     [scopedShots, selectedShotId]
   );
+  const currentSequence = useMemo(
+    () => sequences.find((sequence) => sequence.id === currentSequenceId) ?? null,
+    [currentSequenceId, sequences]
+  );
+  const latestCodexTask = useMemo(
+    () => generationTasks
+      .filter((task) => task.shotId === selectedShot?.id && task.externalProvider === "codex_task_package")
+      .slice()
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0] ?? null,
+    [generationTasks, selectedShot?.id]
+  );
+  const codexDesktopError = !projectPath.trim()
+    ? "codex_storyboard_project_path_missing"
+    : !isTauriRuntime()
+      ? "codex_storyboard_requires_tauri_runtime"
+      : "";
   const selectedCharacterLayers = useMemo(
     () => selectedShot
       ? layers.filter((layer) => layer.shotId === selectedShot.id && Boolean(layer.characterGenerationMetadata))
       : [],
     [layers, selectedShot]
   );
+
+  const updateCodexReference = (
+    id: string,
+    field: "sourcePath" | "usage" | "instruction",
+    value: string
+  ) => {
+    setCodexReferences((previous) => previous.map((reference) => (
+      reference.id === id
+        ? { ...reference, [field]: value }
+        : reference
+    )) as CodexStoryboardReferenceSelection[]);
+  };
+
+  const moveCodexReference = (id: string, direction: "up" | "down") => {
+    setCodexReferences((previous) => {
+      const index = previous.findIndex((reference) => reference.id === id);
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || target < 0 || target >= previous.length) return previous;
+      const next = previous.slice();
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const removeCodexReference = (id: string) => {
+    setCodexReferences((previous) => previous.length <= 1
+      ? previous
+      : previous.filter((reference) => reference.id !== id));
+  };
+
+  const addCodexReference = () => {
+    setCodexReferences((previous) => previous.length >= 16
+      ? previous
+      : [
+          ...previous,
+          {
+            id: `reference-${previous.length + 1}-${Date.now().toString(36)}`,
+            sourcePath: "",
+            usage: "style_only",
+            instruction: ""
+          }
+        ]);
+  };
+
+  const fillDefaultCodexReferences = () => {
+    if (!selectedShot) {
+      setCodexTaskMessage("codex_storyboard_shot_missing");
+      return;
+    }
+    try {
+      const defaults = buildDefaultCodexStoryboardReferenceSelections({
+        shot: selectedShot,
+        assets,
+        spatialFramePath: codexSpatialFramePath
+      });
+      setCodexReferences(defaults.map((reference) => ({ ...reference })));
+      setCodexTaskMessage(`已填充 ${defaults.length} 张默认参考图；空间构图路径由用户显式提供。`);
+    } catch (error) {
+      setCodexTaskMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const exportSelectedCodexJob = async () => {
+    try {
+      if (codexDesktopError) throw new Error(codexDesktopError);
+      if (!selectedShot) throw new Error("codex_storyboard_shot_missing");
+      if (!currentSequence) throw new Error("codex_storyboard_sequence_missing");
+      if (codexReferences.length < 1 || codexReferences.length > 16) {
+        throw new Error("codex_storyboard_references_invalid");
+      }
+      const now = Date.now();
+      const jobId = createCodexStoryboardJobId({
+        shotId: selectedShot.id,
+        now,
+        randomBytes: crypto.getRandomValues(new Uint32Array(2))
+      });
+      const request = buildCodexStoryboardPackageRequest({
+        jobId,
+        projectPath: projectPath.trim(),
+        project,
+        sequence: currentSequence,
+        shot: selectedShot,
+        assets,
+        references: codexReferences.map((reference) => ({ ...reference })),
+        createdAt: new Date(now).toISOString()
+      });
+      const receipt = await prepareCodexStoryboardJob(request);
+      upsertGenerationTask({
+        id: jobId,
+        batchId: jobId,
+        shotId: selectedShot.id,
+        workflowId: "codex_task_package",
+        stage: "exported",
+        status: "queued",
+        promptHash: receipt.requestDigest,
+        outputPath: receipt.packagePath,
+        externalProvider: "codex_task_package",
+        externalJobId: receipt.jobId,
+        externalRequestDigest: receipt.requestDigest,
+        startedAt: request.createdAt
+      });
+      setCodexTaskMessage(`已导出 ${receipt.jobId}：${receipt.packagePath}`);
+      pushToast("Codex 任务包已导出", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setCodexTaskMessage(message);
+      pushToast(message, "error");
+    }
+  };
+
+  const copyCodexJobInstruction = async () => {
+    if (!latestCodexTask?.outputPath) return;
+    const instruction = [
+      "请在当前 Codex 任务中处理这个分镜任务包。",
+      `任务 ID：${latestCodexTask.externalJobId ?? latestCodexTask.id}`,
+      `任务包目录：${latestCodexTask.outputPath}`,
+      "按 request.json 中的图片顺序和使用说明生成 outputs/candidate.png 与 outputs/result.json。",
+      "返回应用后只进入 needs_review；Codex 候选图不会自动发布，必须由用户显式接受。"
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(instruction);
+      setCodexTaskMessage("Codex 处理指令已复制");
+    } catch (error) {
+      setCodexTaskMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const importSelectedCodexResult = async () => {
+    try {
+      if (codexDesktopError) throw new Error(codexDesktopError);
+      if (!selectedShot || !currentSequence || !latestCodexTask?.outputPath) {
+        throw new Error("codex_storyboard_exported_task_missing");
+      }
+      const receipt = await importCodexStoryboardResult({
+        schemaVersion: 1,
+        jobId: latestCodexTask.externalJobId ?? latestCodexTask.id,
+        projectId: project.id,
+        episodeId: currentSequence.id,
+        shotId: selectedShot.id,
+        provider: "codex_task_package",
+        projectPath: projectPath.trim(),
+        taskStatus: latestCodexTask.status === "cancelled"
+          ? "cancelled"
+          : latestCodexTask.status === "completed"
+            ? "accepted"
+            : "queued"
+      });
+      markGenerationTaskNeedsReview(latestCodexTask.id, receipt.candidatePath, ["codex_candidate"]);
+      setCodexTaskMessage(`候选图已导入，等待审查：${receipt.candidatePath}`);
+      pushToast("Codex 候选图已导入，等待人工审查", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setCodexTaskMessage(message);
+      pushToast(message, "error");
+    }
+  };
 
   const queueCurrentStoryboardShot = async () => {
     const shot = scopedShots.find((item) => item.id === useStoryboardStore.getState().selectedShotId) ?? scopedShots[0];
@@ -15697,6 +15925,7 @@ export function ComfyPipelinePanel() {
             鑷畾涔夐鏍兼湭鐗堟湰鍖栵紝涓嶈兘鐢熸垚鍙戝竷璇佹嵁
           </div>
         )}
+        {storyboardImageWorkflowMode !== "codex_task_package" && (<>
         <label className="comfy-script-block">
           分镜图工作流（JSON）
           <textarea
@@ -15725,6 +15954,7 @@ export function ComfyPipelinePanel() {
             当前分镜基模未出现在 Comfy checkpoint 下拉里：{settings.storyboardImageModelName}
           </div>
         )}
+        </>)}
         <label>
           分镜图工作流模式
           <select
@@ -15740,8 +15970,194 @@ export function ComfyPipelinePanel() {
             <option value="mature_asset_guided">成熟资产约束流程（推荐）</option>
             <option value="builtin_zimage">Z-Image-Turbo 快速分镜（当前可用）</option>
             <option value="builtin_qwen">内置 Qwen 分阶段模板（需补模型）</option>
+            <option value="codex_task_package">Codex 生图（任务包）</option>
           </select>
         </label>
+        {storyboardImageWorkflowMode === "codex_task_package" ? (
+          <>
+          {/* CODEX_TASK_PACKAGE_BRANCH_START */}
+          <div className="comfy-asset-mode-card" data-codex-task-package>
+            <div className="comfy-asset-mode-head">
+              <strong>{storyboardImageModeSpec.label}</strong>
+              <span>有序参考图 {codexReferences.length}/16</span>
+            </div>
+            <p>{storyboardImageModeSpec.summary}</p>
+            <p className="timeline-meta">
+              仅支持 Tauri 桌面版。Codex 候选图导入后不会自动发布，必须在此处显式接受或拒绝。
+            </p>
+            {codexDesktopError && (
+              <div className="timeline-meta comfy-inline-warning">
+                {codexDesktopError}：{codexDesktopError === "codex_storyboard_project_path_missing"
+                  ? "当前项目路径为空，无法导出任务包。"
+                  : "导出和导入要求 Tauri 桌面运行时；不会调用 Windows Web backend。"}
+              </div>
+            )}
+            <label>
+              空间构图参考路径（由用户显式提供）
+              <input
+                onChange={(event) => setCodexSpatialFramePath(event.target.value)}
+                placeholder="C:\\project\\references\\spatial.png"
+                type="text"
+                value={codexSpatialFramePath}
+              />
+            </label>
+            <div className="timeline-actions">
+              <button
+                className="btn-secondary"
+                disabled={!selectedShot}
+                onClick={fillDefaultCodexReferences}
+                type="button"
+              >
+                从当前镜头填充默认参考
+              </button>
+              <button
+                className="btn-ghost"
+                disabled={codexReferences.length >= 16}
+                onClick={addCodexReference}
+                type="button"
+              >
+                添加参考图
+              </button>
+            </div>
+            <div className="comfy-asset-diagnostic-list">
+              {codexReferences.length === 0 && <div>尚未添加参考图；导出要求 1-16 张。</div>}
+              {codexReferences.map((reference, index) => (
+                <div className="comfy-asset-mode-card" key={reference.id}>
+                  <div className="comfy-asset-mode-head">
+                    <strong>参考图 {index + 1}</strong>
+                    <div className="timeline-actions">
+                      <button
+                        aria-label={`上移参考图 ${index + 1}`}
+                        disabled={index === 0}
+                        onClick={() => moveCodexReference(reference.id, "up")}
+                        type="button"
+                      >
+                        上移
+                      </button>
+                      <button
+                        aria-label={`下移参考图 ${index + 1}`}
+                        disabled={index === codexReferences.length - 1}
+                        onClick={() => moveCodexReference(reference.id, "down")}
+                        type="button"
+                      >
+                        下移
+                      </button>
+                      <button
+                        aria-label={`移除参考图 ${index + 1}`}
+                        disabled={codexReferences.length <= 1}
+                        onClick={() => removeCodexReference(reference.id)}
+                        type="button"
+                      >
+                        移除
+                      </button>
+                    </div>
+                  </div>
+                  <label>
+                    图片路径
+                    <input
+                      onChange={(event) => updateCodexReference(reference.id, "sourcePath", event.target.value)}
+                      type="text"
+                      value={reference.sourcePath}
+                    />
+                  </label>
+                  <label>
+                    用途
+                    <select
+                      onChange={(event) => updateCodexReference(reference.id, "usage", event.target.value)}
+                      value={reference.usage}
+                    >
+                      {CODEX_STORYBOARD_REFERENCE_USAGES.map((usage) => (
+                        <option key={usage} value={usage}>{usage}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    使用说明
+                    <textarea
+                      onChange={(event) => updateCodexReference(reference.id, "instruction", event.target.value)}
+                      required
+                      rows={2}
+                      value={reference.instruction}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+            <div className="timeline-actions">
+              <button
+                disabled={Boolean(codexDesktopError) || !selectedShot}
+                onClick={() => void exportSelectedCodexJob()}
+                type="button"
+              >
+                导出 Codex 任务包
+              </button>
+              <button
+                disabled={!latestCodexTask?.outputPath}
+                onClick={() => void copyCodexJobInstruction()}
+                type="button"
+              >
+                复制 Codex 处理指令
+              </button>
+              <button
+                disabled={!latestCodexTask?.outputPath || Boolean(codexDesktopError)}
+                onClick={() => void importSelectedCodexResult()}
+                type="button"
+              >
+                检查并导入结果
+              </button>
+            </div>
+            {latestCodexTask && (
+              <div className="comfy-asset-diagnostic-grid">
+                <div>Job ID</div>
+                <div>{latestCodexTask.externalJobId ?? latestCodexTask.id}</div>
+                <div>导出路径</div>
+                <div>{latestCodexTask.outputPath ?? "尚未导出"}</div>
+                <div>状态</div>
+                <div>{latestCodexTask.status}</div>
+              </div>
+            )}
+            {codexTaskMessage && <div className="timeline-meta">{codexTaskMessage}</div>}
+            {latestCodexTask?.status === "needs_review" && latestCodexTask.bestPreviewPath && (
+              <div className="comfy-asset-mode-card">
+                <strong>Codex 候选图（等待人工审查）</strong>
+                <a href={toDesktopMediaSource(latestCodexTask.bestPreviewPath)} rel="noreferrer" target="_blank">
+                  <img
+                    alt="Codex 候选分镜图"
+                    className="comfy-shot-preview"
+                    src={toDesktopMediaSource(latestCodexTask.bestPreviewPath)}
+                  />
+                </a>
+                <div className="timeline-actions">
+                  <button
+                    onClick={() => {
+                      acceptGenerationTaskCandidate(latestCodexTask.id);
+                      setCodexTaskMessage("Codex 候选图已接受并发布到当前镜头");
+                    }}
+                    type="button"
+                  >
+                    接受候选图
+                  </button>
+                  <button
+                    className="btn-danger"
+                    onClick={() => {
+                      markGenerationTaskCancelled(latestCodexTask.id, {
+                        bestPreviewPath: latestCodexTask.bestPreviewPath,
+                        reviewReasons: latestCodexTask.reviewReasons,
+                        errorMessage: "codex_candidate_rejected"
+                      });
+                      setCodexTaskMessage("Codex 候选图已拒绝；候选证据仍保留在任务记录中");
+                    }}
+                    type="button"
+                  >
+                    拒绝候选图
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* CODEX_TASK_PACKAGE_BRANCH_END */}
+          </>
+        ) : (<>
         <div className="comfy-asset-mode-card">
           <div className="comfy-asset-mode-head">
             <strong>{storyboardImageModeSpec.label}</strong>
@@ -15892,6 +16308,7 @@ export function ComfyPipelinePanel() {
             )}
           </div>
         )}
+        </>)}
         {availableCheckpointOptions.length > 0 && (
           <datalist id="comfy-checkpoint-options">
             {availableCheckpointOptions.map((item) => (
