@@ -399,6 +399,7 @@ type StoryboardState = {
   ) => void;
   markGenerationTaskNeedsReview: (id: string, bestPreviewPath: string, reviewReasons: string[]) => void;
   completeGenerationTask: (id: string, outputPath: string) => void;
+  acceptGenerationTaskCandidate: (id: string) => void;
   createSpatialStage: (sceneId: string) => string;
   updateSpatialScene: (scene: SpatialScene) => void;
   setSelectedSpatialObject: (objectId: string | null) => void;
@@ -2620,6 +2621,40 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
       if (task.status === "needs_review" || task.status === "cancelled") return state;
       if (!state.shots.some((shot) => shot.id === task.shotId)) {
         throw new Error(`Cannot complete generation task for unknown shot: ${task.shotId}`);
+      }
+
+      const finishedAt = new Date().toISOString();
+      return {
+        shots: state.shots.map((shot) =>
+          shot.id === task.shotId ? { ...shot, generatedImagePath: outputPath } : shot
+        ),
+        generationTasks: state.generationTasks.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                stage: "completed",
+                status: "completed",
+                outputPath,
+                finishedAt
+              }
+            : item
+        )
+      };
+    }),
+
+  acceptGenerationTaskCandidate: (id) =>
+    set((state) => {
+      const task = state.generationTasks.find((item) => item.id === id);
+      if (!task) throw new Error(`Cannot accept unknown generation task: ${id}`);
+      if (task.stage !== "needs_review" || task.status !== "needs_review") {
+        throw new Error(`Cannot accept generation task that is not needs_review: ${id}`);
+      }
+      if (!state.shots.some((shot) => shot.id === task.shotId)) {
+        throw new Error(`Cannot accept generation task for unknown shot: ${task.shotId}`);
+      }
+      const outputPath = task.bestPreviewPath?.trim();
+      if (!outputPath) {
+        throw new Error(`Cannot accept generation task without a best preview path: ${id}`);
       }
 
       const finishedAt = new Date().toISOString();

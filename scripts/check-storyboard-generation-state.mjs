@@ -49,6 +49,68 @@ try {
   assert.equal(completedState.generationTasks[0]?.outputPath, "outputs/shot-1.png");
   assert.ok(completedState.generationTasks[0]?.finishedAt);
 
+  const acceptedBeforeExport = completedState.shots.find(
+    (shot) => shot.id === firstShot.id
+  )?.generatedImagePath;
+  const exportedTask = {
+    ...task,
+    id: "generation_task_exported",
+    stage: "exported",
+    status: "queued",
+    outputPath: "C:/project/codex-storyboard-jobs/job-1",
+    externalProvider: "codex_task_package",
+    externalJobId: "job-1",
+    externalRequestDigest: "a".repeat(64)
+  };
+  useStoryboardStore.getState().upsertGenerationTask(exportedTask);
+  assert.equal(
+    useStoryboardStore.getState().shots.find((item) => item.id === firstShot.id)
+      ?.generatedImagePath,
+    acceptedBeforeExport,
+    "exporting a task package must not publish an image"
+  );
+  useStoryboardStore
+    .getState()
+    .markGenerationTaskNeedsReview(
+      exportedTask.id,
+      "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png",
+      ["codex_candidate"]
+    );
+  assert.equal(
+    useStoryboardStore.getState().shots.find((item) => item.id === firstShot.id)
+      ?.generatedImagePath,
+    acceptedBeforeExport,
+    "importing a Codex candidate must remain review-only"
+  );
+  useStoryboardStore
+    .getState()
+    .completeGenerationTask(
+      exportedTask.id,
+      "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png"
+    );
+  assert.equal(
+    useStoryboardStore.getState().shots.find((item) => item.id === firstShot.id)
+      ?.generatedImagePath,
+    acceptedBeforeExport,
+    "needs_review remains terminal until a dedicated acceptance action"
+  );
+  useStoryboardStore.getState().acceptGenerationTaskCandidate(exportedTask.id);
+  const acceptedExportState = useStoryboardStore.getState();
+  const acceptedExportTask = acceptedExportState.generationTasks.find(
+    (item) => item.id === exportedTask.id
+  );
+  assert.equal(
+    acceptedExportState.shots.find((item) => item.id === firstShot.id)?.generatedImagePath,
+    "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png"
+  );
+  assert.equal(acceptedExportTask?.stage, "completed");
+  assert.equal(acceptedExportTask?.status, "completed");
+  assert.equal(
+    acceptedExportTask?.outputPath,
+    "C:/project/codex-storyboard-jobs/job-1/outputs/candidate.png"
+  );
+  assert.ok(acceptedExportTask?.finishedAt);
+
   const reviewTask = { ...task, id: "generation_task_review", stage: "stageB", status: "running" };
   useStoryboardStore.getState().upsertGenerationTask(reviewTask);
   const acceptedPathBeforeReview = useStoryboardStore.getState().shots.find((shot) => shot.id === firstShot.id)?.generatedImagePath;
@@ -112,8 +174,12 @@ try {
     () => useStoryboardStore.getState().completeGenerationTask("orphaned-task", "outputs/missing.png"),
     /unknown shot/i
   );
+  assert.throws(
+    () => useStoryboardStore.getState().acceptGenerationTaskCandidate("missing-task"),
+    /unknown generation task/i
+  );
 } finally {
   useStoryboardStore.setState(initialState, true);
 }
 
-console.log("PASS storyboard generation state: success, failure, retry, restore, and unknown-shot rejection");
+console.log("PASS storyboard generation state: export, review acceptance, success, failure, retry, restore, and unknown-shot rejection");

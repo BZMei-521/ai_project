@@ -98,6 +98,7 @@ export type Shot = {
 
 export type StoryboardGenerationStage =
   | "preflight"
+  | "exported"
   | "stageA"
   | "stageB"
   | "fallback"
@@ -139,6 +140,9 @@ export type StoryboardGenerationTask = {
   reviewReasons?: string[];
   errorCode?: string;
   errorMessage?: string;
+  externalProvider?: "codex_task_package";
+  externalJobId?: string;
+  externalRequestDigest?: string;
   retrySnapshot?: StoryboardGenerationRetrySnapshot;
   startedAt: string;
   finishedAt?: string;

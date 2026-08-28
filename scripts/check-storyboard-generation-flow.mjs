@@ -13,6 +13,12 @@ const request = (id = shot.id, runStage, extra = {}) => ({ settings, shot: { ...
 const accepted = (localPath) => ({ status: "accepted", previewUrl: localPath, localPath });
 const needsReview = (bestPreviewPath, reasons = ["quality"]) => ({ status: "needs_review", bestPreviewPath, reasons });
 
+assert.match(
+  result.outputFiles[0].text,
+  /codex_task_package/,
+  "the bundled Comfy service must expose Codex task-package workflow support"
+);
+
 try {
   const rejected = await service.queueStoryboardShot(request(shot.id, async () => ({ localPath: "x.png" }), { preflight: async () => { throw new Error("missing checkpoint"); } }));
   assert.equal(rejected.status, "failed");

@@ -2,6 +2,8 @@ import type {
   Asset,
   AudioTrack,
   CharacterGenerationMetadata,
+  Project,
+  Sequence,
   Shot,
   ShotLayer,
   SkyboxFace
@@ -14,6 +16,7 @@ import {
   verifyVideoAssemblyReceipt,
   beginVideoAssemblyRun,
   cleanupVideoAssemblyAssets,
+  createPrepareCodexStoryboardJobRequest,
   extractVideoReviewFrames,
   invokeDesktopCommand,
   isDesktopRuntime,
@@ -23,8 +26,10 @@ import {
   stageVideoSegment,
   toDesktopMediaSource,
   type ConcatenatedVideo,
+  type PrepareCodexStoryboardJobRequest,
   verifyCharacterEvidenceReceipt
 } from "../platform/desktopBridge";
+import type { CodexStoryboardReferenceUsage } from "../../services/generation-providers/codexTaskPackage";
 import {
   CHARACTER_GENERATION_PROVIDERS,
   inspectCharacterProvider,
@@ -283,7 +288,8 @@ export type ComfySettings = {
     | "builtin_klein_reference"
     | "builtin_zimage"
     | "builtin_qwen"
-    | "mature_asset_guided";
+    | "mature_asset_guided"
+    | "codex_task_package";
   storyboardImageModelName?: string;
   videoWorkflowJson: string;
   characterWorkflowJson?: string;
@@ -373,6 +379,158 @@ export type ComfySettings = {
     hasDialogueAudio: string;
   };
 };
+
+export type CodexStoryboardReferenceSelection = {
+  id: string;
+  sourcePath: string;
+  usage: CodexStoryboardReferenceUsage;
+  instruction: string;
+};
+
+function codexReferencePathKey(sourcePath: string): string {
+  const normalized = sourcePath.trim().replace(/\\/g, "/");
+  return /^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+function resolveSingleCodexStoryboardCharacter(shot: Shot, assets: Asset[]): Asset {
+  const requestedIds = new Set(
+    (shot.characterRefs ?? []).map((item) => item.trim()).filter((item) => item.length > 0)
+  );
+  const requestedNames = new Set(
+    (shot.sourceCharacterNames ?? [])
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => item.length > 0)
+  );
+  const characters = assets.filter(
+    (asset) =>
+      asset.type === "character" &&
+      (requestedIds.has(asset.id) || requestedNames.has(asset.name.trim().toLowerCase()))
+  );
+  if (characters.length !== 1) {
+    throw new Error(`codex_storyboard_character_reference_count_invalid count=${characters.length}`);
+  }
+  if (!characters[0].characterIdentityPack) {
+    throw new Error("codex_storyboard_character_identity_pack_missing");
+  }
+  return characters[0];
+}
+
+export function buildDefaultCodexStoryboardReferenceSelections(input: {
+  shot: Shot;
+  assets: Asset[];
+  spatialFramePath: string;
+  styleReferencePaths?: string[];
+}): CodexStoryboardReferenceSelection[] {
+  const character = resolveSingleCodexStoryboardCharacter(input.shot, input.assets);
+  const identity = character.characterIdentityPack!;
+  const spatialFramePath = input.spatialFramePath.trim();
+  const bodyFrontPath = identity.bodyFrontPath.trim();
+  const faceMasterPath = identity.faceMasterPath.trim();
+  if (!spatialFramePath) throw new Error("codex_storyboard_spatial_reference_missing");
+  if (!bodyFrontPath) throw new Error("codex_storyboard_body_reference_missing");
+  if (!faceMasterPath) throw new Error("codex_storyboard_face_reference_missing");
+
+  const occupiedPaths = new Set(
+    [spatialFramePath, bodyFrontPath, faceMasterPath].map(codexReferencePathKey)
+  );
+  let styleReferencePaths: string[];
+  if (input.styleReferencePaths !== undefined) {
+    styleReferencePaths = input.styleReferencePaths.map((item) => item.trim()).filter(Boolean);
+  } else {
+    const approvedStylePath = identity.approvedHeroFramePaths
+      .map((item) => item.trim())
+      .find((item) => item.length > 0 && !occupiedPaths.has(codexReferencePathKey(item)));
+    styleReferencePaths = approvedStylePath ? [approvedStylePath] : [];
+  }
+  if (styleReferencePaths.length === 0) {
+    throw new Error("codex_storyboard_style_reference_missing");
+  }
+
+  return [
+    {
+      id: "spatial-authority",
+      sourcePath: spatialFramePath,
+      usage: "spatial_authority",
+      instruction: "Use this image as the spatial authority for camera, blocking, poses, framing, and composition."
+    },
+    {
+      id: "character-body",
+      sourcePath: bodyFrontPath,
+      usage: "body_costume",
+      instruction: `Preserve ${character.name}'s body proportions, costume construction, materials, and accessories; composition remains controlled by the spatial authority.`
+    },
+    {
+      id: "character-face",
+      sourcePath: faceMasterPath,
+      usage: "face_identity",
+      instruction: `Preserve ${character.name}'s facial identity, hairline, hairstyle, and immutable facial traits; composition remains controlled by the spatial authority.`
+    },
+    ...styleReferencePaths.map((sourcePath, index) => ({
+      id: `style-${index + 1}`,
+      sourcePath,
+      usage: "style_only" as const,
+      instruction: `Use style reference ${index + 1} only for rendering language, palette, material treatment, and finish; this image does not control composition.`
+    }))
+  ];
+}
+
+export function buildCodexStoryboardPackageRequest(input: {
+  jobId: string;
+  projectPath: string;
+  project: Project;
+  sequence: Sequence;
+  shot: Shot;
+  assets: Asset[];
+  references: CodexStoryboardReferenceSelection[];
+  createdAt: string;
+}): PrepareCodexStoryboardJobRequest {
+  const referencedCharacterNames = input.assets
+    .filter(
+      (asset) =>
+        asset.type === "character" &&
+        ((input.shot.characterRefs ?? []).includes(asset.id) ||
+          (input.shot.sourceCharacterNames ?? []).some(
+            (name) => name.trim().toLowerCase() === asset.name.trim().toLowerCase()
+          ))
+    )
+    .map((asset) => asset.name.trim())
+    .filter(Boolean);
+  const primaryRequest = [
+    "Create one production-ready AI comic-drama storyboard frame.",
+    `Project: ${input.project.name}. Sequence: ${input.sequence.name}.`,
+    `Shot ${input.shot.order}: ${input.shot.title}.`,
+    input.shot.storyPrompt?.trim() ? `Story and action: ${input.shot.storyPrompt.trim()}` : "",
+    input.shot.dialogue.trim() ? `Dialogue context: ${input.shot.dialogue.trim()}` : "",
+    input.shot.notes.trim() ? `Director notes: ${input.shot.notes.trim()}` : "",
+    input.shot.tags.length > 0 ? `Shot tags: ${input.shot.tags.join(", ")}.` : "",
+    referencedCharacterNames.length > 0
+      ? `On-screen character identity: ${referencedCharacterNames.join(", ")}.`
+      : "",
+    `Output framing: ${input.project.width}x${input.project.height} at ${input.project.fps} fps continuity.`,
+    `Cinematic style contract ${CINEMATIC_3D_DONGHUA_CONTRACT.id}@${CINEMATIC_3D_DONGHUA_CONTRACT.version}: ${CINEMATIC_3D_DONGHUA_CONTRACT.positivePrompt}.`,
+    `Avoid: ${[input.shot.negativePrompt?.trim(), CINEMATIC_3D_DONGHUA_CONTRACT.negativePrompt]
+      .filter(Boolean)
+      .join(", ")}.`
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return createPrepareCodexStoryboardJobRequest({
+    schemaVersion: 1,
+    jobId: input.jobId,
+    projectId: input.project.id,
+    episodeId: input.sequence.id,
+    shotId: input.shot.id,
+    provider: "codex_task_package",
+    createdAt: input.createdAt,
+    projectPath: input.projectPath,
+    prompt: { useCase: "stylized-concept", primaryRequest },
+    references: input.references.map((reference) => ({ ...reference })),
+    acceptedImagePath: input.shot.generatedImagePath?.trim() || null
+  });
+}
 
 export const DEFAULT_TOKEN_MAPPING: ComfySettings["tokenMapping"] = {
   prompt: "PROMPT",

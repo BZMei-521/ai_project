@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { build } from "esbuild";
 import typescript from "typescript";
 import * as runtime from "../src/services/generation-providers/codexTaskPackageRuntime.mjs";
+
+const comfyBundle = await build({
+  entryPoints: [path.join(process.cwd(), "src/modules/comfy-pipeline/comfyService.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2020",
+  write: false
+});
+const comfyService = await import(
+  `data:text/javascript;base64,${Buffer.from(comfyBundle.outputFiles[0].text).toString("base64")}`
+);
 
 const providerSource = await readFile(
   new URL("../src/services/generation-providers/codexTaskPackageProvider.ts", import.meta.url),
@@ -15,6 +29,143 @@ const providerModule = await import(`data:text/javascript,${encodeURIComponent(
 const { CodexTaskPackageProvider } = providerModule;
 
 const sha = (character) => character.repeat(64);
+const characterAsset = {
+  id: "character-1",
+  projectId: "project-1",
+  type: "character",
+  name: "Shen Yan",
+  filePath: "C:/project/assets/shen-yan.png",
+  characterIdentityPack: {
+    version: "identity-v1",
+    triggerWord: "shen_yan",
+    species: "human",
+    speciesTraits: [],
+    styleContractId: "cinematic_3d_donghua_v1",
+    styleContractVersion: "1.0.0",
+    styleContractDigest: sha("1"),
+    faceMasterPath: "C:/project/assets/shen-yan-face.png",
+    bodyFrontPath: "C:/project/assets/shen-yan-body.png",
+    immutableTraits: ["black hair"],
+    forbiddenChanges: ["costume drift"],
+    approvedHeroFramePaths: ["C:/project/assets/shen-yan-style.png"],
+    updatedAt: "2026-08-28T00:00:00.000Z"
+  }
+};
+const storyboardShot = {
+  id: "shot-1",
+  sequenceId: "episode-1",
+  order: 1,
+  title: "Rooftop confrontation",
+  durationFrames: 48,
+  dialogue: "You came back.",
+  notes: "Low-angle medium shot with rain and strong rim light.",
+  tags: ["night", "rain"],
+  storyPrompt: "Shen Yan faces the rival across the rooftop.",
+  negativePrompt: "identity drift",
+  characterRefs: [characterAsset.id],
+  generatedImagePath: "C:/project/accepted/shot-1.png"
+};
+const defaultSelections = comfyService.buildDefaultCodexStoryboardReferenceSelections({
+  shot: storyboardShot,
+  assets: [characterAsset],
+  spatialFramePath: "C:/project/spatial/shot-1.png"
+});
+assert.deepEqual(
+  defaultSelections.map(({ id, usage, sourcePath }) => ({ id, usage, sourcePath })),
+  [
+    { id: "spatial-authority", usage: "spatial_authority", sourcePath: "C:/project/spatial/shot-1.png" },
+    { id: "character-body", usage: "body_costume", sourcePath: "C:/project/assets/shen-yan-body.png" },
+    { id: "character-face", usage: "face_identity", sourcePath: "C:/project/assets/shen-yan-face.png" },
+    { id: "style-1", usage: "style_only", sourcePath: "C:/project/assets/shen-yan-style.png" }
+  ],
+  "the default helper must emit spatial, body, face, then style references"
+);
+assert.ok(defaultSelections.every((item) => item.instruction.trim()), "every default reference must be annotated");
+assert.match(defaultSelections[3].instruction, /does not control composition/i);
+
+const appendedStyleSelections = [
+  ...defaultSelections,
+  {
+    id: "style-2",
+    sourcePath: "C:/project/assets/palette-style.png",
+    usage: "style_only",
+    instruction: "Use only the palette and surface treatment; this image does not control composition."
+  }
+];
+const preparedRequest = comfyService.buildCodexStoryboardPackageRequest({
+  jobId: "job-1",
+  projectPath: "C:/project",
+  project: {
+    id: "project-1",
+    name: "Storyboard Project",
+    fps: 24,
+    width: 1920,
+    height: 1080,
+    createdAt: "2026-08-28T00:00:00.000Z",
+    updatedAt: "2026-08-28T00:00:00.000Z"
+  },
+  sequence: { id: "episode-1", projectId: "project-1", name: "Episode 1", order: 1 },
+  shot: storyboardShot,
+  assets: [characterAsset],
+  references: appendedStyleSelections,
+  createdAt: "2026-08-28T00:00:00.000Z"
+});
+assert.deepEqual(preparedRequest.references, appendedStyleSelections, "request construction must preserve caller order");
+assert.match(preparedRequest.references[3].instruction, /does not control composition/i);
+assert.match(preparedRequest.references[4].instruction, /does not control composition/i);
+assert.notEqual(preparedRequest.references[3].instruction, preparedRequest.references[4].instruction);
+assert.equal(preparedRequest.acceptedImagePath, storyboardShot.generatedImagePath);
+assert.match(preparedRequest.prompt.primaryRequest, /Rooftop confrontation/);
+assert.match(preparedRequest.prompt.primaryRequest, /cinematic/i);
+
+const { projectPath: _projectPath, ...immutablePreparedRequest } = preparedRequest;
+const immutableRequestForPrompt = {
+  ...immutablePreparedRequest,
+  references: preparedRequest.references.map((reference, index) => ({
+    id: reference.id,
+    usage: reference.usage,
+    instruction: reference.instruction,
+    relativePath: `references/reference-${index + 1}.png`,
+    sha256: String(index + 1).repeat(64),
+    width: 512,
+    height: 512,
+    mimeType: "image/png"
+  })),
+  expectedOutput: {
+    candidatePath: "outputs/candidate.png",
+    resultPath: "outputs/result.json",
+    mimeTypes: ["image/png"]
+  }
+};
+const compiledPreparedPrompt = runtime.compileCodexStoryboardImageSpec(immutableRequestForPrompt).compiledPrompt;
+assert.match(compiledPreparedPrompt, /Picture 4 \[style_only\]:.*does not control composition/i);
+assert.match(compiledPreparedPrompt, /Picture 5 \[style_only\]:.*does not control composition/i);
+assert.throws(
+  () => comfyService.buildCodexStoryboardPackageRequest({
+    jobId: "job-duplicate-id",
+    projectPath: "C:/project",
+    project: { id: "project-1" },
+    sequence: { id: "episode-1" },
+    shot: storyboardShot,
+    assets: [characterAsset],
+    references: [...defaultSelections, { ...defaultSelections[3], sourcePath: "C:/project/assets/other-style.png" }],
+    createdAt: "2026-08-28T00:00:00.000Z"
+  }),
+  /reference_id_invalid/
+);
+assert.throws(
+  () => comfyService.buildCodexStoryboardPackageRequest({
+    jobId: "job-relative-path",
+    projectPath: "C:/project",
+    project: { id: "project-1" },
+    sequence: { id: "episode-1" },
+    shot: storyboardShot,
+    assets: [characterAsset],
+    references: defaultSelections.map((item, index) => index === 0 ? { ...item, sourcePath: "relative/stage.png" } : item),
+    createdAt: "2026-08-28T00:00:00.000Z"
+  }),
+  /path_must_be_absolute/
+);
 const request = {
   schemaVersion: 1,
   jobId: "job-1",
