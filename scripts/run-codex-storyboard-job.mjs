@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, lstat, link, mkdir, mkdtemp, opendir, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 
 const PROVIDER = "codex_task_package";
@@ -97,9 +98,11 @@ function inspectPng(bytes, invalidCode, exitCode) {
   let width = 0;
   let height = 0;
   let expectedScanlines = 0;
+  let scanlineLength = 0;
   let seenIhdr = false;
   let seenIdat = false;
   let seenIend = false;
+  let idatClosed = false;
   const idat = [];
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length) fail(invalidCode, exitCode);
@@ -125,23 +128,26 @@ function inspectPng(bytes, invalidCode, exitCode) {
       const allowedDepths = colorType === 3 ? [1, 2, 4, 8] : [8, 16];
       if (!samples || !allowedDepths.includes(bitDepth)) fail(invalidCode, exitCode);
       const rowBytes = Math.ceil((width * samples * bitDepth) / 8);
-      expectedScanlines = height * (rowBytes + 1);
+      scanlineLength = rowBytes + 1;
+      expectedScanlines = height * scanlineLength;
       if (!Number.isSafeInteger(expectedScanlines) || expectedScanlines > MAX_IMAGE_BYTES) fail(invalidCode, exitCode);
     } else if (type === "IDAT") {
-      if (!seenIhdr || seenIend) fail(invalidCode, exitCode);
+      if (!seenIhdr || seenIend || idatClosed) fail(invalidCode, exitCode);
       seenIdat = true;
       idat.push(data);
     } else if (type === "IEND") {
       if (!seenIhdr || !seenIdat || seenIend || length !== 0 || crcEnd !== bytes.length) fail(invalidCode, exitCode);
       seenIend = true;
-    } else if (seenIend) {
-      fail(invalidCode, exitCode);
+    } else {
+      if (seenIdat) idatClosed = true;
+      if (seenIend || (type.charCodeAt(0) & 0x20) === 0) fail(invalidCode, exitCode);
     }
     offset = crcEnd;
   }
   if (!seenIhdr || !seenIdat || !seenIend || offset !== bytes.length) fail(invalidCode, exitCode);
   try {
-    if (inflateSync(Buffer.concat(idat), { maxOutputLength: expectedScanlines }).length !== expectedScanlines) fail(invalidCode, exitCode);
+    const inflated = inflateSync(Buffer.concat(idat), { maxOutputLength: expectedScanlines });
+    if (inflated.length !== expectedScanlines || Array.from({ length: height }, (_, index) => inflated[index * scanlineLength]).some((filter) => filter > 4)) fail(invalidCode, exitCode);
   } catch (error) {
     if (error instanceof CliError) throw error;
     fail(invalidCode, exitCode);
@@ -405,6 +411,7 @@ async function main() {
       shotId: job.request.shotId,
       requestDigest: job.requestDigest,
       inspectionRoot: staged.inspectionRoot,
+      inspectionCleanup: "Delete inspectionRoot after built-in image generation finishes; it contains immutable staged snapshots for this handoff.",
       referencedImagePaths: staged.referencedImagePaths,
       referenceUsages: job.request.references.map(({ usage }) => usage),
       referenceInstructions: job.request.references.map(({ instruction }) => instruction),
@@ -422,37 +429,21 @@ async function main() {
   }
   const image = inspectImage(candidate, "codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   if (image.mimeType !== "image/png") fail("codex_storyboard_cli_candidate_invalid", EXIT.candidate);
-  const outputs = await ensureOutputs(job.packagePath);
-  try {
-    await assertStableOutputs(outputs);
-    if (await pathExists(path.join(outputs.outputPath, "candidate.png")) || await pathExists(path.join(outputs.outputPath, "result.json"))) fail("codex_storyboard_cli_output_exists", EXIT.outputExists);
-    const publishedCandidate = await publishExclusive(outputs, "candidate.png", candidate);
-  const result = {
-    schemaVersion: 1,
-    jobId: job.request.jobId,
-    projectId: job.request.projectId,
-    episodeId: job.request.episodeId,
-    shotId: job.request.shotId,
-    provider: PROVIDER,
-    requestDigest: job.requestDigest,
-    referenceDigests: job.request.references.map(({ id, sha256 }) => ({ id, sha256 })),
-    generationMode: "codex_builtin_imagegen",
-    finalPrompt: compiledPrompt,
-    output: { relativePath: "outputs/candidate.png", sha256: sha256(candidate), width: image.width, height: image.height, mimeType: "image/png" },
-    completedAt: new Date().toISOString(),
-    state: "completed"
-  };
-    try {
-      await publishExclusive(outputs, "result.json", Buffer.from(`${JSON.stringify(result, null, 2)}\n`), process.env.NODE_ENV === "test" && process.env.CODEX_STORYBOARD_TEST_FAIL_RESULT_PUBLISH === "1");
-    } catch (error) {
-      await rollbackPublishedCandidate(outputs, publishedCandidate);
-      throw error;
-    }
-    await assertStableOutputs(outputs);
-    process.stdout.write(`${JSON.stringify({ jobId: result.jobId, resultPath: path.join(outputs.outputPath, "result.json") })}\n`);
-  } finally {
-    await outputs.directory.close().catch(() => {});
+  const helper = process.env.CODEX_STORYBOARD_OPERATOR_BIN;
+  const helperCommand = helper || "cargo";
+  const helperArguments = helper
+    ? ["complete", "--package", job.packagePath, "--candidate", candidateArgument]
+    : ["run", "--offline", "--quiet", "--manifest-path", path.join(process.cwd(), "src-tauri", "Cargo.toml"), "--bin", "codex-storyboard-operator", "--", "complete", "--package", job.packagePath, "--candidate", candidateArgument];
+  const helperResult = spawnSync(helperCommand, helperArguments, { encoding: "utf8", env: process.env });
+  if (helperResult.error) fail("codex_storyboard_cli_publish_failed", EXIT.publish);
+  if (helperResult.stdout) process.stdout.write(helperResult.stdout);
+  if (helperResult.status !== 0) {
+    const outputExists = /codex_storyboard_operator_(?:replay|output_exists)/.test(helperResult.stderr ?? "");
+    process.stderr.write(outputExists ? "codex_storyboard_cli_output_exists\n" : helperResult.stderr || "codex_storyboard_cli_publish_failed\n");
+    process.exitCode = outputExists ? EXIT.outputExists : helperResult.status || EXIT.publish;
+    return;
   }
+  return;
 }
 
 main().catch((error) => {

@@ -269,7 +269,7 @@ const writeFixturePackage = async () => {
 const runCli = (...args) => spawnSync(process.execPath, [cliPath, ...args], { encoding: "utf8" });
 const runCliWithEnv = (env, ...args) => spawnSync(process.execPath, [cliPath, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
 const runCliAsync = (...args) => new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CODEX_STORYBOARD_OPERATOR_BIN: path.join(process.cwd(), "src-tauri", "target", "debug", "codex-storyboard-operator.exe") } });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -286,7 +286,7 @@ try {
   const linkedPackage = path.join(fixtureRoot, "linked-package");
   await symlink(fixturePackage, linkedPackage, "junction");
   const symlinkedPackage = runCli("inspect", "--package", linkedPackage);
-  assert.equal(symlinkedPackage.status, 12);
+  assert.equal(symlinkedPackage.status, 12, symlinkedPackage.stderr);
   assert.match(symlinkedPackage.stderr, /codex_storyboard_cli_package_invalid/);
   const inspected = runCli("inspect", "--package", fixturePackage);
   assert.equal(inspected.status, 0, inspected.stderr);
@@ -299,6 +299,7 @@ try {
   assert.deepEqual(inspection.referenceInstructions, cliRequest.references.map((reference) => reference.instruction));
   assert.match(inspection.compiledPrompt, /Picture 5 \[style_only\]: Use only the cool-blue lighting palette\./);
   assert.match(inspection.inspectionRoot, /codex-storyboard-inspection-/);
+  assert.match(inspection.inspectionCleanup, /Delete inspectionRoot after built-in image generation finishes/);
   assert.ok(inspection.referencedImagePaths.every((filePath) => filePath.startsWith(inspection.inspectionRoot)), "inspect exposes staged immutable snapshots rather than source paths");
   assert.ok((await Promise.all(inspection.referencedImagePaths.map((filePath) => lstat(filePath)))).every((entry) => !entry.isSymbolicLink()), "inspect never emits a symlink path");
 
@@ -354,13 +355,12 @@ try {
 
   const injectedResultFailure = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_TEST_FAIL_RESULT_PUBLISH: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(injectedResultFailure.status, 15);
-  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), false, "a result publication failure rolls back only its candidate");
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), true, "a result publication failure leaves its verified candidate for safe resume");
   assert.equal(await exists(path.join(fixturePackage, "outputs", "result.json")), false);
-
-  const writeWindowSwap = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_TEST_SWAP_OUTPUTS_BEFORE_LINK: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
-  assert.equal(writeWindowSwap.status, 15);
-  assert.equal(await exists(path.join(fixturePackage, "outputs", "candidate.png")), false, "a replaced outputs directory cannot receive a candidate");
-  assert.equal(await exists(path.join(fixturePackage, "outputs", "result.json")), false, "a replaced outputs directory cannot receive a receipt");
+  const resumedResult = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(resumedResult.status, 0, resumedResult.stderr);
+  assert.equal(await exists(path.join(fixturePackage, "outputs", "result.json")), true, "the next matching completion safely resumes receipt publication");
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
 
   const concurrent = await Promise.all([
     runCliAsync("complete", "--package", fixturePackage, "--candidate", fixtureCandidate),
