@@ -36,6 +36,7 @@
     "export:character-lora-dataset": "node scripts/export-character-lora-dataset.mjs",
     "test:character-benchmark": "node scripts/check-character-consistency-benchmark.mjs",
     "test:character-evaluator": "node scripts/check-character-siglip2-evaluator.mjs",
+    "test:codex-storyboard-package": "node scripts/check-codex-storyboard-task-package.mjs",
     "benchmark:characters": "node scripts/run-character-consistency-benchmark.mjs",
     "test:workflow-presets": "node scripts/check-workflow-presets.mjs",
     "test:minimax-h3-video-smoke": "node scripts/run-minimax-h3-video-smoke.mjs",

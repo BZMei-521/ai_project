@@ -13,6 +13,7 @@ export type JobResult = {
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   outputPath?: string;
   errorMessage?: string;
+  metadata?: Record<string, string>;
 };
 
 export type GenerationProvider = {
