@@ -256,6 +256,7 @@ export function createImportCodexStoryboardResultRequest(
 export async function prepareCodexStoryboardJob(
   request: PrepareCodexStoryboardJobRequest
 ): Promise<TauriCodexStoryboardExportReceipt> {
+  if (!isTauriRuntime()) throw new Error("codex_storyboard_requires_tauri_runtime");
   return invokeDesktopCommand("prepare_codex_storyboard_job", {
     request: createPrepareCodexStoryboardJobRequest(request)
   });
@@ -264,6 +265,7 @@ export async function prepareCodexStoryboardJob(
 export async function importCodexStoryboardResult(
   request: ImportCodexStoryboardResultRequest
 ): Promise<TauriCodexStoryboardImportReceipt> {
+  if (!isTauriRuntime()) throw new Error("codex_storyboard_requires_tauri_runtime");
   return invokeDesktopCommand("import_codex_storyboard_result", {
     request: createImportCodexStoryboardResultRequest(request)
   });

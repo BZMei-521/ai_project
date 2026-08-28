@@ -75,6 +75,14 @@ const imported = bridge.createImportCodexStoryboardResultRequest({
   requestDigest: "attacker-controlled",
 });
 assert.equal(Object.hasOwn(imported, "requestDigest"), false);
+await assert.rejects(
+  bridge.prepareCodexStoryboardJob(request(2)),
+  { message: "codex_storyboard_requires_tauri_runtime" }
+);
+await assert.rejects(
+  bridge.importCodexStoryboardResult(imported),
+  { message: "codex_storyboard_requires_tauri_runtime" }
+);
 assert.match(bridgeSource, /CoreCodexStoryboardExportReceipt\s*&\s*\{/);
 assert.match(bridgeSource, /CoreCodexStoryboardImportReceipt\s*&\s*\{/);
 const exportReceipt = { jobId: "job-1", packagePath: "C:/package", requestDigest: "a".repeat(64), schemaVersion: 1, status: "exported", requestPath: "C:/package/request.json" };

@@ -1,4 +1,8 @@
 use image::GenericImageView;
+use cap_std::{
+    ambient_authority,
+    fs::{Dir as CapabilityDir, OpenOptions as CapabilityOpenOptions},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -228,6 +232,7 @@ fn reject_symlink(path: &Path, code: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn open_read_no_follow(path: &Path) -> Result<File, std::io::Error> {
     let mut options = OpenOptions::new();
     options.read(true);
@@ -408,6 +413,51 @@ fn open_directory_no_follow(path: &Path) -> Result<File, std::io::Error> {
     options.open(path)
 }
 
+fn open_capability_directory(path: &Path, code: &str) -> Result<CapabilityDir, String> {
+    CapabilityDir::open_ambient_dir(path, ambient_authority()).map_err(|_| code.to_string())
+}
+
+fn bind_capability_directory(
+    directory: &CapabilityDir,
+    stable: &StableDirectory,
+    code: &str,
+) -> Result<(), String> {
+    let file = directory
+        .try_clone()
+        .map_err(|_| code.to_string())?
+        .into_std_file();
+    let metadata = file.metadata().map_err(|_| code.to_string())?;
+    let (identity_a, identity_b) = opened_file_identity(&file).map_err(|_| code.to_string())?;
+    if identity_a != stable.identity_a
+        || identity_b != stable.identity_b
+        || metadata_attributes(&metadata) != stable.attributes
+    {
+        return Err(code.to_string());
+    }
+    Ok(())
+}
+
+fn open_capability_child(
+    parent: &CapabilityDir,
+    name: &Path,
+    code: &str,
+) -> Result<CapabilityDir, String> {
+    parent.open_dir(name).map_err(|_| code.to_string())
+}
+
+fn ensure_capability_child(
+    parent: &CapabilityDir,
+    name: &Path,
+    code: &str,
+) -> Result<CapabilityDir, String> {
+    match parent.create_dir(name) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => return Err(code.to_string()),
+    }
+    open_capability_child(parent, name, code)
+}
+
 #[derive(Debug, Clone)]
 struct StableDirectory {
     original_path: PathBuf,
@@ -451,6 +501,7 @@ fn revalidate_stable_directory(stable: &StableDirectory, code: &str) -> Result<(
     Ok(())
 }
 
+#[cfg(test)]
 fn ensure_no_symlink_components(root: &Path, path: &Path, code: &str) -> Result<(), String> {
     let relative = path.strip_prefix(root).map_err(|_| code.to_string())?;
     let mut current = root.to_path_buf();
@@ -467,6 +518,7 @@ fn ensure_no_symlink_components(root: &Path, path: &Path, code: &str) -> Result<
     Ok(())
 }
 
+#[cfg(test)]
 fn canonical_existing_file_within(root: &Path, path: &Path, code: &str) -> Result<PathBuf, String> {
     let root = canonical_directory(root, code)?;
     reject_symlink(path, code)?;
@@ -485,6 +537,7 @@ struct StableFile {
     fingerprint: FileFingerprint,
 }
 
+#[cfg(test)]
 fn read_stable_file_within(root: &Path, path: &Path, code: &str) -> Result<StableFile, String> {
     let root = canonical_directory(root, code)?;
     let canonical_before = canonical_existing_file_within(&root, path, code)?;
@@ -509,14 +562,83 @@ fn read_stable_file_within(root: &Path, path: &Path, code: &str) -> Result<Stabl
     })
 }
 
-fn read_stable_file_within_fixed_root(
+fn read_stable_file_at(
+    directory: &CapabilityDir,
     root: &StableDirectory,
-    path: &Path,
+    relative: &Path,
     code: &str,
 ) -> Result<StableFile, String> {
-    read_stable_file_within_fixed_root_inner(root, path, code, || {}, || {})
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(code.to_string());
+    }
+    if directory
+        .symlink_metadata(relative)
+        .map_err(|_| code.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(code.to_string());
+    }
+    let mut file = directory
+        .open(relative)
+        .map_err(|_| code.to_string())?
+        .into_std();
+    let before = opened_file_fingerprint(&file).map_err(|_| code.to_string())?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|_| code.to_string())?;
+    let after = opened_file_fingerprint(&file).map_err(|_| code.to_string())?;
+    if before != after || bytes.len() as u64 != after.len {
+        return Err(code.to_string());
+    }
+    if directory
+        .symlink_metadata(relative)
+        .map_err(|_| code.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(code.to_string());
+    }
+    let reopened = directory
+        .open(relative)
+        .map_err(|_| code.to_string())?
+        .into_std();
+    if opened_file_fingerprint(&reopened).map_err(|_| code.to_string())? != after {
+        return Err(code.to_string());
+    }
+    let canonical_path = fs::canonicalize(root.canonical_path.join(relative))
+        .map_err(|_| code.to_string())?;
+    if !component_contained(&root.canonical_path, &canonical_path) {
+        return Err(code.to_string());
+    }
+    Ok(StableFile {
+        bytes,
+        canonical_path,
+        fingerprint: after,
+    })
 }
 
+fn revalidate_stable_file_at(
+    stable: &StableFile,
+    directory: &CapabilityDir,
+    root: &StableDirectory,
+    relative: &Path,
+    code: &str,
+) -> Result<(), String> {
+    let current = read_stable_file_at(directory, root, relative, code)?;
+    if current.canonical_path != stable.canonical_path
+        || current.fingerprint != stable.fingerprint
+        || current.bytes != stable.bytes
+    {
+        return Err(code.to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn read_stable_file_within_fixed_root_inner<B: FnOnce(), A: FnOnce()>(
     root: &StableDirectory,
     path: &Path,
@@ -544,22 +666,6 @@ fn read_stable_file_within_fixed_root_with_hooks<B: FnOnce(), A: FnOnce()>(
     after_read: A,
 ) -> Result<StableFile, String> {
     read_stable_file_within_fixed_root_inner(root, path, code, before_read, after_read)
-}
-
-fn revalidate_stable_file(
-    stable: &StableFile,
-    root: &Path,
-    path: &Path,
-    code: &str,
-) -> Result<(), String> {
-    let current = read_stable_file_within(root, path, code)?;
-    if current.canonical_path != stable.canonical_path
-        || current.fingerprint != stable.fingerprint
-        || current.bytes != stable.bytes
-    {
-        return Err(code.to_string());
-    }
-    Ok(())
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -627,12 +733,14 @@ fn unique_temp_sibling(final_path: &Path) -> Result<PathBuf, String> {
     Ok(final_path.with_file_name(format!(".{name}.tmp-{}-{nonce}", std::process::id())))
 }
 
+#[cfg(test)]
 fn publish_json<T: Serialize>(path: &Path, value: &T, exists_code: &str) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
     publish_bytes(path, &bytes, exists_code)
 }
 
+#[cfg(test)]
 fn publish_bytes(path: &Path, bytes: &[u8], exists_code: &str) -> Result<(), String> {
     let parent = path
         .parent()
@@ -658,6 +766,84 @@ fn publish_bytes(path: &Path, bytes: &[u8], exists_code: &str) -> Result<(), Str
         };
     }
     Ok(())
+}
+
+fn publish_bytes_at(
+    directory: &CapabilityDir,
+    path: &Path,
+    bytes: &[u8],
+    exists_code: &str,
+) -> Result<(), String> {
+    publish_bytes_at_inner(directory, path, bytes, exists_code, || {}, || {})
+}
+
+fn publish_bytes_at_inner<B: FnOnce(), L: FnOnce()>(
+    directory: &CapabilityDir,
+    path: &Path,
+    bytes: &[u8],
+    exists_code: &str,
+    before_temp_create: B,
+    before_link: L,
+) -> Result<(), String> {
+    if path.as_os_str().is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err("codex_storyboard_publish_failed".to_string());
+    }
+    let temporary = unique_temp_sibling(path)?;
+    before_temp_create();
+    let mut options = CapabilityOpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = directory
+        .open_with(&temporary, &options)
+        .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
+    drop(file);
+    before_link();
+    let link_result = directory.hard_link(&temporary, directory, path);
+    let _ = directory.remove_file(&temporary);
+    if link_result.is_err() {
+        return if directory.symlink_metadata(path).is_ok() {
+            Err(exists_code.to_string())
+        } else {
+            Err("codex_storyboard_publish_failed".to_string())
+        };
+    }
+    Ok(())
+}
+
+fn publish_json_at<T: Serialize>(
+    directory: &CapabilityDir,
+    path: &Path,
+    value: &T,
+    exists_code: &str,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|_| "codex_storyboard_publish_failed".to_string())?;
+    publish_bytes_at(directory, path, &bytes, exists_code)
+}
+
+#[cfg(test)]
+fn publish_bytes_at_with_hooks<B: FnOnce(), L: FnOnce()>(
+    directory: &CapabilityDir,
+    path: &Path,
+    bytes: &[u8],
+    exists_code: &str,
+    before_temp_create: B,
+    before_link: L,
+) -> Result<(), String> {
+    publish_bytes_at_inner(
+        directory,
+        path,
+        bytes,
+        exists_code,
+        before_temp_create,
+        before_link,
+    )
 }
 
 fn validate_prepare_request(request: &PrepareCodexStoryboardJobRequest) -> Result<(), String> {
@@ -736,42 +922,21 @@ fn project_authority_key(project: &Path, project_id: &str) -> Result<String, Str
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn ensure_private_child(parent: &Path, name: &str) -> Result<PathBuf, String> {
-    let child = parent.join(name);
-    match fs::create_dir(&child) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(_) => return Err("codex_storyboard_authority_invalid".to_string()),
-    }
-    reject_symlink(&child, "codex_storyboard_authority_invalid")?;
-    let canonical = canonical_directory(&child, "codex_storyboard_authority_invalid")?;
-    if !canonical.starts_with(parent) {
-        return Err("codex_storyboard_authority_invalid".to_string());
-    }
-    Ok(canonical)
-}
-
 fn authority_project_dir(
     authority: &Path,
     family: &str,
     project: &Path,
     project_id: &str,
-    create: bool,
 ) -> Result<PathBuf, String> {
     let authority = canonical_authority_root(authority)?;
     let key = project_authority_key(project, project_id)?;
-    if create {
-        let family = ensure_private_child(&authority, family)?;
-        ensure_private_child(&family, &key)
-    } else {
-        let directory = authority.join(family).join(key);
-        reject_symlink(&directory, "codex_storyboard_authority_invalid")?;
-        let canonical = canonical_directory(&directory, "codex_storyboard_authority_invalid")?;
-        if !canonical.starts_with(&authority) {
-            return Err("codex_storyboard_authority_invalid".to_string());
-        }
-        Ok(canonical)
+    let directory = authority.join(family).join(key);
+    reject_symlink(&directory, "codex_storyboard_authority_invalid")?;
+    let canonical = canonical_directory(&directory, "codex_storyboard_authority_invalid")?;
+    if !canonical.starts_with(&authority) {
+        return Err("codex_storyboard_authority_invalid".to_string());
     }
+    Ok(canonical)
 }
 
 fn authority_export_record_path(
@@ -784,19 +949,7 @@ fn authority_export_record_path(
         return Err("codex_storyboard_jobId_invalid".to_string());
     }
     Ok(
-        authority_project_dir(authority, "exports", project, project_id, false)?
-            .join(format!("{job_id}.json")),
-    )
-}
-
-fn ensure_authority_export_record_path(
-    authority: &Path,
-    project: &Path,
-    project_id: &str,
-    job_id: &str,
-) -> Result<PathBuf, String> {
-    Ok(
-        authority_project_dir(authority, "exports", project, project_id, true)?
+        authority_project_dir(authority, "exports", project, project_id)?
             .join(format!("{job_id}.json")),
     )
 }
@@ -811,19 +964,7 @@ fn authority_ready_marker_path(
         return Err("codex_storyboard_jobId_invalid".to_string());
     }
     Ok(
-        authority_project_dir(authority, "exports", project, project_id, false)?
-            .join(format!("{job_id}.ready.json")),
-    )
-}
-
-fn ensure_authority_ready_marker_path(
-    authority: &Path,
-    project: &Path,
-    project_id: &str,
-    job_id: &str,
-) -> Result<PathBuf, String> {
-    Ok(
-        authority_project_dir(authority, "exports", project, project_id, true)?
+        authority_project_dir(authority, "exports", project, project_id)?
             .join(format!("{job_id}.ready.json")),
     )
 }
@@ -851,50 +992,50 @@ fn authority_import_ledger_path(
         .join(format!("{job_id}-{request_digest}.json")))
 }
 
-fn ensure_authority_import_ledger_path(
-    authority: &Path,
-    project: &Path,
-    project_id: &str,
-    job_id: &str,
-    request_digest: &str,
-) -> Result<PathBuf, String> {
-    Ok(
-        authority_project_dir(authority, "imports", project, project_id, true)?
-            .join(format!("{job_id}-{request_digest}.json")),
-    )
+fn write_bytes_create_new_at(
+    directory: &CapabilityDir,
+    destination: &Path,
+    bytes: &[u8],
+    code: &str,
+) -> Result<(), String> {
+    write_bytes_create_new_at_inner(directory, destination, bytes, code, || {})
 }
 
-fn ensure_jobs_root(project: &Path) -> Result<PathBuf, String> {
-    let jobs = project.join("codex-storyboard-jobs");
-    match fs::create_dir(&jobs) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            reject_symlink(&jobs, "codex_storyboard_jobs_root_escape")?;
-            if !jobs.is_dir() {
-                return Err("codex_storyboard_jobs_root_invalid".to_string());
-            }
-        }
-        Err(_) => return Err("codex_storyboard_jobs_root_invalid".to_string()),
+fn write_bytes_create_new_at_inner<F: FnOnce()>(
+    directory: &CapabilityDir,
+    destination: &Path,
+    bytes: &[u8],
+    code: &str,
+    before_open: F,
+) -> Result<(), String> {
+    if destination.as_os_str().is_empty()
+        || !destination
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(code.to_string());
     }
-    let canonical =
-        fs::canonicalize(&jobs).map_err(|_| "codex_storyboard_jobs_root_invalid".to_string())?;
-    if !canonical.starts_with(project) {
-        return Err("codex_storyboard_jobs_root_escape".to_string());
-    }
-    Ok(canonical)
-}
-
-fn write_bytes_create_new(destination: &Path, bytes: &[u8], code: &str) -> Result<(), String> {
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
+    before_open();
+    let mut options = CapabilityOpenOptions::new();
+    options.write(true).create_new(true);
+    let mut output = directory
+        .open_with(destination, &options)
         .map_err(|_| code.to_string())?;
     output
         .write_all(bytes)
         .and_then(|_| output.sync_all())
-        .map_err(|_| code.to_string())?;
-    Ok(())
+        .map_err(|_| code.to_string())
+}
+
+#[cfg(test)]
+fn write_bytes_create_new_at_with_hook<F: FnOnce()>(
+    directory: &CapabilityDir,
+    destination: &Path,
+    bytes: &[u8],
+    code: &str,
+    before_open: F,
+) -> Result<(), String> {
+    write_bytes_create_new_at_inner(directory, destination, bytes, code, before_open)
 }
 
 struct PrepareLayoutIdentity {
@@ -938,12 +1079,14 @@ fn revalidate_prepare_layout(layout: &PrepareLayoutIdentity) -> Result<(), Strin
 
 fn revalidate_snapshots(
     inputs: &StableDirectory,
+    inputs_capability: &CapabilityDir,
     snapshots: &[(StableFile, PathBuf)],
 ) -> Result<(), String> {
     for (snapshot, path) in snapshots {
-        revalidate_stable_file(
+        revalidate_stable_file_at(
             snapshot,
-            &inputs.canonical_path,
+            inputs_capability,
+            inputs,
             path,
             "codex_storyboard_snapshot_changed_during_export",
         )?;
@@ -1074,6 +1217,34 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     let project = project_root.canonical_path.clone();
     let assets = assets_root.canonical_path.clone();
     let authority = canonical_authority_root(authority)?;
+    let project_capability =
+        open_capability_directory(&project, "codex_storyboard_project_root_invalid")?;
+    let assets_capability = if assets == project {
+        project_capability
+            .try_clone()
+            .map_err(|_| "codex_storyboard_assets_root_outside_project".to_string())?
+    } else {
+        let relative = assets
+            .strip_prefix(&project)
+            .map_err(|_| "codex_storyboard_assets_root_outside_project".to_string())?;
+        open_capability_child(
+            &project_capability,
+            relative,
+            "codex_storyboard_assets_root_outside_project",
+        )?
+    };
+    bind_capability_directory(
+        &project_capability,
+        &project_root,
+        "codex_storyboard_prepare_layout_changed",
+    )?;
+    bind_capability_directory(
+        &assets_capability,
+        &assets_root,
+        "codex_storyboard_prepare_layout_changed",
+    )?;
+    let authority_capability =
+        open_capability_directory(&authority, "codex_storyboard_authority_invalid")?;
     let requested_project = fs::canonicalize(Path::new(&request.project_path))
         .map_err(|_| "codex_storyboard_project_path_invalid".to_string())?;
     if requested_project != project {
@@ -1126,20 +1297,35 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
                 (reference.usage.as_str(), reference.instruction.as_str()),
             );
         }
-        sources.push(raw.to_path_buf());
+        sources.push(
+            source
+                .strip_prefix(&assets)
+                .map_err(|_| "codex_storyboard_reference_path_escape".to_string())?
+                .to_path_buf(),
+        );
     }
 
     revalidate_stable_directory(&project_root, "codex_storyboard_prepare_layout_changed")?;
     revalidate_stable_directory(&assets_root, "codex_storyboard_prepare_layout_changed")?;
-    let jobs = ensure_jobs_root(&project)?;
+    let jobs_capability = ensure_capability_child(
+        &project_capability,
+        Path::new("codex-storyboard-jobs"),
+        "codex_storyboard_jobs_root_invalid",
+    )?;
+    let jobs = project.join("codex-storyboard-jobs");
     revalidate_stable_directory(&project_root, "codex_storyboard_prepare_layout_changed")?;
     let jobs_root = capture_stable_directory(&jobs, "codex_storyboard_prepare_layout_changed")?;
     if !component_contained(&project_root.canonical_path, &jobs_root.canonical_path) {
         return Err("codex_storyboard_prepare_layout_changed".to_string());
     }
     revalidate_stable_directory(&jobs_root, "codex_storyboard_prepare_layout_changed")?;
+    bind_capability_directory(
+        &jobs_capability,
+        &jobs_root,
+        "codex_storyboard_prepare_layout_changed",
+    )?;
     let package = jobs_root.canonical_path.join(&request.job_id);
-    match fs::create_dir(&package) {
+    match jobs_capability.create_dir(Path::new(&request.job_id)) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             return Err("codex_storyboard_destination_exists".to_string())
@@ -1155,15 +1341,27 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     }
     let package_root =
         capture_stable_directory(&package, "codex_storyboard_prepare_layout_changed")?;
+    let package_capability = open_capability_child(
+        &jobs_capability,
+        Path::new(&request.job_id),
+        "codex_storyboard_prepare_layout_changed",
+    )?;
+    bind_capability_directory(
+        &package_capability,
+        &package_root,
+        "codex_storyboard_prepare_layout_changed",
+    )?;
     revalidate_stable_directory(&jobs_root, "codex_storyboard_prepare_layout_changed")?;
     revalidate_stable_directory(&package_root, "codex_storyboard_prepare_layout_changed")?;
     let inputs = package.join("inputs");
     let outputs = package.join("outputs");
-    fs::create_dir(&inputs)
+    package_capability
+        .create_dir(Path::new("inputs"))
         .map_err(|_| "codex_storyboard_destination_create_failed".to_string())?;
     revalidate_stable_directory(&jobs_root, "codex_storyboard_prepare_layout_changed")?;
     revalidate_stable_directory(&package_root, "codex_storyboard_prepare_layout_changed")?;
-    fs::create_dir(&outputs)
+    package_capability
+        .create_dir(Path::new("outputs"))
         .map_err(|_| "codex_storyboard_destination_create_failed".to_string())?;
     revalidate_stable_directory(&jobs_root, "codex_storyboard_prepare_layout_changed")?;
     revalidate_stable_directory(&package_root, "codex_storyboard_prepare_layout_changed")?;
@@ -1185,32 +1383,55 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         inputs: capture_stable_directory(&inputs, "codex_storyboard_prepare_layout_changed")?,
         outputs: capture_stable_directory(&outputs, "codex_storyboard_prepare_layout_changed")?,
     };
+    let inputs_capability = open_capability_child(
+        &package_capability,
+        Path::new("inputs"),
+        "codex_storyboard_prepare_layout_changed",
+    )?;
+    let outputs_capability = open_capability_child(
+        &package_capability,
+        Path::new("outputs"),
+        "codex_storyboard_prepare_layout_changed",
+    )?;
+    bind_capability_directory(
+        &inputs_capability,
+        &layout.inputs,
+        "codex_storyboard_prepare_layout_changed",
+    )?;
+    bind_capability_directory(
+        &outputs_capability,
+        &layout.outputs,
+        "codex_storyboard_prepare_layout_changed",
+    )?;
     revalidate_prepare_layout(&layout)?;
 
     let mut immutable_references = Vec::with_capacity(request.references.len());
     let mut stable_snapshots = Vec::with_capacity(request.references.len());
-    for (index, (reference, source_path)) in
+    for (index, (reference, source_relative)) in
         request.references.iter().zip(sources.iter()).enumerate()
     {
         revalidate_prepare_layout(&layout)?;
         before_copy(index);
         revalidate_prepare_layout(&layout)?;
-        let source = read_stable_file_within_fixed_root(
+        let source = read_stable_file_at(
+            &assets_capability,
             &layout.assets,
-            source_path,
+            source_relative,
             "codex_storyboard_reference_changed_during_copy",
         )?;
         let usage = reference.usage.replace('_', "-");
-        let placeholder = inputs.join(format!("{:02}-{usage}.snapshot", index + 1));
+        let placeholder = PathBuf::from(format!("{:02}-{usage}.snapshot", index + 1));
         let temporary = unique_temp_sibling(&placeholder)?;
         revalidate_prepare_layout(&layout)?;
-        write_bytes_create_new(
+        write_bytes_create_new_at(
+            &inputs_capability,
             &temporary,
             &source.bytes,
             "codex_storyboard_snapshot_write_failed",
         )?;
         revalidate_prepare_layout(&layout)?;
-        let temporary_snapshot = read_stable_file_within_fixed_root(
+        let temporary_snapshot = read_stable_file_at(
+            &inputs_capability,
             &layout.inputs,
             &temporary,
             "codex_storyboard_snapshot_verify_failed",
@@ -1221,26 +1442,30 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         )?;
         let filename = format!("{:02}-{usage}.{extension}", index + 1);
         let relative_path = format!("inputs/{filename}");
-        let destination = inputs.join(&filename);
+        let destination = PathBuf::from(&filename);
         revalidate_prepare_layout(&layout)?;
-        if fs::hard_link(&temporary, &destination).is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(if fs::symlink_metadata(&destination).is_ok() {
+        if inputs_capability
+            .hard_link(&temporary, &inputs_capability, &destination)
+            .is_err()
+        {
+            let _ = inputs_capability.remove_file(&temporary);
+            return Err(if inputs_capability.symlink_metadata(&destination).is_ok() {
                 "codex_storyboard_snapshot_exists".to_string()
             } else {
                 "codex_storyboard_snapshot_write_failed".to_string()
             });
         }
-        let _ = fs::remove_file(&temporary);
+        let _ = inputs_capability.remove_file(&temporary);
         revalidate_prepare_layout(&layout)?;
-        let snapshot = read_stable_file_within_fixed_root(
+        let snapshot = read_stable_file_at(
+            &inputs_capability,
             &layout.inputs,
             &destination,
             "codex_storyboard_snapshot_verify_failed",
         )?;
         let (width, height, mime_type, verified_extension) =
             inspect_image_bytes(&snapshot.bytes, "codex_storyboard_reference_image_invalid")?;
-        if verified_extension != extension || !destination.ends_with(&filename) {
+        if verified_extension != extension || destination != Path::new(&filename) {
             return Err("codex_storyboard_snapshot_extension_mismatch".to_string());
         }
         stable_snapshots.push((snapshot.clone(), destination.clone()));
@@ -1283,35 +1508,45 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         request_digest: digest.clone(),
         canonical_package_path: package.to_string_lossy().to_string(),
     };
-    let authority_record_path = ensure_authority_export_record_path(
-        &authority,
-        &project,
-        &request.project_id,
-        &request.job_id,
+    let authority_key = project_authority_key(&project, &request.project_id)?;
+    let exports_capability = ensure_capability_child(
+        &authority_capability,
+        Path::new("exports"),
+        "codex_storyboard_authority_invalid",
     )?;
+    let export_project_capability = ensure_capability_child(
+        &exports_capability,
+        Path::new(&authority_key),
+        "codex_storyboard_authority_invalid",
+    )?;
+    let authority_record_name = PathBuf::from(format!("{}.json", request.job_id));
     before_publish();
     revalidate_prepare_layout(&layout)?;
-    revalidate_snapshots(&layout.inputs, &stable_snapshots)?;
-    publish_json(
-        &authority_record_path,
+    revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
+    publish_json_at(
+        &export_project_capability,
+        &authority_record_name,
         &authority_record,
         "codex_storyboard_authority_record_exists",
     )?;
     revalidate_prepare_layout(&layout)?;
-    revalidate_snapshots(&layout.inputs, &stable_snapshots)?;
+    revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
     let request_path = package.join("request.json");
+    let request_relative = Path::new("request.json");
     revalidate_prepare_layout(&layout)?;
     before_request_publish();
-    publish_bytes(
-        &request_path,
+    publish_bytes_at(
+        &package_capability,
+        request_relative,
         &canonical_request,
         "codex_storyboard_request_exists",
     )?;
     after_request_publish();
     revalidate_prepare_layout(&layout)?;
-    let published_request = read_stable_file_within_fixed_root(
+    let published_request = read_stable_file_at(
+        &package_capability,
         &layout.package,
-        &request_path,
+        request_relative,
         "codex_storyboard_request_changed_during_publication",
     )?;
     if published_request.bytes != canonical_request
@@ -1320,7 +1555,7 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         return Err("codex_storyboard_request_changed_during_publication".to_string());
     }
     revalidate_prepare_layout(&layout)?;
-    revalidate_snapshots(&layout.inputs, &stable_snapshots)?;
+    revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
     let ready_record = CodexStoryboardReadyRecord {
         schema_version: 1,
         canonical_project_path: project.to_string_lossy().to_string(),
@@ -1339,37 +1574,39 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
         request_modified_nanos: published_request.fingerprint.modified_nanos,
         request_attributes: published_request.fingerprint.attributes,
     };
-    let ready_path = ensure_authority_ready_marker_path(
-        &authority,
-        &project,
-        &request.project_id,
-        &request.job_id,
-    )?;
+    let ready_name = PathBuf::from(format!("{}.ready.json", request.job_id));
     revalidate_prepare_layout(&layout)?;
-    revalidate_snapshots(&layout.inputs, &stable_snapshots)?;
-    revalidate_stable_file(
+    revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
+    revalidate_stable_file_at(
         &published_request,
-        &layout.package.canonical_path,
-        &request_path,
+        &package_capability,
+        &layout.package,
+        request_relative,
         "codex_storyboard_request_changed_during_publication",
     )?;
-    publish_json(
-        &ready_path,
+    outputs_capability
+        .dir_metadata()
+        .map_err(|_| "codex_storyboard_prepare_layout_changed".to_string())?;
+    publish_json_at(
+        &export_project_capability,
+        &ready_name,
         &ready_record,
         "codex_storyboard_ready_marker_exists",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &published_request,
-        &layout.package.canonical_path,
-        &request_path,
+        &package_capability,
+        &layout.package,
+        request_relative,
         "codex_storyboard_request_changed_during_publication",
     )?;
     revalidate_prepare_layout(&layout)?;
-    revalidate_snapshots(&layout.inputs, &stable_snapshots)?;
-    revalidate_stable_file(
+    revalidate_snapshots(&layout.inputs, &inputs_capability, &stable_snapshots)?;
+    revalidate_stable_file_at(
         &published_request,
-        &layout.package.canonical_path,
-        &request_path,
+        &package_capability,
+        &layout.package,
+        request_relative,
         "codex_storyboard_request_changed_during_publication",
     )?;
     Ok(CodexStoryboardExportReceipt {
@@ -1382,12 +1619,13 @@ fn prepare_at_roots_inner<F: FnMut(usize), P: FnOnce(), B: FnOnce(), A: FnOnce()
     })
 }
 
-fn parse_stable_json<T: for<'de> Deserialize<'de>>(
-    root: &Path,
-    path: &Path,
+fn parse_stable_json_at<T: for<'de> Deserialize<'de>>(
+    directory: &CapabilityDir,
+    root: &StableDirectory,
+    relative: &Path,
     code: &str,
 ) -> Result<(T, StableFile), String> {
-    let stable = read_stable_file_within(root, path, code)?;
+    let stable = read_stable_file_at(directory, root, relative, code)?;
     let value = serde_json::from_slice(&stable.bytes).map_err(|_| code.to_string())?;
     Ok((value, stable))
 }
@@ -1519,13 +1757,16 @@ fn validate_package_layout(project: &Path, job_id: &str) -> Result<PackageLayout
     })
 }
 
-fn write_import_ledger_create_new(
+fn write_import_ledger_create_new_at(
+    directory: &CapabilityDir,
     path: &Path,
     receipt: &CodexStoryboardImportReceipt,
 ) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(receipt)
         .map_err(|_| "codex_storyboard_authority_invalid".to_string())?;
-    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+    let mut options = CapabilityOpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = match directory.open_with(path, &options) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             return Err("codex_storyboard_result_already_imported".to_string())
@@ -1538,12 +1779,14 @@ fn write_import_ledger_create_new(
 }
 
 fn revalidate_reference_snapshot_files(
-    inputs: &Path,
+    inputs_capability: &CapabilityDir,
+    inputs: &StableDirectory,
     snapshots: &[(StableFile, PathBuf)],
 ) -> Result<(), String> {
     for (snapshot, path) in snapshots {
-        revalidate_stable_file(
+        revalidate_stable_file_at(
             snapshot,
+            inputs_capability,
             inputs,
             path,
             "codex_storyboard_reference_changed_during_validation",
@@ -1630,8 +1873,49 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     after_ledger: A,
 ) -> Result<CodexStoryboardImportReceipt, String> {
     validate_import_request(&request)?;
-    let (project, _) = ensure_child_root(project, assets)?;
+    let (project, assets) = ensure_child_root(project, assets)?;
     let authority = canonical_authority_root(authority)?;
+    let project_root =
+        capture_stable_directory(&project, "codex_storyboard_project_root_invalid")?;
+    let assets_root = capture_stable_directory(
+        &assets,
+        "codex_storyboard_assets_root_outside_project",
+    )?;
+    let authority_root =
+        capture_stable_directory(&authority, "codex_storyboard_authority_invalid")?;
+    let project_capability =
+        open_capability_directory(&project, "codex_storyboard_project_root_invalid")?;
+    let assets_capability = if assets == project {
+        project_capability
+            .try_clone()
+            .map_err(|_| "codex_storyboard_assets_root_outside_project".to_string())?
+    } else {
+        let relative = assets
+            .strip_prefix(&project)
+            .map_err(|_| "codex_storyboard_assets_root_outside_project".to_string())?;
+        open_capability_child(
+            &project_capability,
+            relative,
+            "codex_storyboard_assets_root_outside_project",
+        )?
+    };
+    let authority_capability =
+        open_capability_directory(&authority, "codex_storyboard_authority_invalid")?;
+    bind_capability_directory(
+        &project_capability,
+        &project_root,
+        "codex_storyboard_project_root_invalid",
+    )?;
+    bind_capability_directory(
+        &assets_capability,
+        &assets_root,
+        "codex_storyboard_assets_root_outside_project",
+    )?;
+    bind_capability_directory(
+        &authority_capability,
+        &authority_root,
+        "codex_storyboard_authority_invalid",
+    )?;
     let requested_project = fs::canonicalize(Path::new(&request.project_path))
         .map_err(|_| "codex_storyboard_project_path_invalid".to_string())?;
     if requested_project != project {
@@ -1639,13 +1923,70 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     }
     let layout = validate_package_layout(&project, &request.job_id)?;
     let import_layout = capture_import_layout(&project, &layout)?;
+    let jobs_capability = open_capability_child(
+        &project_capability,
+        Path::new("codex-storyboard-jobs"),
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    let package_capability = open_capability_child(
+        &jobs_capability,
+        Path::new(&request.job_id),
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    let inputs_capability = open_capability_child(
+        &package_capability,
+        Path::new("inputs"),
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    let outputs_capability = open_capability_child(
+        &package_capability,
+        Path::new("outputs"),
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    bind_capability_directory(
+        &jobs_capability,
+        &import_layout.jobs,
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    bind_capability_directory(
+        &package_capability,
+        &import_layout.package,
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    bind_capability_directory(
+        &inputs_capability,
+        &import_layout.inputs,
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    bind_capability_directory(
+        &outputs_capability,
+        &import_layout.outputs,
+        "codex_storyboard_package_changed_during_validation",
+    )?;
+    assets_capability
+        .dir_metadata()
+        .map_err(|_| "codex_storyboard_assets_root_outside_project".to_string())?;
 
-    let authority_record_path =
-        authority_export_record_path(&authority, &project, &request.project_id, &request.job_id)?;
+    let authority_key = project_authority_key(&project, &request.project_id)?;
+    let exports_capability = open_capability_child(
+        &authority_capability,
+        Path::new("exports"),
+        "codex_storyboard_authority_invalid",
+    )?;
+    let export_project_capability = open_capability_child(
+        &exports_capability,
+        Path::new(&authority_key),
+        "codex_storyboard_authority_invalid",
+    )?;
+    let export_project_path = authority.join("exports").join(&authority_key);
+    let export_project_root =
+        capture_stable_directory(&export_project_path, "codex_storyboard_authority_invalid")?;
+    let authority_record_name = PathBuf::from(format!("{}.json", request.job_id));
     let (authority_record, authority_stable): (CodexStoryboardAuthorityRecord, StableFile) =
-        parse_stable_json(
-            &authority,
-            &authority_record_path,
+        parse_stable_json_at(
+            &export_project_capability,
+            &export_project_root,
+            &authority_record_name,
             "codex_storyboard_authority_invalid",
         )?;
     if authority_record.schema_version != 1
@@ -1657,14 +1998,14 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         return Err("codex_storyboard_authority_mismatch".to_string());
     }
 
-    let ready_path =
-        authority_ready_marker_path(&authority, &project, &request.project_id, &request.job_id)
-            .map_err(|_| "codex_storyboard_package_not_ready".to_string())?;
-    let (ready_record, ready_stable): (CodexStoryboardReadyRecord, StableFile) = parse_stable_json(
-        &authority,
-        &ready_path,
-        "codex_storyboard_package_not_ready",
-    )?;
+    let ready_name = PathBuf::from(format!("{}.ready.json", request.job_id));
+    let (ready_record, ready_stable): (CodexStoryboardReadyRecord, StableFile) =
+        parse_stable_json_at(
+            &export_project_capability,
+            &export_project_root,
+            &ready_name,
+            "codex_storyboard_package_not_ready",
+        )?;
     if ready_record.schema_version != 1
         || ready_record.canonical_project_path != project.to_string_lossy()
         || ready_record.project_id != request.project_id
@@ -1678,12 +2019,14 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         return Err("codex_storyboard_package_not_ready".to_string());
     }
 
-    let request_path = layout.package.join("request.json");
-    let (immutable, immutable_stable): (CodexStoryboardRequest, StableFile) = parse_stable_json(
-        &layout.package,
-        &request_path,
-        "codex_storyboard_request_invalid",
-    )?;
+    let request_relative = Path::new("request.json");
+    let (immutable, immutable_stable): (CodexStoryboardRequest, StableFile) =
+        parse_stable_json_at(
+            &package_capability,
+            &import_layout.package,
+            request_relative,
+            "codex_storyboard_request_invalid",
+        )?;
     if immutable.schema_version != 1
         || immutable.provider != PROVIDER
         || immutable.job_id != request.job_id
@@ -1726,10 +2069,12 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
             .relative_path
             .strip_prefix("inputs/")
             .ok_or_else(|| "codex_storyboard_reference_path_escape".to_string())?;
+        let relative_inside_inputs = Path::new(relative_inside_inputs);
         let raw = layout.inputs.join(relative_inside_inputs);
-        let snapshot = read_stable_file_within(
-            &layout.inputs,
-            &raw,
+        let snapshot = read_stable_file_at(
+            &inputs_capability,
+            &import_layout.inputs,
+            relative_inside_inputs,
             "codex_storyboard_reference_path_escape",
         )?;
         let actual_digest = sha256_bytes(&snapshot.bytes);
@@ -1745,15 +2090,18 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         {
             return Err("codex_storyboard_reference_metadata_mismatch".to_string());
         }
-        reference_snapshots.push((snapshot, raw));
+        reference_snapshots.push((snapshot, relative_inside_inputs.to_path_buf()));
     }
 
     let result_path = layout.outputs.join("result.json");
-    let (result, result_stable): (CodexStoryboardResult, StableFile) = parse_stable_json(
-        &layout.outputs,
-        &result_path,
-        "codex_storyboard_result_invalid",
-    )?;
+    let result_relative = Path::new("result.json");
+    let (result, result_stable): (CodexStoryboardResult, StableFile) =
+        parse_stable_json_at(
+            &outputs_capability,
+            &import_layout.outputs,
+            result_relative,
+            "codex_storyboard_result_invalid",
+        )?;
     if result.schema_version != 1
         || result.provider != PROVIDER
         || result.job_id != request.job_id
@@ -1786,10 +2134,11 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         return Err("codex_storyboard_result_invalid".to_string());
     }
 
-    let candidate_raw = layout.outputs.join("candidate.png");
-    let candidate = read_stable_file_within(
-        &layout.outputs,
-        &candidate_raw,
+    let candidate_relative = Path::new("candidate.png");
+    let candidate = read_stable_file_at(
+        &outputs_capability,
+        &import_layout.outputs,
+        candidate_relative,
         "codex_storyboard_candidate_escape",
     )?;
     if sha256_bytes(&candidate.bytes) != result.output.sha256 {
@@ -1808,35 +2157,44 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
     after_candidate_read();
     before_ledger();
     revalidate_import_layout(&project, &import_layout)?;
-    revalidate_reference_snapshot_files(&layout.inputs, &reference_snapshots)?;
-    revalidate_stable_file(
+    revalidate_reference_snapshot_files(
+        &inputs_capability,
+        &import_layout.inputs,
+        &reference_snapshots,
+    )?;
+    revalidate_stable_file_at(
         &candidate,
-        &layout.outputs,
-        &candidate_raw,
+        &outputs_capability,
+        &import_layout.outputs,
+        candidate_relative,
         "codex_storyboard_candidate_changed_during_validation",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &result_stable,
-        &layout.outputs,
-        &result_path,
+        &outputs_capability,
+        &import_layout.outputs,
+        result_relative,
         "codex_storyboard_result_changed_during_validation",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &immutable_stable,
-        &layout.package,
-        &request_path,
+        &package_capability,
+        &import_layout.package,
+        request_relative,
         "codex_storyboard_request_changed_during_validation",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &authority_stable,
-        &authority,
-        &authority_record_path,
+        &export_project_capability,
+        &export_project_root,
+        &authority_record_name,
         "codex_storyboard_authority_invalid",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &ready_stable,
-        &authority,
-        &ready_path,
+        &export_project_capability,
+        &export_project_root,
+        &ready_name,
         "codex_storyboard_package_not_ready",
     )?;
     let final_layout = validate_package_layout(&project, &request.job_id)?;
@@ -1855,57 +2213,77 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), A: FnOnce()>(
         status: "needs_review".to_string(),
         candidate_path: candidate.canonical_path.to_string_lossy().to_string(),
     };
-    let ledger_path = ensure_authority_import_ledger_path(
-        &authority,
-        &project,
-        &request.project_id,
-        &request.job_id,
-        &authority_record.request_digest,
+    let imports_capability = ensure_capability_child(
+        &authority_capability,
+        Path::new("imports"),
+        "codex_storyboard_authority_invalid",
     )?;
-    write_import_ledger_create_new(&ledger_path, &receipt)?;
+    let import_project_capability = ensure_capability_child(
+        &imports_capability,
+        Path::new(&authority_key),
+        "codex_storyboard_authority_invalid",
+    )?;
+    let ledger_name = PathBuf::from(format!(
+        "{}-{}.json",
+        request.job_id, authority_record.request_digest
+    ));
+    write_import_ledger_create_new_at(&import_project_capability, &ledger_name, &receipt)?;
     after_ledger();
     revalidate_import_layout(&project, &import_layout)?;
-    revalidate_reference_snapshot_files(&layout.inputs, &reference_snapshots)?;
-    let marker_path = layout.outputs.join("import-receipt.json");
-    let _ = publish_json(
-        &marker_path,
+    revalidate_reference_snapshot_files(
+        &inputs_capability,
+        &import_layout.inputs,
+        &reference_snapshots,
+    )?;
+    let _ = publish_json_at(
+        &outputs_capability,
+        Path::new("import-receipt.json"),
         &receipt,
         "codex_storyboard_package_audit_exists",
     );
 
     // The private ledger is deliberately fail-closed: if anything changes after
     // its CAS succeeds, reject the import while leaving the ledger consumed.
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &candidate,
-        &layout.outputs,
-        &candidate_raw,
+        &outputs_capability,
+        &import_layout.outputs,
+        candidate_relative,
         "codex_storyboard_candidate_changed_during_validation",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &result_stable,
-        &layout.outputs,
-        &result_path,
+        &outputs_capability,
+        &import_layout.outputs,
+        result_relative,
         "codex_storyboard_result_changed_during_validation",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &immutable_stable,
-        &layout.package,
-        &request_path,
+        &package_capability,
+        &import_layout.package,
+        request_relative,
         "codex_storyboard_request_changed_during_validation",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &authority_stable,
-        &authority,
-        &authority_record_path,
+        &export_project_capability,
+        &export_project_root,
+        &authority_record_name,
         "codex_storyboard_authority_invalid",
     )?;
-    revalidate_stable_file(
+    revalidate_stable_file_at(
         &ready_stable,
-        &authority,
-        &ready_path,
+        &export_project_capability,
+        &export_project_root,
+        &ready_name,
         "codex_storyboard_package_not_ready",
     )?;
-    revalidate_reference_snapshot_files(&layout.inputs, &reference_snapshots)?;
+    revalidate_reference_snapshot_files(
+        &inputs_capability,
+        &import_layout.inputs,
+        &reference_snapshots,
+    )?;
     revalidate_import_layout(&project, &import_layout)?;
     let return_layout = validate_package_layout(&project, &request.job_id)?;
     if return_layout.package != layout.package
@@ -1948,7 +2326,29 @@ fn app_authority_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     fs::create_dir_all(&app_data).map_err(|_| "codex_storyboard_authority_invalid".to_string())?;
     reject_symlink(&app_data, "codex_storyboard_authority_invalid")?;
     let app_data = canonical_directory(&app_data, "codex_storyboard_authority_invalid")?;
-    ensure_private_child(&app_data, "codex-storyboard-authority")
+    let app_data_root =
+        capture_stable_directory(&app_data, "codex_storyboard_authority_invalid")?;
+    let app_data_capability =
+        open_capability_directory(&app_data, "codex_storyboard_authority_invalid")?;
+    bind_capability_directory(
+        &app_data_capability,
+        &app_data_root,
+        "codex_storyboard_authority_invalid",
+    )?;
+    let authority_capability = ensure_capability_child(
+        &app_data_capability,
+        Path::new("codex-storyboard-authority"),
+        "codex_storyboard_authority_invalid",
+    )?;
+    let authority = app_data.join("codex-storyboard-authority");
+    let authority_root =
+        capture_stable_directory(&authority, "codex_storyboard_authority_invalid")?;
+    bind_capability_directory(
+        &authority_capability,
+        &authority_root,
+        "codex_storyboard_authority_invalid",
+    )?;
+    Ok(authority_root.canonical_path)
 }
 
 #[tauri::command]
@@ -1977,6 +2377,7 @@ mod tests {
     use image::{ImageBuffer, Rgb, Rgba};
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
+    use std::cell::Cell;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2173,9 +2574,15 @@ mod tests {
         }
     }
 
-    fn replace_tree_with_hardlinks(path: &Path, displaced: &Path) {
-        fs::rename(path, displaced).unwrap();
+    fn replace_tree_with_hardlinks(path: &Path, displaced: &Path) -> bool {
+        if let Err(error) = fs::rename(path, displaced) {
+            eprintln!(
+                "SKIP: retained directory handle prevented path replacement: {error}"
+            );
+            return false;
+        }
         clone_tree_with_hardlinks(displaced, path);
+        true
     }
 
     fn import_request(fixture: &Fixture, task_status: &str) -> ImportCodexStoryboardResultRequest {
@@ -2425,21 +2832,30 @@ mod tests {
             .join(&fixture.request.job_id);
         let inputs = package.join("inputs");
         let displaced = package.join("inputs-displaced");
+        let swapped = Cell::new(false);
         let result = prepare_at_roots_with_layout_hook(
             &fixture.project,
             &fixture.assets,
             &fixture.authority,
             fixture.request.clone(),
             || {
-                fs::rename(&inputs, &displaced).unwrap();
-                fs::create_dir(&inputs).unwrap();
+                if fs::rename(&inputs, &displaced).is_ok() {
+                    swapped.set(true);
+                    fs::create_dir(&inputs).unwrap();
+                }
             },
         );
-        assert_eq!(
-            result.unwrap_err(),
-            "codex_storyboard_prepare_layout_changed"
-        );
-        assert!(!package.join("request.json").exists());
+        if swapped.get() {
+            assert_eq!(
+                result.unwrap_err(),
+                "codex_storyboard_prepare_layout_changed"
+            );
+            assert!(!package.join("request.json").exists());
+        } else {
+            eprintln!("SKIP swap branch: retained Windows directory handle denied rename");
+            assert_eq!(result.unwrap().status, "exported");
+            assert!(package.join("request.json").is_file());
+        }
     }
 
     #[test]
@@ -2484,6 +2900,101 @@ mod tests {
     }
 
     #[test]
+    fn capability_relative_snapshot_create_ignores_replaced_path_name() {
+        let root = unique_root("cap-snapshot-create");
+        let trusted = root.join("inputs");
+        let displaced = root.join("inputs-displaced");
+        fs::create_dir_all(&trusted).unwrap();
+        let capability = open_capability_directory(
+            &trusted,
+            "codex_storyboard_snapshot_write_failed",
+        )
+        .unwrap();
+        let swapped = Cell::new(false);
+        let external = root.join("external-sentinel");
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("sentinel"), b"external").unwrap();
+        write_bytes_create_new_at_with_hook(
+            &capability,
+            Path::new("01-spatial-authority.png"),
+            b"stable snapshot bytes",
+            "codex_storyboard_snapshot_write_failed",
+            || {
+                if fs::rename(&trusted, &displaced).is_ok() {
+                    swapped.set(true);
+                    fs::create_dir(&trusted).unwrap();
+                    fs::write(trusted.join("sentinel"), b"external").unwrap();
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"external");
+        assert_eq!(fs::read_dir(&external).unwrap().count(), 1);
+        if swapped.get() {
+            assert_eq!(fs::read(trusted.join("sentinel")).unwrap(), b"external");
+            assert!(!trusted.join("01-spatial-authority.png").exists());
+            assert_eq!(
+                fs::read(displaced.join("01-spatial-authority.png")).unwrap(),
+                b"stable snapshot bytes"
+            );
+        } else {
+            eprintln!("SKIP swap branch: retained Windows directory handle denied rename");
+            assert_eq!(
+                fs::read(trusted.join("01-spatial-authority.png")).unwrap(),
+                b"stable snapshot bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn capability_relative_publication_keeps_temp_and_final_out_of_replacement() {
+        let root = unique_root("cap-request-publish");
+        let trusted = root.join("package");
+        let displaced = root.join("package-displaced");
+        fs::create_dir_all(&trusted).unwrap();
+        let capability = open_capability_directory(
+            &trusted,
+            "codex_storyboard_publish_failed",
+        )
+        .unwrap();
+        let swapped = Cell::new(false);
+        let external = root.join("external-sentinel");
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("sentinel"), b"external").unwrap();
+        publish_bytes_at_with_hooks(
+            &capability,
+            Path::new("request.json"),
+            b"canonical request bytes",
+            "codex_storyboard_request_exists",
+            || {
+                if fs::rename(&trusted, &displaced).is_ok() {
+                    swapped.set(true);
+                    fs::create_dir(&trusted).unwrap();
+                    fs::write(trusted.join("sentinel"), b"external").unwrap();
+                }
+            },
+            || {},
+        )
+        .unwrap();
+        assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"external");
+        assert_eq!(fs::read_dir(&external).unwrap().count(), 1);
+        let authority_dir = if swapped.get() { &displaced } else { &trusted };
+        if swapped.get() {
+            assert_eq!(fs::read(trusted.join("sentinel")).unwrap(), b"external");
+            assert_eq!(fs::read_dir(&trusted).unwrap().count(), 1);
+        } else {
+            eprintln!("SKIP swap branch: retained Windows directory handle denied rename");
+        }
+        assert_eq!(
+            fs::read(authority_dir.join("request.json")).unwrap(),
+            b"canonical request bytes"
+        );
+        assert!(fs::read_dir(authority_dir)
+            .unwrap()
+            .all(|entry| !entry.unwrap().file_name().to_string_lossy().contains(".tmp-")));
+    }
+
+    #[test]
     fn postpublish_package_swap_keeps_untrusted_request_and_never_marks_ready() {
         let fixture = fixture("postpublish-package-swap");
         let package = fixture
@@ -2495,6 +3006,7 @@ mod tests {
             .join("codex-storyboard-jobs")
             .join("postpublish-displaced");
         let sentinel = b"untrusted replacement request";
+        let swapped = Cell::new(false);
         let result = prepare_at_roots_with_publish_hooks(
             &fixture.project,
             &fixture.assets,
@@ -2502,24 +3014,32 @@ mod tests {
             fixture.request.clone(),
             || {},
             || {
-                fs::rename(&package, &displaced).unwrap();
-                fs::create_dir(&package).unwrap();
-                fs::write(package.join("request.json"), sentinel).unwrap();
+                if fs::rename(&package, &displaced).is_ok() {
+                    swapped.set(true);
+                    fs::create_dir(&package).unwrap();
+                    fs::write(package.join("request.json"), sentinel).unwrap();
+                }
             },
         );
-        assert_eq!(
-            result.unwrap_err(),
-            "codex_storyboard_prepare_layout_changed"
-        );
-        assert_eq!(fs::read(package.join("request.json")).unwrap(), sentinel);
-        assert!(!authority_ready_marker_path(
+        let ready = authority_ready_marker_path(
             &fixture.authority,
             &fixture.project,
             &fixture.request.project_id,
             &fixture.request.job_id,
         )
-        .unwrap()
-        .exists());
+        .unwrap();
+        if swapped.get() {
+            assert_eq!(
+                result.unwrap_err(),
+                "codex_storyboard_prepare_layout_changed"
+            );
+            assert_eq!(fs::read(package.join("request.json")).unwrap(), sentinel);
+            assert!(!ready.exists());
+        } else {
+            eprintln!("SKIP swap branch: retained Windows directory handle denied rename");
+            assert_eq!(result.unwrap().status, "exported");
+            assert!(ready.is_file());
+        }
     }
 
     #[test]
@@ -2568,7 +3088,7 @@ mod tests {
     }
 
     #[test]
-    fn request_publication_into_instant_replacement_never_marks_original_package_ready() {
+    fn request_publication_uses_retained_package_handle_during_instant_swap() {
         let fixture = fixture("request-publish-instant-swap");
         let package = fixture
             .project
@@ -2582,34 +3102,41 @@ mod tests {
             .project
             .join("codex-storyboard-jobs")
             .join("request-publish-untrusted");
+        let swapped = Cell::new(false);
         let result = prepare_at_roots_with_request_publish_hooks(
             &fixture.project,
             &fixture.assets,
             &fixture.authority,
             fixture.request.clone(),
             || {
-                fs::rename(&package, &displaced).unwrap();
-                fs::create_dir(&package).unwrap();
+                if fs::rename(&package, &displaced).is_ok() {
+                    swapped.set(true);
+                    fs::create_dir(&package).unwrap();
+                }
             },
             || {
-                fs::rename(&package, &untrusted).unwrap();
-                fs::rename(&displaced, &package).unwrap();
+                if swapped.get() {
+                    fs::rename(&package, &untrusted).unwrap();
+                    fs::rename(&displaced, &package).unwrap();
+                }
             },
         );
-        assert_eq!(
-            result.unwrap_err(),
-            "codex_storyboard_request_changed_during_publication"
-        );
-        assert!(!package.join("request.json").exists());
-        assert!(untrusted.join("request.json").is_file());
-        assert!(!authority_ready_marker_path(
+        assert_eq!(result.unwrap().status, "exported");
+        assert!(package.join("request.json").is_file());
+        if swapped.get() {
+            assert!(!untrusted.join("request.json").exists());
+            assert_eq!(fs::read_dir(&untrusted).unwrap().count(), 0);
+        } else {
+            eprintln!("SKIP swap branch: retained Windows directory handle denied rename");
+        }
+        assert!(authority_ready_marker_path(
             &fixture.authority,
             &fixture.project,
             &fixture.request.project_id,
             &fixture.request.job_id,
         )
         .unwrap()
-        .exists());
+        .is_file());
     }
 
     #[test]
@@ -2631,27 +3158,33 @@ mod tests {
                 package.join("inputs")
             };
             let displaced = target.with_file_name(format!("{kind}-displaced"));
+            let swapped = Cell::new(false);
             let result = import_at_roots_with_layout_hooks(
                 &fixture.project,
                 &fixture.assets,
                 &fixture.authority,
                 import_request(&fixture, "queued"),
-                || replace_tree_with_hardlinks(&target, &displaced),
+                || swapped.set(replace_tree_with_hardlinks(&target, &displaced)),
                 || {},
             );
-            assert_eq!(
-                result.unwrap_err(),
-                "codex_storyboard_package_changed_during_validation"
-            );
-            assert!(!authority_import_ledger_path(
+            let ledger = authority_import_ledger_path(
                 &fixture.authority,
                 &fixture.project,
                 &fixture.request.project_id,
                 &fixture.request.job_id,
                 &receipt.request_digest,
             )
-            .unwrap()
-            .exists());
+            .unwrap();
+            if swapped.get() {
+                assert_eq!(
+                    result.unwrap_err(),
+                    "codex_storyboard_package_changed_during_validation"
+                );
+                assert!(!ledger.exists());
+            } else {
+                assert_eq!(result.unwrap().status, "needs_review");
+                assert!(ledger.is_file());
+            }
         }
     }
 
@@ -2668,18 +3201,23 @@ mod tests {
         publish_result(&receipt, |_| {});
         let outputs = PathBuf::from(&receipt.package_path).join("outputs");
         let displaced = PathBuf::from(&receipt.package_path).join("outputs-displaced");
+        let swapped = Cell::new(false);
         let result = import_at_roots_with_layout_hooks(
             &fixture.project,
             &fixture.assets,
             &fixture.authority,
             import_request(&fixture, "queued"),
             || {},
-            || replace_tree_with_hardlinks(&outputs, &displaced),
+            || swapped.set(replace_tree_with_hardlinks(&outputs, &displaced)),
         );
-        assert_eq!(
-            result.unwrap_err(),
-            "codex_storyboard_package_changed_during_validation"
-        );
+        if swapped.get() {
+            assert_eq!(
+                result.unwrap_err(),
+                "codex_storyboard_package_changed_during_validation"
+            );
+        } else {
+            assert_eq!(result.unwrap().status, "needs_review");
+        }
         assert!(authority_import_ledger_path(
             &fixture.authority,
             &fixture.project,
