@@ -20,6 +20,7 @@ use tauri::Manager;
 
 mod video_continuity;
 mod spatial_stage;
+mod codex_storyboard;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -3962,6 +3963,8 @@ fn main() {
             export_animatic,
             export_animatic_from_frames,
             concat_video_segments,
+            codex_storyboard::prepare_codex_storyboard_job,
+            codex_storyboard::import_codex_storyboard_result,
             video_continuity::prepare_runninghub_handoff,
             video_continuity::record_runninghub_submission,
             video_continuity::import_runninghub_result,

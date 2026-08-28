@@ -1,4 +1,11 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import {
+  CODEX_STORYBOARD_REFERENCE_USAGES,
+  type CodexStoryboardExportReceipt as CoreCodexStoryboardExportReceipt,
+  type CodexStoryboardImportReceipt as CoreCodexStoryboardImportReceipt,
+  type CodexStoryboardReferenceUsage,
+  type CodexStoryboardRequest
+} from "../../services/generation-providers/codexTaskPackage";
 
 declare global {
   interface Window {
@@ -7,7 +14,7 @@ declare global {
 }
 
 function isAbsoluteLocalPath(value: string): boolean {
-  return value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value);
+  return value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value);
 }
 
 export function isTauriRuntime(): boolean {
@@ -61,6 +68,192 @@ export async function invokeDesktopCommand<T>(cmd: string, args?: Record<string,
     return (payload as { result: T }).result;
   }
   return payload as T;
+}
+
+export type CodexStoryboardReferenceSelection = {
+  id: string;
+  usage: CodexStoryboardReferenceUsage;
+  instruction: string;
+  sourcePath: string;
+};
+
+export type PrepareCodexStoryboardJobRequest = {
+  schemaVersion: 1;
+  jobId: string;
+  projectId: string;
+  episodeId: string;
+  shotId: string;
+  provider: "codex_task_package";
+  createdAt: string;
+  projectPath: string;
+  prompt: CodexStoryboardRequest["prompt"];
+  references: CodexStoryboardReferenceSelection[];
+  acceptedImagePath: string | null;
+};
+
+export type CodexStoryboardTaskStatus =
+  | "queued"
+  | "exported"
+  | "running"
+  | "cancelled"
+  | "rejected"
+  | "accepted"
+  | "completed";
+
+export type ImportCodexStoryboardResultRequest = {
+  schemaVersion: 1;
+  jobId: string;
+  projectId: string;
+  episodeId: string;
+  shotId: string;
+  provider: "codex_task_package";
+  projectPath: string;
+  taskStatus: CodexStoryboardTaskStatus;
+  requestDigest: string;
+};
+
+export type TauriCodexStoryboardExportReceipt = CoreCodexStoryboardExportReceipt & {
+  schemaVersion: 1;
+  status: "exported";
+  requestPath: string;
+};
+
+export type TauriCodexStoryboardImportReceipt = CoreCodexStoryboardImportReceipt & {
+  schemaVersion: 1;
+  status: "needs_review";
+  candidatePath: string;
+};
+
+function requireCodexIdentifier(value: string, field: "jobId" | "projectId" | "episodeId" | "shotId"): string {
+  const trimmed = String(value ?? "").trim();
+  if (!/^[a-zA-Z0-9_-]{1,96}$/.test(trimmed)) {
+    throw new Error(`codex_storyboard_${field}_invalid`);
+  }
+  return trimmed;
+}
+
+function requireCodexAbsolutePath(value: string, missingCode: string): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) throw new Error(missingCode);
+  if (!isAbsoluteLocalPath(trimmed)) throw new Error("codex_storyboard_path_must_be_absolute");
+  return trimmed;
+}
+
+function duplicatePathKey(value: string): string {
+  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+export function createPrepareCodexStoryboardJobRequest(
+  request: PrepareCodexStoryboardJobRequest
+): PrepareCodexStoryboardJobRequest {
+  const projectPath = requireCodexAbsolutePath(request.projectPath, "codex_storyboard_project_path_missing");
+  if (request.schemaVersion !== 1 || request.provider !== "codex_task_package") {
+    throw new Error("codex_storyboard_provider_mismatch");
+  }
+  if (!Array.isArray(request.references) || request.references.length === 0 || request.references.length > 16) {
+    throw new Error("codex_storyboard_references_invalid");
+  }
+  if (
+    request.prompt?.useCase !== "stylized-concept" ||
+    !String(request.prompt?.primaryRequest ?? "").trim()
+  ) {
+    throw new Error("codex_storyboard_prompt_invalid");
+  }
+
+  const ids = new Set<string>();
+  const sourceAssignments = new Map<string, { usage: CodexStoryboardReferenceUsage; instruction: string }>();
+  const references = request.references.map((reference) => {
+    const id = String(reference.id ?? "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id) || ids.has(id)) {
+      throw new Error("codex_storyboard_reference_id_invalid");
+    }
+    ids.add(id);
+    if (!CODEX_STORYBOARD_REFERENCE_USAGES.includes(reference.usage)) {
+      throw new Error("codex_storyboard_reference_usage_invalid");
+    }
+    const instruction = String(reference.instruction ?? "").trim();
+    if (!instruction) throw new Error("codex_storyboard_reference_instruction_invalid");
+    const sourcePath = requireCodexAbsolutePath(
+      reference.sourcePath,
+      "codex_storyboard_reference_path_missing"
+    );
+    const pathKey = duplicatePathKey(sourcePath);
+    const prior = sourceAssignments.get(pathKey);
+    if (prior && (prior.usage !== reference.usage || prior.instruction !== instruction)) {
+      throw new Error("codex_storyboard_reference_path_conflict");
+    }
+    sourceAssignments.set(pathKey, { usage: reference.usage, instruction });
+    return { id, usage: reference.usage, instruction, sourcePath };
+  });
+  if (
+    !references.some((reference) => reference.usage === "spatial_authority") ||
+    !references.some((reference) => reference.usage === "face_identity" || reference.usage === "body_costume")
+  ) {
+    throw new Error("codex_storyboard_required_reference_usage_missing");
+  }
+  const acceptedImagePath = request.acceptedImagePath === null
+    ? null
+    : requireCodexAbsolutePath(request.acceptedImagePath, "codex_storyboard_accepted_path_invalid");
+  return {
+    schemaVersion: 1,
+    jobId: requireCodexIdentifier(request.jobId, "jobId"),
+    projectId: requireCodexIdentifier(request.projectId, "projectId"),
+    episodeId: requireCodexIdentifier(request.episodeId, "episodeId"),
+    shotId: requireCodexIdentifier(request.shotId, "shotId"),
+    provider: "codex_task_package",
+    createdAt: String(request.createdAt ?? "").trim(),
+    projectPath,
+    prompt: structuredClone(request.prompt),
+    references,
+    acceptedImagePath
+  };
+}
+
+export function createImportCodexStoryboardResultRequest(
+  request: ImportCodexStoryboardResultRequest
+): ImportCodexStoryboardResultRequest {
+  if (request.schemaVersion !== 1 || request.provider !== "codex_task_package") {
+    throw new Error("codex_storyboard_provider_mismatch");
+  }
+  const allowedStatuses: readonly CodexStoryboardTaskStatus[] = [
+    "queued", "exported", "running", "cancelled", "rejected", "accepted", "completed"
+  ];
+  if (!allowedStatuses.includes(request.taskStatus)) {
+    throw new Error("codex_storyboard_task_state_invalid");
+  }
+  if (!/^[a-f0-9]{64}$/.test(request.requestDigest ?? "")) {
+    throw new Error("codex_storyboard_request_digest_invalid");
+  }
+  return {
+    schemaVersion: 1,
+    jobId: requireCodexIdentifier(request.jobId, "jobId"),
+    projectId: requireCodexIdentifier(request.projectId, "projectId"),
+    episodeId: requireCodexIdentifier(request.episodeId, "episodeId"),
+    shotId: requireCodexIdentifier(request.shotId, "shotId"),
+    provider: "codex_task_package",
+    projectPath: requireCodexAbsolutePath(request.projectPath, "codex_storyboard_project_path_missing"),
+    taskStatus: request.taskStatus,
+    requestDigest: request.requestDigest
+  };
+}
+
+export async function prepareCodexStoryboardJob(
+  request: PrepareCodexStoryboardJobRequest
+): Promise<TauriCodexStoryboardExportReceipt> {
+  return invokeDesktopCommand("prepare_codex_storyboard_job", {
+    request: createPrepareCodexStoryboardJobRequest(request)
+  });
+}
+
+export async function importCodexStoryboardResult(
+  request: ImportCodexStoryboardResultRequest
+): Promise<TauriCodexStoryboardImportReceipt> {
+  return invokeDesktopCommand("import_codex_storyboard_result", {
+    request: createImportCodexStoryboardResultRequest(request)
+  });
 }
 
 export type TrustedCharacterReferenceBytes = {
