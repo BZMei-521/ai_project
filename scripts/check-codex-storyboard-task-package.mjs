@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { build } from "esbuild";
 import typescript from "typescript";
 import * as runtime from "../src/services/generation-providers/codexTaskPackageRuntime.mjs";
@@ -223,6 +227,97 @@ const validatedResult = runtime.validateCodexStoryboardResult(result, request);
 assert.throws(() => { validatedResult.output.sha256 = sha("f"); }, /read only/i);
 assert.throws(() => { validatedResult.referenceDigests[0].sha256 = sha("f"); }, /read only/i);
 
+const cliPath = fileURLToPath(new URL("./run-codex-storyboard-job.mjs", import.meta.url));
+const fixtureRoot = await mkdtemp(path.join(tmpdir(), "codex-storyboard-contract-fixture-"));
+const fixturePackage = path.join(fixtureRoot, "package");
+const fixtureCandidate = path.join(fixtureRoot, "candidate.png");
+const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M/wHwAFAAH/e+m+7wAAAABJRU5ErkJggg==", "base64");
+const hashBytes = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const canonicalizeForDigest = (value) => Array.isArray(value)
+  ? value.map(canonicalizeForDigest)
+  : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalizeForDigest(value[key])]))
+    : value;
+const makeFixtureRequest = () => ({
+  schemaVersion: 1,
+  jobId: "job-cli-1",
+  projectId: "project-cli-1",
+  episodeId: "episode-cli-1",
+  shotId: "shot-cli-1",
+  provider: "codex_task_package",
+  createdAt: "2026-08-28T00:00:00.000Z",
+  prompt: { useCase: "stylized-concept", primaryRequest: "A locked storyboard frame." },
+  references: [
+    ["stage", "spatial_authority", "Preserve geometry and composition."],
+    ["body", "body_costume", "Preserve body and costume."],
+    ["face", "face_identity", "Preserve facial identity."],
+    ["style-a", "style_only", "Use only the painterly material treatment."],
+    ["style-b", "style_only", "Use only the cool-blue lighting palette."]
+  ].map(([id, usage, instruction], index) => ({
+    id, usage, instruction, relativePath: `references/${index + 1}-${id}.png`, sha256: hashBytes(tinyPng), width: 1, height: 1, mimeType: "image/png"
+  })),
+  acceptedImagePath: null,
+  expectedOutput: { candidatePath: "outputs/candidate.png", resultPath: "outputs/result.json", mimeTypes: ["image/png"] }
+});
+const writeFixturePackage = async () => {
+  const request = makeFixtureRequest();
+  await mkdir(path.join(fixturePackage, "references"), { recursive: true });
+  await Promise.all(request.references.map((reference) => writeFile(path.join(fixturePackage, reference.relativePath), tinyPng)));
+  await writeFile(path.join(fixturePackage, "request.json"), `${JSON.stringify(request, null, 2)}\n`);
+  return request;
+};
+const runCli = (...args) => spawnSync(process.execPath, [cliPath, ...args], { encoding: "utf8" });
+
+try {
+  const cliRequest = await writeFixturePackage();
+  const inspected = runCli("inspect", "--package", fixturePackage);
+  assert.equal(inspected.status, 0, inspected.stderr);
+  const inspection = JSON.parse(inspected.stdout);
+  assert.equal(inspection.jobId, cliRequest.jobId);
+  assert.equal(inspection.shotId, cliRequest.shotId);
+  assert.equal(inspection.requestDigest, hashBytes(Buffer.from(JSON.stringify(canonicalizeForDigest(cliRequest)))));
+  assert.deepEqual(inspection.referencedImagePaths, await Promise.all(cliRequest.references.map((reference) => realpath(path.join(fixturePackage, reference.relativePath)))));
+  assert.deepEqual(inspection.referenceUsages, cliRequest.references.map((reference) => reference.usage));
+  assert.deepEqual(inspection.referenceInstructions, cliRequest.references.map((reference) => reference.instruction));
+  assert.match(inspection.compiledPrompt, /Picture 5 \[style_only\]: Use only the cool-blue lighting palette\./);
+
+  await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), Buffer.concat([tinyPng, Buffer.from("mutated")]));
+  const mutated = runCli("inspect", "--package", fixturePackage);
+  assert.equal(mutated.status, 11);
+  assert.match(mutated.stderr, /codex_storyboard_cli_reference_digest_mismatch/);
+  await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), tinyPng);
+
+  await rm(path.join(fixturePackage, "request.json"));
+  const missingRequest = runCli("inspect", "--package", fixturePackage);
+  assert.equal(missingRequest.status, 10);
+  assert.match(missingRequest.stderr, /codex_storyboard_cli_request_missing/);
+  await writeFixturePackage();
+
+  const escaped = makeFixtureRequest();
+  escaped.references[0].relativePath = "../escape.png";
+  await writeFile(path.join(fixturePackage, "request.json"), `${JSON.stringify(escaped, null, 2)}\n`);
+  const escapedPath = runCli("inspect", "--package", fixturePackage);
+  assert.equal(escapedPath.status, 12);
+  assert.match(escapedPath.stderr, /codex_storyboard_cli_reference_path_invalid/);
+  await writeFixturePackage();
+
+  await writeFile(fixtureCandidate, tinyPng);
+  const completed = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(completed.status, 0, completed.stderr);
+  const completedResult = JSON.parse(await readFile(path.join(fixturePackage, "outputs", "result.json"), "utf8"));
+  const completionRequest = makeFixtureRequest();
+  assert.equal(completedResult.requestDigest, hashBytes(Buffer.from(JSON.stringify(canonicalizeForDigest(completionRequest)))));
+  assert.deepEqual(completedResult.referenceDigests, completionRequest.references.map(({ id, sha256 }) => ({ id, sha256 })));
+  assert.equal(completedResult.output.width, 1);
+  assert.equal(completedResult.output.height, 1);
+  runtime.validateCodexStoryboardResult(completedResult, completionRequest);
+  const existingOutput = runCli("complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(existingOutput.status, 13);
+  assert.match(existingOutput.stderr, /codex_storyboard_cli_output_exists/);
+} finally {
+  await rm(fixtureRoot, { recursive: true, force: true });
+}
+
 const provider = new CodexTaskPackageProvider({
   exportStoryboardJob: async () => ({ jobId: request.jobId, packagePath: "C:/project/codex-storyboard-jobs/job-1", requestDigest: "a".repeat(64) })
 });
@@ -234,4 +329,31 @@ assert.deepEqual(await provider.storyboard({ request }), {
 });
 await assert.rejects(() => provider.video({}), /unsupported_job_kind/);
 
-console.log("PASS Codex storyboard task-package contract and provider");
+const e01Fixture = JSON.parse(await readFile(new URL("../examples/codex-storyboard/e01-c01.json", import.meta.url), "utf8"));
+assert.deepEqual(
+  e01Fixture,
+  {
+    schemaVersion: 1,
+    projectId: "yingdi-storyboard",
+    episodeId: "E01",
+    shotId: "E01-C01",
+    characterAssetId: "li-baozhu",
+    references: [
+      {
+        id: "spatial-main",
+        path: ".superpowers/sdd/e01-c01-depth-refcontrol-20260827-v1/outputs/run-20260827-125315-241-7e50d4f6/container/color.png",
+        usage: "spatial_authority",
+        instruction: "锁定机位、棺木几何、人物投影位置、姿态、构图和遮挡关系。"
+      },
+      {
+        id: "style-main",
+        path: "影帝他总想对我图谋不轨_漫剧改编/分镜/E01-01/f1.png",
+        usage: "style_only",
+        instruction: "只参考材质、光影和电影感中式半写实 3D 动画语言，不沿用近景构图。"
+      }
+    ]
+  },
+  "the fixed E01-C01 selection leaves identity rows for the persisted identity-pack loader to insert between spatial and style"
+);
+
+console.log("PASS Codex storyboard task-package contract, provider, and operator CLI");

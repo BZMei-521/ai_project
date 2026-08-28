@@ -37,6 +37,7 @@
     "test:character-benchmark": "node scripts/check-character-consistency-benchmark.mjs",
     "test:character-evaluator": "node scripts/check-character-siglip2-evaluator.mjs",
     "test:codex-storyboard-package": "node scripts/check-codex-storyboard-task-package.mjs",
+    "codex:storyboard-job": "node scripts/run-codex-storyboard-job.mjs",
     "test:codex-storyboard-ui": "node scripts/check-codex-storyboard-ui.mjs",
     "benchmark:characters": "node scripts/run-character-consistency-benchmark.mjs",
     "test:workflow-presets": "node scripts/check-workflow-presets.mjs",

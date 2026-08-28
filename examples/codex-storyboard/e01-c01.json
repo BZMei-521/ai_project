@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "projectId": "yingdi-storyboard",
+  "episodeId": "E01",
+  "shotId": "E01-C01",
+  "characterAssetId": "li-baozhu",
+  "references": [
+    {
+      "id": "spatial-main",
+      "path": ".superpowers/sdd/e01-c01-depth-refcontrol-20260827-v1/outputs/run-20260827-125315-241-7e50d4f6/container/color.png",
+      "usage": "spatial_authority",
+      "instruction": "锁定机位、棺木几何、人物投影位置、姿态、构图和遮挡关系。"
+    },
+    {
+      "id": "style-main",
+      "path": "影帝他总想对我图谋不轨_漫剧改编/分镜/E01-01/f1.png",
+      "usage": "style_only",
+      "instruction": "只参考材质、光影和电影感中式半写实 3D 动画语言，不沿用近景构图。"
+    }
+  ]
+}
