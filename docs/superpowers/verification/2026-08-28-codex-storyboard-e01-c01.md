@@ -1,142 +1,102 @@
-# Codex 内置生图 E01-C01 任务包交接验证
+# Codex 内置生图 E01-01-C01 桌面工作流验证
 
 日期：2026-08-28
 
-状态：候选图已导入为 `needs_review`，尚未接受
+状态：真实 Tauri 界面已完成导出与导入，候选保持 `needs_review`，未接受、未拒绝
 
 分支：`codex/codex-storyboard-task-package`
 
-## 1. 实现版本
+Live run 开始时实现 HEAD：`4d4205e1b9a23ab63ffb1730e773c7ea9fe7ff96`。本文件作为后续证据提交，不把自身提交误记为 live run 的实现版本。
 
-本次 live 验证基于以下 Task 1–5 提交：
+## 1. 验证范围
 
-- Task 1：`9f60f30`、`c4f374e`
-- Task 2：`dff14f6`、`454b834`、`64c6836`、`41fca80`、`c414632`、`1942b6e`、`682e273`
-- Task 3：`d602578`、`244a5c6`
-- Task 4：`8517bf2`、`e5b0312`
-- Task 5：`e39b0d8`、`783ae3a`、`cb6aea4`、`21f158b`、`78c3712`、`9eb2574`
+本次验证使用带独立 Tauri identifier 的桌面开发实例，实际点击正式界面的“导出 Codex 任务包”和“检查并导入结果”。隔离项目为：
 
-验证时 HEAD：`9eb2574`。
+`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\.superpowers\sdd\codex-ui-live-e01-c01-20260828-v2.sbproj`
 
-## 2. Deterministic preflight
+该路径不在应用默认工作区列表内，因此先从 WebView 调用正式 `select_workspace_project` Tauri command，使隔离实例的 `current-project.txt` 与界面项目一致。真实用户实例的 marker 验证前后均保持：
 
-在 `C:\Users\Administrator\Desktop\ai_project\.worktrees\codex-storyboard-task-package` 执行：
+`C:\Users\Administrator\Desktop\小说\应用项目\default.sbproj`
+
+桌面启动验证同时确认 `src-tauri/Cargo.toml` 的 `default-run = "storyboard-pro"` 能在多 binary 配置下选择正确的 Tauri 主程序。
+
+## 2. 实际桌面交接
+
+- Shot：`E01-01-C01`（`E01-01 · 01 · 棺中惊醒`）
+- Job ID：`codex-e01-01-c01-mtd2vg4n-4e4447cdef6c264e`
+- Package：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\.superpowers\sdd\codex-ui-live-e01-c01-20260828-v2.sbproj\codex-storyboard-jobs\codex-e01-01-c01-mtd2vg4n-4e4447cdef6c264e`
+- Request digest：`7d547c733da3465735a2142428e0f983f6864bd8e24488c617f8ca646c65d94f`
+- Compiled prompt digest：`f7b3cc951ae14f12e89445f4c1630a62c4e1b63916ed98d260139c082e76d9e6`
+- Result digest：`49a6ce7ee6d0f43cd1adec0cf0439a99fdde27c27a618fc7bacc1b0a79303c95`
+- Candidate digest：`ccfdb1c7ca71b7db5b4104c18a2b287591557767b61d2ddfb9abe7d28c1518b0`
+
+UI 中填写并冻结的有序参考图如下：
+
+| Picture | Usage | 作用 | SHA-256 | 尺寸 |
+| --- | --- | --- | --- | --- |
+| 1 | `spatial_authority` | 锁定机位、棺木几何、完整躺姿、遮挡与构图 | `8824abcac767df5ba2cd0caa2b3881daf53d5f7443a83cec9deb7db53cde9e70` | 960×720 |
+| 2 | `body_costume` | 只约束李宝珠体态比例、破损绯红礼服、金饰和材质 | `2c7472956ceb769e958986428fec8577ac7a057e58da7051ca39de2fc8fbf73c` | 370×610 |
+| 3 | `face_identity` | 只约束脸型、凤眼、五官比例、发型与凤钗 | `78fc51a664bab051d88eaa4cfc40dc1ea4ef7ce4d4698f875ab2a9dab1962606` | 380×380 |
+| 4 | `style_only` | 只约束中式半写实 3D、暗色电影光、材质和色盘 | `885154a4887dcdd54b426895b322e7584ec479650d0ae335ab5bb6ab6036bf97` | 1672×941 |
+
+Operator inspect 保留了 Picture 顺序、逐图 usage/instruction 和不可变 staged snapshot。编译提示词在逐图说明后自动加入强制块：单人物、双臂双手与手指可见、空间权威机位锁定、禁止构图漂移、禁止文字与水印。`outputs/result.json.finalPrompt` 与 inspection manifest 的编译提示词逐字一致。
+
+## 3. Codex 内置生图结果
+
+使用四张 inspected staged paths 和原样编译提示词调用 Codex 内置 image generation：
+
+- Codex 原图：`C:\Users\Administrator\.codex\generated_images\01a04605-055b-7510-a3d7-f8b17ddc13f9\exec-d5087626-69ae-42d4-88ca-d10d5f305421.png`
+- Package candidate：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\.superpowers\sdd\codex-ui-live-e01-c01-20260828-v2.sbproj\codex-storyboard-jobs\codex-e01-01-c01-mtd2vg4n-4e4447cdef6c264e\outputs\candidate.png`
+- 输出：1672×941，`image/png`
+- Generation mode：`codex_builtin_imagegen`
+- Result state：`completed`
+- Completed at：`2026-08-28T15:02:45.122Z`
+
+`complete` 在发布前重新核验 request、compiled prompt、四张 reference snapshots 与候选 PNG，并以不可覆盖方式写入 candidate 和 result。
+
+## 4. Review gate 证据
+
+点击正式 UI 的“检查并导入结果”后：
+
+- 界面历史项显示 `needs_review`；
+- 界面显示“接受候选图”和“拒绝候选图”按钮；
+- “检查并导入结果”变为禁用；
+- `outputs/import-receipt.json.status = needs_review`；
+- 私有 lifecycle 仅有 `queued`（version 0）→ `needs_review`（version 1）；
+- 没有 `accepted`、`rejected` 或 `cancelled` lifecycle 记录；
+- 本次没有点击接受或拒绝。
+
+请求为 review gate 冻结的 `acceptedImagePath` 字段是 `assets/codex-live-refs/04-style.png`，SHA-256 为 `885154a4887dcdd54b426895b322e7584ec479650d0ae335ab5bb6ab6036bf97`；这不等同于声称磁盘 `snapshot.json` 的 shot 路径已被改写。候选 SHA-256 不同，且该摘要没有出现在 package 外的项目 PNG 中；结合私有 lifecycle 与 receipt，可证明本次导入没有发布候选或替换持久化分镜。
+
+## 5. 视觉检查
+
+优点：
+
+- 恰好一名成年女性，没有重复人物、文字或水印；
+- 双臂、双手与十指清晰，未见融合、缺失或多余肢体；
+- 李宝珠的脸型、发型、凤钗、破损绯红礼服与金饰保持良好；
+- 黑暗棺内压迫感、木材、布料和金属的中式半写实 3D 质感完成度较高。
+
+需要人工审查的问题：
+
+- 候选明显继承了 Picture 4 的近景正俯构图，没有遵守 Picture 1 的斜俯全身空间权威；全腿、双脚及完整棺体没有进入画面；
+- 提示词要求 1920×1080，但 Codex 实际返回 1672×941；宽高比接近 16:9，像素尺寸不相等；
+- 双掌悬在棺盖下方，情绪成立，但“向上顶压棺盖”的受力接触仍不够明确。
+
+因此这张图适合作为效果候选，但不应自动接受。它也说明“多参考图 + usage 标注”能稳定身份、服装和风格，却不能保证模型严格服从空间参考优先级；需要在后续方案中考虑降低 style reference 的构图吸引力、裁剪风格图，或增加生成后空间一致性审查与重试。
+
+## 6. 最终自动验证
 
 | 命令 | 结果 |
 | --- | --- |
-| `npm run test:codex-storyboard-package` | PASS，退出码 0；该脚本本次没有额外打印显式 PASS 行 |
-| `npm run test:codex-storyboard-ui` | PASS，`codex storyboard UI checks passed` |
+| `npm run test:codex-storyboard-package` | PASS，任务包契约、provider、inspect/complete、并发与恢复检查通过 |
+| `npm run test:codex-storyboard-bridge` | PASS，桌面持久边界与 `default-run` 回归检查通过 |
+| `npm run test:codex-storyboard-ui` | PASS |
 | `node scripts/check-storyboard-generation-flow.mjs` | PASS |
 | `node scripts/check-storyboard-generation-state.mjs` | PASS |
-| `cargo test --manifest-path src-tauri/Cargo.toml codex_storyboard -- --nocapture` | PASS，27 passed / 0 failed；Windows rename/symlink 分支按测试设计跳过，另有既存 dead-code warning |
-| `npm run build` | PASS；仅出现既存的 Vite `>500 kB` chunk advisory |
+| `cargo test --offline --manifest-path src-tauri/Cargo.toml codex_storyboard -- --nocapture` | PASS，30 passed / 0 failed；Windows 目录替换分支按测试设计跳过 |
+| `cargo test --offline --manifest-path src-tauri/Cargo.toml --bin codex-storyboard-operator` | PASS，3 passed / 0 failed |
+| `npx tsc -b` | PASS |
+| `npm run build` | PASS；仅有既存 Vite `>500 kB` chunk advisory |
 
-Windows workspace sandbox 内的 Node 启动会在 `lstat C:\Users\Administrator` 返回 `EPERM`，因此 Node focused tests 和 build 使用获批的沙箱外本地执行；没有网络调用。
-
-## 3. Live export
-
-- Active media project：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project`
-- Shot：`E01-C01`
-- Job ID：`codex-e01-c01-mtcxgpxe-7e411f5d615b53b5`
-- Package：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\codex-storyboard-jobs\codex-e01-c01-mtcxgpxe-7e411f5d615b53b5`
-- Request：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\codex-storyboard-jobs\codex-e01-c01-mtcxgpxe-7e411f5d615b53b5\request.json`
-- Request SHA-256：`7d6fdfa8773d2f92cc7ee1ae66a40c1c17293686ce807f16207f9f5fcbe2f8c4`
-- Inspection manifest：`C:\Users\Administrator\AppData\Local\Temp\codex-storyboard-inspection-dxjm5a\inspection-manifest.json`
-- Prompt SHA-256：`4ea53218ea6ac141b222babdc75d302bbf4569ff5bb3d83aab5908cd3dda4ce0`
-
-正式 UI 没有被点击：当时真实 Tauri `current-project.txt` 绑定的是另一个 `.sbproj`，修改该 marker 会干扰用户正在打开的项目。验证没有修改真实 marker。请求由生产 `buildCodexStoryboardPackageRequest` 实际生成，再由一次性 Rust 桥直接复用正式 Tauri command 内相同的 `codex_storyboard.rs::prepare_at_roots` 核心；project root 与 assets root 均为上面的 aebb active project，authority 使用该项目内的私有目录。桥源和临时 request-builder 文件执行后已删除，未进入提交。
-
-导出完成时 `request.json` 存在，`outputs` 为空。导出前已接受路径为：
-
-`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\影帝他总想对我图谋不轨_漫剧改编\分镜\E01-01\f1.png`
-
-其 SHA-256 为 `885154a4887dcdd54b426895b322e7584ec479650d0ae335ab5bb6ab6036bf97`，导出、inspect、complete 和 import 后均未改变。
-
-## 4. Ordered references
-
-| Picture | ID | Usage | Instruction | SHA-256 | Dimensions | Immutable staged path |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `e01-c01-spatial-authority` | `spatial_authority` | Use Picture 1 as the immutable spatial authority for camera, blocking, the complete lying pose, coffin geometry, occlusion, framing, and composition. Do not alter the camera or layout. | `8824abcac767df5ba2cd0caa2b3881daf53d5f7443a83cec9deb7db53cde9e70` | 960×720 | `C:\Users\Administrator\AppData\Local\Temp\codex-storyboard-inspection-dxjm5a\01-e01-c01-spatial-authority.png` |
-| 2 | `li-baozhu-body-costume` | `body_costume` | Preserve Li Baozhu's body proportions, damaged crimson ceremonial robe construction, gold embroidery, materials, and accessories; keep the lying pose and composition controlled only by Picture 1. | `2c7472956ceb769e958986428fec8577ac7a057e58da7051ca39de2fc8fbf73c` | 370×610 | `C:\Users\Administrator\AppData\Local\Temp\codex-storyboard-inspection-dxjm5a\02-li-baozhu-body-costume.png` |
-| 3 | `li-baozhu-face-identity` | `face_identity` | Preserve Li Baozhu's facial identity, face shape, phoenix eyes, brows, nose-lip proportions, hairline, updo, and phoenix hairpin; keep pose and composition controlled only by Picture 1. | `78fc51a664bab051d88eaa4cfc40dc1ea4ef7ce4d4698f875ab2a9dab1962606` | 380×380 | `C:\Users\Administrator\AppData\Local\Temp\codex-storyboard-inspection-dxjm5a\03-li-baozhu-face-identity.png` |
-| 4 | `e01-01-style-anchor` | `style_only` | Use Picture 4 only for refined cinematic Chinese 3D animation rendering language, dark film lighting, palette, material treatment, and finish; it does not control composition, pose, anatomy, coffin geometry, or identity. | `885154a4887dcdd54b426895b322e7584ec479650d0ae335ab5bb6ab6036bf97` | 1672×941 | `C:\Users\Administrator\AppData\Local\Temp\codex-storyboard-inspection-dxjm5a\04-e01-01-style-anchor.png` |
-
-Operator inspect 保留了 Picture 顺序、重复 usage 的通用能力、逐图 instruction、摘要和只读 staged snapshots。本次 baseline 使用四张图。
-
-## 5. Exact final prompt
-
-以下文本来自 inspection manifest，且与 `outputs/result.json.finalPrompt` 逐字一致：
-
-```text
-Picture 1 [spatial_authority]: Use Picture 1 as the immutable spatial authority for camera, blocking, the complete lying pose, coffin geometry, occlusion, framing, and composition. Do not alter the camera or layout.
-Picture 2 [body_costume]: Preserve Li Baozhu's body proportions, damaged crimson ceremonial robe construction, gold embroidery, materials, and accessories; keep the lying pose and composition controlled only by Picture 1.
-Picture 3 [face_identity]: Preserve Li Baozhu's facial identity, face shape, phoenix eyes, brows, nose-lip proportions, hairline, updo, and phoenix hairpin; keep pose and composition controlled only by Picture 1.
-Picture 4 [style_only]: Use Picture 4 only for refined cinematic Chinese 3D animation rendering language, dark film lighting, palette, material treatment, and finish; it does not control composition, pose, anatomy, coffin geometry, or identity.
-Create one production-ready AI comic-drama storyboard frame.
-Project: 影帝他总想对我图谋不轨. Sequence: Episode 1 · Burial Chamber.
-Shot 1: Li Baozhu wakes inside the sealed coffin.
-Story and action: Li Baozhu jolts awake inside a sealed coffin. She is the only person in frame, wearing a damaged crimson ceremonial robe, with both hands braced against the heavy lid.
-Dialogue context: 放我出去！有人吗！
-Director notes: One young royal woman lies fully inside a cramped dark wooden coffin, both palms driving upward against the lid. Preserve the verified oblique overhead camera, complete body, both hands, both legs and both feet, credible lid pressure and continuous occlusion.
-Shot tags: burial chamber, sealed coffin, oblique overhead, survival pressure.
-On-screen character identity: Li Baozhu.
-Output framing: 1280x720 at 24 fps continuity.
-Cinematic style contract cinematic_3d_donghua_v1@1.0.0: cinematic semi-realistic 3D donghua, premium game-cinematic rendering, mature adult character proportions, refined slightly stylized facial anatomy, readable eyes, modeled nose and lips, detailed hair strands, soft luminous skin, restrained subsurface scattering, physically readable cloth leather metal fur and jewelry materials, cinematic depth of field, soft key light, controlled rim light, coherent character and environment rendering, original fantasy costume design.
-Avoid: extra people, missing limbs, extra limbs, fused fingers, broken wrists, standing pose, bed, open room, modern clothing, identity drift, photoreal live action, cartoon outline, plastic game render, live-action photography, documentary photography, Disney, Pixar, western cartoon, chibi, toy-like, juvenile proportions, flat generic 2D anime, manga panels, watercolor, sketches, collage, character-sheet layout, waxy cheap plastic CG, excessive skin smoothing, overexposure, unreadable eyes, deformed anatomy, duplicated characters.
-```
-
-## 6. Built-in generation and publication
-
-Codex built-in image generation was called exactly once with all four inspected staged paths, in request order, and the exact compiled prompt. No API、CLI image generator、ComfyUI、watcher、automation or network fallback was used.
-
-- Built-in source：`C:\Users\Administrator\.codex\generated_images\01a04605-055b-7510-a3d7-f8b17ddc13f9\exec-a6ab348f-a8f1-49c9-98f8-3e84717c5362.png`
-- Published candidate：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\codex-storyboard-jobs\codex-e01-c01-mtcxgpxe-7e411f5d615b53b5\outputs\candidate.png`
-- Result：`C:\Users\Administrator\.codex\worktrees\aebb\ai_project\codex-storyboard-jobs\codex-e01-c01-mtcxgpxe-7e411f5d615b53b5\outputs\result.json`
-- Candidate SHA-256：`12af61bdef6fa41ed1b8353c76141cbf6d39e928dd08314dc3e57e450bc5327c`
-- Candidate dimensions/MIME：1672×941，`image/png`
-- Generation mode：`codex_builtin_imagegen`
-- Result state：`completed`
-
-`complete` 使用同一 inspection manifest 重新验证 request、prompt、四张 reference snapshots 和 candidate，并通过 capability helper 以 candidate 后 result 的顺序无替换发布。Helper JSON 返回的 job、request digest、candidate path 和 result path 均与实际文件一致。
-
-## 7. Import and review-only proof
-
-正式 importer 的 UI 点击同样没有执行，因为真实 Tauri marker 仍绑定其他项目；验证仍未修改 marker。Import request 经生产 `createImportCodexStoryboardResultRequest` 验证，再由一次性 Rust 桥复用正式 command 相同的 `import_at_roots` core。该 core 重新验证 package/authority/ready marker/request/references/result/candidate lineage，写入私有 replay ledger，返回：
-
-- `status = needs_review`
-- `candidatePath = \\?\C:\Users\Administrator\.codex\worktrees\aebb\ai_project\codex-storyboard-jobs\codex-e01-c01-mtcxgpxe-7e411f5d615b53b5\outputs\candidate.png`
-- `resultPath = \\?\C:\Users\Administrator\.codex\worktrees\aebb\ai_project\codex-storyboard-jobs\codex-e01-c01-mtcxgpxe-7e411f5d615b53b5\outputs\result.json`
-
-真实生产 Zustand store 路径随后消费该 receipt：`upsertGenerationTask` → `markGenerationTaskNeedsReview(..., expectedTransition)`。断言结果：
-
-- task `stage = needs_review`
-- task `status = needs_review`
-- `bestPreviewPath` 等于 importer 返回的 package candidate path
-- shot `generatedImagePath` 仍为 pre-run accepted path `...\分镜\E01-01\f1.png`
-- 对 review task 调用普通 `completeGenerationTask` 是 no-op，不能绕过 review gate
-- `acceptGenerationTaskCandidate` 未调用
-
-因此本次 live run 没有把候选发布为正式分镜，仍需用户显式审查和接受。
-
-## 8. Visual review notes
-
-对 package 内候选图执行原始分辨率视觉检查：
-
-- Subject count：恰好一名成年女性，无重复人物或多余头部。
-- Camera：保持清晰的斜俯视大景别，人物完整位于长方形木棺内部；整体机位和轴线与空间权威接近。
-- Coffin：木制棺体、四周高侧壁、底板和人物遮挡关系连贯；但画面中没有棺盖，双掌伸向上方/壁沿，而不是明确顶住沉重棺盖。这是需要人工审查的主要空间叙事偏差。
-- Anatomy：头、双臂、双手、双腿和双脚完整；可见双手各五指，腕臂连接连续，未见多余或融合肢体。右臂比例和抬手姿态可读。
-- Costume：破损深绯红古装、金色纹饰、腰饰和长袖材质完整，符合 burial variant；脚部浅色厚底鞋较抢眼，略有现代鞋/厚底靴观感，需要审查是否符合既有人设。
-- Identity：脸型、凤眼方向、黑色盘发与金色发饰总体接近李宝珠参考，成人比例成立；单张候选不能替代用户对精确五官身份的最终判断。
-- Style：暗色电影灯光、半写实中式 3D 动画材质、木材/布料/金属层次统一，无明显真人摄影、卡通描边或拼贴边缘。
-
-自动和本次视觉检查只证明候选可进入人工 review，并不构成接受决定。棺盖缺失和鞋履风格是显式保留的审查项。
-
-## 9. Scope and integrity
-
-- Package candidate 位于 active project 内，不只存在于 Codex generated-images 目录。
-- 没有修改或删除任何 Comfy provider setting / workflow JSON。
-- 没有新增 API key 字段、OpenAI network client、watcher、automation 或 batch mode。
-- 一次性 export/import bridge 和临时 request 文件均已清理且不进入提交。
-- 生成媒体、package、authority、inspection snapshots 均不进入代码提交。
-- 本提交只包含本验证文档。
+Windows workspace sandbox 内 Node 对用户目录 realpath 会返回 `EPERM`，因此 Node、npm 与 Rust 验证使用获批的沙箱外本地执行；全程没有调用 ComfyUI、API key、watcher 或网络回退。
