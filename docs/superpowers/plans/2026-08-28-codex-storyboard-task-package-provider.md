@@ -262,7 +262,7 @@ export async function importCodexStoryboardResult(request: ImportCodexStoryboard
 }
 ```
 
-Frontend request constructors must reject missing active workspace paths, non-absolute source paths, unknown usages, empty instructions, duplicate IDs, conflicting duplicate paths, invalid job/shot IDs, and non-64-byte hex digests before invoking Tauri.
+Keep the frontend `PrepareCodexStoryboardJobRequest` separate from the immutable package `CodexStoryboardRequest`: the prepare request carries absolute `sourcePath` values but no digest, dimensions, MIME type, or package-relative path. Frontend constructors must reject missing active workspace paths, non-absolute source paths, unknown usages, empty instructions, duplicate IDs, conflicting duplicate paths, and invalid job/shot IDs before invoking Tauri. Tauri alone reads the source bytes, verifies existence/containment/image metadata, computes SHA-256, assigns deterministic package-relative paths, and publishes the immutable `CodexStoryboardRequest`.
 
 - [ ] **Step 5: Verify Rust and TypeScript boundaries**
 
@@ -369,7 +369,7 @@ export function buildDefaultCodexStoryboardReferenceSelections(input: {
 }): CodexStoryboardReferenceSelection[];
 ```
 
-Define `CodexStoryboardReferenceSelection` as `{ id: string; sourcePath: string; usage: CodexStoryboardReferenceUsage; instruction: string }`. The default helper resolves exactly one shot character and its `CharacterIdentityPack`, then returns spatial authority, body/costume, face identity, and one or more explicit style references; when no explicit style list is supplied it uses the first distinct `approvedHeroFramePaths` entry. The request builder accepts any ordered list up to 16 entries, allows repeated usages, rejects duplicate IDs, empty instructions, conflicting duplicate paths, nonexistent files, and missing required usages, and compiles every entry into `Picture N`. Build the base `stylized-concept` prompt from shot fields plus the cinematic style contract. Preserve `shot.generatedImagePath` only as `acceptedImagePath` overwrite-protection evidence.
+Define `CodexStoryboardReferenceSelection` as `{ id: string; sourcePath: string; usage: CodexStoryboardReferenceUsage; instruction: string }`. The default helper resolves exactly one shot character and its `CharacterIdentityPack`, then returns spatial authority, body/costume, face identity, and one or more explicit style references; when no explicit style list is supplied it uses the first distinct `approvedHeroFramePaths` entry. The request builder accepts any ordered list up to 16 entries, allows repeated usages, and rejects duplicate IDs, empty instructions, non-absolute source paths, conflicting duplicate paths, and missing required usages. Tauri performs file-existence and image-byte validation during export, then compiles every entry into `Picture N` in the immutable request. Build the base `stylized-concept` prompt from shot fields plus the cinematic style contract. Preserve `shot.generatedImagePath` only as `acceptedImagePath` overwrite-protection evidence.
 
 - [ ] **Step 5: Verify GREEN**
 
