@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Storyboard animation editor"
 authors = ["duole"]
 edition = "2021"
+default-run = "storyboard-pro"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

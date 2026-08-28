@@ -5,6 +5,8 @@ import { build } from "esbuild";
 
 const bridgePath = new URL("../src/modules/platform/desktopBridge.ts", import.meta.url);
 const bridgeSource = await readFile(bridgePath, "utf8");
+const cargoSource = await readFile(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
+assert.match(cargoSource, /default-run\s*=\s*["']storyboard-pro["']/, "tauri dev must select the desktop binary when the operator helper is also present");
 const bundle = await build({
   entryPoints: [fileURLToPath(bridgePath)],
   bundle: true,
