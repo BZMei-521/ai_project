@@ -57,3 +57,22 @@ Complete. Commit: `e39b0d8bed9086a64dd13fbe53ef0d6c0df05908` (`feat: add Codex s
 - `node scripts/check-codex-storyboard-ui.mjs` — PASS.
 - `npm run build` — PASS; existing Vite large-chunk advisory only.
 - Generated schemas and `tsconfig.app.tsbuildinfo` restored to HEAD after build.
+
+## R4 review closure
+
+- Final candidate/result names are no longer linked through a retained, movable outputs handle. The helper retains a filesystem-root anchor capability and resolves both hard-link source and destination through the canonical package-relative path at the atomic publication step. If `outputs` or the package is moved after validation and temporary-file creation, publication fails and the retained handle only removes the private temp; no external `candidate.png` or `result.json` is created. Dedicated outputs/package move-window tests cover this boundary.
+- Rust now enforces the full request contract before manifest processing: exact top-level, prompt, reference and expected-output keys; non-empty `createdAt`; accepted-image type; fixed output paths/MIME; identifiers, usages, instructions, digests, dimensions and MIME values. It also validates the complete generated result schema and identity/lineage before serialization. Node independently requires exact helper stdout, result and output keys plus all provider, version, mode, state, identity, lineage, prompt and output fields.
+- Node completion copies the preflight PNG into an exclusive private read-only staging directory and passes its SHA-256 as `--candidate-digest`. Rust re-hashes that staged file against the explicit digest before any output work. Replacing the user-supplied source path after staging therefore still publishes and verifies the original preflight bytes, avoiding a completed package followed by a CLI-side mismatch.
+- Existing offline behavior, candidate-only resume, stale-temp tolerance, conflicting-candidate rejection and the eight-process single-winner publication contract remain covered.
+
+## R4 verification
+
+- RED: focused Node contract rejected the old helper because an empty `createdAt` reached manifest mismatch instead of request-schema rejection; Rust result-schema unit initially failed to compile before `validate_result` existed.
+- `cargo test --offline --manifest-path src-tauri/Cargo.toml --bin codex-storyboard-operator` — PASS (3/3).
+- `cargo build --offline --manifest-path src-tauri/Cargo.toml --bin codex-storyboard-operator` — PASS.
+- `node scripts/check-codex-storyboard-task-package.mjs` — PASS.
+- `node scripts/check-storyboard-generation-flow.mjs` — PASS.
+- `node scripts/check-storyboard-generation-state.mjs` — PASS.
+- `node scripts/check-codex-storyboard-ui.mjs` — PASS.
+- `npm run build` — PASS; existing Vite large-chunk advisory only.
+- Generated schemas and `tsconfig.app.tsbuildinfo` restored to HEAD after build.

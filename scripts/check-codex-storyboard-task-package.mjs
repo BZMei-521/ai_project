@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -275,7 +275,7 @@ const withManifest = (args) => args[0] === "complete" && currentInspectionManife
 const runCli = (...args) => spawnSync(process.execPath, [cliPath, ...withManifest(args)], { encoding: "utf8" });
 const runCliWithEnv = (env, ...args) => spawnSync(process.execPath, [cliPath, ...withManifest(args)], { encoding: "utf8", env: { ...process.env, ...env } });
 const runCliFrom = (cwd, env, ...args) => spawnSync(process.execPath, [cliPath, ...withManifest(args)], { cwd, encoding: "utf8", env: { ...process.env, ...env } });
-const runHelper = (env = {}) => spawnSync(helperPath, ["complete", "--package", fixturePackage, "--candidate", fixtureCandidate, "--inspection-manifest", currentInspectionManifest], { encoding: "utf8", env: { ...process.env, ...env } });
+const runHelper = (env = {}) => spawnSync(helperPath, ["complete", "--package", fixturePackage, "--candidate", fixtureCandidate, "--candidate-digest", hashBytes(tinyPng), "--inspection-manifest", currentInspectionManifest], { encoding: "utf8", env: { ...process.env, ...env } });
 const runCliAsync = (args, env = {}) => new Promise((resolve, reject) => {
   const child = spawn(process.execPath, [cliPath, ...withManifest(args)], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CODEX_STORYBOARD_OPERATOR_BIN: helperPath, ...env } });
   let stdout = "";
@@ -364,6 +364,24 @@ try {
   assert.match(helperRejectsRequestTamper.stderr, /codex_storyboard_operator_manifest_invalid/);
   await writeFile(path.join(fixturePackage, "request.json"), originalRequestText);
 
+  const malformedRequestCases = [
+    ["empty createdAt", (value) => { value.createdAt = ""; }],
+    ["prompt unknown key", (value) => { value.prompt.unknown = true; }],
+    ["acceptedImagePath wrong type", (value) => { value.acceptedImagePath = 42; }],
+    ["expectedOutput unknown key", (value) => { value.expectedOutput.unknown = true; }],
+    ["expectedOutput candidate path", (value) => { value.expectedOutput.candidatePath = "outputs/other.png"; }],
+    ["expectedOutput MIME", (value) => { value.expectedOutput.mimeTypes = ["image/jpeg"]; }]
+  ];
+  for (const [label, mutate] of malformedRequestCases) {
+    const malformedRequest = makeFixtureRequest();
+    mutate(malformedRequest);
+    await writeFile(path.join(fixturePackage, "request.json"), `${JSON.stringify(malformedRequest, null, 2)}\n`);
+    const rejected = runHelper();
+    assert.notEqual(rejected.status, 0, `helper independently rejects ${label}`);
+    assert.match(rejected.stderr, /codex_storyboard_operator_request_invalid/, label);
+  }
+  await writeFile(path.join(fixturePackage, "request.json"), originalRequestText);
+
   await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), otherTinyPng);
   const helperRejectsReferenceTamper = runHelper();
   assert.notEqual(helperRejectsReferenceTamper.status, 0, "helper independently rejects package reference tampering after inspection");
@@ -380,6 +398,31 @@ try {
   assert.equal(helperRejectsCaptureOpenSwap.status, 15, helperRejectsCaptureOpenSwap.stderr);
   assert.match(helperRejectsCaptureOpenSwap.stderr, /codex_storyboard_operator_package_invalid/);
   assert.equal(await exists(path.join(fixturePackage, "request.json")), true, "package swap test hook restores the original fixture");
+
+  const movedOutputs = path.join(fixtureRoot, "moved-outputs");
+  const helperRejectsMovedOutputs = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_MOVE_OUTPUTS_BEFORE_CANDIDATE_LINK: movedOutputs }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(helperRejectsMovedOutputs.status, 15, helperRejectsMovedOutputs.stderr);
+  assert.equal(await exists(path.join(movedOutputs, "candidate.png")), false, "retained outputs move cannot publish candidate externally");
+  assert.equal(await exists(path.join(movedOutputs, "result.json")), false, "retained outputs move cannot publish result externally");
+  if (await exists(movedOutputs)) await rename(movedOutputs, path.join(fixturePackage, "outputs"));
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const movedPackage = path.join(fixtureRoot, "moved-package");
+  const helperRejectsMovedPackage = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_MOVE_PACKAGE_BEFORE_CANDIDATE_LINK: movedPackage }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(helperRejectsMovedPackage.status, 15, helperRejectsMovedPackage.stderr);
+  assert.equal(await exists(path.join(movedPackage, "outputs", "candidate.png")), false, "retained package move cannot publish candidate externally");
+  assert.equal(await exists(path.join(movedPackage, "outputs", "result.json")), false, "retained package move cannot publish result externally");
+  if (await exists(movedPackage)) await rename(movedPackage, fixturePackage);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const replacementSource = path.join(fixtureRoot, "replacement-source.png");
+  await writeFile(replacementSource, otherTinyPng);
+  const sourceReplacedAfterStage = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_REPLACE_CANDIDATE_AFTER_STAGE: replacementSource }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(sourceReplacedAfterStage.status, 0, sourceReplacedAfterStage.stderr);
+  assert.equal(hashBytes(await readFile(fixtureCandidate)), hashBytes(otherTinyPng), "source path was replaced after immutable candidate staging");
+  assert.equal(hashBytes(await readFile(path.join(fixturePackage, "outputs", "candidate.png"))), hashBytes(tinyPng), "published candidate remains the staged preflight bytes");
+  await writeFile(fixtureCandidate, tinyPng);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
 
   const relativeOverride = runCliWithEnv({ CODEX_STORYBOARD_OPERATOR_BIN: path.relative(repoRoot, helperPath) }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(relativeOverride.status, 15, relativeOverride.stderr);
@@ -404,6 +447,16 @@ try {
   const forgedStdout = runCliWithEnv({ CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_FORGE_STDOUT: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
   assert.equal(forgedStdout.status, 15, forgedStdout.stderr);
   assert.match(forgedStdout.stderr, /codex_storyboard_cli_helper_invalid/);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const forgedResultShape = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_FORGE_RESULT_SHAPE: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(forgedResultShape.status, 15, forgedResultShape.stderr);
+  assert.match(forgedResultShape.stderr, /codex_storyboard_cli_helper_invalid/);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+
+  const forgedResultIdentity = runCliWithEnv({ NODE_ENV: "test", CODEX_STORYBOARD_OPERATOR_BIN: helperPath, CODEX_STORYBOARD_TEST_FORGE_RESULT_IDENTITY: "1" }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate);
+  assert.equal(forgedResultIdentity.status, 15, forgedResultIdentity.stderr);
+  assert.match(forgedResultIdentity.stderr, /codex_storyboard_cli_helper_invalid/);
   await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
 
   await writeFile(fixtureCandidate, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1]));

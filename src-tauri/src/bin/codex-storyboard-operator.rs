@@ -150,6 +150,21 @@ struct PackageCap {
     path: PathBuf,
     identity: (u64, u64),
     dir: Dir,
+    anchor: Dir,
+    relative_from_anchor: PathBuf,
+}
+fn filesystem_root(path: &Path) -> Result<PathBuf, String> {
+    let mut root = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => root.push(component.as_os_str()),
+            _ => break,
+        }
+    }
+    if root.as_os_str().is_empty() {
+        return fail("codex_storyboard_operator_package_invalid");
+    }
+    Ok(root)
 }
 fn revalidate_package(package: &PackageCap) -> Result<(), String> {
     let code = "codex_storyboard_operator_package_invalid";
@@ -219,10 +234,22 @@ fn acquire_package(argument: &Path) -> Result<PackageCap, String> {
     if dir_identity(&dir) != Some(identity) {
         return fail(code);
     }
+    let anchor_path = filesystem_root(&path)?;
+    let relative_from_anchor = path
+        .strip_prefix(&anchor_path)
+        .map_err(|_| code.to_string())?
+        .to_path_buf();
+    if relative_from_anchor.as_os_str().is_empty() {
+        return fail(code);
+    }
+    let anchor =
+        Dir::open_ambient_dir(&anchor_path, ambient_authority()).map_err(|_| code.to_string())?;
     let package = PackageCap {
         path,
         identity,
         dir,
+        anchor,
+        relative_from_anchor,
     };
     revalidate_package(&package)?;
     Ok(package)
@@ -362,12 +389,41 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
             return fail("codex_storyboard_operator_request_invalid");
         }
     }
+    if string(object, "createdAt").is_err() {
+        return fail("codex_storyboard_operator_request_invalid");
+    }
     let prompt = object
         .get("prompt")
         .and_then(Value::as_object)
         .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
-    if prompt.get("useCase").and_then(Value::as_str) != Some("stylized-concept")
+    let prompt_keys = ["useCase", "primaryRequest"];
+    if prompt.len() != prompt_keys.len()
+        || prompt_keys.iter().any(|key| !prompt.contains_key(*key))
+        || prompt.get("useCase").and_then(Value::as_str) != Some("stylized-concept")
         || string(prompt, "primaryRequest").is_err()
+    {
+        return fail("codex_storyboard_operator_request_invalid");
+    }
+    if !object
+        .get("acceptedImagePath")
+        .is_some_and(|value| value.is_null() || value.as_str().is_some())
+    {
+        return fail("codex_storyboard_operator_request_invalid");
+    }
+    let expected_output = object
+        .get("expectedOutput")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    let output_keys = ["candidatePath", "resultPath", "mimeTypes"];
+    if expected_output.len() != output_keys.len()
+        || output_keys
+            .iter()
+            .any(|key| !expected_output.contains_key(*key))
+        || expected_output.get("candidatePath").and_then(Value::as_str)
+            != Some("outputs/candidate.png")
+        || expected_output.get("resultPath").and_then(Value::as_str) != Some("outputs/result.json")
+        || expected_output.get("mimeTypes").and_then(Value::as_array)
+            != Some(&vec![Value::String("image/png".to_string())])
     {
         return fail("codex_storyboard_operator_request_invalid");
     }
@@ -404,7 +460,9 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
         if !valid_id(id, 64)
             || !ids.insert(id.to_string())
             || !usage(u)
+            || string(r, "instruction").is_err()
             || !normal(rel)
+            || !matches!(mime, "image/png" | "image/jpeg")
             || digest.len() != 64
             || !digest
                 .bytes()
@@ -454,7 +512,8 @@ fn revalidate_outputs(package: &PackageCap, outputs: &OutputCap) -> Result<(), S
     Ok(())
 }
 fn output_dir(package: &PackageCap) -> Result<OutputCap, String> {
-    match package.dir.create_dir("outputs") {
+    let output_relative = package.relative_from_anchor.join("outputs");
+    match package.anchor.create_dir(&output_relative) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return fail("codex_storyboard_operator_publish_failed"),
@@ -466,8 +525,8 @@ fn output_dir(package: &PackageCap) -> Result<OutputCap, String> {
         "codex_storyboard_operator_publish_failed",
     )?;
     let dir = package
-        .dir
-        .open_dir("outputs")
+        .anchor
+        .open_dir(&output_relative)
         .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     let identity =
         dir_identity(&dir).ok_or_else(|| "codex_storyboard_operator_publish_failed".to_string())?;
@@ -492,29 +551,76 @@ fn temp_name(name: &str) -> String {
             .as_nanos()
     )
 }
-fn publish(dir: &Dir, name: &str, bytes: &[u8], inject: bool) -> Result<(), String> {
-    if exists(dir, name) {
+fn test_move_before_candidate_link(
+    package: &PackageCap,
+    outputs: &OutputCap,
+    name: &str,
+) -> Result<(), String> {
+    if env::var("NODE_ENV").ok().as_deref() != Some("test") || name != "candidate.png" {
+        return Ok(());
+    }
+    if let Ok(target) = env::var("CODEX_STORYBOARD_TEST_MOVE_OUTPUTS_BEFORE_CANDIDATE_LINK") {
+        let target = Path::new(&target);
+        if !target.is_absolute() || target.exists() {
+            return fail("codex_storyboard_operator_publish_failed");
+        }
+        fs::rename(&outputs.path, target)
+            .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
+    }
+    if let Ok(target) = env::var("CODEX_STORYBOARD_TEST_MOVE_PACKAGE_BEFORE_CANDIDATE_LINK") {
+        let target = Path::new(&target);
+        if !target.is_absolute() || target.exists() {
+            return fail("codex_storyboard_operator_publish_failed");
+        }
+        fs::rename(&package.path, target)
+            .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
+    }
+    Ok(())
+}
+fn anchored_exists(package: &PackageCap, name: &str) -> bool {
+    package
+        .anchor
+        .symlink_metadata(package.relative_from_anchor.join("outputs").join(name))
+        .is_ok()
+}
+fn publish(
+    package: &PackageCap,
+    outputs: &OutputCap,
+    name: &str,
+    bytes: &[u8],
+    inject: bool,
+) -> Result<(), String> {
+    if anchored_exists(package, name) {
         return fail("codex_storyboard_operator_output_exists");
     }
     let temp = temp_name(name);
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);
-    let mut file = dir
+    let mut file = outputs
+        .dir
         .open_with(&temp, &opts)
         .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     file.write_all(bytes)
         .and_then(|_| file.sync_all())
         .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     drop(file);
+    if let Err(code) = test_move_before_candidate_link(package, outputs, name) {
+        let _ = outputs.dir.remove_file(&temp);
+        return Err(code);
+    }
     if inject {
-        let _ = dir.remove_file(&temp);
+        let _ = outputs.dir.remove_file(&temp);
         return fail("codex_storyboard_operator_publish_failed");
     }
-    let linked = dir.hard_link(&temp, dir, name);
-    let _ = dir.remove_file(&temp);
+    let temp_relative = package.relative_from_anchor.join("outputs").join(&temp);
+    let final_relative = package.relative_from_anchor.join("outputs").join(name);
+    let linked = package
+        .anchor
+        .hard_link(&temp_relative, &package.anchor, &final_relative);
+    let _ = outputs.dir.remove_file(&temp);
     match linked {
         Ok(()) => Ok(()),
-        Err(_) if exists(dir, name) => fail("codex_storyboard_operator_output_exists"),
+        Err(_) if anchored_exists(package, name) => fail("codex_storyboard_operator_output_exists"),
         Err(_) => fail("codex_storyboard_operator_publish_failed"),
     }
 }
@@ -687,9 +793,94 @@ fn checked_manifest(
     }
     Ok(prompt)
 }
+fn validate_result(
+    result: &Value,
+    request: &Value,
+    request_digest: &str,
+    final_prompt: &str,
+    candidate_digest: &str,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let invalid = "codex_storyboard_operator_result_invalid";
+    let object = result.as_object().ok_or_else(|| invalid.to_string())?;
+    let request = request.as_object().ok_or_else(|| invalid.to_string())?;
+    let keys = [
+        "schemaVersion",
+        "jobId",
+        "projectId",
+        "episodeId",
+        "shotId",
+        "provider",
+        "requestDigest",
+        "referenceDigests",
+        "generationMode",
+        "finalPrompt",
+        "output",
+        "completedAt",
+        "state",
+    ];
+    if object.len() != keys.len()
+        || keys.iter().any(|key| !object.contains_key(*key))
+        || object.get("schemaVersion").and_then(Value::as_u64) != Some(1)
+        || object.get("provider").and_then(Value::as_str) != Some(PROVIDER)
+        || object.get("generationMode").and_then(Value::as_str) != Some("codex_builtin_imagegen")
+        || object.get("state").and_then(Value::as_str) != Some("completed")
+        || object.get("requestDigest").and_then(Value::as_str) != Some(request_digest)
+        || object.get("finalPrompt").and_then(Value::as_str) != Some(final_prompt)
+        || object
+            .get("completedAt")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        || ["jobId", "projectId", "episodeId", "shotId"]
+            .iter()
+            .any(|key| object.get(*key) != request.get(*key))
+    {
+        return fail(invalid);
+    }
+    let expected_references: Vec<Value> = request
+        .get("references")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid.to_string())?
+        .iter()
+        .map(|reference| json!({"id":reference["id"],"sha256":reference["sha256"]}))
+        .collect();
+    let references = object
+        .get("referenceDigests")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid.to_string())?;
+    if references != &expected_references
+        || references.iter().any(|reference| {
+            reference.as_object().is_none_or(|entry| {
+                let keys = ["id", "sha256"];
+                entry.len() != keys.len() || keys.iter().any(|key| !entry.contains_key(*key))
+            })
+        })
+    {
+        return fail(invalid);
+    }
+    let output = object
+        .get("output")
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid.to_string())?;
+    let output_keys = ["relativePath", "sha256", "width", "height", "mimeType"];
+    if output.len() != output_keys.len()
+        || output_keys.iter().any(|key| !output.contains_key(*key))
+        || output.get("relativePath").and_then(Value::as_str) != Some("outputs/candidate.png")
+        || output.get("sha256").and_then(Value::as_str) != Some(candidate_digest)
+        || output.get("width").and_then(Value::as_u64) != Some(width as u64)
+        || output.get("height").and_then(Value::as_u64) != Some(height as u64)
+        || output.get("mimeType").and_then(Value::as_str) != Some("image/png")
+    {
+        return fail(invalid);
+    }
+    Ok(())
+}
 fn complete(
     package_argument: &str,
     candidate_path: &str,
+    expected_candidate_digest: &str,
     manifest_path: &str,
 ) -> Result<Value, String> {
     let package = acquire_package(Path::new(package_argument))?;
@@ -709,6 +900,14 @@ fn complete(
     let bytes = stable_ambient_read(&source, "codex_storyboard_operator_candidate_invalid")?;
     let (width, height, mime) = inspect_image(&bytes, Some("image/png"))?;
     let candidate_digest = sha(&bytes);
+    if expected_candidate_digest.len() != 64
+        || !expected_candidate_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || candidate_digest != expected_candidate_digest
+    {
+        return fail("codex_storyboard_operator_candidate_invalid");
+    }
     revalidate_package(&package)?;
     let outputs = output_dir(&package)?;
     revalidate_outputs(&package, &outputs)?;
@@ -725,7 +924,7 @@ fn complete(
             height,
             &mime,
         )?;
-    } else if let Err(code) = publish(&outputs.dir, "candidate.png", &bytes, false) {
+    } else if let Err(code) = publish(&package, &outputs, "candidate.png", &bytes, false) {
         if code != "codex_storyboard_operator_output_exists" {
             return Err(code);
         }
@@ -745,7 +944,33 @@ fn complete(
         .iter()
         .map(|r| json!({"id":r["id"],"sha256":r["sha256"]}))
         .collect();
-    let result = json!({"schemaVersion":1,"jobId":o["jobId"],"projectId":o["projectId"],"episodeId":o["episodeId"],"shotId":o["shotId"],"provider":PROVIDER,"requestDigest":request_digest,"referenceDigests":references,"generationMode":"codex_builtin_imagegen","finalPrompt":manifest_prompt,"output":{"relativePath":"outputs/candidate.png","sha256":candidate_digest,"width":width,"height":height,"mimeType":"image/png"},"completedAt":"1970-01-01T00:00:00.000Z","state":"completed"});
+    let mut result = json!({"schemaVersion":1,"jobId":o["jobId"],"projectId":o["projectId"],"episodeId":o["episodeId"],"shotId":o["shotId"],"provider":PROVIDER,"requestDigest":request_digest,"referenceDigests":references,"generationMode":"codex_builtin_imagegen","finalPrompt":manifest_prompt,"output":{"relativePath":"outputs/candidate.png","sha256":candidate_digest,"width":width,"height":height,"mimeType":"image/png"},"completedAt":"1970-01-01T00:00:00.000Z","state":"completed"});
+    validate_result(
+        &result,
+        &request,
+        &request_digest,
+        result["finalPrompt"].as_str().unwrap_or_default(),
+        &candidate_digest,
+        width,
+        height,
+    )?;
+    if env::var("NODE_ENV").ok().as_deref() == Some("test")
+        && env::var("CODEX_STORYBOARD_TEST_FORGE_RESULT_SHAPE")
+            .ok()
+            .as_deref()
+            == Some("1")
+    {
+        result["unknown"] = json!(true);
+    }
+    if env::var("NODE_ENV").ok().as_deref() == Some("test")
+        && env::var("CODEX_STORYBOARD_TEST_FORGE_RESULT_IDENTITY")
+            .ok()
+            .as_deref()
+            == Some("1")
+    {
+        result["provider"] = json!("forged_provider");
+        result["projectId"] = json!("forged-project");
+    }
     let result_bytes = serde_json::to_vec_pretty(&result)
         .map_err(|_| "codex_storyboard_operator_publish_failed".to_string())?;
     let inject = env::var("NODE_ENV").ok().as_deref() == Some("test")
@@ -753,7 +978,7 @@ fn complete(
             .ok()
             .as_deref()
             == Some("1");
-    publish(&outputs.dir, "result.json", &result_bytes, inject)?;
+    publish(&package, &outputs, "result.json", &result_bytes, inject)?;
     revalidate_outputs(&package, &outputs)?;
     let mut handoff = json!({"jobId":o["jobId"],"requestDigest":request_digest,"candidatePath":output_path.join("candidate.png"),"resultPath":output_path.join("result.json")});
     if env::var("CODEX_STORYBOARD_TEST_FORGE_STDOUT")
@@ -767,13 +992,14 @@ fn complete(
 }
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let result = if args.len() == 8
+    let result = if args.len() == 10
         && args[1] == "complete"
         && args[2] == "--package"
         && args[4] == "--candidate"
-        && args[6] == "--inspection-manifest"
+        && args[6] == "--candidate-digest"
+        && args[8] == "--inspection-manifest"
     {
-        complete(&args[3], &args[5], &args[7])
+        complete(&args[3], &args[5], &args[7], &args[9])
     } else {
         fail("codex_storyboard_operator_usage")
     };
@@ -799,6 +1025,56 @@ mod tests {
         assert_eq!(
             canonical(&json!({"b":1,"a":2})).to_string(),
             "{\"a\":2,\"b\":1}"
+        );
+    }
+    #[test]
+    fn result_schema_rejects_unknown_fields_and_identity_forgery() {
+        let request = json!({
+            "jobId":"job-1","projectId":"project-1","episodeId":"episode-1","shotId":"shot-1",
+            "references":[{"id":"stage","sha256":"a".repeat(64)}]
+        });
+        let mut result = json!({
+            "schemaVersion":1,"jobId":"job-1","projectId":"project-1","episodeId":"episode-1","shotId":"shot-1",
+            "provider":PROVIDER,"requestDigest":"b".repeat(64),"referenceDigests":[{"id":"stage","sha256":"a".repeat(64)}],
+            "generationMode":"codex_builtin_imagegen","finalPrompt":"prompt","output":{"relativePath":"outputs/candidate.png","sha256":"c".repeat(64),"width":1,"height":1,"mimeType":"image/png"},
+            "completedAt":"1970-01-01T00:00:00.000Z","state":"completed"
+        });
+        assert!(validate_result(
+            &result,
+            &request,
+            &"b".repeat(64),
+            "prompt",
+            &"c".repeat(64),
+            1,
+            1
+        )
+        .is_ok());
+        result["unknown"] = json!(true);
+        assert_eq!(
+            validate_result(
+                &result,
+                &request,
+                &"b".repeat(64),
+                "prompt",
+                &"c".repeat(64),
+                1,
+                1
+            ),
+            Err("codex_storyboard_operator_result_invalid".to_string())
+        );
+        result.as_object_mut().unwrap().remove("unknown");
+        result["projectId"] = json!("forged");
+        assert_eq!(
+            validate_result(
+                &result,
+                &request,
+                &"b".repeat(64),
+                "prompt",
+                &"c".repeat(64),
+                1,
+                1
+            ),
+            Err("codex_storyboard_operator_result_invalid".to_string())
         );
     }
 }
