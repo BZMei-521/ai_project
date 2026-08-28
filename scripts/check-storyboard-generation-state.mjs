@@ -145,6 +145,47 @@ try {
     "completion must not publish a terminal review task"
   );
 
+  const inconsistentReviewTasks = [
+    {
+      ...task,
+      id: "generation_task_review_status_only",
+      stage: "queued",
+      status: "needs_review",
+      bestPreviewPath: "outputs/status-only-review.png"
+    },
+    {
+      ...task,
+      id: "generation_task_review_stage_only",
+      stage: "needs_review",
+      status: "queued",
+      bestPreviewPath: "outputs/stage-only-review.png"
+    }
+  ];
+  for (const inconsistentTask of inconsistentReviewTasks) {
+    useStoryboardStore.getState().hydrateFromSnapshot({ generationTasks: [inconsistentTask] });
+    const beforeInconsistentCompletion = useStoryboardStore.getState();
+    const acceptedPath = beforeInconsistentCompletion.shots.find(
+      (shot) => shot.id === firstShot.id
+    )?.generatedImagePath;
+    const persistedTask = structuredClone(beforeInconsistentCompletion.generationTasks[0]);
+
+    useStoryboardStore
+      .getState()
+      .completeGenerationTask(inconsistentTask.id, "outputs/must-not-publish.png");
+    const afterInconsistentCompletion = useStoryboardStore.getState();
+    assert.equal(
+      afterInconsistentCompletion.shots.find((shot) => shot.id === firstShot.id)
+        ?.generatedImagePath,
+      acceptedPath,
+      `completion must fail closed when review is represented by ${inconsistentTask.stage}/${inconsistentTask.status}`
+    );
+    assert.deepEqual(
+      afterInconsistentCompletion.generationTasks[0],
+      persistedTask,
+      `completion must not mutate an inconsistent review task represented by ${inconsistentTask.stage}/${inconsistentTask.status}`
+    );
+  }
+
   const failedTask = { ...task, id: "generation_task_2", shotId: secondShot.id, stage: "fallback", status: "running" };
   useStoryboardStore.getState().upsertGenerationTask(failedTask);
   useStoryboardStore.getState().markGenerationTaskFailed(failedTask.id, {

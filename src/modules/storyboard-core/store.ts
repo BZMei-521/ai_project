@@ -2618,7 +2618,9 @@ export const useStoryboardStore = create<StoryboardState>((set, get) => ({
     set((state) => {
       const task = state.generationTasks.find((item) => item.id === id);
       if (!task) throw new Error(`Cannot complete unknown generation task: ${id}`);
-      if (task.status === "needs_review" || task.status === "cancelled") return state;
+      if (task.stage === "needs_review" || task.status === "needs_review" || task.status === "cancelled") {
+        return state;
+      }
       if (!state.shots.some((shot) => shot.id === task.shotId)) {
         throw new Error(`Cannot complete generation task for unknown shot: ${task.shotId}`);
       }
