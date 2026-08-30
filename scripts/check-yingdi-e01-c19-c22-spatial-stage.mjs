@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { auditYingdiTombStage, buildYingdiTombStage } from "./build-yingdi-e01-c19-c22-spatial-stage.mjs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  auditYingdiTombStage,
+  buildYingdiInitialManifest,
+  buildYingdiTombStage,
+  validateYingdiReviewManifest,
+  writeYingdiReviewManifest
+} from "./build-yingdi-e01-c19-c22-spatial-stage.mjs";
 
 const seedPath = "影帝他总想对我图谋不轨_漫剧改编/分镜/work/E01-C19-C22.spatial-stage.seed.json";
 const shots = ["E01-S01-C19", "E01-S01-C20", "E01-S01-C21", "E01-S01-C22"];
@@ -60,6 +68,52 @@ function state(snapshot, entityId) {
 }
 
 const stage = buildYingdiTombStage();
+const initialManifest = buildYingdiInitialManifest(stage);
+assert.deepEqual(
+  {
+    schemaVersion: initialManifest.schemaVersion,
+    workflow: initialManifest.workflow,
+    reviewState: initialManifest.reviewState,
+    videoProvider: initialManifest.videoProvider,
+    videoGate: initialManifest.videoGate,
+    shots: initialManifest.shots.map(({ shotId, controlState, codexState, candidateState }) => ({ shotId, controlState, codexState, candidateState }))
+  },
+  {
+    schemaVersion: 1,
+    workflow: "hybrid_panorama_spatial_stage_codex_v2",
+    reviewState: "needs_review",
+    videoProvider: "DaSiWa_MiniMaxH3Video",
+    videoGate: "blocked",
+    shots: ["C19", "C20", "C21", "C22"].map((shotId) => ({ shotId, controlState: "pending", codexState: "pending", candidateState: "pending" }))
+  },
+  "initial review manifest must keep video blocked and every spatial shot pending"
+);
+assert.equal(validateYingdiReviewManifest(initialManifest).ok, true, "initial review manifest must be accepted by the fail-closed gate");
+const prematureVideo = structuredClone(initialManifest);
+prematureVideo.videoGate = "ready";
+assert.ok(validateYingdiReviewManifest(prematureVideo).errors.includes("video_gate_requires_accepted_candidates"), "video gate must reject a ready state before all four candidates are accepted");
+const duplicateManifestShot = structuredClone(initialManifest);
+duplicateManifestShot.shots[3].shotId = "C21";
+assert.ok(validateYingdiReviewManifest(duplicateManifestShot).errors.includes("manifest_shots_invalid"), "manifest gate must reject duplicate shots");
+const inconsistentReview = structuredClone(initialManifest);
+inconsistentReview.reviewState = "approved";
+assert.ok(validateYingdiReviewManifest(inconsistentReview).errors.includes("review_state_inconsistent"), "manifest gate must reject approval with pending candidates");
+const manifestRoot = await mkdtemp(path.join(os.tmpdir(), "yingdi-e01-manifest-"));
+const manifestPath = path.join(manifestRoot, "run-manifest.json");
+try {
+  await writeYingdiReviewManifest(manifestPath, initialManifest);
+  assert.deepEqual(JSON.parse(await readFile(manifestPath, "utf8")), initialManifest, "atomic manifest writer must preserve the deterministic manifest bytes");
+  assert.equal(validateYingdiReviewManifest(JSON.parse(await readFile(manifestPath, "utf8"))).ok, true, "written manifest must remain valid");
+} finally {
+  await rm(manifestRoot, { recursive: true, force: true });
+}
+const reviewRendererSource = await readFile(new URL("./render-yingdi-e01-c19-c22-review.ps1", import.meta.url), "utf8");
+for (const parameter of ["C18Path", "C19Path", "C20Path", "C21Path", "C22Path", "C23Path", "OutputPath"]) assert.match(reviewRendererSource, new RegExp(`\\$${parameter}`), `review renderer must require explicit ${parameter}`);
+assert.match(reviewRendererSource, /FFMPEG_BIN/, "review renderer must use the bundled ffmpeg discovery override");
+assert.match(reviewRendererSource, /scale=.*force_original_aspect_ratio=decrease/, "review renderer must preserve source aspect ratios without cropping");
+assert.match(reviewRendererSource, /drawtext/, "review renderer must label panels outside source pixels");
+assert.match(reviewRendererSource, /IsPathRooted/, "review renderer must remain compatible with Windows PowerShell path APIs");
+assert.doesNotMatch(reviewRendererSource, /\.AddRange\(/, "review renderer must not pass PowerShell object arrays to generic List.AddRange");
 const rawSeed = await readFile(seedPath, "utf8");
 assert.ok(rawSeed.endsWith("\n"), "fixture serialization must end with a newline");
 assert.deepEqual(JSON.parse(rawSeed), stage, "fixture must exactly equal the deterministic builder output");

@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,7 @@ const COFFIN_ASSEMBLY = {
   "coffin-end-head": { position: [-1.035, 0.66, 0], size: [0.08, 0.36, 0.62] },
   "coffin-end-foot": { position: [1.035, 0.66, 0], size: [0.08, 0.36, 0.62] }
 };
+const REVIEW_SHOTS = ["C19", "C20", "C21", "C22"];
 
 function transform(position, rotation = IDENTITY, scale = UNIT_SCALE) { return { position, rotation, scale }; }
 function attachment(id, label, position) { return { id, label, localTransform: transform(position) }; }
@@ -187,13 +189,70 @@ export function auditYingdiTombStage(stage) {
   return { ok: errors.length === 0, errors };
 }
 
+function sha256Json(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+export function buildYingdiInitialManifest(stage = buildYingdiTombStage()) {
+  return {
+    schemaVersion: 1,
+    workflow: "hybrid_panorama_spatial_stage_codex_v2",
+    reviewState: "needs_review",
+    videoProvider: "DaSiWa_MiniMaxH3Video",
+    videoGate: "blocked",
+    stage: { id: stage.id, revision: stage.revision, sha256: sha256Json(stage) },
+    panorama: { assetId: "yingdi-e01-tomb-v2-panorama", sha256: null },
+    shots: REVIEW_SHOTS.map((shotId) => ({
+      shotId,
+      controlState: "pending",
+      codexState: "pending",
+      candidateState: "pending",
+      controlPack: { sha256: null },
+      codexJob: { sha256: null },
+      candidate: { sha256: null }
+    }))
+  };
+}
+
+export function validateYingdiReviewManifest(manifest) {
+  const errors = [];
+  if (!manifest || typeof manifest !== "object") return { ok: false, errors: ["manifest_invalid"] };
+  if (manifest.schemaVersion !== 1 || manifest.workflow !== "hybrid_panorama_spatial_stage_codex_v2" || manifest.videoProvider !== "DaSiWa_MiniMaxH3Video") errors.push("manifest_contract_invalid");
+  const shots = Array.isArray(manifest.shots) ? manifest.shots : [];
+  if (shots.length !== REVIEW_SHOTS.length || new Set(shots.map((shot) => shot?.shotId)).size !== REVIEW_SHOTS.length || shots.some((shot, index) => shot?.shotId !== REVIEW_SHOTS[index])) errors.push("manifest_shots_invalid");
+  const candidateStates = shots.map((shot) => shot?.candidateState);
+  const allAccepted = candidateStates.length === REVIEW_SHOTS.length && candidateStates.every((state) => state === "accepted");
+  if (!["needs_review", "approved"].includes(manifest.reviewState)) errors.push("review_state_invalid");
+  if ((manifest.reviewState === "approved") !== allAccepted) errors.push("review_state_inconsistent");
+  if (!["blocked", "ready"].includes(manifest.videoGate)) errors.push("video_gate_invalid");
+  if (manifest.videoGate === "ready" && !allAccepted) errors.push("video_gate_requires_accepted_candidates");
+  return { ok: errors.length === 0, errors };
+}
+
+export async function writeYingdiReviewManifest(manifestPath, manifest) {
+  if (!path.isAbsolute(manifestPath)) throw new Error("manifest path must be absolute");
+  const validation = validateYingdiReviewManifest(manifest);
+  if (!validation.ok) throw new Error(`manifest invalid: ${validation.errors.join(",")}`);
+  await mkdir(path.dirname(manifestPath), { recursive: true });
+  const temporaryPath = path.join(path.dirname(manifestPath), `.${path.basename(manifestPath)}.${process.pid}.tmp`);
+  await writeFile(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await rename(temporaryPath, manifestPath);
+}
+
 async function main() {
   const outputIndex = process.argv.indexOf("--output");
-  if (outputIndex < 0 || !process.argv[outputIndex + 1]) throw new Error("missing --output");
-  if (process.argv.length !== outputIndex + 2) throw new Error("unknown argument");
-  const outputPath = path.resolve(process.argv[outputIndex + 1]);
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(buildYingdiTombStage(), null, 2)}\n`, "utf8");
+  const manifestIndex = process.argv.indexOf("--manifest");
+  const recognizedArgumentCount = (outputIndex >= 0 ? 2 : 0) + (manifestIndex >= 0 ? 2 : 0);
+  if (recognizedArgumentCount === 0 || process.argv.length !== 2 + recognizedArgumentCount) throw new Error("expected --output <path> and/or --manifest <absolute-path>");
+  if (outputIndex >= 0 && !process.argv[outputIndex + 1]) throw new Error("missing --output");
+  if (manifestIndex >= 0 && !process.argv[manifestIndex + 1]) throw new Error("missing --manifest");
+  const stage = buildYingdiTombStage();
+  if (outputIndex >= 0) {
+    const outputPath = path.resolve(process.argv[outputIndex + 1]);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(stage, null, 2)}\n`, "utf8");
+  }
+  if (manifestIndex >= 0) await writeYingdiReviewManifest(process.argv[manifestIndex + 1], buildYingdiInitialManifest(stage));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
