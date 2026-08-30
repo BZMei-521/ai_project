@@ -531,7 +531,9 @@ export function buildCodexStoryboardPackageRequest(input: {
       reference.instruction.includes("C23 CORRECT-HAND CROP/REFRAME BASE")
   );
   const primarySubjectName = referencedCharacterNames[0] || "the primary story subject";
-  const edgeSubjectName = referencedCharacterNames.at(-1) || "the secondary story subject";
+  const edgeSubjectName = referencedCharacterNames.length > 0
+    ? referencedCharacterNames[referencedCharacterNames.length - 1]
+    : "the secondary story subject";
   const defaultHardConstraints = {
     subjectCount: Math.max(1, referencedCharacterNames.length),
     visibleAnatomy: "both arms, both hands, and all required fingers must remain visible and anatomically separate",
