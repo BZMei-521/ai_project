@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "stage_yingdi_e01_tomb_v2",
   "sceneId": "yingdi_e01_tomb_c19_c22",
-  "revision": 1,
+  "revision": 2,
   "coordinateFrame": {
     "handedness": "right",
     "upAxis": "y",
@@ -31,15 +31,16 @@
   "entities": [
     {
       "id": "tomb-room",
-      "label": "Enclosed metric tomb room",
+      "label": "Tomb room stone floor",
       "tags": [
         "environment",
-        "room"
+        "room",
+        "surface"
       ],
       "transform": {
         "position": [
           0,
-          2.4,
+          -0.05,
           0
         ],
         "rotation": [
@@ -58,19 +59,219 @@
         "kind": "box",
         "size": [
           6.4,
-          4.8,
+          0.1,
           3.8
         ]
       },
       "visibility": "visible",
       "metadata": {
+        "collider": true,
+        "surface": "floor",
         "dimensionsMetres": [
           6.4,
           3.8,
           4.8
+        ]
+      }
+    },
+    {
+      "id": "tomb-room-ceiling",
+      "label": "Tomb room stone ceiling",
+      "tags": [
+        "environment",
+        "room",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          4.75,
+          0
         ],
-        "collider": false,
-        "enclosure": "interior volume"
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          6.4,
+          0.1,
+          3.8
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "ceiling"
+      }
+    },
+    {
+      "id": "tomb-room-wall-west",
+      "label": "Tomb room west wall",
+      "tags": [
+        "environment",
+        "room",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          -3.15,
+          2.35,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.1,
+          4.7,
+          3.8
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall"
+      }
+    },
+    {
+      "id": "tomb-room-wall-east",
+      "label": "Tomb room east wall",
+      "tags": [
+        "environment",
+        "room",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          3.15,
+          2.35,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.1,
+          4.7,
+          3.8
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall"
+      }
+    },
+    {
+      "id": "tomb-room-wall-north",
+      "label": "Tomb room north wall",
+      "tags": [
+        "environment",
+        "room",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          2.35,
+          -1.85
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          6.2,
+          4.7,
+          0.1
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall"
+      }
+    },
+    {
+      "id": "tomb-room-wall-south",
+      "label": "Tomb room south wall",
+      "tags": [
+        "environment",
+        "room",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          2.35,
+          1.85
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          6.2,
+          4.7,
+          0.1
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall"
       }
     },
     {
@@ -113,16 +314,16 @@
     },
     {
       "id": "coffin-shell",
-      "label": "Hollow coffin shell",
+      "label": "Hollow coffin bottom",
       "tags": [
         "prop",
         "coffin",
-        "collider"
+        "surface"
       ],
       "transform": {
         "position": [
           0,
-          0.62,
+          0.44,
           0
         ],
         "rotation": [
@@ -141,7 +342,7 @@
         "kind": "box",
         "size": [
           2.15,
-          0.44,
+          0.08,
           0.78
         ]
       },
@@ -151,9 +352,9 @@
           "label": "Lid hinge",
           "localTransform": {
             "position": [
-              -1,
-              0.22,
-              0.31
+              0,
+              0.4,
+              -0.35
             ],
             "rotation": [
               0,
@@ -172,24 +373,167 @@
       "visibility": "visible",
       "metadata": {
         "collider": true,
-        "hollow": true,
-        "interiorBounds": {
-          "min": [
-            -0.92,
-            0.4,
-            -0.31
-          ],
-          "max": [
-            0.92,
-            1.05,
-            0.31
-          ]
-        },
         "dimensionsMetres": [
           2.15,
           0.78,
           0.44
         ]
+      }
+    },
+    {
+      "id": "coffin-side-north",
+      "label": "Hollow coffin north side",
+      "tags": [
+        "prop",
+        "coffin",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          0.66,
+          -0.35
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          2.15,
+          0.36,
+          0.08
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true
+      }
+    },
+    {
+      "id": "coffin-side-south",
+      "label": "Hollow coffin south side",
+      "tags": [
+        "prop",
+        "coffin",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          0.66,
+          0.35
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          2.15,
+          0.36,
+          0.08
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true
+      }
+    },
+    {
+      "id": "coffin-end-head",
+      "label": "Hollow coffin head wall",
+      "tags": [
+        "prop",
+        "coffin",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          -1.035,
+          0.66,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.08,
+          0.36,
+          0.62
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true
+      }
+    },
+    {
+      "id": "coffin-end-foot",
+      "label": "Hollow coffin foot wall",
+      "tags": [
+        "prop",
+        "coffin",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          1.035,
+          0.66,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.08,
+          0.36,
+          0.62
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true
       }
     },
     {
@@ -202,14 +546,14 @@
       ],
       "transform": {
         "position": [
-          -0.9,
-          1.05,
-          0.56
+          0,
+          1.029769414123733,
+          -0.004041089335814818
         ],
         "rotation": [
+          -0.17364818,
           0,
           0,
-          0.17364818,
           0.98480775
         ],
         "scale": [
@@ -232,9 +576,9 @@
           "label": "Hinge pin",
           "localTransform": {
             "position": [
-              -0.1,
+              0,
               -0.06,
-              -0.31
+              -0.39
             ],
             "rotation": [
               0,
@@ -267,7 +611,7 @@
       "transform": {
         "position": [
           0,
-          0.44,
+          0.52,
           0
         ],
         "rotation": [
@@ -313,7 +657,7 @@
       "transform": {
         "position": [
           0,
-          0.84,
+          0.66,
           0
         ],
         "rotation": [
@@ -331,9 +675,9 @@
       "geometry": {
         "kind": "capsule",
         "size": [
-          0.42,
-          1.72,
-          0.42
+          0.18,
+          1.42,
+          0.18
         ]
       },
       "rig": {
@@ -365,7 +709,7 @@
           "localTransform": {
             "position": [
               -0.18,
-              0.48,
+              0.3976,
               0
             ],
             "rotation": [
@@ -387,7 +731,7 @@
           "localTransform": {
             "position": [
               0.18,
-              0.48,
+              0.3976,
               0
             ],
             "rotation": [
@@ -409,8 +753,8 @@
           "localTransform": {
             "position": [
               0,
-              0.72,
-              -0.08
+              0.8899999999999999,
+              -0.09
             ],
             "rotation": [
               0,
@@ -428,9 +772,14 @@
       ],
       "visibility": "visible",
       "metadata": {
+        "collider": true,
         "role": "li-baozhu",
         "bodyProxy": "complete humanoid capsule",
-        "collider": true
+        "viewportCapsule": {
+          "radius": 0.18,
+          "cylinderLength": 1.42,
+          "totalHeight": 1.7799999999999998
+        }
       }
     },
     {
@@ -445,7 +794,7 @@
       "transform": {
         "position": [
           1.72,
-          1.12,
+          1.2,
           0.22
         ],
         "rotation": [
@@ -463,9 +812,9 @@
       "geometry": {
         "kind": "capsule",
         "size": [
-          0.42,
-          1.72,
-          0.42
+          0.25,
+          1.4,
+          0.25
         ]
       },
       "rig": {
@@ -496,8 +845,8 @@
           "label": "Left palm",
           "localTransform": {
             "position": [
-              -0.18,
-              0.48,
+              -0.25,
+              0.392,
               0
             ],
             "rotation": [
@@ -518,8 +867,8 @@
           "label": "Right palm",
           "localTransform": {
             "position": [
-              0.18,
-              0.48,
+              0.25,
+              0.392,
               0
             ],
             "rotation": [
@@ -541,8 +890,8 @@
           "localTransform": {
             "position": [
               0,
-              0.72,
-              -0.08
+              0.95,
+              -0.125
             ],
             "rotation": [
               0,
@@ -560,9 +909,14 @@
       ],
       "visibility": "visible",
       "metadata": {
+        "collider": true,
         "role": "wei-xun",
         "bodyProxy": "complete humanoid capsule",
-        "collider": true
+        "viewportCapsule": {
+          "radius": 0.25,
+          "cylinderLength": 1.4,
+          "totalHeight": 1.9
+        }
       }
     },
     {
@@ -576,7 +930,7 @@
       "transform": {
         "position": [
           0.34,
-          0.5,
+          0.58,
           -0.1
         ],
         "rotation": [
@@ -655,13 +1009,13 @@
       "targetEntityId": "coffin-shell",
       "parameters": {
         "boundsMin": [
-          -0.92,
-          0.4,
+          -0.995,
+          0.48,
           -0.31
         ],
         "boundsMax": [
-          0.92,
-          1.05,
+          0.995,
+          0.84,
           0.31
         ]
       },
@@ -721,7 +1075,7 @@
       ],
       "target": [
         0,
-        0.76,
+        0.7,
         0
       ],
       "panoramaYaw": 0,
@@ -747,7 +1101,7 @@
       ],
       "target": [
         0,
-        0.82,
+        0.66,
         0
       ],
       "panoramaYaw": 0,
@@ -773,7 +1127,7 @@
       ],
       "target": [
         0,
-        0.44,
+        0.52,
         0
       ],
       "panoramaYaw": 0,
@@ -822,8 +1176,118 @@
           "transform": {
             "position": [
               0,
-              2.4,
+              -0.05,
               0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-ceiling",
+          "transform": {
+            "position": [
+              0,
+              4.75,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-west",
+          "transform": {
+            "position": [
+              -3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-east",
+          "transform": {
+            "position": [
+              3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-south",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              1.85
             ],
             "rotation": [
               0,
@@ -866,7 +1330,95 @@
           "transform": {
             "position": [
               0,
-              0.62,
+              0.44,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-north",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              -0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-south",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-head",
+          "transform": {
+            "position": [
+              -1.035,
+              0.66,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-foot",
+          "transform": {
+            "position": [
+              1.035,
+              0.66,
               0
             ],
             "rotation": [
@@ -887,14 +1439,14 @@
           "entityId": "coffin-lid",
           "transform": {
             "position": [
-              -0.9,
-              1.05,
-              0.56
+              0,
+              1.029769414123733,
+              -0.004041089335814818
             ],
             "rotation": [
+              -0.17364818,
               0,
               0,
-              0.17364818,
               0.98480775
             ],
             "scale": [
@@ -910,7 +1462,7 @@
           "transform": {
             "position": [
               0,
-              0.44,
+              0.52,
               0
             ],
             "rotation": [
@@ -932,7 +1484,7 @@
           "transform": {
             "position": [
               0,
-              0.84,
+              0.66,
               0
             ],
             "rotation": [
@@ -952,7 +1504,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.84,
+                0.66,
                 0
               ],
               "rotation": [
@@ -978,7 +1530,7 @@
           "transform": {
             "position": [
               1.72,
-              1.12,
+              1.2,
               0.22
             ],
             "rotation": [
@@ -998,7 +1550,7 @@
             "rootTransform": {
               "position": [
                 1.72,
-                1.12,
+                1.2,
                 0.22
               ],
               "rotation": [
@@ -1024,7 +1576,7 @@
           "transform": {
             "position": [
               0.34,
-              0.5,
+              0.58,
               -0.1
             ],
             "rotation": [
@@ -1084,8 +1636,118 @@
           "transform": {
             "position": [
               0,
-              2.4,
+              -0.05,
               0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-ceiling",
+          "transform": {
+            "position": [
+              0,
+              4.75,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-west",
+          "transform": {
+            "position": [
+              -3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-east",
+          "transform": {
+            "position": [
+              3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-south",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              1.85
             ],
             "rotation": [
               0,
@@ -1128,7 +1790,95 @@
           "transform": {
             "position": [
               0,
-              0.62,
+              0.44,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-north",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              -0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-south",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-head",
+          "transform": {
+            "position": [
+              -1.035,
+              0.66,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-foot",
+          "transform": {
+            "position": [
+              1.035,
+              0.66,
               0
             ],
             "rotation": [
@@ -1149,14 +1899,14 @@
           "entityId": "coffin-lid",
           "transform": {
             "position": [
-              -0.9,
-              1.05,
-              0.56
+              0,
+              1.029769414123733,
+              -0.004041089335814818
             ],
             "rotation": [
+              -0.17364818,
               0,
               0,
-              0.17364818,
               0.98480775
             ],
             "scale": [
@@ -1172,7 +1922,7 @@
           "transform": {
             "position": [
               0,
-              0.44,
+              0.52,
               0
             ],
             "rotation": [
@@ -1194,7 +1944,7 @@
           "transform": {
             "position": [
               0,
-              0.84,
+              0.66,
               0
             ],
             "rotation": [
@@ -1214,7 +1964,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.84,
+                0.66,
                 0
               ],
               "rotation": [
@@ -1240,7 +1990,7 @@
           "transform": {
             "position": [
               1.72,
-              1.12,
+              1.2,
               0.22
             ],
             "rotation": [
@@ -1260,7 +2010,7 @@
             "rootTransform": {
               "position": [
                 1.72,
-                1.12,
+                1.2,
                 0.22
               ],
               "rotation": [
@@ -1286,7 +2036,7 @@
           "transform": {
             "position": [
               0.34,
-              0.5,
+              0.58,
               -0.1
             ],
             "rotation": [
@@ -1346,8 +2096,118 @@
           "transform": {
             "position": [
               0,
-              2.4,
+              -0.05,
               0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-ceiling",
+          "transform": {
+            "position": [
+              0,
+              4.75,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-west",
+          "transform": {
+            "position": [
+              -3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-east",
+          "transform": {
+            "position": [
+              3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-south",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              1.85
             ],
             "rotation": [
               0,
@@ -1390,7 +2250,95 @@
           "transform": {
             "position": [
               0,
-              0.62,
+              0.44,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-north",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              -0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-south",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-head",
+          "transform": {
+            "position": [
+              -1.035,
+              0.66,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-foot",
+          "transform": {
+            "position": [
+              1.035,
+              0.66,
               0
             ],
             "rotation": [
@@ -1411,14 +2359,14 @@
           "entityId": "coffin-lid",
           "transform": {
             "position": [
-              -0.9,
-              1.05,
-              0.56
+              0,
+              1.029769414123733,
+              -0.004041089335814818
             ],
             "rotation": [
+              -0.17364818,
               0,
               0,
-              0.17364818,
               0.98480775
             ],
             "scale": [
@@ -1434,7 +2382,7 @@
           "transform": {
             "position": [
               0,
-              0.44,
+              0.52,
               0
             ],
             "rotation": [
@@ -1456,7 +2404,7 @@
           "transform": {
             "position": [
               0,
-              0.84,
+              0.66,
               0
             ],
             "rotation": [
@@ -1476,7 +2424,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.84,
+                0.66,
                 0
               ],
               "rotation": [
@@ -1502,7 +2450,7 @@
           "transform": {
             "position": [
               1.72,
-              1.12,
+              1.2,
               0.22
             ],
             "rotation": [
@@ -1522,7 +2470,7 @@
             "rootTransform": {
               "position": [
                 1.72,
-                1.12,
+                1.2,
                 0.22
               ],
               "rotation": [
@@ -1548,7 +2496,7 @@
           "transform": {
             "position": [
               0.34,
-              0.5,
+              0.58,
               -0.1
             ],
             "rotation": [
@@ -1608,8 +2556,118 @@
           "transform": {
             "position": [
               0,
-              2.4,
+              -0.05,
               0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-ceiling",
+          "transform": {
+            "position": [
+              0,
+              4.75,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-west",
+          "transform": {
+            "position": [
+              -3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-east",
+          "transform": {
+            "position": [
+              3.15,
+              2.35,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-south",
+          "transform": {
+            "position": [
+              0,
+              2.35,
+              1.85
             ],
             "rotation": [
               0,
@@ -1652,7 +2710,95 @@
           "transform": {
             "position": [
               0,
-              0.62,
+              0.44,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-north",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              -0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-side-south",
+          "transform": {
+            "position": [
+              0,
+              0.66,
+              0.35
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-head",
+          "transform": {
+            "position": [
+              -1.035,
+              0.66,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "coffin-end-foot",
+          "transform": {
+            "position": [
+              1.035,
+              0.66,
               0
             ],
             "rotation": [
@@ -1673,14 +2819,14 @@
           "entityId": "coffin-lid",
           "transform": {
             "position": [
-              -0.9,
-              1.05,
-              0.56
+              0,
+              1.029769414123733,
+              -0.004041089335814818
             ],
             "rotation": [
+              -0.17364818,
               0,
               0,
-              0.17364818,
               0.98480775
             ],
             "scale": [
@@ -1696,7 +2842,7 @@
           "transform": {
             "position": [
               0,
-              0.44,
+              0.52,
               0
             ],
             "rotation": [
@@ -1718,7 +2864,7 @@
           "transform": {
             "position": [
               0,
-              0.84,
+              0.66,
               0
             ],
             "rotation": [
@@ -1738,7 +2884,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.84,
+                0.66,
                 0
               ],
               "rotation": [
@@ -1764,7 +2910,7 @@
           "transform": {
             "position": [
               1.72,
-              1.12,
+              1.2,
               0.22
             ],
             "rotation": [
@@ -1784,7 +2930,7 @@
             "rootTransform": {
               "position": [
                 1.72,
-                1.12,
+                1.2,
                 0.22
               ],
               "rotation": [
@@ -1810,7 +2956,7 @@
           "transform": {
             "position": [
               0.34,
-              0.5,
+              0.58,
               -0.1
             ],
             "rotation": [
