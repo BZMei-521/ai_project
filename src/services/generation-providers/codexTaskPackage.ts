@@ -13,7 +13,8 @@ export type CodexStoryboardRequest = {
 };
 export type CodexStoryboardResult = {
   schemaVersion: 1; jobId: string; projectId: string; episodeId: string; shotId: string; provider: "codex_task_package"; requestDigest: string;
-  referenceDigests: Array<Pick<CodexStoryboardReference, "id" | "sha256">>; generationMode: "codex_builtin_imagegen"; finalPrompt: string;
+  referenceDigests: Array<Pick<CodexStoryboardReference, "id" | "sha256">>; generationMode: "codex_builtin_imagegen" | "user_authorized_local_deterministic_crop"; finalPrompt: string;
+  derivedTransform?: { operation: "user_authorized_local_deterministic_crop"; authorization: { observedAt: string; context: string }; tool: { name: "ffmpeg"; generative: false; filter: string }; source: { absolutePath: string; sha256: string; width: number; height: number }; cropRectangle: { x: number; y: number; width: number; height: number }; output: { absolutePath: string; sha256: string; width: number; height: number }; pixelExactCrop: true };
   output: { relativePath: "outputs/candidate.png"; sha256: string; width: number; height: number; mimeType: "image/png" }; completedAt: string; state: "completed";
 };
 export type CodexStoryboardImageSpec = { taxonomy: "stylized-concept"; assetType: "AI comic-drama storyboard frame"; referenceUsages: CodexStoryboardReferenceUsage[]; referencedRelativePaths: string[]; compiledPrompt: string };

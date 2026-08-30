@@ -151,6 +151,122 @@ const immutableRequestForPrompt = {
 const compiledPreparedPrompt = runtime.compileCodexStoryboardImageSpec(immutableRequestForPrompt).compiledPrompt;
 assert.match(compiledPreparedPrompt, /Picture 4 \[style_only\]:.*does not control composition/i);
 assert.match(compiledPreparedPrompt, /Picture 5 \[style_only\]:.*does not control composition/i);
+
+const secondCharacterAsset = {
+  ...characterAsset,
+  id: "character-2",
+  name: "Wei Xun",
+  filePath: "C:/project/assets/wei-xun.png",
+  characterIdentityPack: {
+    ...characterAsset.characterIdentityPack,
+    faceMasterPath: "C:/project/assets/wei-xun-face.png",
+    bodyFrontPath: "C:/project/assets/wei-xun-body.png",
+    approvedHeroFramePaths: ["C:/project/assets/wei-xun-style.png"]
+  }
+};
+const buildFramingRequest = (shot, semanticProfile) => comfyService.buildCodexStoryboardPackageRequest({
+  jobId: `job-${shot.order}`,
+  projectPath: "C:/project",
+  project: {
+    id: "project-1", name: "Storyboard Project", fps: 24, width: 1920, height: 1080,
+    createdAt: "2026-08-28T00:00:00.000Z", updatedAt: "2026-08-28T00:00:00.000Z"
+  },
+  sequence: { id: "episode-1", projectId: "project-1", name: "Episode 1", order: 1 },
+  shot: { ...storyboardShot, ...shot, characterRefs: [characterAsset.id, secondCharacterAsset.id], generatedImagePath: "" },
+  assets: [characterAsset, secondCharacterAsset],
+  references: appendedStyleSelections,
+  semanticProfile,
+  createdAt: "2026-08-28T00:00:00.000Z"
+});
+const immutableFramingRequest = (prepared) => {
+  const { projectPath: _ignored, ...request } = prepared;
+  return {
+    ...request,
+    references: request.references.map((reference, index) => ({
+      id: reference.id, usage: reference.usage, instruction: reference.instruction,
+      relativePath: `references/reference-${index + 1}.png`, sha256: String(index + 1).repeat(64),
+      width: 512, height: 512, mimeType: "image/png"
+    })),
+    expectedOutput: { candidatePath: "outputs/candidate.png", resultPath: "outputs/result.json", mimeTypes: ["image/png"] }
+  };
+};
+
+const c22Prepared = buildFramingRequest({
+  id: "E01-S01-C22", order: 22,
+  storyPrompt: "over-the-shoulder-insert; camera locked-off; the shovel blade stays above the horizontal panel with an air gap."
+}, "yingdi_e01_c22_ots_insert");
+assert.equal(Object.hasOwn(c22Prepared.prompt.hardConstraints, "subjectCount"), false);
+assert.match(c22Prepared.prompt.hardConstraints.primarySubject, /short broad shovel blade.*horizontal phoenix panel.*clear air gap/i);
+assert.doesNotMatch(c22Prepared.prompt.hardConstraints.primarySubject, /Shen Yan/i);
+assert.match(c22Prepared.prompt.hardConstraints.secondaryPresence, /Wei Xun.*cropped shoulder.*back.of.head.*edge framing only.*Shen Yan.*limited secondary continuity inside (?:the )?coffin.*never co-equal/is);
+const c22Compiled = runtime.compileCodexStoryboardImageSpec(immutableFramingRequest(c22Prepared)).compiledPrompt;
+assert.match(c22Compiled, /Subject visibility:.*two story characters.*cropped.*shoulder.*back of head/is);
+assert.match(c22Compiled, /Camera and framing lock:.*genuine locked-off over-the-shoulder insert/is);
+assert.match(c22Compiled, /Visible anatomy:.*only anatomy actually required by this insert.*shovel blade.*horizontal panel.*air gap/is);
+assert.match(c22Compiled, /Spatial authority role:.*environment.*layout.*not.*camera/is);
+assert.doesNotMatch(c22Compiled, /Exact subject count: 2/);
+assert.doesNotMatch(c22Compiled, /No pose, composition, camera, framing, projection, or occlusion drift from spatial authority/);
+
+const c23Prepared = buildFramingRequest({
+  id: "E01-S01-C23", order: 23,
+  storyPrompt: "extreme-close-up; camera rack-focus-hold; the uninjured left hand stops one inch from the jade while the injured right hand protects the wound."
+}, "yingdi_e01_c23_jade_ecu");
+assert.equal(Object.hasOwn(c23Prepared.prompt.hardConstraints, "subjectCount"), false);
+assert.match(c23Prepared.prompt.hardConstraints.primarySubject, /Shen Yan.*primary/i);
+assert.match(c23Prepared.prompt.hardConstraints.secondaryPresence, /Wei Xun.*optional_defocused_edge/i);
+const c23Compiled = runtime.compileCodexStoryboardImageSpec(immutableFramingRequest(c23Prepared)).compiledPrompt;
+assert.match(c23Compiled, /Subject visibility:.*Shen Yan.*primary subject.*Wei Xun.*optional.*tiny defocused edge/is);
+assert.match(c23Compiled, /Camera and framing lock:.*extreme close-up.*rack-focus-hold/is);
+assert.match(c23Compiled, /Visible anatomy:.*uninjured LEFT hand.*injured RIGHT protective hand.*required fingers/is);
+assert.match(c23Compiled, /Spatial authority role:.*environment.*layout.*not.*camera/is);
+assert.doesNotMatch(c23Compiled, /Exact subject count: 2/);
+assert.doesNotMatch(c23Compiled, /No pose, composition, camera, framing, projection, or occlusion drift from spatial authority/);
+const c23EditBaseInstruction = "EDIT COMPOSITION BASE FOR C23: preserve this image's approved extreme-close-up crop and rack-focus-hold look. Edit only that hand-role and injury assignment while preserving the approved ECU composition.";
+const c23EditPrepared = comfyService.buildCodexStoryboardPackageRequest({
+  jobId: "job-c23-edit", projectPath: "C:/project",
+  project: { id: "project-1", name: "Storyboard Project", fps: 24, width: 1920, height: 1080, createdAt: "2026-08-28T00:00:00.000Z", updatedAt: "2026-08-28T00:00:00.000Z" },
+  sequence: { id: "episode-1", projectId: "project-1", name: "Episode 1", order: 1 },
+  shot: { ...storyboardShot, id: "E01-S01-C23", order: 23, characterRefs: [characterAsset.id, secondCharacterAsset.id], storyPrompt: "extreme-close-up; camera rack-focus-hold; the uninjured left hand stops one inch from the jade while the injured right hand protects the wound.", generatedImagePath: "" },
+  assets: [characterAsset, secondCharacterAsset],
+  references: appendedStyleSelections.map((reference, index) => index === 0 ? { ...reference, usage: "spatial_authority", instruction: c23EditBaseInstruction } : reference),
+  semanticProfile: "yingdi_e01_c23_jade_ecu",
+  createdAt: "2026-08-28T00:00:00.000Z"
+});
+const c23EditCompiled = runtime.compileCodexStoryboardImageSpec(immutableFramingRequest(c23EditPrepared)).compiledPrompt;
+assert.match(c23EditPrepared.prompt.hardConstraints.cameraFramingLock, /preserve.*ECU edit base.*camera.*framing.*composition/is);
+assert.match(c23EditPrepared.prompt.hardConstraints.spatialAuthorityRole, /ECU edit base.*sole camera.*framing.*composition authority/is);
+assert.match(c23EditCompiled, /Spatial authority role:.*ECU edit base.*sole camera.*framing.*composition authority/is);
+assert.doesNotMatch(c23EditCompiled, /spatial-authority contact sheet only for environment/i);
+const c23CropBaseInstruction = "C23 CORRECT-HAND CROP/REFRAME BASE: use this image as the sole spatial, composition, and anatomical hand-role authority. Preserve the subject's own LEFT uninjured reaching hand and RIGHT wounded protective hand exactly; only optical crop, zoom, reframe, depth of field, and Wei edge visibility may change.";
+const c23CropPrepared = comfyService.buildCodexStoryboardPackageRequest({
+  jobId: "job-c23-crop", projectPath: "C:/project",
+  project: { id: "project-1", name: "Storyboard Project", fps: 24, width: 1920, height: 1080, createdAt: "2026-08-28T00:00:00.000Z", updatedAt: "2026-08-28T00:00:00.000Z" },
+  sequence: { id: "episode-1", projectId: "project-1", name: "Episode 1", order: 1 },
+  shot: { ...storyboardShot, id: "E01-S01-C23", order: 23, characterRefs: [characterAsset.id, secondCharacterAsset.id], storyPrompt: "extreme-close-up; camera rack-focus-hold; the uninjured left hand stops one inch from the jade while the injured right hand protects the wound.", generatedImagePath: "" },
+  assets: [characterAsset, secondCharacterAsset],
+  references: appendedStyleSelections.map((reference, index) => index === 0 ? { ...reference, usage: "spatial_authority", instruction: c23CropBaseInstruction } : reference),
+  semanticProfile: "yingdi_e01_c23_jade_ecu",
+  createdAt: "2026-08-28T00:00:00.000Z"
+});
+assert.equal(Object.hasOwn(c23CropPrepared.prompt.hardConstraints, "subjectCount"), false);
+assert.match(c23CropPrepared.prompt.hardConstraints.primarySubject, /jade.*LEFT.*hand.*RIGHT.*hand/i);
+assert.match(c23CropPrepared.prompt.hardConstraints.secondaryPresence, /Wei Xun.*optional_defocused_edge/i);
+assert.match(c23CropPrepared.prompt.hardConstraints.visibleAnatomy, /only.*LEFT.*uninjured.*RIGHT.*wounded.*protective hand/is);
+assert.match(c23CropPrepared.prompt.hardConstraints.cameraFramingLock, /optical crop.*zoom.*reframe.*rack-focus/is);
+assert.match(c23CropPrepared.prompt.hardConstraints.spatialAuthorityRole, /sole spatial.*composition.*anatomical hand-role authority/is);
+assert.match(c23CropPrepared.prompt.hardConstraints.spatialAuthorityRole, /must not re-pose.*exchange hands.*move.*wound/is);
+const c23CropCompiled = runtime.compileCodexStoryboardImageSpec(immutableFramingRequest(c23CropPrepared)).compiledPrompt;
+assert.doesNotMatch(c23CropCompiled, /Exact subject count:/);
+assert.doesNotMatch(c23CropCompiled, /both arms, both hands/i);
+assert.match(c23CropCompiled, /Subject visibility:.*jade.*two required hands.*primary content/is);
+assert.match(c23CropCompiled, /Camera and framing lock:.*optical crop.*zoom.*reframe/is);
+const genericOts = buildFramingRequest({ id: "future-ots", order: 90, title: "Airport handoff", storyPrompt: "over-the-shoulder-insert; camera locked-off; a courier slides an envelope across a glass desk." });
+assert.equal(genericOts.prompt.hardConstraints.subjectCount, 2);
+assert.doesNotMatch(JSON.stringify(genericOts.prompt.hardConstraints), /coffin|shovel|phoenix|jade|wound|Shen Yan|Wei Xun/i);
+const genericEcu = buildFramingRequest({ id: "future-ecu", order: 91, title: "Watch mechanism", storyPrompt: "extreme-close-up; camera rack-focus-hold; a watchmaker adjusts a brass gear." });
+assert.equal(genericEcu.prompt.hardConstraints.subjectCount, 2);
+assert.doesNotMatch(JSON.stringify(genericEcu.prompt.hardConstraints), /coffin|shovel|phoenix|jade|wound|Shen Yan|Wei Xun/i);
+assert.equal(preparedRequest.prompt.hardConstraints.subjectCount, 1);
 assert.throws(
   () => comfyService.buildCodexStoryboardPackageRequest({
     jobId: "job-duplicate-id",
@@ -244,6 +360,19 @@ assert.throws(() => { validatedRequest.references[0].instruction = "Rewrite bloc
 const validatedResult = runtime.validateCodexStoryboardResult(result, request);
 assert.throws(() => { validatedResult.output.sha256 = sha("f"); }, /read only/i);
 assert.throws(() => { validatedResult.referenceDigests[0].sha256 = sha("f"); }, /read only/i);
+const derivedTransform = {
+  operation: "user_authorized_local_deterministic_crop",
+  authorization: { observedAt: "2026-08-30T02:14:40.535Z", context: "User explicitly authorized one local deterministic crop." },
+  tool: { name: "ffmpeg", generative: false, filter: "crop=1184:666:488:244" },
+  source: { absolutePath: "C:\\source.png", sha256: "a".repeat(64), width: 1672, height: 941 },
+  cropRectangle: { x: 488, y: 244, width: 1184, height: 666 },
+  output: { absolutePath: "C:\\derived.png", sha256: "b".repeat(64), width: 1184, height: 666 },
+  pixelExactCrop: true
+};
+const cropResult = { ...result, generationMode: "user_authorized_local_deterministic_crop", derivedTransform, output: { ...result.output, sha256: "b".repeat(64), width: 1184, height: 666 } };
+assert.equal(runtime.validateCodexStoryboardResult(cropResult, request).derivedTransform.tool.generative, false);
+assert.throws(() => runtime.validateCodexStoryboardResult({ ...cropResult, derivedTransform: { ...derivedTransform, cropRectangle: { ...derivedTransform.cropRectangle, width: 1183 } } }, request), /derived_transform_invalid/);
+assert.throws(() => runtime.validateCodexStoryboardResult({ ...result, derivedTransform }, request), /keys_invalid/);
 
 const cliPath = fileURLToPath(new URL("./run-codex-storyboard-job.mjs", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));

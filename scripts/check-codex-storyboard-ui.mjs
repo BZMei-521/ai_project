@@ -56,6 +56,9 @@ for (const mode of [
 assert.match(panel, /parsed\.storyboardImageWorkflowMode === "codex_task_package"/, "settings migration retains Codex mode");
 assert.match(panel, /requiredNodes: \[\][\s\S]{0,180}requiredModels: \[\][\s\S]{0,180}recommendedPlugins: \[\]/, "Codex mode has no Comfy dependencies");
 assert.match(panel, /references:\s*codexReferences\.map\(\(reference\) => \(\{ \.\.\.reference \}\)\)/, "export preserves edited reference order");
+assert.match(types, /export type CodexStoryboardSemanticProfile\s*=\s*[\s\S]*?"yingdi_e01_c22_ots_insert"[\s\S]*?"yingdi_e01_c23_jade_ecu"/, "shot metadata exposes the audited Codex semantic profiles");
+assert.match(types, /codexStoryboardSemanticProfile\?: CodexStoryboardSemanticProfile/, "Shot persists the optional Codex semantic profile");
+assert.match(panel, /semanticProfile:\s*selectedShot\.codexStoryboardSemanticProfile/, "the production UI exporter forwards explicit shot profile metadata");
 assert.doesNotMatch(panel, /generatedImagePath[^\n]{0,160}spatial_authority|spatial_authority[^\n]{0,160}generatedImagePath/, "generated still is not inferred as spatial authority");
 
 const codexBranch = panel.match(/\/\* CODEX_TASK_PACKAGE_BRANCH_START \*\/[\s\S]*?\/\* CODEX_TASK_PACKAGE_BRANCH_END \*\//)?.[0];

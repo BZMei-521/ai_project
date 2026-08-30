@@ -357,7 +357,16 @@ function compilePrompt(request) {
   const subjectCount = Number.isSafeInteger(hard.subjectCount) && hard.subjectCount > 0 ? hard.subjectCount : 1;
   const anatomy = typeof hard.visibleAnatomy === "string" && hard.visibleAnatomy.trim() ? hard.visibleAnatomy.trim() : "both arms, both hands, and all required fingers must remain visible and anatomically separate";
   const framing = typeof hard.cameraFramingLock === "string" && hard.cameraFramingLock.trim() ? hard.cameraFramingLock.trim() : request.references.find((item) => item.usage === "spatial_authority")?.instruction;
-  const mandatory = ["MANDATORY HARD CONSTRAINTS:", `- Exact subject count: ${subjectCount}. Do not add, duplicate, merge, or remove subjects.`, `- Visible anatomy: ${anatomy}. No fused, missing, duplicated, or malformed limbs/hands.`, `- Camera and framing lock: ${framing}`, "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.", "- No text, captions, logos, signatures, or watermarks."].join("\n");
+  const subjectVisibility = typeof hard.subjectVisibility === "string" && hard.subjectVisibility.trim() ? hard.subjectVisibility.trim() : "";
+  const spatialAuthorityRole = typeof hard.spatialAuthorityRole === "string" && hard.spatialAuthorityRole.trim() ? hard.spatialAuthorityRole.trim() : "";
+  const mandatory = [
+    "MANDATORY HARD CONSTRAINTS:",
+    subjectVisibility ? `- Subject visibility: ${subjectVisibility}` : `- Exact subject count: ${subjectCount}. Do not add, duplicate, merge, or remove subjects.`,
+    `- Visible anatomy: ${anatomy}. No fused, missing, duplicated, or malformed limbs/hands.`,
+    `- Camera and framing lock: ${framing}`,
+    spatialAuthorityRole ? `- Spatial authority role: ${spatialAuthorityRole}` : "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.",
+    "- No text, captions, logos, signatures, or watermarks."
+  ].join("\n");
   return [...request.references.map((reference, index) => `Picture ${index + 1} [${reference.usage}]: ${reference.instruction}`), mandatory, request.prompt.primaryRequest].join("\n");
 }
 
@@ -446,7 +455,7 @@ async function validatedHelperOverride(argument) {
   }
 }
 
-async function verifyHelperSuccess(stdout, job, candidateBytes, candidateImage, manifest) {
+async function verifyHelperSuccess(stdout, job, candidateBytes, candidateImage, manifest, derivedTransform) {
   let handoff;
   try { handoff = JSON.parse(stdout.trim()); } catch { fail("codex_storyboard_cli_helper_invalid", EXIT.publish); }
   exactKeys(handoff, ["jobId", "requestDigest", "candidatePath", "resultPath"], "codex_storyboard_cli_helper_invalid", EXIT.publish);
@@ -462,16 +471,18 @@ async function verifyHelperSuccess(stdout, job, candidateBytes, candidateImage, 
     const publishedImage = inspectImage(publishedCandidate, "codex_storyboard_cli_helper_invalid", EXIT.publish);
     if (publishedImage.mimeType !== "image/png" || publishedImage.width !== candidateImage.width || publishedImage.height !== candidateImage.height) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
     const result = JSON.parse(resultBytes.toString("utf8"));
-    exactKeys(result, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "requestDigest", "referenceDigests", "generationMode", "finalPrompt", "output", "completedAt", "state"], "codex_storyboard_cli_helper_invalid", EXIT.publish);
+    const cropMode = Boolean(derivedTransform);
+    exactKeys(result, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "requestDigest", "referenceDigests", "generationMode", "finalPrompt", "output", "completedAt", "state", ...(cropMode ? ["derivedTransform"] : [])], "codex_storyboard_cli_helper_invalid", EXIT.publish);
     exactKeys(result.output, ["relativePath", "sha256", "width", "height", "mimeType"], "codex_storyboard_cli_helper_invalid", EXIT.publish);
     if (!Array.isArray(result.referenceDigests) || result.referenceDigests.some((reference) => {
       try { exactKeys(reference, ["id", "sha256"], "codex_storyboard_cli_helper_invalid", EXIT.publish); return false; } catch { return true; }
     })) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
-    if (result.schemaVersion !== 1 || result.provider !== PROVIDER || result.generationMode !== "codex_builtin_imagegen" || result.state !== "completed"
+    if (result.schemaVersion !== 1 || result.provider !== PROVIDER || result.generationMode !== (cropMode ? "user_authorized_local_deterministic_crop" : "codex_builtin_imagegen") || result.state !== "completed"
       || result.jobId !== job.request.jobId || result.projectId !== job.request.projectId || result.episodeId !== job.request.episodeId || result.shotId !== job.request.shotId
       || result.requestDigest !== job.requestDigest || result.finalPrompt !== manifest.compiledPrompt || typeof result.completedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(result.completedAt) || !Number.isFinite(Date.parse(result.completedAt)) || new Date(result.completedAt).toISOString() !== result.completedAt
       || result.output.relativePath !== "outputs/candidate.png" || result.output.sha256 !== sha256(candidateBytes) || result.output.width !== candidateImage.width || result.output.height !== candidateImage.height || result.output.mimeType !== "image/png"
-      || JSON.stringify(result.referenceDigests) !== JSON.stringify(job.request.references.map(({ id, sha256: digest }) => ({ id, sha256: digest })))) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
+      || JSON.stringify(result.referenceDigests) !== JSON.stringify(job.request.references.map(({ id, sha256: digest }) => ({ id, sha256: digest })))
+      || (cropMode && JSON.stringify(canonicalize(result.derivedTransform)) !== JSON.stringify(canonicalize(derivedTransform)))) fail("codex_storyboard_cli_helper_invalid", EXIT.publish);
     return handoff;
   } catch (error) {
     if (error instanceof CliError) throw error;
@@ -485,15 +496,15 @@ function parseArguments(argv) {
   for (let index = 0; index < rest.length; index += 2) {
     const key = rest[index];
     const value = rest[index + 1];
-    if (!/^--(?:package|candidate|inspection-manifest)$/.test(key ?? "") || !value || options[key]) fail("codex_storyboard_cli_usage", EXIT.usage);
+    if (!/^--(?:package|candidate|inspection-manifest|derived-transform)$/.test(key ?? "") || !value || options[key]) fail("codex_storyboard_cli_usage", EXIT.usage);
     options[key] = value;
   }
-  if (!command || !options["--package"] || (command === "complete" && (!options["--candidate"] || !options["--inspection-manifest"])) || (command === "inspect" && (options["--candidate"] || options["--inspection-manifest"])) || !["inspect", "complete"].includes(command)) fail("codex_storyboard_cli_usage", EXIT.usage);
-  return { command, packageArgument: options["--package"], candidateArgument: options["--candidate"], manifestArgument: options["--inspection-manifest"] };
+  if (!command || !options["--package"] || (command === "complete" && (!options["--candidate"] || !options["--inspection-manifest"])) || (command === "inspect" && (options["--candidate"] || options["--inspection-manifest"] || options["--derived-transform"])) || !["inspect", "complete"].includes(command)) fail("codex_storyboard_cli_usage", EXIT.usage);
+  return { command, packageArgument: options["--package"], candidateArgument: options["--candidate"], manifestArgument: options["--inspection-manifest"], derivedTransformArgument: options["--derived-transform"] };
 }
 
 async function main() {
-  const { command, packageArgument, candidateArgument, manifestArgument } = parseArguments(process.argv.slice(2));
+  const { command, packageArgument, candidateArgument, manifestArgument, derivedTransformArgument } = parseArguments(process.argv.slice(2));
   const job = await loadPackage(packageArgument);
   const compiledPrompt = compilePrompt(job.request);
   if (command === "inspect") {
@@ -533,6 +544,14 @@ async function main() {
   const image = inspectImage(candidate, "codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   if (image.mimeType !== "image/png") fail("codex_storyboard_cli_candidate_invalid", EXIT.candidate);
   const stagedCandidate = await stageCandidate(candidate, image);
+  let derivedTransform;
+  let derivedTransformPath;
+  if (derivedTransformArgument) {
+    try {
+      derivedTransformPath = await realpath(derivedTransformArgument);
+      derivedTransform = JSON.parse((await stableRead(derivedTransformPath, path.dirname(derivedTransformPath), "codex_storyboard_cli_derived_transform_invalid", EXIT.request)).toString("utf8"));
+    } catch { fail("codex_storyboard_cli_derived_transform_invalid", EXIT.request); }
+  }
   try {
     if (process.env.NODE_ENV === "test" && process.env.CODEX_STORYBOARD_TEST_REPLACE_CANDIDATE_AFTER_STAGE) {
       const replacementPath = await realpath(process.env.CODEX_STORYBOARD_TEST_REPLACE_CANDIDATE_AFTER_STAGE);
@@ -541,6 +560,7 @@ async function main() {
     const helper = process.env.CODEX_STORYBOARD_OPERATOR_BIN;
     const helperCommand = helper ? await validatedHelperOverride(helper) : "cargo";
     const completionArguments = ["complete", "--package", job.packagePath, "--candidate", stagedCandidate.candidatePath, "--candidate-digest", stagedCandidate.digest, "--inspection-manifest", manifestPath];
+    if (derivedTransformPath) completionArguments.push("--derived-transform", derivedTransformPath);
     const helperArguments = helper
       ? completionArguments
       : ["run", "--offline", "--quiet", "--manifest-path", CARGO_MANIFEST, "--bin", "codex-storyboard-operator", "--", ...completionArguments];
@@ -553,7 +573,7 @@ async function main() {
       process.exitCode = outputExists ? EXIT.outputExists : EXIT.publish;
       return;
     }
-    await verifyHelperSuccess(helperResult.stdout, job, candidate, image, manifest);
+    await verifyHelperSuccess(helperResult.stdout, job, candidate, image, manifest, derivedTransform);
     process.stdout.write(helperResult.stdout);
   } finally {
     await rm(stagedCandidate.stagingRoot, { recursive: true, force: true }).catch(() => {});

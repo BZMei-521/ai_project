@@ -5437,6 +5437,7 @@ export function ComfyPipelinePanel({ projectPath }: { projectPath: string }) {
         sequence: currentSequence,
         shot: selectedShot,
         assets,
+        semanticProfile: selectedShot.codexStoryboardSemanticProfile,
         references: codexReferences.map((reference) => ({ ...reference })),
         createdAt: new Date(now).toISOString()
       });

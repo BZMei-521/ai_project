@@ -2,6 +2,7 @@ import type {
   Asset,
   AudioTrack,
   CharacterGenerationMetadata,
+  CodexStoryboardSemanticProfile,
   Project,
   Sequence,
   Shot,
@@ -485,6 +486,7 @@ export function buildCodexStoryboardPackageRequest(input: {
   assets: Asset[];
   references: CodexStoryboardReferenceSelection[];
   createdAt: string;
+  semanticProfile?: CodexStoryboardSemanticProfile;
 }): PrepareCodexStoryboardJobRequest {
   const referencedCharacterNames = input.assets
     .filter(
@@ -517,6 +519,58 @@ export function buildCodexStoryboardPackageRequest(input: {
     .filter(Boolean)
     .join("\n");
 
+  const semanticProfile = input.semanticProfile;
+  const hasC23EcuEditBase = input.references.some(
+    (reference) =>
+      reference.usage === "spatial_authority" &&
+      reference.instruction.includes("EDIT COMPOSITION BASE FOR C23")
+  );
+  const hasC23CorrectHandCropBase = input.references.some(
+    (reference) =>
+      reference.usage === "spatial_authority" &&
+      reference.instruction.includes("C23 CORRECT-HAND CROP/REFRAME BASE")
+  );
+  const primarySubjectName = referencedCharacterNames[0] || "the primary story subject";
+  const edgeSubjectName = referencedCharacterNames.at(-1) || "the secondary story subject";
+  const defaultHardConstraints = {
+    subjectCount: Math.max(1, referencedCharacterNames.length),
+    visibleAnatomy: "both arms, both hands, and all required fingers must remain visible and anatomically separate",
+    cameraFramingLock: `Preserve shot ${input.shot.order} camera, framing, projection, blocking, pose, and occlusion exactly as supplied by the spatial-authority reference; output ${input.project.width}x${input.project.height}.`
+  };
+  const hardConstraints = semanticProfile === "yingdi_e01_c22_ots_insert"
+    ? {
+        primarySubject: "the short broad shovel blade, horizontal phoenix panel, and clear air gap are primary",
+        secondaryPresence: `${edgeSubjectName} = cropped shoulder/back-of-head edge framing only; ${primarySubjectName} = limited secondary continuity inside the coffin, never co-equal`,
+        subjectVisibility: `The two story characters remain narratively present, but ${edgeSubjectName} is only a cropped near shoulder and back-of-head foreground edge while ${primarySubjectName} remains limited secondary continuity; do not force a balanced two-person tableau or full-body visibility.`,
+        visibleAnatomy: `show only anatomy actually required by this insert: ${edgeSubjectName}'s cropped shoulder/back of head and the single hand/grip needed to read the short shovel blade; ${primarySubjectName} may remain partially cropped inside the coffin; keep the shovel blade, horizontal panel, and clear air gap readable; do not require both characters' full arms or both hands`,
+        cameraFramingLock: `Use a genuine locked-off over-the-shoulder insert from behind ${edgeSubjectName}; only a narrow shoulder/back-of-head foreground edge may frame the shot, while the shovel blade, horizontal phoenix panel, and clear air gap dominate. Do not copy the spatial-authority contact-sheet camera or any prior candidate framing; output ${input.project.width}x${input.project.height}.`,
+        spatialAuthorityRole: "Use the spatial-authority contact sheet only for environment, coffin geometry, and horizontal panel layout continuity; it is not camera, framing, projection, pose, occlusion, or composition authority. Any pose/continuity reference likewise does not control composition."
+      }
+    : semanticProfile === "yingdi_e01_c23_jade_ecu"
+      ? {
+          primarySubject: hasC23CorrectHandCropBase
+            ? `the phoenix jade pendant plus ${primarySubjectName}'s anatomical LEFT reaching hand and anatomical RIGHT protective hand are the only primary subjects`
+            : `${primarySubjectName} is primary`,
+          secondaryPresence: `${edgeSubjectName} is optional_defocused_edge`,
+          subjectVisibility: hasC23CorrectHandCropBase
+            ? `Frame only the jade and ${primarySubjectName}'s two required hands as primary content; ${edgeSubjectName} is optional and may appear only as a tiny defocused edge identity cue, with no face, torso, arms, hands, or full body required.`
+            : `${primarySubjectName} is the primary subject; ${edgeSubjectName} is optional and may appear only as a tiny defocused edge identity cue. Do not require ${edgeSubjectName}'s face, torso, arms, hands, or full body to be visible.`,
+          visibleAnatomy: hasC23CorrectHandCropBase
+            ? `show only ${primarySubjectName}'s anatomical LEFT uninjured hand reaching and stopping one inch from the jade plus anatomical RIGHT wounded protective hand; preserve their exact hand roles, poses, finger identities, and wound placement from the correct-hand base; ${edgeSubjectName}'s limbs remain outside the crop and are not required`
+            : `show ${primarySubjectName}'s uninjured LEFT hand stopped one inch from the jade, injured RIGHT protective hand, and all required fingers clearly and anatomically separate; ${edgeSubjectName}'s limbs remain outside the crop and are not required`,
+          cameraFramingLock: hasC23CorrectHandCropBase
+            ? `Perform only an optical crop, zoom, and reframe of the correct-hand spatial base into one extreme close-up, rack-focus-hold still; preserve the original jade position and exact anatomical LEFT/RIGHT hand poses while reducing ${edgeSubjectName} to an optional defocused edge; output ${input.project.width}x${input.project.height}.`
+            : hasC23EcuEditBase
+            ? `Preserve the C23 ECU edit base's extreme-close-up camera, rack-focus-hold framing, crop, depth of field, jade placement, and both-hand composition exactly; edit only the anatomical LEFT/RIGHT hand roles and RIGHT-index injury assignment; output ${input.project.width}x${input.project.height}.`
+            : `Use one extreme close-up, rack-focus-hold storytelling frame dominated by the jade pendant, ${primarySubjectName}'s uninjured LEFT reaching hand, and injured RIGHT protective hand. Do not copy the spatial-authority contact-sheet camera or any prior candidate framing; output ${input.project.width}x${input.project.height}.`,
+          spatialAuthorityRole: hasC23CorrectHandCropBase
+            ? "The C23 correct-hand crop/reframe base is the sole spatial, composition, and anatomical hand-role authority. Preserve its subject's own LEFT uninjured reaching hand, RIGHT-index wound, and RIGHT protective hand exactly. Only optical crop, zoom, reframe, depth of field, and optional Wei edge visibility may change; must not re-pose, exchange hands, mirror anatomy, move the wound, or borrow composition from any other reference."
+            : hasC23EcuEditBase
+            ? "The C23 ECU edit base is the sole camera, framing, crop, rack-focus, jade-placement, and composition authority; its hand roles, wound placement, handedness, and finger anatomy are explicitly wrong and must not be copied. Other references control only their named identity, anatomical hand-role, wound-detail, or prop-detail scope."
+            : "Use the spatial-authority contact sheet only for environment, coffin geometry, and horizontal panel layout continuity; it is not camera, framing, projection, pose, occlusion, or composition authority. Any pose/continuity reference likewise does not control composition."
+        }
+      : defaultHardConstraints;
+
   return createPrepareCodexStoryboardJobRequest({
     schemaVersion: 1,
     jobId: input.jobId,
@@ -529,11 +583,7 @@ export function buildCodexStoryboardPackageRequest(input: {
     prompt: {
       useCase: "stylized-concept",
       primaryRequest,
-      hardConstraints: {
-        subjectCount: Math.max(1, referencedCharacterNames.length),
-        visibleAnatomy: "both arms, both hands, and all required fingers must remain visible and anatomically separate",
-        cameraFramingLock: `Preserve shot ${input.shot.order} camera, framing, projection, blocking, pose, and occlusion exactly as supplied by the spatial-authority reference; output ${input.project.width}x${input.project.height}.`
-      }
+      hardConstraints
     },
     references: input.references.map((reference) => ({ ...reference })),
     acceptedImagePath: input.shot.generatedImagePath?.trim() || null

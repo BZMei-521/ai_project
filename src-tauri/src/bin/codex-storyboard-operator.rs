@@ -4,6 +4,9 @@ use cap_std::{
 };
 use image::ImageFormat;
 use serde_json::{json, Map, Value};
+#[path = "../crop_attestation.rs"]
+mod crop_attestation;
+use crop_attestation::verify_exact_crop_pixels;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -799,9 +802,13 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
     let prompt = o.get("prompt").and_then(Value::as_object).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
     let hard = prompt.get("hardConstraints").and_then(Value::as_object);
     let count = hard.and_then(|v| v.get("subjectCount")).and_then(Value::as_u64).filter(|v| *v > 0).unwrap_or(1);
+    let subject_visibility = hard.and_then(|v| v.get("subjectVisibility")).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
     let anatomy = hard.and_then(|v| v.get("visibleAnatomy")).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).unwrap_or("both arms, both hands, and all required fingers must remain visible and anatomically separate");
     let framing = hard.and_then(|v| v.get("cameraFramingLock")).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).or_else(|| refs.iter().find(|r| r.get("usage").and_then(Value::as_str) == Some("spatial_authority")).and_then(|r| r.get("instruction")).and_then(Value::as_str)).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
-    parts.push(format!("MANDATORY HARD CONSTRAINTS:\n- Exact subject count: {count}. Do not add, duplicate, merge, or remove subjects.\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.\n- No text, captions, logos, signatures, or watermarks."));
+    let spatial_role = hard.and_then(|v| v.get("spatialAuthorityRole")).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    let subject_line = subject_visibility.map(|value| format!("- Subject visibility: {value}")).unwrap_or_else(|| format!("- Exact subject count: {count}. Do not add, duplicate, merge, or remove subjects."));
+    let spatial_line = spatial_role.map(|value| format!("- Spatial authority role: {value}")).unwrap_or_else(|| "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.".to_string());
+    parts.push(format!("MANDATORY HARD CONSTRAINTS:\n{subject_line}\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n{spatial_line}\n- No text, captions, logos, signatures, or watermarks."));
     parts.push(string(prompt, "primaryRequest")?.to_string());
     Ok(parts.join("\n"))
 }
@@ -957,7 +964,7 @@ fn validate_result(
     let invalid = "codex_storyboard_operator_result_invalid";
     let object = result.as_object().ok_or_else(|| invalid.to_string())?;
     let request = request.as_object().ok_or_else(|| invalid.to_string())?;
-    let keys = [
+    let mut keys = vec![
         "schemaVersion",
         "jobId",
         "projectId",
@@ -972,11 +979,14 @@ fn validate_result(
         "completedAt",
         "state",
     ];
+    let crop_mode = object.get("generationMode").and_then(Value::as_str)
+        == Some("user_authorized_local_deterministic_crop");
+    if crop_mode { keys.push("derivedTransform"); }
     if object.len() != keys.len()
         || keys.iter().any(|key| !object.contains_key(*key))
         || object.get("schemaVersion").and_then(Value::as_u64) != Some(1)
         || object.get("provider").and_then(Value::as_str) != Some(PROVIDER)
-        || object.get("generationMode").and_then(Value::as_str) != Some("codex_builtin_imagegen")
+        || !matches!(object.get("generationMode").and_then(Value::as_str), Some("codex_builtin_imagegen" | "user_authorized_local_deterministic_crop"))
         || object.get("state").and_then(Value::as_str) != Some("completed")
         || object.get("requestDigest").and_then(Value::as_str) != Some(request_digest)
         || object.get("finalPrompt").and_then(Value::as_str) != Some(final_prompt)
@@ -1029,11 +1039,48 @@ fn validate_result(
     }
     Ok(())
 }
+
+fn validated_derived_transform(path: &str, request: &Value, request_digest: &str, candidate_digest: &str, width: u32, height: u32) -> Result<Value, String> {
+    let invalid = "codex_storyboard_operator_derived_transform_invalid";
+    let raw = Path::new(path);
+    check_absolute_components(raw, invalid)?;
+    let canonical = fs::canonicalize(raw).map_err(|_| invalid.to_string())?;
+    let value: Value = serde_json::from_slice(&stable_ambient_read(&canonical, invalid)?).map_err(|_| invalid.to_string())?;
+    let o = value.as_object().ok_or_else(|| invalid.to_string())?;
+    let keys = ["operation","authorization","tool","source","cropRectangle","output","pixelExactCrop"];
+    if o.len()!=keys.len() || keys.iter().any(|k| !o.contains_key(*k)) || o.get("operation").and_then(Value::as_str)!=Some("user_authorized_local_deterministic_crop") || o.get("pixelExactCrop").and_then(Value::as_bool)!=Some(true) { return fail(invalid); }
+    let authorization=o["authorization"].as_object().ok_or_else(|| invalid.to_string())?;
+    if authorization.len()!=2 || !authorization.contains_key("observedAt") || !authorization.contains_key("context") || !authorization.get("observedAt").and_then(Value::as_str).is_some_and(valid_rfc3339_utc) || authorization.get("context").and_then(Value::as_str).is_none_or(|v| v.trim().is_empty()) { return fail(invalid); }
+    let tool=o["tool"].as_object().ok_or_else(|| invalid.to_string())?;
+    if tool.len()!=3 || tool.get("name").and_then(Value::as_str)!=Some("ffmpeg") || tool.get("generative").and_then(Value::as_bool)!=Some(false) { return fail(invalid); }
+    let source=o["source"].as_object().ok_or_else(|| invalid.to_string())?;
+    let output=o["output"].as_object().ok_or_else(|| invalid.to_string())?;
+    let crop=o["cropRectangle"].as_object().ok_or_else(|| invalid.to_string())?;
+    let file_keys=["absolutePath","sha256","width","height"];
+    let crop_keys=["x","y","width","height"];
+    if source.len()!=4 || output.len()!=4 || crop.len()!=4 || file_keys.iter().any(|k| !source.contains_key(*k)||!output.contains_key(*k)) || crop_keys.iter().any(|k| !crop.contains_key(*k)) { return fail(invalid); }
+    let sw=source["width"].as_u64().ok_or_else(|| invalid.to_string())?; let sh=source["height"].as_u64().ok_or_else(|| invalid.to_string())?;
+    let x=crop["x"].as_u64().ok_or_else(|| invalid.to_string())?; let y=crop["y"].as_u64().ok_or_else(|| invalid.to_string())?; let w=crop["width"].as_u64().ok_or_else(|| invalid.to_string())?; let h=crop["height"].as_u64().ok_or_else(|| invalid.to_string())?;
+    if w==0 || h==0 || x.checked_add(w).is_none_or(|v|v>sw) || y.checked_add(h).is_none_or(|v|v>sh) || output["width"].as_u64()!=Some(w) || output["height"].as_u64()!=Some(h) || w*9!=h*16 || w!=width as u64 || h!=height as u64 || output["sha256"].as_str()!=Some(candidate_digest) || tool.get("filter").and_then(Value::as_str)!=Some(format!("crop={w}:{h}:{x}:{y}").as_str()) { return fail(invalid); }
+    let mut verified_files=Vec::new();
+    for (entry, ew, eh) in [(source,sw,sh),(output,w,h)] {
+        let file_path=entry["absolutePath"].as_str().map(Path::new).filter(|p|p.is_absolute()).ok_or_else(|| invalid.to_string())?;
+        check_absolute_components(file_path, invalid)?;
+        let bytes=stable_ambient_read(&fs::canonicalize(file_path).map_err(|_| invalid.to_string())?, invalid)?;
+        let (aw,ah,mime)=inspect_image(&bytes, Some("image/png"))?;
+        if aw as u64!=ew || ah as u64!=eh || mime!="image/png" || sha(&bytes)!=entry["sha256"].as_str().unwrap_or_default() { return fail(invalid); }
+        verified_files.push(bytes);
+    }
+    verify_exact_crop_pixels(&verified_files[0], &verified_files[1], x as u32, y as u32, w as u32, h as u32).map_err(|_| invalid.to_string())?;
+    let _ = request; let _ = request_digest;
+    Ok(value)
+}
 fn complete(
     package_argument: &str,
     candidate_path: &str,
     expected_candidate_digest: &str,
     manifest_path: &str,
+    derived_transform_path: Option<&str>,
 ) -> Result<Value, String> {
     let package = acquire_package(Path::new(package_argument))?;
     let package_path = package.path.clone();
@@ -1098,6 +1145,10 @@ fn complete(
         .collect();
     let completed_at = utc_rfc3339_now()?;
     let mut result = json!({"schemaVersion":1,"jobId":o["jobId"],"projectId":o["projectId"],"episodeId":o["episodeId"],"shotId":o["shotId"],"provider":PROVIDER,"requestDigest":request_digest,"referenceDigests":references,"generationMode":"codex_builtin_imagegen","finalPrompt":manifest_prompt,"output":{"relativePath":"outputs/candidate.png","sha256":candidate_digest,"width":width,"height":height,"mimeType":"image/png"},"completedAt":completed_at,"state":"completed"});
+    if let Some(transform_path) = derived_transform_path {
+        result["generationMode"] = json!("user_authorized_local_deterministic_crop");
+        result["derivedTransform"] = validated_derived_transform(transform_path, &request, &request_digest, &candidate_digest, width, height)?;
+    }
     validate_result(
         &result,
         &request,
@@ -1145,14 +1196,15 @@ fn complete(
 }
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let result = if args.len() == 10
+    let result = if (args.len() == 10 || args.len() == 12)
         && args[1] == "complete"
         && args[2] == "--package"
         && args[4] == "--candidate"
         && args[6] == "--candidate-digest"
         && args[8] == "--inspection-manifest"
+        && (args.len() == 10 || args[10] == "--derived-transform")
     {
-        complete(&args[3], &args[5], &args[7], &args[9])
+        complete(&args[3], &args[5], &args[7], &args[9], args.get(11).map(String::as_str))
     } else {
         fail("codex_storyboard_operator_usage")
     };
@@ -1168,6 +1220,25 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+    use std::io::Cursor;
+
+    fn png(image: RgbaImage) -> Vec<u8> {
+        let mut bytes=Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image).write_to(&mut bytes, ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn exact_crop_rejects_single_pixel_tamper() {
+        let source=RgbaImage::from_fn(4,4,|x,y|Rgba([x as u8,y as u8,(x+y) as u8,255]));
+        let expected=RgbaImage::from_fn(2,2,|x,y|*source.get_pixel(x+1,y+1));
+        let source_bytes=png(source);
+        let candidate_bytes=png(expected.clone());
+        assert!(verify_exact_crop_pixels(&source_bytes,&candidate_bytes,1,1,2,2).is_ok());
+        let mut tampered=expected; tampered.put_pixel(0,0,Rgba([255,0,0,255]));
+        assert_eq!(verify_exact_crop_pixels(&source_bytes,&png(tampered),1,1,2,2),Err("codex_storyboard_crop_pixels_mismatch".to_string()));
+    }
     #[test]
     fn rejects_relative_paths() {
         assert!(!normal("../escape.png"));
@@ -1179,6 +1250,28 @@ mod tests {
             canonical(&json!({"b":1,"a":2})).to_string(),
             "{\"a\":2,\"b\":1}"
         );
+    }
+    #[test]
+    fn compiled_prompt_honors_non_exact_subject_visibility_and_spatial_role() {
+        let request = json!({
+            "references":[{"usage":"spatial_authority","instruction":"environment layout only"}],
+            "prompt":{
+                "primaryRequest":"story request",
+                "hardConstraints":{
+                    "primarySubject":"the short broad shovel blade, horizontal phoenix panel, and clear air gap are primary",
+                    "secondaryPresence":"Wei = cropped shoulder/back-of-head edge framing only; Li = limited secondary continuity inside the coffin, never co-equal",
+                    "subjectVisibility":"Wei is a cropped foreground edge; Li is limited secondary continuity",
+                    "visibleAnatomy":"only insert-required anatomy",
+                    "cameraFramingLock":"genuine locked-off over-the-shoulder insert",
+                    "spatialAuthorityRole":"environment and layout only; not camera authority"
+                }
+            }
+        });
+        let compiled = compiled_prompt(&request).expect("shot-specific prompt compiles");
+        assert!(compiled.contains("Subject visibility: Wei is a cropped foreground edge; Li is limited secondary continuity"));
+        assert!(compiled.contains("Spatial authority role: environment and layout only; not camera authority"));
+        assert!(!compiled.contains("Exact subject count"));
+        assert!(!compiled.contains("No pose, composition, camera, framing, projection, or occlusion drift"));
     }
     #[test]
     fn result_schema_rejects_unknown_fields_and_identity_forgery() {

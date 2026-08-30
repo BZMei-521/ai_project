@@ -192,6 +192,30 @@ struct ResultOutput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CropAuthorization { observed_at: String, context: String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CropTool { name: String, generative: bool, filter: String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CropFile { absolute_path: String, sha256: String, width: u32, height: u32 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CropRectangle { x: u32, y: u32, width: u32, height: u32 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DerivedTransform {
+    operation: String,
+    authorization: CropAuthorization,
+    tool: CropTool,
+    source: CropFile,
+    crop_rectangle: CropRectangle,
+    output: CropFile,
+    pixel_exact_crop: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodexStoryboardResult {
     schema_version: u8,
     job_id: String,
@@ -202,10 +226,36 @@ pub struct CodexStoryboardResult {
     request_digest: String,
     reference_digests: Vec<ReferenceDigest>,
     generation_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    derived_transform: Option<DerivedTransform>,
     final_prompt: String,
     output: ResultOutput,
     completed_at: String,
     state: String,
+}
+
+fn validate_derived_transform(transform: &DerivedTransform, result: &CodexStoryboardResult) -> Result<(), String> {
+    let invalid = "codex_storyboard_result_derived_transform_invalid";
+    let crop=&transform.crop_rectangle;
+    if transform.operation != "user_authorized_local_deterministic_crop" || transform.tool.name != "ffmpeg" || transform.tool.generative || !transform.pixel_exact_crop || !valid_rfc3339_utc(&transform.authorization.observed_at) || transform.authorization.context.trim().is_empty() || !Path::new(&transform.source.absolute_path).is_absolute() || !Path::new(&transform.output.absolute_path).is_absolute() || crop.width==0 || crop.height==0 || crop.x.checked_add(crop.width).is_none_or(|v|v>transform.source.width) || crop.y.checked_add(crop.height).is_none_or(|v|v>transform.source.height) || transform.output.width!=crop.width || transform.output.height!=crop.height || u64::from(transform.output.width)*9 != u64::from(transform.output.height)*16 || transform.output.sha256!=result.output.sha256 || transform.output.width!=result.output.width || transform.output.height!=result.output.height || transform.tool.filter != format!("crop={}:{}:{}:{}",crop.width,crop.height,crop.x,crop.y) { return Err(invalid.to_string()); }
+    Ok(())
+}
+
+fn validate_derived_transform_files(transform: &DerivedTransform, candidate_bytes: &[u8]) -> Result<(), String> {
+    let invalid="codex_storyboard_result_derived_transform_invalid";
+    let read_verified=|entry: &CropFile| -> Result<Vec<u8>,String> {
+        let path=Path::new(&entry.absolute_path);
+        reject_symlink(path, invalid)?;
+        let bytes=fs::read(path).map_err(|_|invalid.to_string())?;
+        let (width,height,mime,_) = inspect_image_bytes(&bytes, invalid)?;
+        if width!=entry.width || height!=entry.height || mime!="image/png" || sha256_bytes(&bytes)!=entry.sha256 { return Err(invalid.to_string()); }
+        Ok(bytes)
+    };
+    let source=read_verified(&transform.source)?;
+    let derived=read_verified(&transform.output)?;
+    if derived!=candidate_bytes { return Err(invalid.to_string()); }
+    let crop=&transform.crop_rectangle;
+    crate::crop_attestation::verify_exact_crop_pixels(&source,candidate_bytes,crop.x,crop.y,crop.width,crop.height).map_err(|_|invalid.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -774,10 +824,14 @@ fn compiled_prompt(request: &CodexStoryboardRequest) -> Result<String, String> {
     let prompt = request.prompt.as_object().ok_or_else(|| "codex_storyboard_prompt_invalid".to_string())?;
     let hard = prompt.get("hardConstraints").and_then(Value::as_object);
     let count = hard.and_then(|value| value.get("subjectCount")).and_then(Value::as_u64).filter(|value| *value > 0).unwrap_or(1);
+    let subject_visibility = hard.and_then(|value| value.get("subjectVisibility")).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty());
     let anatomy = hard.and_then(|value| value.get("visibleAnatomy")).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).unwrap_or("both arms, both hands, and all required fingers must remain visible and anatomically separate");
     let framing = hard.and_then(|value| value.get("cameraFramingLock")).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).or_else(|| request.references.iter().find(|reference| reference.usage == "spatial_authority").map(|reference| reference.instruction.as_str())).ok_or_else(|| "codex_storyboard_prompt_invalid".to_string())?;
+    let spatial_role = hard.and_then(|value| value.get("spatialAuthorityRole")).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty());
     let mut parts = request.references.iter().enumerate().map(|(index, reference)| format!("Picture {} [{}]: {}", index + 1, reference.usage, reference.instruction)).collect::<Vec<_>>();
-    parts.push(format!("MANDATORY HARD CONSTRAINTS:\n- Exact subject count: {count}. Do not add, duplicate, merge, or remove subjects.\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.\n- No text, captions, logos, signatures, or watermarks."));
+    let subject_line = subject_visibility.map(|value| format!("- Subject visibility: {value}")).unwrap_or_else(|| format!("- Exact subject count: {count}. Do not add, duplicate, merge, or remove subjects."));
+    let spatial_line = spatial_role.map(|value| format!("- Spatial authority role: {value}")).unwrap_or_else(|| "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.".to_string());
+    parts.push(format!("MANDATORY HARD CONSTRAINTS:\n{subject_line}\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n{spatial_line}\n- No text, captions, logos, signatures, or watermarks."));
     parts.push(prompt.get("primaryRequest").and_then(Value::as_str).ok_or_else(|| "codex_storyboard_prompt_invalid".to_string())?.to_string());
     Ok(parts.join("\n"))
 }
@@ -2349,8 +2403,12 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), L: FnOnce() -> Result<(), Str
     if result.reference_digests != expected_reference_digests {
         return Err("codex_storyboard_result_lineage_mismatch".to_string());
     }
-    if result.generation_mode != "codex_builtin_imagegen"
-        || result.state != "completed"
+    let generation_valid = match result.generation_mode.as_str() {
+        "codex_builtin_imagegen" => result.derived_transform.is_none(),
+        "user_authorized_local_deterministic_crop" => result.derived_transform.as_ref().is_some_and(|transform| validate_derived_transform(transform, &result).is_ok()),
+        _ => false,
+    };
+    if !generation_valid || result.state != "completed"
         || result.final_prompt != compiled_prompt(&immutable)?
         || !valid_rfc3339_utc(&result.completed_at)
         || result.output.relative_path != "outputs/candidate.png"
@@ -2377,6 +2435,9 @@ fn import_at_roots_inner<C: FnOnce(), B: FnOnce(), L: FnOnce() -> Result<(), Str
         || extension != "png"
     {
         return Err("codex_storyboard_candidate_metadata_mismatch".to_string());
+    }
+    if let Some(transform)=result.derived_transform.as_ref() {
+        validate_derived_transform_files(transform,&candidate.bytes)?;
     }
     let result_file_digest = sha256_bytes(&result_stable.bytes);
     let candidate_file_digest = sha256_bytes(&candidate.bytes);
@@ -2669,6 +2730,16 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn deterministic_crop_result_round_trips_and_rejects_bad_bounds() {
+        let value=json!({"schemaVersion":1,"jobId":"job","projectId":"project","episodeId":"episode","shotId":"shot","provider":PROVIDER,"requestDigest":"a".repeat(64),"referenceDigests":[],"generationMode":"user_authorized_local_deterministic_crop","derivedTransform":{"operation":"user_authorized_local_deterministic_crop","authorization":{"observedAt":"2026-08-30T02:14:40.535Z","context":"User explicitly authorized one deterministic crop."},"tool":{"name":"ffmpeg","generative":false,"filter":"crop=1184:666:488:244"},"source":{"absolutePath":"C:\\source.png","sha256":"b".repeat(64),"width":1672,"height":941},"cropRectangle":{"x":488,"y":244,"width":1184,"height":666},"output":{"absolutePath":"C:\\derived.png","sha256":"c".repeat(64),"width":1184,"height":666},"pixelExactCrop":true},"finalPrompt":"prompt","output":{"relativePath":"outputs/candidate.png","sha256":"c".repeat(64),"width":1184,"height":666,"mimeType":"image/png"},"completedAt":"2026-08-30T02:20:00.000Z","state":"completed"});
+        let result: CodexStoryboardResult=serde_json::from_value(value.clone()).unwrap();
+        validate_derived_transform(result.derived_transform.as_ref().unwrap(), &result).unwrap();
+        assert_eq!(serde_json::to_value(&result).unwrap(), value);
+        let mut bad=result.clone(); bad.derived_transform.as_mut().unwrap().crop_rectangle.x=489;
+        assert_eq!(validate_derived_transform(bad.derived_transform.as_ref().unwrap(), &bad).unwrap_err(), "codex_storyboard_result_derived_transform_invalid");
+    }
+
     struct Fixture {
         project: PathBuf,
         assets: PathBuf,
@@ -2701,6 +2772,22 @@ mod tests {
         ImageBuffer::<Rgba<u8>, Vec<u8>>::from_pixel(width, height, Rgba(color))
             .save_with_format(path, image::ImageFormat::Png)
             .unwrap();
+    }
+
+    #[test]
+    fn tauri_crop_validation_rejects_single_pixel_tamper() {
+        let root=unique_root("crop-pixels"); fs::create_dir_all(&root).unwrap();
+        let source_path=root.join("source.png"); let output_path=root.join("output.png");
+        let source=ImageBuffer::<Rgba<u8>,Vec<u8>>::from_fn(4,4,|x,y|Rgba([x as u8,y as u8,(x+y) as u8,255]));
+        source.save(&source_path).unwrap();
+        let output=image::imageops::crop_imm(&source,1,1,2,2).to_image(); output.save(&output_path).unwrap();
+        let source_bytes=fs::read(&source_path).unwrap(); let output_bytes=fs::read(&output_path).unwrap();
+        let transform=DerivedTransform{operation:"user_authorized_local_deterministic_crop".into(),authorization:CropAuthorization{observed_at:"2026-08-30T02:14:40.535Z".into(),context:"authorized".into()},tool:CropTool{name:"ffmpeg".into(),generative:false,filter:"crop=2:2:1:1".into()},source:CropFile{absolute_path:source_path.to_string_lossy().into(),sha256:sha256_bytes(&source_bytes),width:4,height:4},crop_rectangle:CropRectangle{x:1,y:1,width:2,height:2},output:CropFile{absolute_path:output_path.to_string_lossy().into(),sha256:sha256_bytes(&output_bytes),width:2,height:2},pixel_exact_crop:true};
+        validate_derived_transform_files(&transform,&output_bytes).unwrap();
+        let mut tampered=output; tampered.put_pixel(0,0,Rgba([255,0,0,255])); let tampered_path=root.join("tampered.png"); tampered.save(&tampered_path).unwrap();
+        let tampered_bytes=fs::read(&tampered_path).unwrap();
+        assert_eq!(crate::crop_attestation::verify_exact_crop_pixels(&source_bytes,&tampered_bytes,1,1,2,2),Err("codex_storyboard_crop_pixels_mismatch".to_string()));
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn write_jpeg_with_disguised_extension(path: &Path) {
@@ -2897,6 +2984,27 @@ mod tests {
             provider: fixture.request.provider.clone(),
             project_path: fixture.request.project_path.clone(),
         }
+    }
+
+    #[test]
+    fn compiled_prompt_matches_non_exact_shot_specific_constraints() {
+        let request: CodexStoryboardRequest = serde_json::from_value(json!({
+            "schemaVersion":1,"jobId":"job","projectId":"project","episodeId":"episode","shotId":"shot","provider":PROVIDER,
+            "createdAt":"2026-08-30T00:00:00.000Z","acceptedImagePath":null,
+            "prompt":{"primaryRequest":"story request","hardConstraints":{
+                "primarySubject":"the short broad shovel blade, horizontal phoenix panel, and clear air gap are primary",
+                "secondaryPresence":"Wei = cropped shoulder/back-of-head edge framing only; Li = limited secondary continuity inside the coffin, never co-equal",
+                "subjectVisibility":"Wei is a cropped foreground edge; Li is limited secondary continuity",
+                "visibleAnatomy":"only insert-required anatomy","cameraFramingLock":"genuine locked-off over-the-shoulder insert",
+                "spatialAuthorityRole":"environment and layout only; not camera authority"}},
+            "references":[{"id":"spatial","usage":"spatial_authority","instruction":"environment layout only","relativePath":"inputs/01.png","sha256":"a".repeat(64),"width":1,"height":1,"mimeType":"image/png"}],
+            "expectedOutput":{"candidatePath":"outputs/candidate.png","resultPath":"outputs/result.json","mimeTypes":["image/png"]}
+        })).expect("valid immutable request fixture");
+        let compiled = compiled_prompt(&request).expect("shot-specific prompt compiles");
+        assert!(compiled.contains("Subject visibility: Wei is a cropped foreground edge; Li is limited secondary continuity"));
+        assert!(compiled.contains("Spatial authority role: environment and layout only; not camera authority"));
+        assert!(!compiled.contains("Exact subject count"));
+        assert!(!compiled.contains("No pose, composition, camera, framing, projection, or occlusion drift"));
     }
 
     #[test]

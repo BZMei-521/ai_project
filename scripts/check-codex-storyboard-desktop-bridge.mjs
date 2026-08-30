@@ -88,6 +88,9 @@ await assert.rejects(
 );
 assert.match(bridgeSource, /CoreCodexStoryboardExportReceipt\s*&\s*\{/);
 assert.match(bridgeSource, /CoreCodexStoryboardImportReceipt\s*&\s*\{/);
+const coreTypes = await readFile(new URL("../src/services/generation-providers/codexTaskPackage.ts", import.meta.url), "utf8");
+assert.match(coreTypes, /user_authorized_local_deterministic_crop/);
+assert.match(coreTypes, /derivedTransform\?:/);
 const exportReceipt = { jobId: "job-1", packagePath: "C:/package", requestDigest: "a".repeat(64), schemaVersion: 1, status: "exported", requestPath: "C:/package/request.json" };
 const importReceipt = { jobId: "job-1", resultPath: "C:/package/outputs/result.json", result: {}, schemaVersion: 1, status: "needs_review", candidatePath: "C:/package/outputs/candidate.png" };
 assert.deepEqual(Object.keys(exportReceipt).sort(), ["jobId", "packagePath", "requestDigest", "requestPath", "schemaVersion", "status"].sort());

@@ -35,12 +35,18 @@ function mandatoryHardConstraints(request) {
     : 1;
   const anatomy = promptConstraintValue(prompt, "visibleAnatomy", "both arms, both hands, and all required fingers must remain visible and anatomically separate");
   const framing = promptConstraintValue(prompt, "cameraFramingLock", request.references.find((item) => item.usage === "spatial_authority")?.instruction ?? "preserve the spatial-authority camera and framing exactly");
+  const subjectVisibility = promptConstraintValue(prompt, "subjectVisibility", "");
+  const spatialAuthorityRole = promptConstraintValue(prompt, "spatialAuthorityRole", "");
   return [
     "MANDATORY HARD CONSTRAINTS:",
-    `- Exact subject count: ${subjectCount}. Do not add, duplicate, merge, or remove subjects.`,
+    subjectVisibility
+      ? `- Subject visibility: ${subjectVisibility}`
+      : `- Exact subject count: ${subjectCount}. Do not add, duplicate, merge, or remove subjects.`,
     `- Visible anatomy: ${anatomy}. No fused, missing, duplicated, or malformed limbs/hands.`,
     `- Camera and framing lock: ${framing}`,
-    "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.",
+    spatialAuthorityRole
+      ? `- Spatial authority role: ${spatialAuthorityRole}`
+      : "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.",
     "- No text, captions, logos, signatures, or watermarks."
   ].join("\n");
 }
@@ -80,12 +86,27 @@ export function compileCodexStoryboardImageSpec(value) {
 
 export function validateCodexStoryboardResult(result, requestValue) {
   const request = validateCodexStoryboardRequest(requestValue);
-  exactKeys(result, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "requestDigest", "referenceDigests", "generationMode", "finalPrompt", "output", "completedAt", "state"], "codex_storyboard_result_keys_invalid");
-  if (result.schemaVersion !== 1 || result.provider !== CODEX_STORYBOARD_PROVIDER_ID || result.generationMode !== "codex_builtin_imagegen" || result.state !== "completed") fail("codex_storyboard_result_invalid");
+  const cropMode = result?.generationMode === "user_authorized_local_deterministic_crop";
+  exactKeys(result, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "requestDigest", "referenceDigests", "generationMode", "finalPrompt", "output", "completedAt", "state", ...(cropMode ? ["derivedTransform"] : [])], "codex_storyboard_result_keys_invalid");
+  if (result.schemaVersion !== 1 || result.provider !== CODEX_STORYBOARD_PROVIDER_ID || !["codex_builtin_imagegen", "user_authorized_local_deterministic_crop"].includes(result.generationMode) || result.state !== "completed") fail("codex_storyboard_result_invalid");
   for (const field of ["jobId", "projectId", "episodeId", "shotId"]) if (result[field] !== request[field]) fail("codex_storyboard_result_identity_mismatch");
   if (!digest(result.requestDigest) || JSON.stringify(result.referenceDigests) !== JSON.stringify(request.references.map(({ id, sha256 }) => ({ id, sha256 })))) fail("codex_storyboard_result_lineage_mismatch");
   if (result.finalPrompt !== compileCodexStoryboardImageSpec(request).compiledPrompt) fail("codex_storyboard_result_prompt_mismatch");
   if (!validIsoTimestamp(result.completedAt)) fail("codex_storyboard_result_completed_at_invalid");
   if (result.output?.relativePath !== "outputs/candidate.png" || !digest(result.output?.sha256) || !Number.isSafeInteger(result.output?.width) || result.output.width <= 0 || !Number.isSafeInteger(result.output?.height) || result.output.height <= 0 || result.output?.mimeType !== "image/png") fail("codex_storyboard_result_output_invalid");
+  if (cropMode) {
+    const transform = result.derivedTransform;
+    try {
+      exactKeys(transform, ["operation", "authorization", "tool", "source", "cropRectangle", "output", "pixelExactCrop"], "codex_storyboard_result_derived_transform_invalid");
+      exactKeys(transform.authorization, ["observedAt", "context"], "codex_storyboard_result_derived_transform_invalid");
+      exactKeys(transform.tool, ["name", "generative", "filter"], "codex_storyboard_result_derived_transform_invalid");
+      exactKeys(transform.source, ["absolutePath", "sha256", "width", "height"], "codex_storyboard_result_derived_transform_invalid");
+      exactKeys(transform.cropRectangle, ["x", "y", "width", "height"], "codex_storyboard_result_derived_transform_invalid");
+      exactKeys(transform.output, ["absolutePath", "sha256", "width", "height"], "codex_storyboard_result_derived_transform_invalid");
+    } catch { fail("codex_storyboard_result_derived_transform_invalid"); }
+    const { source, cropRectangle: crop, output } = transform;
+    const integers = [source.width, source.height, crop.x, crop.y, crop.width, crop.height, output.width, output.height];
+    if (transform.operation !== result.generationMode || transform.tool?.name !== "ffmpeg" || transform.tool?.generative !== false || transform.pixelExactCrop !== true || !validIsoTimestamp(transform.authorization?.observedAt) || typeof transform.authorization?.context !== "string" || !transform.authorization.context.trim() || !digest(source?.sha256) || !digest(output?.sha256) || typeof source?.absolutePath !== "string" || typeof output?.absolutePath !== "string" || integers.some((v) => !Number.isSafeInteger(v) || v < 0) || source.width <= 0 || source.height <= 0 || crop.width <= 0 || crop.height <= 0 || crop.x + crop.width > source.width || crop.y + crop.height > source.height || output.width !== crop.width || output.height !== crop.height || output.width * 9 !== output.height * 16 || output.sha256 !== result.output.sha256 || output.width !== result.output.width || output.height !== result.output.height || transform.tool.filter !== `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`) fail("codex_storyboard_result_derived_transform_invalid");
+  }
   return deepFreeze(structuredClone(result));
 }

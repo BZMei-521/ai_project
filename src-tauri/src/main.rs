@@ -21,6 +21,7 @@ use tauri::Manager;
 mod video_continuity;
 mod spatial_stage;
 mod codex_storyboard;
+mod crop_attestation;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +46,8 @@ struct ShotPayload {
     dialogue: String,
     notes: String,
     tags: Vec<String>,
+    #[serde(flatten)]
+    extra_fields: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -613,7 +616,8 @@ fn initialize_db(connection: &Connection) -> Result<(), String> {
                 duration_frames INTEGER NOT NULL,
                 dialogue TEXT NOT NULL,
                 notes TEXT NOT NULL,
-                tags_json TEXT NOT NULL
+                tags_json TEXT NOT NULL,
+                extra_json TEXT NOT NULL DEFAULT '{}'
             );
 
             CREATE TABLE IF NOT EXISTS sequences (
@@ -739,6 +743,136 @@ fn ensure_snapshot_meta_workbench_column(connection: &Connection) -> Result<(), 
             .map_err(|err| format!("Failed to add workbench_snapshot_json column: {err}"))?;
     }
     Ok(())
+}
+
+fn ensure_shots_extra_json_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(shots)")
+        .map_err(|err| format!("Failed to inspect shots schema: {err}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("Failed to read shots schema rows: {err}"))?;
+    let mut has_extra_json = false;
+    for column_name in rows {
+        if column_name.map_err(|err| format!("Failed to decode shots schema row: {err}"))?
+            == "extra_json"
+        {
+            has_extra_json = true;
+        }
+    }
+    if !has_extra_json {
+        connection
+            .execute(
+                "ALTER TABLE shots ADD COLUMN extra_json TEXT NOT NULL DEFAULT '{}'",
+                [],
+            )
+            .map_err(|err| format!("Failed to add shots extra_json column: {err}"))?;
+    }
+    Ok(())
+}
+
+const SHOT_BASE_FIELD_KEYS: [&str; 8] = [
+    "id",
+    "sequenceId",
+    "order",
+    "title",
+    "durationFrames",
+    "dialogue",
+    "notes",
+    "tags",
+];
+
+fn is_shot_base_field_key(key: &str) -> bool {
+    SHOT_BASE_FIELD_KEYS.contains(&key)
+}
+
+fn sanitized_shot_extra_fields(
+    extra_fields: &HashMap<String, serde_json::Value>,
+) -> HashMap<String, serde_json::Value> {
+    extra_fields
+        .iter()
+        .filter(|(key, _)| !is_shot_base_field_key(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn serialize_shot_extra_fields(shot: &ShotPayload) -> Result<String, String> {
+    serde_json::to_string(&sanitized_shot_extra_fields(&shot.extra_fields))
+        .map_err(|err| format!("Unable to serialize shot extra fields: {err}"))
+}
+
+fn deserialize_shot_extra_fields(
+    raw: &str,
+) -> rusqlite::Result<HashMap<String, serde_json::Value>> {
+    let parsed: HashMap<String, serde_json::Value> = serde_json::from_str(raw).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    Ok(sanitized_shot_extra_fields(&parsed))
+}
+
+fn replace_shots(
+    transaction: &rusqlite::Transaction<'_>,
+    shots: &[ShotPayload],
+) -> Result<(), String> {
+    transaction
+        .execute("DELETE FROM shots", [])
+        .map_err(|err| format!("Unable to clear shots table: {err}"))?;
+    for shot in shots {
+        let tags_json = serde_json::to_string(&shot.tags)
+            .map_err(|err| format!("Unable to serialize shot tags: {err}"))?;
+        let extra_json = serialize_shot_extra_fields(shot)?;
+        transaction
+            .execute(
+                "INSERT INTO shots (id, sequence_id, shot_order, title, duration_frames, dialogue, notes, tags_json, extra_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    &shot.id,
+                    &shot.sequence_id,
+                    shot.order,
+                    &shot.title,
+                    shot.duration_frames,
+                    &shot.dialogue,
+                    &shot.notes,
+                    tags_json,
+                    extra_json
+                ],
+            )
+            .map_err(|err| format!("Unable to write shot row: {err}"))?;
+    }
+    Ok(())
+}
+
+fn load_shots(connection: &Connection) -> Result<Vec<ShotPayload>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, sequence_id, shot_order, title, duration_frames, dialogue, notes, tags_json, extra_json
+             FROM shots
+             ORDER BY shot_order ASC",
+        )
+        .map_err(|err| format!("Unable to prepare shots query: {err}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            let tags_json: String = row.get(7)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let extra_json: String = row.get(8)?;
+            let extra_fields = deserialize_shot_extra_fields(&extra_json)?;
+            Ok(ShotPayload {
+                id: row.get(0)?,
+                sequence_id: row.get(1)?,
+                order: row.get(2)?,
+                title: row.get(3)?,
+                duration_frames: row.get(4)?,
+                dialogue: row.get(5)?,
+                notes: row.get(6)?,
+                tags,
+                extra_fields,
+            })
+        })
+        .map_err(|err| format!("Unable to query shots: {err}"))?;
+    let mut shots = Vec::new();
+    for row in rows {
+        shots.push(row.map_err(|err| format!("Unable to decode shot row: {err}"))?);
+    }
+    Ok(shots)
 }
 
 #[tauri::command]
@@ -883,6 +1017,7 @@ fn save_current_project(
     initialize_db(&connection)?;
     ensure_snapshot_meta_export_settings_column(&connection)?;
     ensure_snapshot_meta_workbench_column(&connection)?;
+    ensure_shots_extra_json_column(&connection)?;
     ensure_assets_voice_profile_column(&connection)?;
     ensure_audio_track_metadata_columns(&connection)?;
 
@@ -893,9 +1028,6 @@ fn save_current_project(
     transaction
         .execute("DELETE FROM projects", [])
         .map_err(|err| format!("Unable to clear projects table: {err}"))?;
-    transaction
-        .execute("DELETE FROM shots", [])
-        .map_err(|err| format!("Unable to clear shots table: {err}"))?;
     transaction
         .execute("DELETE FROM sequences", [])
         .map_err(|err| format!("Unable to clear sequences table: {err}"))?;
@@ -924,26 +1056,7 @@ fn save_current_project(
         )
         .map_err(|err| format!("Unable to write project row: {err}"))?;
 
-    for shot in &snapshot.shots {
-        let tags_json = serde_json::to_string(&shot.tags)
-            .map_err(|err| format!("Unable to serialize shot tags: {err}"))?;
-
-        transaction
-            .execute(
-                "INSERT INTO shots (id, sequence_id, shot_order, title, duration_frames, dialogue, notes, tags_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    &shot.id,
-                    &shot.sequence_id,
-                    shot.order,
-                    &shot.title,
-                    shot.duration_frames,
-                    &shot.dialogue,
-                    &shot.notes,
-                    tags_json
-                ],
-            )
-            .map_err(|err| format!("Unable to write shot row: {err}"))?;
-    }
+    replace_shots(&transaction, &snapshot.shots)?;
 
     for sequence in &snapshot.sequences {
         transaction
@@ -1086,6 +1199,7 @@ fn load_current_project(
     initialize_db(&connection)?;
     ensure_snapshot_meta_export_settings_column(&connection)?;
     ensure_snapshot_meta_workbench_column(&connection)?;
+    ensure_shots_extra_json_column(&connection)?;
     ensure_assets_voice_profile_column(&connection)?;
     ensure_audio_track_metadata_columns(&connection)?;
 
@@ -1112,36 +1226,7 @@ fn load_current_project(
         return Ok(None);
     };
 
-    let mut shots_statement = connection
-        .prepare(
-            "SELECT id, sequence_id, shot_order, title, duration_frames, dialogue, notes, tags_json
-             FROM shots
-             ORDER BY shot_order ASC",
-        )
-        .map_err(|err| format!("Unable to prepare shots query: {err}"))?;
-
-    let shots_iter = shots_statement
-        .query_map([], |row| {
-            let tags_json: String = row.get(7)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-
-            Ok(ShotPayload {
-                id: row.get(0)?,
-                sequence_id: row.get(1)?,
-                order: row.get(2)?,
-                title: row.get(3)?,
-                duration_frames: row.get(4)?,
-                dialogue: row.get(5)?,
-                notes: row.get(6)?,
-                tags,
-            })
-        })
-        .map_err(|err| format!("Unable to query shots: {err}"))?;
-
-    let mut shots = Vec::new();
-    for shot_result in shots_iter {
-        shots.push(shot_result.map_err(|err| format!("Unable to decode shot row: {err}"))?);
-    }
+    let shots = load_shots(&connection)?;
 
     let mut sequence_statement = connection
         .prepare(
@@ -3702,8 +3787,211 @@ fn verify_character_evidence_receipt(
 }
 
 #[cfg(test)]
-mod trusted_character_reference_tests {
+mod persistence_tests {
     use super::*;
+
+    #[test]
+    fn sqlite_shot_roundtrip_preserves_storyboard_and_video_fields() {
+        let rich_shot = serde_json::json!({
+            "id": "C01",
+            "sequenceId": "sequence-e01",
+            "order": 0,
+            "title": "棺中惊醒",
+            "durationFrames": 120,
+            "dialogue": "",
+            "notes": "",
+            "tags": ["棺中"],
+            "storyPrompt": "李宝珠在黑暗棺木中骤然睁眼",
+            "imagePrompt": "cinematic coffin interior",
+            "videoPrompt": "slow push in, shallow breathing",
+            "codexReferenceBindings": [
+                { "assetId": "character-li-baozhu", "usage": "identity" },
+                { "assetId": "scene-coffin-interior", "usage": "environment" }
+            ],
+            "generatedImagePath": "",
+            "generatedVideoPath": "C:/sample/C01.mp4",
+            "videoStatus": "blocked",
+            "codexStoryboardSemanticProfile": "yingdi_e01_c22_ots_insert",
+            "futureShotField": { "retained": true }
+        });
+        let shot: ShotPayload = serde_json::from_value(rich_shot.clone()).unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_db(&connection).unwrap();
+        ensure_shots_extra_json_column(&connection).unwrap();
+        let transaction = connection.transaction().unwrap();
+        replace_shots(&transaction, &[shot]).unwrap();
+        transaction.commit().unwrap();
+
+        let persisted_extra: serde_json::Value = connection
+            .query_row("SELECT extra_json FROM shots WHERE id = 'C01'", [], |row| row.get::<_, String>(0))
+            .map(|raw| serde_json::from_str(&raw).unwrap())
+            .unwrap();
+        assert_eq!(
+            persisted_extra["codexStoryboardSemanticProfile"],
+            "yingdi_e01_c22_ots_insert"
+        );
+
+        let restored = load_shots(&connection).unwrap().remove(0);
+        let restored_json = serde_json::to_value(restored).unwrap();
+
+        for field in [
+            "storyPrompt",
+            "imagePrompt",
+            "videoPrompt",
+            "codexReferenceBindings",
+            "generatedImagePath",
+            "generatedVideoPath",
+            "videoStatus",
+            "codexStoryboardSemanticProfile",
+            "futureShotField",
+        ] {
+            assert_eq!(
+                restored_json.get(field),
+                rich_shot.get(field),
+                "shot field {field} must survive the SQLite round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_shots_table_migrates_with_empty_extra_json_default() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE shots (
+                    id TEXT PRIMARY KEY,
+                    sequence_id TEXT NOT NULL,
+                    shot_order INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    duration_frames INTEGER NOT NULL,
+                    dialogue TEXT NOT NULL,
+                    notes TEXT NOT NULL,
+                    tags_json TEXT NOT NULL
+                );
+                INSERT INTO shots VALUES ('legacy', 'sequence', 0, 'Legacy', 24, '', '', '[]');
+                "#,
+            )
+            .unwrap();
+
+        ensure_shots_extra_json_column(&connection).unwrap();
+        ensure_shots_extra_json_column(&connection).unwrap();
+
+        let extra_json: String = connection
+            .query_row(
+                "SELECT extra_json FROM shots WHERE id = 'legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(extra_json, "{}");
+        let restored = load_shots(&connection).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, "legacy");
+        assert!(restored[0].extra_fields.is_empty());
+    }
+
+    #[test]
+    fn shot_save_and_load_keep_base_fields_authoritative_over_conflicting_extra() {
+        let mut shot: ShotPayload = serde_json::from_value(serde_json::json!({
+            "id": "C01",
+            "sequenceId": "sequence-e01",
+            "order": 7,
+            "title": "Authority title",
+            "durationFrames": 120,
+            "dialogue": "Authority dialogue",
+            "notes": "Authority notes",
+            "tags": ["authority"],
+            "futureShotField": { "retained": true }
+        }))
+        .unwrap();
+        for key in SHOT_BASE_FIELD_KEYS {
+            shot.extra_fields
+                .insert(key.to_string(), serde_json::json!("malicious"));
+        }
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_db(&connection).unwrap();
+        ensure_shots_extra_json_column(&connection).unwrap();
+        let transaction = connection.transaction().unwrap();
+        replace_shots(&transaction, &[shot]).unwrap();
+        transaction.commit().unwrap();
+
+        let persisted_extra: serde_json::Value = connection
+            .query_row("SELECT extra_json FROM shots WHERE id = 'C01'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .map(|raw| serde_json::from_str(&raw).unwrap())
+            .unwrap();
+        for key in SHOT_BASE_FIELD_KEYS {
+            assert!(
+                persisted_extra.get(key).is_none(),
+                "base key {key} leaked into extra_json"
+            );
+        }
+        assert_eq!(persisted_extra["futureShotField"]["retained"], true);
+
+        connection
+            .execute(
+                "UPDATE shots SET extra_json = ?1 WHERE id = 'C01'",
+                params![serde_json::json!({
+                    "title": "Historical conflict",
+                    "tags": ["conflict"],
+                    "futureShotField": { "retained": true }
+                })
+                .to_string()],
+            )
+            .unwrap();
+        let restored = load_shots(&connection).unwrap().remove(0);
+        let serialized = serde_json::to_string(&restored).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(value["title"], "Authority title");
+        assert_eq!(value["tags"], serde_json::json!(["authority"]));
+        assert_eq!(value["futureShotField"]["retained"], true);
+        assert_eq!(serialized.matches("\"title\"").count(), 1);
+        assert_eq!(serialized.matches("\"tags\"").count(), 1);
+    }
+
+    #[test]
+    fn shot_load_fails_closed_for_invalid_non_object_and_null_extra_json() {
+        for raw in ["{invalid", "[]"] {
+            let connection = Connection::open_in_memory().unwrap();
+            initialize_db(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO shots (id, sequence_id, shot_order, title, duration_frames, dialogue, notes, tags_json, extra_json) VALUES ('bad', 'sequence', 0, 'Bad', 24, '', '', '[]', ?1)",
+                    params![raw],
+                )
+                .unwrap();
+            assert!(
+                load_shots(&connection).is_err(),
+                "extra_json {raw:?} must fail closed"
+            );
+        }
+
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE shots (
+                    id TEXT PRIMARY KEY,
+                    sequence_id TEXT NOT NULL,
+                    shot_order INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    duration_frames INTEGER NOT NULL,
+                    dialogue TEXT NOT NULL,
+                    notes TEXT NOT NULL,
+                    tags_json TEXT NOT NULL,
+                    extra_json TEXT
+                );
+                INSERT INTO shots VALUES ('null-extra', 'sequence', 0, 'Null', 24, '', '', '[]', NULL);
+                "#,
+            )
+            .unwrap();
+        assert!(
+            load_shots(&connection).is_err(),
+            "NULL extra_json must fail closed"
+        );
+    }
 
     #[test]
     fn workbench_sqlite_roundtrip_preserves_unknown_fields() {
@@ -3759,6 +4047,11 @@ mod trusted_character_reference_tests {
         assert!(restored.migration_backup_pending);
         assert_eq!(restored.extra_snapshot_fields["futureLegacyField"]["retained"], true);
     }
+}
+
+#[cfg(test)]
+mod trusted_character_reference_tests {
+    use super::*;
 
     #[test]
     fn receipt_ids_are_canonical_lowercase_hashes_only() {

@@ -42,6 +42,10 @@ export type ShotTransition = {
   notes: string;
 };
 
+export type CodexStoryboardSemanticProfile =
+  | "yingdi_e01_c22_ots_insert"
+  | "yingdi_e01_c23_jade_ecu";
+
 export type Shot = {
   id: string;
   sequenceId: string;
@@ -51,6 +55,7 @@ export type Shot = {
   dialogue: string;
   notes: string;
   tags: string[];
+  codexStoryboardSemanticProfile?: CodexStoryboardSemanticProfile;
   storyPrompt?: string;
   negativePrompt?: string;
   seed?: number;
