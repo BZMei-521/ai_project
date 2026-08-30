@@ -13,6 +13,7 @@ export type SpatialCodexReferenceInput = {
   environmentPerspectivePath: string;
   identities: Array<{ id: string; sourcePath: string; instruction: string }>;
   props: Array<{ id: string; sourcePath: string; instruction: string }>;
+  forbiddenCandidatePaths: string[];
   isCurrentPack: boolean;
 };
 
@@ -44,7 +45,6 @@ const CONTROL_INSTRUCTIONS: Record<CodexStoryboardSpatialArtifactKind, string> =
 };
 
 const HEX64 = /^[a-f0-9]{64}$/;
-const OLD_CANDIDATE_PATH = /(?:prior|old|previous)[\s_\\/-]*(?:storyboard[\s_\\/-]*)?candidate|candidate[\s_\\/-]*(?:prior|old|previous)/i;
 
 function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value);
@@ -66,7 +66,6 @@ function pathKey(value: string): string {
 function requireSafePath(value: string, error: string): string {
   const path = String(value ?? "").trim();
   if (!isAbsolutePath(path)) throw new Error(error);
-  if (OLD_CANDIDATE_PATH.test(path)) throw new Error("spatial_codex_old_candidate");
   return path;
 }
 
@@ -115,6 +114,12 @@ export function buildSpatialCodexReferenceSelections(
 
   const masterPath = requireSafePath(input.panorama.masterPath, "spatial_codex_panorama_path_invalid");
   const environmentPath = requireSafePath(input.environmentPerspectivePath, "spatial_codex_environment_path_invalid");
+  const forbiddenCandidatePaths = input.forbiddenCandidatePaths.map((path) =>
+    requireSafePath(path, "spatial_codex_forbidden_candidate_path_invalid")
+  );
+  if (forbiddenCandidatePaths.some((path) => pathKey(path) === pathKey(environmentPath))) {
+    throw new Error("spatial_codex_old_candidate");
+  }
   const identities = input.identities.map((identity) => ({
     id: requireIdentifier(identity.id, "spatial_codex_identity_id_invalid"),
     sourcePath: requireSafePath(identity.sourcePath, "spatial_codex_identity_path_invalid"),

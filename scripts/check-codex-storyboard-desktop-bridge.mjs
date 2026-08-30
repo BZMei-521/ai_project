@@ -69,6 +69,19 @@ assert.equal(preparedV2.schemaVersion, 2);
 assert.deepEqual(preparedV2.spatialControl, spatialControl, "schema-v2 preserves the explicit spatial binding verbatim");
 expectPrepareError({ ...v2, spatialControl: { ...spatialControl, shotId: "other-shot" } }, "codex_storyboard_spatial_shot_id_invalid");
 expectPrepareError({ ...v2, spatialControl: { ...spatialControl, artifacts: spatialControl.artifacts.slice(1) } }, "codex_storyboard_spatial_artifacts_invalid");
+expectPrepareError({ ...v2, spatialControl: { ...spatialControl, unexpected: true } }, "codex_storyboard_spatial_control_invalid");
+expectPrepareError({
+  ...v2,
+  spatialControl: { ...spatialControl, artifacts: spatialControl.artifacts.map((artifact, index) => index === 0 ? { ...artifact, unexpected: true } : artifact) }
+}, "codex_storyboard_spatial_artifacts_invalid");
+expectPrepareError({
+  ...v2,
+  references: v2.references.map((item) => item.id === "li" ? { ...item, usage: "spatial_authority" } : item)
+}, "codex_storyboard_required_reference_usage_missing");
+expectPrepareError({
+  ...v2,
+  references: v2.references.map((item) => item.id === "color" ? { ...item, instruction: "Use the prior storyboard candidate for framing." } : item)
+}, "codex_storyboard_spatial_instruction_invalid");
 
 const duplicateId = request(2);
 duplicateId.references[1].id = duplicateId.references[0].id;

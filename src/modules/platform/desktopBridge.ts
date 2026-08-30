@@ -174,6 +174,22 @@ function duplicatePathKey(value: string): string {
     : canonical;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
+  return isPlainObject(value) && Object.keys(value).sort().join("|") === [...keys].sort().join("|");
+}
+
+const SPATIAL_BINDING_KEYS = [
+  "stageId", "stageRevision", "stageDigest", "shotId", "snapshotId", "cameraId", "cameraDigest", "panoramaAssetId", "panoramaSha256", "artifacts"
+] as const;
+const SPATIAL_ARTIFACT_KEYS = ["kind", "referenceId", "sha256"] as const;
+const OLD_CANDIDATE_INSTRUCTION = /prior storyboard candidate|old storyboard candidate|previous storyboard candidate/i;
+
 export function createPrepareCodexStoryboardJobRequest(
   request: PrepareCodexStoryboardJobRequest
 ): PrepareCodexStoryboardJobRequest {
@@ -247,7 +263,8 @@ function validateCodexStoryboardSpatialBinding(
   requestShotId: string,
   references: CodexStoryboardReferenceSelection[]
 ): void {
-  if (!binding || binding.shotId !== requestShotId) throw new Error("codex_storyboard_spatial_shot_id_invalid");
+  if (!hasExactKeys(binding, SPATIAL_BINDING_KEYS)) throw new Error("codex_storyboard_spatial_control_invalid");
+  if (binding.shotId !== requestShotId) throw new Error("codex_storyboard_spatial_shot_id_invalid");
   for (const field of ["stageId", "shotId", "snapshotId", "cameraId", "panoramaAssetId"] as const) {
     if (!/^[a-zA-Z0-9_-]{1,160}$/.test(binding[field] ?? "")) throw new Error("codex_storyboard_spatial_control_invalid");
   }
@@ -261,16 +278,29 @@ function validateCodexStoryboardSpatialBinding(
     color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", pose: "pose_reference"
   };
   const referencesById = new Map(references.map((reference) => [reference.id, reference]));
+  if (
+    references.filter((reference) => reference.usage === "spatial_authority").length !== 1 ||
+    references.filter((reference) => reference.usage === "environment_reference").length !== 1
+  ) {
+    throw new Error("codex_storyboard_required_reference_usage_missing");
+  }
+  const spatialReferenceUsages = new Set<CodexStoryboardReferenceSelection["usage"]>([
+    "spatial_authority", "spatial_depth", "spatial_normal", "character_id", "prop_id", "pose_reference", "environment_reference"
+  ]);
+  if (references.some((reference) => spatialReferenceUsages.has(reference.usage) && OLD_CANDIDATE_INSTRUCTION.test(reference.instruction))) {
+    throw new Error("codex_storyboard_spatial_instruction_invalid");
+  }
   const kinds = new Set<CodexStoryboardSpatialArtifactKind>();
   for (const artifact of binding.artifacts) {
-    if (!CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.includes(artifact.kind) || kinds.has(artifact.kind) || !/^[a-f0-9]{64}$/.test(artifact.sha256)) {
+    if (!hasExactKeys(artifact, SPATIAL_ARTIFACT_KEYS) || !CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.includes(artifact.kind as CodexStoryboardSpatialArtifactKind) || kinds.has(artifact.kind as CodexStoryboardSpatialArtifactKind) || !/^[a-f0-9]{64}$/.test(String(artifact.sha256 ?? ""))) {
       throw new Error("codex_storyboard_spatial_artifacts_invalid");
     }
-    const reference = referencesById.get(artifact.referenceId);
-    if (!reference || reference.usage !== usages[artifact.kind]) throw new Error("codex_storyboard_spatial_artifacts_invalid");
-    kinds.add(artifact.kind);
+    const kind = artifact.kind as CodexStoryboardSpatialArtifactKind;
+    const reference = referencesById.get(String(artifact.referenceId ?? ""));
+    if (!reference || reference.usage !== usages[kind]) throw new Error("codex_storyboard_spatial_artifacts_invalid");
+    kinds.add(kind);
   }
-  if (CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.some((kind) => !kinds.has(kind)) || !references.some((reference) => reference.usage === "environment_reference")) {
+  if (CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.some((kind) => !kinds.has(kind))) {
     throw new Error("codex_storyboard_spatial_artifacts_invalid");
   }
 }

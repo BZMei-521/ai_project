@@ -50,6 +50,7 @@ const spatialInput = () => ({
     { id: "wei", sourcePath: "C:/identities/wei.png", instruction: "Wei identity and costume authority." }
   ],
   props: [{ id: "jade", sourcePath: "C:/props/jade.png", instruction: "Jade prop detail authority." }],
+  forbiddenCandidatePaths: [],
   isCurrentPack: true
 });
 const buildSpatialSelections = spatialReferenceBuilder.buildSpatialCodexReferenceSelections;
@@ -71,6 +72,10 @@ assert.deepEqual(
 );
 assert.match(selectedSpatial.references[0].instruction, /camera.*projection.*only.*color/i);
 assert.match(selectedSpatial.references[1].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
+assert.match(selectedSpatial.references[2].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
+assert.match(selectedSpatial.references[3].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
+assert.match(selectedSpatial.references[4].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
+assert.match(selectedSpatial.references[5].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
 assert.match(selectedSpatial.references[6].instruction, /appearance.*panorama-derived perspective/i);
 assert.deepEqual(selectedSpatial.spatialControl, {
   stageId: "stage-1", stageRevision: 2, stageDigest: spatialSha("a"), shotId: "shot-1", snapshotId: "snapshot-1", cameraId: "camera-1", cameraDigest: spatialSha("b"),
@@ -85,7 +90,14 @@ for (const [name, mutate] of [
   ["wrong shot", (input) => { input.controlPack.shotId = "shot-2"; }],
   ["duplicate source", (input) => { input.identities[1].sourcePath = "C:/controls/../controls/color.png"; }],
   ["non panorama master", (input) => { input.panorama.width = 4000; }],
-  ["old candidate", (input) => { input.environmentPerspectivePath = "C:/old-storyboard-candidate.png"; }]
+  ["old candidate", (input) => {
+    input.forbiddenCandidatePaths = ["C:/jobs/old-run/outputs/candidate.png"];
+    input.environmentPerspectivePath = "C:/jobs/old-run/outputs/candidate.png";
+  }],
+  ["old candidate", (input) => {
+    input.forbiddenCandidatePaths = ["C:/jobs/old-run/outputs/candidate.png"];
+    input.environmentPerspectivePath = "C:/jobs/old-run/outputs/perspective/../candidate.png";
+  }]
 ]) {
   const invalid = spatialInput();
   mutate(invalid);
