@@ -9,7 +9,7 @@ mod crop_attestation;
 use crop_attestation::verify_exact_crop_pixels;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -398,7 +398,71 @@ fn usage(value: &str) -> bool {
             | "style_only"
             | "lighting_only"
             | "negative_example"
+            | "spatial_depth"
+            | "spatial_normal"
+            | "character_id"
+            | "prop_id"
+            | "environment_reference"
     )
+}
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+fn spatial_artifact_usage(kind: &str) -> Option<&'static str> {
+    match kind {
+        "color" => Some("spatial_authority"),
+        "depth" => Some("spatial_depth"),
+        "normal" => Some("spatial_normal"),
+        "character_id" => Some("character_id"),
+        "prop_id" => Some("prop_id"),
+        "pose" => Some("pose_reference"),
+        _ => None,
+    }
+}
+fn spatial_reference_usage(value: &str) -> bool {
+    matches!(value, "spatial_authority" | "spatial_depth" | "spatial_normal" | "character_id" | "prop_id" | "pose_reference" | "environment_reference")
+}
+fn old_candidate_instruction(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    normalized.contains("prior storyboard candidate") || normalized.contains("old storyboard candidate") || normalized.contains("previous storyboard candidate")
+}
+fn validate_spatial_control(
+    object: &Map<String, Value>,
+    references: &HashMap<String, (String, String)>,
+    spatial_count: usize,
+    environment_count: usize,
+) -> Result<(), String> {
+    if spatial_count != 1 || environment_count != 1 { return fail("codex_storyboard_operator_request_invalid"); }
+    let spatial = object.get("spatialControl").and_then(Value::as_object).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    let keys = ["stageId", "stageRevision", "stageDigest", "shotId", "snapshotId", "cameraId", "cameraDigest", "panoramaAssetId", "panoramaSha256", "artifacts"];
+    if spatial.len() != keys.len() || keys.iter().any(|key| !spatial.contains_key(*key)) { return fail("codex_storyboard_operator_request_invalid"); }
+    for key in ["stageId", "shotId", "snapshotId", "cameraId", "panoramaAssetId"] {
+        if !valid_id(string(spatial, key)?, 160) { return fail("codex_storyboard_operator_request_invalid"); }
+    }
+    if spatial.get("stageRevision").and_then(Value::as_u64).filter(|revision| *revision > 0).is_none()
+        || !valid_digest(string(spatial, "stageDigest")?)
+        || !valid_digest(string(spatial, "cameraDigest")?)
+        || !valid_digest(string(spatial, "panoramaSha256")?)
+        || string(spatial, "shotId")? != string(object, "shotId")?
+    {
+        return fail("codex_storyboard_operator_request_invalid");
+    }
+    let artifacts = spatial.get("artifacts").and_then(Value::as_array).filter(|items| items.len() == 6).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    let mut kinds = HashSet::new();
+    for artifact in artifacts {
+        let binding = artifact.as_object().ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+        let keys = ["kind", "referenceId", "sha256"];
+        if binding.len() != keys.len() || keys.iter().any(|key| !binding.contains_key(*key)) { return fail("codex_storyboard_operator_request_invalid"); }
+        let kind = string(binding, "kind")?;
+        let expected_usage = spatial_artifact_usage(kind).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+        let reference_id = string(binding, "referenceId")?;
+        let digest = string(binding, "sha256")?;
+        if !kinds.insert(kind) || !valid_digest(digest) { return fail("codex_storyboard_operator_request_invalid"); }
+        let (usage, reference_digest) = references.get(reference_id).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+        if usage != expected_usage || reference_digest != digest { return fail("codex_storyboard_operator_request_invalid"); }
+    }
+    if kinds.len() != 6 { return fail("codex_storyboard_operator_request_invalid"); }
+    Ok(())
 }
 fn inspect_image(bytes: &[u8], expected: Option<&str>) -> Result<(u32, u32, String), String> {
     if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES { return fail("codex_storyboard_operator_image_invalid"); }
@@ -445,10 +509,13 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
         "acceptedImagePath",
         "expectedOutput",
     ];
-    if object.len() != expected.len()
-        || expected.iter().any(|key| !object.contains_key(*key))
-        || object.get("schemaVersion").and_then(Value::as_u64) != Some(1)
-        || object.get("provider").and_then(Value::as_str) != Some(PROVIDER)
+    let schema_version = object.get("schemaVersion").and_then(Value::as_u64);
+    let valid_keys = match schema_version {
+        Some(1) => object.len() == expected.len() && expected.iter().all(|key| object.contains_key(*key)),
+        Some(2) => object.len() == expected.len() + 1 && expected.iter().all(|key| object.contains_key(*key)) && object.contains_key("spatialControl"),
+        _ => false,
+    };
+    if !valid_keys || object.get("provider").and_then(Value::as_str) != Some(PROVIDER)
     {
         return fail("codex_storyboard_operator_request_invalid");
     }
@@ -497,9 +564,12 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
         .and_then(Value::as_array)
         .filter(|items| !items.is_empty() && items.len() <= 16)
         .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
-    let mut ids = std::collections::HashSet::new();
+    let mut ids = HashSet::new();
     let mut spatial = false;
     let mut identity = false;
+    let mut spatial_count = 0;
+    let mut environment_count = 0;
+    let mut validated_references = HashMap::new();
     for reference in refs {
         let r = reference
             .as_object()
@@ -528,10 +598,7 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
             || string(r, "instruction").is_err()
             || !normal(rel)
             || !matches!(mime, "image/png" | "image/jpeg")
-            || digest.len() != 64
-            || !digest
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || !valid_digest(digest)
         {
             return fail("codex_storyboard_operator_request_invalid");
         }
@@ -551,9 +618,18 @@ fn request_and_digest(package: &Dir, package_path: &Path) -> Result<(Value, Stri
         }
         spatial |= u == "spatial_authority";
         identity |= u == "face_identity" || u == "body_costume";
+        spatial_count += usize::from(u == "spatial_authority");
+        environment_count += usize::from(u == "environment_reference");
+        if schema_version == Some(2) && spatial_reference_usage(u) && old_candidate_instruction(string(r, "instruction")?) {
+            return fail("codex_storyboard_operator_request_invalid");
+        }
+        validated_references.insert(id.to_string(), (u.to_string(), digest.to_string()));
     }
     if !spatial || !identity {
         return fail("codex_storyboard_operator_request_invalid");
+    }
+    if schema_version == Some(2) {
+        validate_spatial_control(object, &validated_references, spatial_count, environment_count)?;
     }
     let bytes = serde_json::to_vec(&canonical(&request))
         .map_err(|_| "codex_storyboard_operator_request_invalid".to_string())?;
@@ -787,8 +863,13 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
         .get("references")
         .and_then(Value::as_array)
         .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    let schema_version = o.get("schemaVersion").and_then(Value::as_u64);
+    let mut ordered_refs = refs.iter().collect::<Vec<_>>();
+    if schema_version == Some(2) {
+        ordered_refs.sort_by_key(|reference| spatial_reference_rank(reference.get("usage").and_then(Value::as_str).unwrap_or_default()));
+    }
     let mut parts = Vec::new();
-    for (i, r) in refs.iter().enumerate() {
+    for (i, r) in ordered_refs.iter().enumerate() {
         let m = r
             .as_object()
             .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
@@ -797,6 +878,14 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
             i + 1,
             string(m, "usage")?,
             string(m, "instruction")?
+        ));
+    }
+    if schema_version == Some(2) {
+        let spatial = o.get("spatialControl").and_then(Value::as_object).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+        parts.push(format!(
+            "SPATIAL LINEAGE (non-visual provenance; do not render):\n- Stage: {} rev {} digest {}\n- Shot snapshot: {} / {}\n- Camera: {} digest {}\n- Panorama: {} sha256 {}",
+            string(spatial, "stageId")?, spatial.get("stageRevision").and_then(Value::as_u64).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?, string(spatial, "stageDigest")?,
+            string(spatial, "shotId")?, string(spatial, "snapshotId")?, string(spatial, "cameraId")?, string(spatial, "cameraDigest")?, string(spatial, "panoramaAssetId")?, string(spatial, "panoramaSha256")?
         ));
     }
     let prompt = o.get("prompt").and_then(Value::as_object).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
@@ -811,6 +900,23 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
     parts.push(format!("MANDATORY HARD CONSTRAINTS:\n{subject_line}\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n{spatial_line}\n- No text, captions, logos, signatures, or watermarks."));
     parts.push(string(prompt, "primaryRequest")?.to_string());
     Ok(parts.join("\n"))
+}
+
+fn spatial_reference_rank(usage: &str) -> u8 {
+    match usage {
+        "spatial_authority" => 0,
+        "spatial_depth" => 1,
+        "spatial_normal" => 2,
+        "character_id" => 3,
+        "prop_id" => 4,
+        "pose_reference" => 5,
+        "environment_reference" => 6,
+        "face_identity" | "body_costume" => 7,
+        "prop_detail" => 8,
+        "style_only" | "lighting_only" => 9,
+        "negative_example" => 10,
+        _ => 11,
+    }
 }
 
 fn utc_rfc3339_now() -> Result<String, String> {
@@ -1272,6 +1378,89 @@ mod tests {
         assert!(compiled.contains("Spatial authority role: environment and layout only; not camera authority"));
         assert!(!compiled.contains("Exact subject count"));
         assert!(!compiled.contains("No pose, composition, camera, framing, projection, or occlusion drift"));
+    }
+    fn spatial_v2_request(reference_sha: &str) -> Value {
+        let references = [
+            ("color", "spatial_authority", "Camera-bound color pass."),
+            ("depth", "spatial_depth", "Camera-bound metric depth pass."),
+            ("normal", "spatial_normal", "Camera-bound world normal pass."),
+            ("character-id", "character_id", "Character segmentation pass."),
+            ("prop-id", "prop_id", "Prop segmentation pass."),
+            ("pose", "pose_reference", "Complete humanoid pose projection."),
+            ("environment", "environment_reference", "Perspective derived from the approved panorama."),
+            ("li", "face_identity", "Li Baozhu identity and costume authority."),
+            ("wei", "face_identity", "Wei Xun identity and costume authority."),
+        ].into_iter().map(|(id, usage, instruction)| json!({
+            "id":id,"usage":usage,"instruction":instruction,"relativePath":format!("references/{id}.png"),"sha256":reference_sha,"width":1,"height":1,"mimeType":"image/png"
+        })).collect::<Vec<_>>();
+        json!({
+            "schemaVersion":2,"jobId":"job-v2","projectId":"project-v2","episodeId":"episode-v2","shotId":"E01-S01-C19","provider":PROVIDER,"createdAt":"2026-08-30T00:00:00.000Z",
+            "prompt":{"useCase":"stylized-concept","primaryRequest":"A locked spatial storyboard frame."},"references":references,"acceptedImagePath":null,
+            "expectedOutput":{"candidatePath":"outputs/candidate.png","resultPath":"outputs/result.json","mimeTypes":["image/png"]},
+            "spatialControl":{"stageId":"stage_yingdi_e01_tomb_v2","stageRevision":2,"stageDigest":"a".repeat(64),"shotId":"E01-S01-C19","snapshotId":"stage_yingdi_e01_tomb_v2_E01-S01-C19","cameraId":"E01-S01-C19-camera","cameraDigest":"b".repeat(64),"panoramaAssetId":"yingdi-e01-tomb-v2-panorama","panoramaSha256":"c".repeat(64),"artifacts":[
+                {"kind":"color","referenceId":"color","sha256":reference_sha},{"kind":"depth","referenceId":"depth","sha256":reference_sha},{"kind":"normal","referenceId":"normal","sha256":reference_sha},
+                {"kind":"character_id","referenceId":"character-id","sha256":reference_sha},{"kind":"prop_id","referenceId":"prop-id","sha256":reference_sha},{"kind":"pose","referenceId":"pose","sha256":reference_sha}
+            ]}
+        })
+    }
+    fn write_spatial_v2_request(root: &Path, request: &Value) {
+        fs::write(root.join("request.json"), serde_json::to_vec_pretty(request).unwrap()).unwrap();
+    }
+    #[test]
+    fn request_schema_v2_binds_spatial_lineage_before_completion() {
+        let root = env::temp_dir().join(format!("codex-storyboard-operator-v2-{}-{}", process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(root.join("references")).unwrap();
+        let bytes = png(RgbaImage::new(1, 1));
+        let digest = sha(&bytes);
+        for id in ["color", "depth", "normal", "character-id", "prop-id", "pose", "environment", "li", "wei"] {
+            fs::write(root.join("references").join(format!("{id}.png")), &bytes).unwrap();
+        }
+        let mut request = spatial_v2_request(&digest);
+        write_spatial_v2_request(&root, &request);
+        let package = acquire_package(&root).unwrap();
+        assert!(request_and_digest(&package.dir, &root).is_ok(), "valid schema-v2 spatial package is accepted");
+        let compiled = compiled_prompt(&request).unwrap();
+        assert!(compiled.find("[spatial_authority]").unwrap() < compiled.find("[spatial_depth]").unwrap());
+        assert!(compiled.find("[spatial_depth]").unwrap() < compiled.find("[spatial_normal]").unwrap());
+        assert!(compiled.find("[spatial_normal]").unwrap() < compiled.find("[character_id]").unwrap());
+        assert!(compiled.find("[character_id]").unwrap() < compiled.find("[prop_id]").unwrap());
+        assert!(compiled.find("[prop_id]").unwrap() < compiled.find("[pose_reference]").unwrap());
+        assert!(compiled.find("[pose_reference]").unwrap() < compiled.find("[environment_reference]").unwrap());
+        assert!(compiled.contains("SPATIAL LINEAGE (non-visual provenance; do not render):"));
+        assert!(compiled.contains("stage_yingdi_e01_tomb_v2"));
+        assert!(compiled.contains("E01-S01-C19-camera"));
+        assert!(compiled.contains("yingdi-e01-tomb-v2-panorama"));
+
+        request["spatialControl"]["artifacts"].as_array_mut().unwrap().remove(0);
+        write_spatial_v2_request(&root, &request);
+        assert_eq!(request_and_digest(&package.dir, &root), Err("codex_storyboard_operator_request_invalid".to_string()));
+
+        request = spatial_v2_request(&digest);
+        request["spatialControl"]["shotId"] = json!("E01-S01-C20");
+        write_spatial_v2_request(&root, &request);
+        assert_eq!(request_and_digest(&package.dir, &root), Err("codex_storyboard_operator_request_invalid".to_string()));
+
+        request = spatial_v2_request(&digest);
+        request["spatialControl"]["artifacts"][0]["sha256"] = json!("f".repeat(64));
+        write_spatial_v2_request(&root, &request);
+        assert_eq!(request_and_digest(&package.dir, &root), Err("codex_storyboard_operator_request_invalid".to_string()));
+
+        request = spatial_v2_request(&digest);
+        request["spatialControl"]["artifacts"][5]["kind"] = json!("color");
+        write_spatial_v2_request(&root, &request);
+        assert_eq!(request_and_digest(&package.dir, &root), Err("codex_storyboard_operator_request_invalid".to_string()));
+
+        request = spatial_v2_request(&digest);
+        request["references"] = Value::Array(request["references"].as_array().unwrap().iter().filter(|reference| reference["usage"] != "environment_reference").cloned().collect());
+        write_spatial_v2_request(&root, &request);
+        assert_eq!(request_and_digest(&package.dir, &root), Err("codex_storyboard_operator_request_invalid".to_string()));
+
+        request = spatial_v2_request(&digest);
+        request["references"][0]["instruction"] = json!("Use the prior storyboard candidate for framing.");
+        write_spatial_v2_request(&root, &request);
+        assert_eq!(request_and_digest(&package.dir, &root), Err("codex_storyboard_operator_request_invalid".to_string()));
+        drop(package);
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn result_schema_rejects_unknown_fields_and_identity_forgery() {
