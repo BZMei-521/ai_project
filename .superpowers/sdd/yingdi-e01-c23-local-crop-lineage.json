@@ -1,0 +1,31 @@
+{
+  "operation": "user_authorized_local_deterministic_crop",
+  "authorization": {
+    "observedAt": "2026-08-30T02:14:40.535Z",
+    "context": "User explicitly authorized one local deterministic crop of C23 attempt3, with no imagegen, no source overwrite, left crop approximately 28-31 percent, exact 16:9 output, preservation of jade and Li Baozhu's correct anatomical LEFT/RIGHT hand roles, and pause before formal complete/UI import pending independent visual review."
+  },
+  "tool": {
+    "name": "ffmpeg",
+    "generative": false,
+    "filter": "crop=1184:666:488:244"
+  },
+  "source": {
+    "absolutePath": "C:\\Users\\Administrator\\.codex\\generated_images\\01a04d8a-f6d0-7fd0-b417-e8caec46028d\\exec-fffd2d66-4d06-453f-b800-b577bc402d4f.png",
+    "sha256": "6e2460966e053cb8b498fa52e67e1b436328361bbf1564f95464bb5318093b77",
+    "width": 1672,
+    "height": 941
+  },
+  "cropRectangle": {
+    "x": 488,
+    "y": 244,
+    "width": 1184,
+    "height": 666
+  },
+  "output": {
+    "absolutePath": "C:\\Users\\Administrator\\Desktop\\小说\\应用项目\\影帝他总想对我图谋不轨_E01样片.sbproj\\codex-reference-assets\\derived-candidates\\C23\\c23-mtf4f9we-attempt3-crop-v1.png",
+    "sha256": "aa2a88b5b634c75245a62c41114cf076a2a7b79cb48b20ea30c16350e9a5e819",
+    "width": 1184,
+    "height": 666
+  },
+  "pixelExactCrop": true
+}

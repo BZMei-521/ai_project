@@ -1,0 +1,48 @@
+{
+  "opened": {
+    "ok": true,
+    "projectId": "yingdi-e01-sample",
+    "shotCount": 23,
+    "taskCount": 63
+  },
+  "navigation": {
+    "ok": true,
+    "mode": "codex_task_package"
+  },
+  "imports": [
+    {
+      "ok": true,
+      "shotId": "E01-S01-C18",
+      "taskId": "codex-e01-s01-c18-mtf9rgac-e5bfd367ff230150",
+      "externalJobId": "codex-e01-s01-c18-mtf9rgac-e5bfd367ff230150",
+      "status": "needs_review",
+      "bestPreviewPath": "\\\\?\\C:\\Users\\Administrator\\Desktop\\小说\\应用项目\\影帝他总想对我图谋不轨_E01样片.sbproj\\codex-storyboard-jobs\\codex-e01-s01-c18-mtf9rgac-e5bfd367ff230150\\outputs\\candidate.png",
+      "acceptVisible": true,
+      "rejectVisible": true,
+      "generatedImagePath": ""
+    },
+    {
+      "ok": true,
+      "shotId": "E01-S01-C19",
+      "taskId": "codex-e01-s01-c19-mtf9scnb-d28cc00448f955d0",
+      "externalJobId": "codex-e01-s01-c19-mtf9scnb-d28cc00448f955d0",
+      "status": "needs_review",
+      "bestPreviewPath": "\\\\?\\C:\\Users\\Administrator\\Desktop\\小说\\应用项目\\影帝他总想对我图谋不轨_E01样片.sbproj\\codex-storyboard-jobs\\codex-e01-s01-c19-mtf9scnb-d28cc00448f955d0\\outputs\\candidate.png",
+      "acceptVisible": true,
+      "rejectVisible": true,
+      "generatedImagePath": ""
+    },
+    {
+      "ok": true,
+      "shotId": "E01-S01-C20",
+      "taskId": "codex-e01-s01-c20-mtf9sf37-7c616ef1d758c7c8",
+      "externalJobId": "codex-e01-s01-c20-mtf9sf37-7c616ef1d758c7c8",
+      "status": "needs_review",
+      "bestPreviewPath": "\\\\?\\C:\\Users\\Administrator\\Desktop\\小说\\应用项目\\影帝他总想对我图谋不轨_E01样片.sbproj\\codex-storyboard-jobs\\codex-e01-s01-c20-mtf9sf37-7c616ef1d758c7c8\\outputs\\candidate.png",
+      "acceptVisible": true,
+      "rejectVisible": true,
+      "generatedImagePath": ""
+    }
+  ],
+  "updatedAt": "2026-08-30T06:52:40.889Z"
+}
