@@ -13,8 +13,15 @@ const TARGET_ROOT = fileURLToPath(new URL("../src-tauri/target/", import.meta.ur
 const HELPER_BASENAME = process.platform === "win32" ? "codex-storyboard-operator.exe" : "codex-storyboard-operator";
 const USAGES = new Set([
   "spatial_authority", "pose_reference", "face_identity", "body_costume",
-  "prop_detail", "style_only", "lighting_only", "negative_example"
+  "prop_detail", "style_only", "lighting_only", "negative_example",
+  "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_reference"
 ]);
+const SPATIAL_ARTIFACT_KINDS = new Set(["color", "depth", "normal", "character_id", "prop_id", "pose"]);
+const SPATIAL_ARTIFACT_USAGE = Object.freeze({
+  color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", pose: "pose_reference"
+});
+const SPATIAL_REFERENCE_USAGES = new Set([...Object.values(SPATIAL_ARTIFACT_USAGE), "environment_reference"]);
+const OLD_CANDIDATE_INSTRUCTION = /prior storyboard candidate|old storyboard candidate|previous storyboard candidate/i;
 const EXIT = Object.freeze({
   request: 10,
   reference: 11,
@@ -65,8 +72,11 @@ const crc32 = (bytes) => {
 };
 
 function validateRequest(value) {
-  exactKeys(value, ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "createdAt", "prompt", "references", "acceptedImagePath", "expectedOutput"], "codex_storyboard_cli_request_invalid");
-  if (value.schemaVersion !== 1 || value.provider !== PROVIDER) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+  const requestKeys = ["schemaVersion", "jobId", "projectId", "episodeId", "shotId", "provider", "createdAt", "prompt", "references", "acceptedImagePath", "expectedOutput"];
+  if (value?.schemaVersion === 1) exactKeys(value, requestKeys, "codex_storyboard_cli_request_invalid");
+  else if (value?.schemaVersion === 2) exactKeys(value, [...requestKeys, "spatialControl"], "codex_storyboard_cli_request_invalid");
+  else fail("codex_storyboard_cli_request_invalid", EXIT.request);
+  if (value.provider !== PROVIDER) fail("codex_storyboard_cli_request_invalid", EXIT.request);
   for (const field of ["jobId", "projectId", "episodeId", "shotId"]) {
     if (!validIdentifier(value[field], 96)) fail("codex_storyboard_cli_request_invalid", EXIT.request);
   }
@@ -91,6 +101,23 @@ function validateRequest(value) {
     hasIdentity ||= reference.usage === "face_identity" || reference.usage === "body_costume";
   }
   if (!hasSpatial || !hasIdentity || (value.acceptedImagePath !== null && typeof value.acceptedImagePath !== "string")) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+  if (value.schemaVersion === 2) {
+    const referencesById = new Map(value.references.map((reference) => [reference.id, reference]));
+    if (value.references.filter((reference) => reference.usage === "spatial_authority").length !== 1 || value.references.filter((reference) => reference.usage === "environment_reference").length !== 1 || value.references.some((reference) => SPATIAL_REFERENCE_USAGES.has(reference.usage) && OLD_CANDIDATE_INSTRUCTION.test(reference.instruction))) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+    const spatial = value.spatialControl;
+    exactKeys(spatial, ["stageId", "stageRevision", "stageDigest", "shotId", "snapshotId", "cameraId", "cameraDigest", "panoramaAssetId", "panoramaSha256", "artifacts"], "codex_storyboard_cli_request_invalid");
+    for (const field of ["stageId", "shotId", "snapshotId", "cameraId", "panoramaAssetId"]) if (!validIdentifier(spatial[field], 160)) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+    if (!Number.isSafeInteger(spatial.stageRevision) || spatial.stageRevision < 1 || !validDigest(spatial.stageDigest) || !validDigest(spatial.cameraDigest) || !validDigest(spatial.panoramaSha256) || spatial.shotId !== value.shotId || !Array.isArray(spatial.artifacts) || spatial.artifacts.length !== SPATIAL_ARTIFACT_KINDS.size) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+    const artifactKinds = new Set();
+    for (const artifact of spatial.artifacts) {
+      exactKeys(artifact, ["kind", "referenceId", "sha256"], "codex_storyboard_cli_request_invalid");
+      if (!SPATIAL_ARTIFACT_KINDS.has(artifact.kind) || artifactKinds.has(artifact.kind) || !validDigest(artifact.sha256)) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+      artifactKinds.add(artifact.kind);
+      const reference = referencesById.get(artifact.referenceId);
+      if (!reference || reference.usage !== SPATIAL_ARTIFACT_USAGE[artifact.kind] || reference.sha256 !== artifact.sha256) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+    }
+    if (artifactKinds.size !== SPATIAL_ARTIFACT_KINDS.size) fail("codex_storyboard_cli_request_invalid", EXIT.request);
+  }
   exactKeys(value.expectedOutput, ["candidatePath", "resultPath", "mimeTypes"], "codex_storyboard_cli_request_invalid");
   if (value.expectedOutput.candidatePath !== "outputs/candidate.png" || value.expectedOutput.resultPath !== "outputs/result.json"
     || JSON.stringify(value.expectedOutput.mimeTypes) !== JSON.stringify(["image/png"])) fail("codex_storyboard_cli_request_invalid", EXIT.request);
@@ -367,7 +394,23 @@ function compilePrompt(request) {
     spatialAuthorityRole ? `- Spatial authority role: ${spatialAuthorityRole}` : "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.",
     "- No text, captions, logos, signatures, or watermarks."
   ].join("\n");
-  return [...request.references.map((reference, index) => `Picture ${index + 1} [${reference.usage}]: ${reference.instruction}`), mandatory, request.prompt.primaryRequest].join("\n");
+  const references = request.schemaVersion === 2
+    ? [...request.references].sort((left, right) => spatialReferenceRank(left.usage) - spatialReferenceRank(right.usage))
+    : request.references;
+  const spatialLineage = request.schemaVersion === 2
+    ? [
+      "SPATIAL LINEAGE (non-visual provenance; do not render):",
+      `- Stage: ${request.spatialControl.stageId} rev ${request.spatialControl.stageRevision} digest ${request.spatialControl.stageDigest}`,
+      `- Shot snapshot: ${request.spatialControl.shotId} / ${request.spatialControl.snapshotId}`,
+      `- Camera: ${request.spatialControl.cameraId} digest ${request.spatialControl.cameraDigest}`,
+      `- Panorama: ${request.spatialControl.panoramaAssetId} sha256 ${request.spatialControl.panoramaSha256}`
+    ].join("\n")
+    : null;
+  return [...references.map((reference, index) => `Picture ${index + 1} [${reference.usage}]: ${reference.instruction}`), ...(spatialLineage ? [spatialLineage] : []), mandatory, request.prompt.primaryRequest].join("\n");
+}
+
+function spatialReferenceRank(usage) {
+  return ({ spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, pose_reference: 5, environment_reference: 6, face_identity: 7, body_costume: 7, prop_detail: 8, style_only: 9, lighting_only: 9, negative_example: 10 })[usage] ?? 11;
 }
 
 async function pathExists(filePath) {

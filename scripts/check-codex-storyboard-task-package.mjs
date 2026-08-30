@@ -341,6 +341,63 @@ assert.match(mandatoryPrompt, /Visible anatomy: both arms, both hands/);
 assert.match(mandatoryPrompt, /Camera and framing lock:/);
 assert.match(mandatoryPrompt, /No pose, composition, camera, framing, projection, or occlusion drift/);
 assert.match(mandatoryPrompt, /No text, captions, logos, signatures, or watermarks/);
+
+const spatialReferenceHash = Object.freeze({
+  color: "1", depth: "2", normal: "3", "character-id": "4", "prop-id": "5", pose: "6", environment: "7", li: "8", wei: "9"
+});
+const reference = (id, usage, instruction) => ({
+  id, usage, instruction, relativePath: `references/${id}.png`, sha256: sha(spatialReferenceHash[id]), width: 512, height: 512, mimeType: "image/png"
+});
+const spatialReferences = [
+  reference("color", "spatial_authority", "Camera-bound color pass."),
+  reference("depth", "spatial_depth", "Camera-bound metric depth pass."),
+  reference("normal", "spatial_normal", "Camera-bound world normal pass."),
+  reference("character-id", "character_id", "Character segmentation pass."),
+  reference("prop-id", "prop_id", "Prop segmentation pass."),
+  reference("pose", "pose_reference", "Complete humanoid pose projection."),
+  reference("environment", "environment_reference", "Perspective derived from the approved panorama."),
+  reference("li", "face_identity", "Li Baozhu identity and costume authority."),
+  reference("wei", "face_identity", "Wei Xun identity and costume authority.")
+];
+const spatialControl = {
+  stageId: "stage_yingdi_e01_tomb_v2",
+  stageRevision: 2,
+  stageDigest: "a".repeat(64),
+  shotId: "E01-S01-C19",
+  snapshotId: "stage_yingdi_e01_tomb_v2_E01-S01-C19",
+  cameraId: "E01-S01-C19-camera",
+  cameraDigest: "b".repeat(64),
+  panoramaAssetId: "yingdi-e01-tomb-v2-panorama",
+  panoramaSha256: "c".repeat(64),
+  artifacts: [
+    ["color", "color"], ["depth", "depth"], ["normal", "normal"],
+    ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]
+  ].map(([kind, referenceId], index) => ({ kind, referenceId, sha256: String(index + 1).repeat(64) }))
+};
+const spatialRequest = {
+  ...request,
+  schemaVersion: 2,
+  shotId: "E01-S01-C19",
+  references: spatialReferences,
+  spatialControl
+};
+assert.equal(runtime.validateCodexStoryboardRequest(spatialRequest).spatialControl.snapshotId, spatialControl.snapshotId, "schema-v2 spatial request is accepted");
+assert.equal(runtime.validateCodexStoryboardRequest(request).schemaVersion, 1, "schema-v1 request remains accepted unchanged");
+assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, spatialControl: { ...spatialControl, artifacts: spatialControl.artifacts.slice(1) } }), /spatial_artifacts_invalid/);
+assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, spatialControl: { ...spatialControl, shotId: "E01-S01-C20" } }), /spatial_shot_id_invalid/);
+assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, spatialControl: { ...spatialControl, artifacts: spatialControl.artifacts.map((item, index) => index === 0 ? { ...item, sha256: sha("f") } : item) } }), /spatial_artifact_hash_invalid/);
+assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, spatialControl: { ...spatialControl, artifacts: spatialControl.artifacts.map((item, index) => index === 5 ? { ...item, kind: "color" } : item) } }), /spatial_artifacts_invalid/);
+assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, references: spatialReferences.filter((item) => item.usage !== "environment_reference") }), /required_reference_usage_missing/);
+assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, references: spatialReferences.map((item) => item.id === "color" ? { ...item, instruction: "Use the prior storyboard candidate for framing." } : item) }), /spatial_instruction_invalid/);
+const reorderedSpatialPrompt = runtime.compileCodexStoryboardImageSpec({ ...spatialRequest, references: [...spatialReferences].reverse() }).compiledPrompt;
+const spatialPictureOrder = ["spatial_authority", "spatial_depth", "spatial_normal", "character_id", "prop_id", "pose_reference", "environment_reference", "face_identity", "face_identity"];
+let priorPicture = -1;
+for (const usage of spatialPictureOrder) {
+  const picture = reorderedSpatialPrompt.indexOf(`[${usage}]`, priorPicture + 1);
+  assert.ok(picture > priorPicture, `schema-v2 prompt orders ${usage} before later reference classes`);
+  priorPicture = picture;
+}
+assert.match(reorderedSpatialPrompt, /SPATIAL LINEAGE[\s\S]*stage_yingdi_e01_tomb_v2[\s\S]*E01-S01-C19-camera[\s\S]*yingdi-e01-tomb-v2-panorama/);
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, provider: "comfy" }), /provider_mismatch/);
 assert.equal(runtime.validateCodexStoryboardRequest({ ...request, prompt: { ...request.prompt, metadata: { lens: "35mm", locked: true } } }).prompt.metadata.lens, "35mm");
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...request, references: request.references.map((item, index) => index === 0 ? { ...item, relativePath: "../escape.png" } : item) }), /path_invalid/);
