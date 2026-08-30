@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile as writeTextFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -69,6 +69,31 @@ function state(snapshot, entityId) {
 
 const stage = buildYingdiTombStage();
 const initialManifest = buildYingdiInitialManifest(stage);
+const hash = (character) => character.repeat(64);
+function buildReadyManifest() {
+  const manifest = structuredClone(initialManifest);
+  manifest.reviewState = "approved";
+  manifest.videoGate = "ready";
+  manifest.panorama.sha256 = hash("a");
+  for (const shot of manifest.shots) {
+    shot.controlState = "ready";
+    shot.codexState = "completed";
+    shot.candidateState = "accepted";
+    shot.controlPack = {
+      stageId: manifest.stage.id,
+      stageRevision: manifest.stage.revision,
+      stageSha256: manifest.stage.sha256,
+      snapshotId: `${manifest.stage.id}_E01-S01-${shot.shotId}`,
+      cameraId: `E01-S01-${shot.shotId}-camera`,
+      cameraSha256: hash("b"),
+      panoramaSha256: manifest.panorama.sha256,
+      artifacts: ["color", "depth", "normal", "character_id", "prop_id", "pose"].map((kind, index) => ({ kind, sha256: hash(String(index + 1)) }))
+    };
+    shot.codexJob = { id: `codex-e01-${shot.shotId.toLowerCase()}`, requestSha256: hash("c"), resultSha256: hash("d") };
+    shot.candidate = { sha256: hash("e") };
+  }
+  return manifest;
+}
 assert.deepEqual(
   {
     schemaVersion: initialManifest.schemaVersion,
@@ -98,6 +123,19 @@ assert.ok(validateYingdiReviewManifest(duplicateManifestShot).errors.includes("m
 const inconsistentReview = structuredClone(initialManifest);
 inconsistentReview.reviewState = "approved";
 assert.ok(validateYingdiReviewManifest(inconsistentReview).errors.includes("review_state_inconsistent"), "manifest gate must reject approval with pending candidates");
+const missingManifestShot = structuredClone(initialManifest);
+missingManifestShot.shots.pop();
+assert.ok(validateYingdiReviewManifest(missingManifestShot).errors.includes("manifest_shots_invalid"), "manifest gate must reject a missing required shot");
+const unexpectedManifestShot = structuredClone(initialManifest);
+unexpectedManifestShot.shots[3].shotId = "C99";
+assert.ok(validateYingdiReviewManifest(unexpectedManifestShot).errors.includes("manifest_shots_invalid"), "manifest gate must reject an unexpected shot");
+const readyWithoutLineage = buildReadyManifest();
+readyWithoutLineage.panorama.sha256 = null;
+assert.ok(validateYingdiReviewManifest(readyWithoutLineage).errors.includes("ready_panorama_sha256_invalid"), "ready video gate must reject null panorama lineage");
+const readyWithInvalidCandidate = buildReadyManifest();
+readyWithInvalidCandidate.shots[0].candidate.sha256 = "not-a-sha256";
+assert.ok(validateYingdiReviewManifest(readyWithInvalidCandidate).errors.includes("ready_candidate_sha256_invalid:C19"), "ready video gate must reject invalid candidate lineage");
+assert.deepEqual(validateYingdiReviewManifest(buildReadyManifest()), { ok: true, errors: [] }, "ready video gate must accept only a fully hashed accepted lineage");
 const manifestRoot = await mkdtemp(path.join(os.tmpdir(), "yingdi-e01-manifest-"));
 const manifestPath = path.join(manifestRoot, "run-manifest.json");
 try {
@@ -106,6 +144,30 @@ try {
   assert.equal(validateYingdiReviewManifest(JSON.parse(await readFile(manifestPath, "utf8"))).ok, true, "written manifest must remain valid");
 } finally {
   await rm(manifestRoot, { recursive: true, force: true });
+}
+const cleanupRoot = await mkdtemp(path.join(os.tmpdir(), "yingdi-e01-manifest-cleanup-"));
+try {
+  const cleanupPath = path.join(cleanupRoot, "run-manifest.json");
+  await assert.rejects(
+    () => writeYingdiReviewManifest(cleanupPath, initialManifest, { randomUUID: () => "forced-rename-failure", rename: async () => { throw new Error("rename failed"); } }),
+    /rename failed/,
+    "manifest writer must surface a rename failure"
+  );
+  assert.deepEqual(await readdir(cleanupRoot), [], "failed manifest writes must clean their unique sibling temporary artifact");
+} finally {
+  await rm(cleanupRoot, { recursive: true, force: true });
+}
+const writeCleanupRoot = await mkdtemp(path.join(os.tmpdir(), "yingdi-e01-manifest-write-cleanup-"));
+try {
+  const writeCleanupPath = path.join(writeCleanupRoot, "run-manifest.json");
+  await assert.rejects(
+    () => writeYingdiReviewManifest(writeCleanupPath, initialManifest, { randomUUID: () => "forced-write-failure", writeFile: async (...argumentsList) => { await writeTextFile(...argumentsList); throw new Error("write failed"); } }),
+    /write failed/,
+    "manifest writer must surface a partial write failure"
+  );
+  assert.deepEqual(await readdir(writeCleanupRoot), [], "partial manifest writes must clean their unique sibling temporary artifact");
+} finally {
+  await rm(writeCleanupRoot, { recursive: true, force: true });
 }
 const reviewRendererSource = await readFile(new URL("./render-yingdi-e01-c19-c22-review.ps1", import.meta.url), "utf8");
 for (const parameter of ["C18Path", "C19Path", "C20Path", "C21Path", "C22Path", "C23Path", "OutputPath"]) assert.match(reviewRendererSource, new RegExp(`\\$${parameter}`), `review renderer must require explicit ${parameter}`);

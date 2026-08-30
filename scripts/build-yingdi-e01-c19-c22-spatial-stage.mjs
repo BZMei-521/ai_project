@@ -1,5 +1,5 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,6 +26,8 @@ const COFFIN_ASSEMBLY = {
   "coffin-end-foot": { position: [1.035, 0.66, 0], size: [0.08, 0.36, 0.62] }
 };
 const REVIEW_SHOTS = ["C19", "C20", "C21", "C22"];
+const CONTROL_ARTIFACT_KINDS = ["color", "depth", "normal", "character_id", "prop_id", "pose"];
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 function transform(position, rotation = IDENTITY, scale = UNIT_SCALE) { return { position, rotation, scale }; }
 function attachment(id, label, position) { return { id, label, localTransform: transform(position) }; }
@@ -207,11 +209,25 @@ export function buildYingdiInitialManifest(stage = buildYingdiTombStage()) {
       controlState: "pending",
       codexState: "pending",
       candidateState: "pending",
-      controlPack: { sha256: null },
-      codexJob: { sha256: null },
+      controlPack: {
+        stageId: stage.id,
+        stageRevision: stage.revision,
+        stageSha256: null,
+        snapshotId: `${stage.id}_E01-S01-${shotId}`,
+        cameraId: `E01-S01-${shotId}-camera`,
+        cameraSha256: null,
+        panoramaSha256: null,
+        artifacts: CONTROL_ARTIFACT_KINDS.map((kind) => ({ kind, sha256: null }))
+      },
+      codexJob: { id: null, requestSha256: null, resultSha256: null },
       candidate: { sha256: null }
     }))
   };
+}
+
+function hasSha256(value) { return typeof value === "string" && SHA256_PATTERN.test(value); }
+function validArtifactLineage(artifacts) {
+  return Array.isArray(artifacts) && artifacts.length === CONTROL_ARTIFACT_KINDS.length && artifacts.every((artifact, index) => artifact?.kind === CONTROL_ARTIFACT_KINDS[index] && hasSha256(artifact.sha256));
 }
 
 export function validateYingdiReviewManifest(manifest) {
@@ -226,17 +242,39 @@ export function validateYingdiReviewManifest(manifest) {
   if ((manifest.reviewState === "approved") !== allAccepted) errors.push("review_state_inconsistent");
   if (!["blocked", "ready"].includes(manifest.videoGate)) errors.push("video_gate_invalid");
   if (manifest.videoGate === "ready" && !allAccepted) errors.push("video_gate_requires_accepted_candidates");
+  if (manifest.videoGate === "ready") {
+    const stage = manifest.stage;
+    if (!stage || typeof stage.id !== "string" || !stage.id || !Number.isSafeInteger(stage.revision) || stage.revision < 1 || !hasSha256(stage.sha256)) errors.push("ready_stage_lineage_invalid");
+    const panorama = manifest.panorama;
+    if (!panorama || typeof panorama.assetId !== "string" || !panorama.assetId || !hasSha256(panorama.sha256)) errors.push("ready_panorama_sha256_invalid");
+    for (const shot of shots) {
+      const shotId = shot?.shotId ?? "unknown";
+      const control = shot?.controlPack;
+      if (!control || control.stageId !== stage?.id || control.stageRevision !== stage?.revision || control.stageSha256 !== stage?.sha256 || control.snapshotId !== `${stage?.id}_E01-S01-${shotId}` || control.cameraId !== `E01-S01-${shotId}-camera` || !hasSha256(control.cameraSha256) || control.panoramaSha256 !== panorama?.sha256 || !validArtifactLineage(control.artifacts)) errors.push(`ready_control_lineage_invalid:${shotId}`);
+      const job = shot?.codexJob;
+      if (!job || typeof job.id !== "string" || !job.id.trim() || !hasSha256(job.requestSha256) || !hasSha256(job.resultSha256)) errors.push(`ready_codex_lineage_invalid:${shotId}`);
+      if (!hasSha256(shot?.candidate?.sha256)) errors.push(`ready_candidate_sha256_invalid:${shotId}`);
+    }
+  }
   return { ok: errors.length === 0, errors };
 }
 
-export async function writeYingdiReviewManifest(manifestPath, manifest) {
+export async function writeYingdiReviewManifest(manifestPath, manifest, operations = {}) {
   if (!path.isAbsolute(manifestPath)) throw new Error("manifest path must be absolute");
   const validation = validateYingdiReviewManifest(manifest);
   if (!validation.ok) throw new Error(`manifest invalid: ${validation.errors.join(",")}`);
+  const writeManifestFile = operations.writeFile ?? writeFile;
+  const renameManifestFile = operations.rename ?? rename;
+  const removeManifestFile = operations.rm ?? rm;
+  const createTemporaryId = operations.randomUUID ?? randomUUID;
   await mkdir(path.dirname(manifestPath), { recursive: true });
-  const temporaryPath = path.join(path.dirname(manifestPath), `.${path.basename(manifestPath)}.${process.pid}.tmp`);
-  await writeFile(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, manifestPath);
+  const temporaryPath = path.join(path.dirname(manifestPath), `.${path.basename(manifestPath)}.${createTemporaryId()}.tmp`);
+  try {
+    await writeManifestFile(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await renameManifestFile(temporaryPath, manifestPath);
+  } finally {
+    await Promise.resolve().then(() => removeManifestFile(temporaryPath, { force: true })).catch(() => {});
+  }
 }
 
 async function main() {
