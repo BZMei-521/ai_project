@@ -89,8 +89,8 @@ function buildReadyManifest() {
       panoramaSha256: manifest.panorama.sha256,
       artifacts: ["color", "depth", "normal", "character_id", "prop_id", "pose"].map((kind, index) => ({ kind, sha256: hash(String(index + 1)) }))
     };
-    shot.codexJob = { id: `codex-e01-${shot.shotId.toLowerCase()}`, requestSha256: hash("c"), resultSha256: hash("d") };
     shot.candidate = { sha256: hash("e") };
+    shot.codexJob = { id: `codex-e01-${shot.shotId.toLowerCase()}`, requestSha256: hash("c"), resultSha256: hash("d"), outputSha256: shot.candidate.sha256 };
   }
   return manifest;
 }
@@ -135,6 +135,15 @@ assert.ok(validateYingdiReviewManifest(readyWithoutLineage).errors.includes("rea
 const readyWithInvalidCandidate = buildReadyManifest();
 readyWithInvalidCandidate.shots[0].candidate.sha256 = "not-a-sha256";
 assert.ok(validateYingdiReviewManifest(readyWithInvalidCandidate).errors.includes("ready_candidate_sha256_invalid:C19"), "ready video gate must reject invalid candidate lineage");
+const readyWithPendingControl = buildReadyManifest();
+readyWithPendingControl.shots[0].controlState = "pending";
+assert.ok(validateYingdiReviewManifest(readyWithPendingControl).errors.includes("ready_control_state_invalid:C19"), "ready video gate must reject a pending control pack");
+const readyWithPendingCodex = buildReadyManifest();
+readyWithPendingCodex.shots[0].codexState = "pending";
+assert.ok(validateYingdiReviewManifest(readyWithPendingCodex).errors.includes("ready_codex_state_invalid:C19"), "ready video gate must reject a pending Codex job");
+const readyWithOutputMismatch = buildReadyManifest();
+readyWithOutputMismatch.shots[0].codexJob.outputSha256 = hash("f");
+assert.ok(validateYingdiReviewManifest(readyWithOutputMismatch).errors.includes("ready_output_candidate_sha256_mismatch:C19"), "ready video gate must reject an output hash that does not equal the candidate hash");
 assert.deepEqual(validateYingdiReviewManifest(buildReadyManifest()), { ok: true, errors: [] }, "ready video gate must accept only a fully hashed accepted lineage");
 const manifestRoot = await mkdtemp(path.join(os.tmpdir(), "yingdi-e01-manifest-"));
 const manifestPath = path.join(manifestRoot, "run-manifest.json");

@@ -219,7 +219,7 @@ export function buildYingdiInitialManifest(stage = buildYingdiTombStage()) {
         panoramaSha256: null,
         artifacts: CONTROL_ARTIFACT_KINDS.map((kind) => ({ kind, sha256: null }))
       },
-      codexJob: { id: null, requestSha256: null, resultSha256: null },
+      codexJob: { id: null, requestSha256: null, resultSha256: null, outputSha256: null },
       candidate: { sha256: null }
     }))
   };
@@ -249,11 +249,15 @@ export function validateYingdiReviewManifest(manifest) {
     if (!panorama || typeof panorama.assetId !== "string" || !panorama.assetId || !hasSha256(panorama.sha256)) errors.push("ready_panorama_sha256_invalid");
     for (const shot of shots) {
       const shotId = shot?.shotId ?? "unknown";
+      if (shot?.controlState !== "ready") errors.push(`ready_control_state_invalid:${shotId}`);
+      if (shot?.codexState !== "completed") errors.push(`ready_codex_state_invalid:${shotId}`);
+      if (shot?.candidateState !== "accepted") errors.push(`ready_candidate_state_invalid:${shotId}`);
       const control = shot?.controlPack;
       if (!control || control.stageId !== stage?.id || control.stageRevision !== stage?.revision || control.stageSha256 !== stage?.sha256 || control.snapshotId !== `${stage?.id}_E01-S01-${shotId}` || control.cameraId !== `E01-S01-${shotId}-camera` || !hasSha256(control.cameraSha256) || control.panoramaSha256 !== panorama?.sha256 || !validArtifactLineage(control.artifacts)) errors.push(`ready_control_lineage_invalid:${shotId}`);
       const job = shot?.codexJob;
-      if (!job || typeof job.id !== "string" || !job.id.trim() || !hasSha256(job.requestSha256) || !hasSha256(job.resultSha256)) errors.push(`ready_codex_lineage_invalid:${shotId}`);
+      if (!job || typeof job.id !== "string" || !job.id.trim() || !hasSha256(job.requestSha256) || !hasSha256(job.resultSha256) || !hasSha256(job.outputSha256) || job.requestSha256 === job.resultSha256 || job.resultSha256 === job.outputSha256) errors.push(`ready_codex_lineage_invalid:${shotId}`);
       if (!hasSha256(shot?.candidate?.sha256)) errors.push(`ready_candidate_sha256_invalid:${shotId}`);
+      else if (job?.outputSha256 !== shot.candidate.sha256) errors.push(`ready_output_candidate_sha256_mismatch:${shotId}`);
     }
   }
   return { ok: errors.length === 0, errors };
