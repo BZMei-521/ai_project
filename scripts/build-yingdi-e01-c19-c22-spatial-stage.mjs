@@ -9,6 +9,21 @@ const IDENTITY = [0, 0, 0, 1];
 const UNIT_SCALE = [1, 1, 1];
 const ROOM_SURFACES = ["tomb-room", "tomb-room-ceiling", "tomb-room-wall-west", "tomb-room-wall-east", "tomb-room-wall-north", "tomb-room-wall-south"];
 const COFFIN_SURFACES = ["coffin-shell", "coffin-side-north", "coffin-side-south", "coffin-end-head", "coffin-end-foot"];
+const ROOM_ASSEMBLY = {
+  "tomb-room": { position: [0, 0.05, 0], size: [6.4, 0.1, 3.8] },
+  "tomb-room-ceiling": { position: [0, 4.75, 0], size: [6.4, 0.1, 3.8] },
+  "tomb-room-wall-west": { position: [-3.15, 2.4, 0], size: [0.1, 4.6, 3.8] },
+  "tomb-room-wall-east": { position: [3.15, 2.4, 0], size: [0.1, 4.6, 3.8] },
+  "tomb-room-wall-north": { position: [0, 2.4, -1.85], size: [6.2, 4.6, 0.1] },
+  "tomb-room-wall-south": { position: [0, 2.4, 1.85], size: [6.2, 4.6, 0.1] }
+};
+const COFFIN_ASSEMBLY = {
+  "coffin-shell": { position: [0, 0.44, 0], size: [2.15, 0.08, 0.78] },
+  "coffin-side-north": { position: [0, 0.66, -0.35], size: [2.15, 0.36, 0.08] },
+  "coffin-side-south": { position: [0, 0.66, 0.35], size: [2.15, 0.36, 0.08] },
+  "coffin-end-head": { position: [-1.035, 0.66, 0], size: [0.08, 0.36, 0.62] },
+  "coffin-end-foot": { position: [1.035, 0.66, 0], size: [0.08, 0.36, 0.62] }
+};
 
 function transform(position, rotation = IDENTITY, scale = UNIT_SCALE) { return { position, rotation, scale }; }
 function attachment(id, label, position) { return { id, label, localTransform: transform(position) }; }
@@ -41,6 +56,8 @@ function pointInGeometry(point, entity, current = entity.transform) {
   return entity.geometry.size.every((size, axis) => Math.abs(local[axis]) <= size / 2);
 }
 function gap(left, right) { return Math.hypot(...left.min.map((minimum, axis) => Math.max(0, minimum - right.max[axis], right.min[axis] - left.max[axis]))); }
+function boundsMatch(bounds, expected) { return [...bounds.min, ...bounds.max].every((value, index) => Math.abs(value - [...expected.min, ...expected.max][index]) < 1e-6); }
+function assemblyMatches(entities, assembly) { return Object.entries(assembly).every(([id, expected]) => { const entity = entities.get(id); return entity && entity.geometry.kind === "box" && entity.transform.rotation.every((value, index) => Math.abs(value - IDENTITY[index]) < 1e-8) && [...entity.transform.position, ...entity.geometry.size].every((value, index) => Math.abs(value - [...expected.position, ...expected.size][index]) < 1e-6); }); }
 function entityMap(stage) { return new Map((stage?.entities ?? []).map((entity) => [entity.id, entity])); }
 function snapshotState(snapshot, id) { return snapshot.entityStates?.find((state) => state.entityId === id) ?? null; }
 function manualCapabilities() {
@@ -91,12 +108,12 @@ export function buildYingdiTombStage() {
   const lidPinLocal = [0, -0.06, -0.39];
   const lidPosition = subtract(hingeWorld, rotate(lidPinLocal, lidRotation));
   const entities = [
-    box("tomb-room", "Tomb room stone floor", [0, -0.05, 0], [6.4, 0.1, 3.8], ["environment", "room", "surface"], { surface: "floor", dimensionsMetres: [6.4, 3.8, 4.8] }),
+    box("tomb-room", "Tomb room stone floor", [0, 0.05, 0], [6.4, 0.1, 3.8], ["environment", "room", "surface"], { surface: "floor", dimensionsMetres: [6.4, 4.8, 3.8], exteriorDimensionsMetres: [6.4, 4.8, 3.8] }),
     box("tomb-room-ceiling", "Tomb room stone ceiling", [0, 4.75, 0], [6.4, 0.1, 3.8], ["environment", "room", "surface"], { surface: "ceiling" }),
-    box("tomb-room-wall-west", "Tomb room west wall", [-3.15, 2.35, 0], [0.1, 4.7, 3.8], ["environment", "room", "surface"], { surface: "wall" }),
-    box("tomb-room-wall-east", "Tomb room east wall", [3.15, 2.35, 0], [0.1, 4.7, 3.8], ["environment", "room", "surface"], { surface: "wall" }),
-    box("tomb-room-wall-north", "Tomb room north wall", [0, 2.35, -1.85], [6.2, 4.7, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
-    box("tomb-room-wall-south", "Tomb room south wall", [0, 2.35, 1.85], [6.2, 4.7, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
+    box("tomb-room-wall-west", "Tomb room west wall", [-3.15, 2.4, 0], [0.1, 4.6, 3.8], ["environment", "room", "surface"], { surface: "wall" }),
+    box("tomb-room-wall-east", "Tomb room east wall", [3.15, 2.4, 0], [0.1, 4.6, 3.8], ["environment", "room", "surface"], { surface: "wall" }),
+    box("tomb-room-wall-north", "Tomb room north wall", [0, 2.4, -1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
+    box("tomb-room-wall-south", "Tomb room south wall", [0, 2.4, 1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
     box("stone-plinth", "Central stone plinth", [0, 0.2, 0], [2.6, 0.4, 1.25], ["environment", "collider"]),
     box("coffin-shell", "Hollow coffin bottom", [0, 0.44, 0], [2.15, 0.08, 0.78], ["prop", "coffin", "surface"], { dimensionsMetres: [2.15, 0.78, 0.44] }, [attachment("lid_hinge", "Lid hinge", [0, 0.4, -0.35])]),
     box("coffin-side-north", "Hollow coffin north side", [0, 0.66, -0.35], [2.15, 0.36, 0.08], ["prop", "coffin", "surface"]),
@@ -134,8 +151,14 @@ export function auditYingdiTombStage(stage) {
   if (!frame || frame.handedness !== "right" || frame.upAxis !== "y" || frame.unit !== "metre" || frame.scaleMode !== "metric") errors.push("coordinate_frame_invalid");
   if (JSON.stringify((stage?.snapshots ?? []).map((snapshot) => snapshot.shotId)) !== JSON.stringify(SHOTS)) errors.push("snapshot_order_invalid");
   if (stage?.cameras?.length !== 4) errors.push("camera_count_invalid");
-  if (!ROOM_SURFACES.every((id) => entities.has(id)) || entities.get("tomb-room")?.geometry?.size?.join(",") !== "6.4,0.1,3.8" || !roomInterior(entities)) errors.push("room_enclosure_invalid");
-  if (!COFFIN_SURFACES.every((id) => entities.has(id)) || entities.get("coffin-shell")?.geometry?.size?.join(",") !== "2.15,0.08,0.78" || entities.get("coffin-shell")?.metadata?.hollow !== undefined || !coffinInterior(entities)) errors.push("coffin_enclosure_invalid");
+  const roomBounds = ROOM_SURFACES.every((id) => entities.has(id)) ? { min: [-3.2, 0, -1.9], max: [3.2, 4.8, 1.9] } : null;
+  const actualRoomBounds = ROOM_SURFACES.every((id) => entities.has(id)) ? (() => { const values = ROOM_SURFACES.map((id) => geometryAabb(entities.get(id))); return { min: values[0].min.map((_, axis) => Math.min(...values.map((value) => value.min[axis]))), max: values[0].max.map((_, axis) => Math.max(...values.map((value) => value.max[axis]))) }; })() : null;
+  const coffinBounds = COFFIN_SURFACES.every((id) => entities.has(id)) ? { min: [-1.075, 0.4, -0.39], max: [1.075, 0.84, 0.39] } : null;
+  const actualCoffinBounds = COFFIN_SURFACES.every((id) => entities.has(id)) ? (() => { const values = COFFIN_SURFACES.map((id) => geometryAabb(entities.get(id))); return { min: values[0].min.map((_, axis) => Math.min(...values.map((value) => value.min[axis]))), max: values[0].max.map((_, axis) => Math.max(...values.map((value) => value.max[axis]))) }; })() : null;
+  if (!roomBounds || !roomInterior(entities)) errors.push("room_enclosure_invalid");
+  else if (!assemblyMatches(entities, ROOM_ASSEMBLY) || !boundsMatch(actualRoomBounds, roomBounds)) errors.push("room_assembly_invalid");
+  if (!coffinBounds || entities.get("coffin-shell")?.metadata?.hollow !== undefined || !coffinInterior(entities)) errors.push("coffin_enclosure_invalid");
+  else if (!assemblyMatches(entities, COFFIN_ASSEMBLY) || !boundsMatch(actualCoffinBounds, coffinBounds)) errors.push("coffin_assembly_invalid");
   for (const id of ["coffin-lid", "phoenix-panel", "li-baozhu-full-body", "wei-xun-full-body", "grave-shovel", "jade-dagger"]) if (!entities.has(id)) errors.push(`missing_entity:${id}`);
   const panel = entities.get("phoenix-panel");
   const shovel = entities.get("grave-shovel");

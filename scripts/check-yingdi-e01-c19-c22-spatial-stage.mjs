@@ -37,6 +37,22 @@ function pointInGeometry(point, entity, transform = entity.transform) {
   return entity.geometry.size.every((size, axis) => Math.abs(local[axis]) <= size / 2);
 }
 function gap(left, right) { return Math.hypot(...left.min.map((minimum, axis) => Math.max(0, minimum - right.max[axis], right.min[axis] - left.max[axis]))); }
+function assembledBounds(entities, ids) {
+  const bounds = ids.map((id) => geometryAabb(entities.get(id)));
+  return {
+    min: bounds[0].min.map((_, axis) => Math.min(...bounds.map((value) => value.min[axis]))),
+    max: bounds[0].max.map((_, axis) => Math.max(...bounds.map((value) => value.max[axis])))
+  };
+}
+function roundedBounds(bounds) { return { min: bounds.min.map((value) => Number(value.toFixed(6))), max: bounds.max.map((value) => Number(value.toFixed(6))) }; }
+function cavityBounds(entities) {
+  const floor = geometryAabb(entities.get("coffin-shell"));
+  const north = geometryAabb(entities.get("coffin-side-north"));
+  const south = geometryAabb(entities.get("coffin-side-south"));
+  const head = geometryAabb(entities.get("coffin-end-head"));
+  const foot = geometryAabb(entities.get("coffin-end-foot"));
+  return { min: [head.max[0], floor.max[1], north.max[2]], max: [foot.min[0], Math.min(north.max[1], south.max[1]), south.min[2]] };
+}
 function state(snapshot, entityId) {
   const value = snapshot.entityStates.find((item) => item.entityId === entityId);
   assert.ok(value, `${snapshot.shotId} must include ${entityId}`);
@@ -57,13 +73,15 @@ assert.equal(stage.entities.some((item) => item.geometry.kind === "box" && item.
 assert.equal(entities.get("tomb-room").geometry.size.join(","), "6.4,0.1,3.8", "tomb-room is its physical floor surface");
 assert.equal(entities.get("coffin-shell").geometry.size.join(","), "2.15,0.08,0.78", "coffin-shell is its physical bottom surface");
 assert.equal(entities.get("coffin-shell").metadata.hollow, undefined, "coffin hollow volume must come from wall geometry, not metadata");
+assert.deepEqual(roundedBounds(assembledBounds(entities, roomSurfaceIds)), { min: [-3.2, 0, -1.9], max: [3.2, 4.8, 1.9] }, "assembled room exterior must be exactly 6.4m x 4.8m x 3.8m");
+assert.deepEqual(roundedBounds(assembledBounds(entities, coffinSurfaceIds)), { min: [-1.075, 0.4, -0.39], max: [1.075, 0.84, 0.39] }, "assembled coffin exterior must be exactly 2.15m x 0.44m x 0.78m");
 
 const panel = entities.get("phoenix-panel");
 const shovel = entities.get("grave-shovel");
 assert.deepEqual(panel.transform.rotation, identity, "panel normal must point upward");
 assert.ok(gap(geometryAabb(shovel), geometryAabb(panel)) >= 0.08, "rotation-aware shovel-panel gap must be at least 0.08 m");
 
-const interior = { min: [-0.995, 0.48, -0.31], max: [0.995, 0.88, 0.31] };
+const interior = cavityBounds(entities);
 for (const snapshot of stage.snapshots) {
   assert.equal(snapshot.cameraId, `${snapshot.shotId}-camera`);
   assert.deepEqual(snapshot.entityStates.map((item) => item.entityId), stage.entities.map((item) => item.id), `${snapshot.shotId} must capture every entity transform`);
@@ -80,7 +98,8 @@ for (const snapshot of stage.snapshots) {
 
 const colliderEntities = stage.entities.filter((entity) => entity.metadata.collider === true);
 for (const camera of stage.cameras) for (const collider of colliderEntities) assert.equal(pointInGeometry(camera.position, collider), false, `${camera.id} must remain outside rotated ${collider.id} collider geometry`);
-const roomInterior = { min: [-3.1, 0, -1.8], max: [3.1, 4.7, 1.8] };
+const roomBounds = assembledBounds(entities, roomSurfaceIds);
+const roomInterior = { min: [-3.1, roomBounds.min[1] + 0.1, -1.8], max: [3.1, roomBounds.max[1] - 0.1, 1.8] };
 for (const camera of stage.cameras.filter((item) => /C19|C20/.test(item.id))) assert.equal(pointInAabb(camera.target, roomInterior), true, `${camera.id} target must remain inside the physical tomb room`);
 
 assert.deepEqual(auditYingdiTombStage(stage), { ok: true, errors: [] });
@@ -90,10 +109,17 @@ assert.ok(auditYingdiTombStage(solidRoom).errors.includes("room_enclosure_invali
 const solidCoffin = structuredClone(stage);
 solidCoffin.entities = solidCoffin.entities.filter((entity) => !coffinSurfaceIds.slice(1).includes(entity.id));
 assert.ok(auditYingdiTombStage(solidCoffin).errors.includes("coffin_enclosure_invalid"), "old solid-coffin form must fail audit");
+const misplacedRoomSurface = structuredClone(stage);
+misplacedRoomSurface.entities.find((entity) => entity.id === "tomb-room-wall-west").transform.position[0] += 0.1;
+assert.ok(auditYingdiTombStage(misplacedRoomSurface).errors.includes("room_assembly_invalid"), "misplaced room wall must fail assembled-room audit");
+const wrongSizeCoffinSurface = structuredClone(stage);
+wrongSizeCoffinSurface.entities.find((entity) => entity.id === "coffin-side-north").geometry.size[1] = 0.35;
+assert.ok(auditYingdiTombStage(wrongSizeCoffinSurface).errors.includes("coffin_assembly_invalid"), "wrong-size coffin wall must fail assembled-coffin audit");
 const brokenHinge = structuredClone(stage);
 brokenHinge.entities.find((entity) => entity.id === "coffin-lid").attachments[0].localTransform.position = [0, 0, 0];
 assert.ok(auditYingdiTombStage(brokenHinge).errors.includes("lid_hinge_distance_invalid:E01-S01-C19"), "invalid hinge attachment must fail audit");
 const bodyOutside = structuredClone(stage);
-bodyOutside.snapshots[0].entityStates.find((item) => item.entityId === "li-baozhu-full-body").transform.position = [0, 1.1, 0];
+bodyOutside.snapshots[0].entityStates.find((item) => item.entityId === "li-baozhu-full-body").transform.position = [0, 0.8, 0];
+assert.equal(pointInAabb([0, 0.8, 0], interior), true, "negative full-body fixture must keep Li root inside the actual cavity");
 assert.ok(auditYingdiTombStage(bodyOutside).errors.includes("li_geometry_outside_coffin:E01-S01-C19"), "root-contained but full-body-invalid capsule must fail audit");
 console.log("PASS E01 C19-C22 tomb stage physical constraints");

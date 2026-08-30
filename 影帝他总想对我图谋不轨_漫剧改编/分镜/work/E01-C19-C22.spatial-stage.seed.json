@@ -40,7 +40,7 @@
       "transform": {
         "position": [
           0,
-          -0.05,
+          0.05,
           0
         ],
         "rotation": [
@@ -69,8 +69,13 @@
         "surface": "floor",
         "dimensionsMetres": [
           6.4,
-          3.8,
-          4.8
+          4.8,
+          3.8
+        ],
+        "exteriorDimensionsMetres": [
+          6.4,
+          4.8,
+          3.8
         ]
       }
     },
@@ -125,7 +130,7 @@
       "transform": {
         "position": [
           -3.15,
-          2.35,
+          2.4,
           0
         ],
         "rotation": [
@@ -144,7 +149,7 @@
         "kind": "box",
         "size": [
           0.1,
-          4.7,
+          4.6,
           3.8
         ]
       },
@@ -165,7 +170,7 @@
       "transform": {
         "position": [
           3.15,
-          2.35,
+          2.4,
           0
         ],
         "rotation": [
@@ -184,7 +189,7 @@
         "kind": "box",
         "size": [
           0.1,
-          4.7,
+          4.6,
           3.8
         ]
       },
@@ -205,7 +210,7 @@
       "transform": {
         "position": [
           0,
-          2.35,
+          2.4,
           -1.85
         ],
         "rotation": [
@@ -224,7 +229,7 @@
         "kind": "box",
         "size": [
           6.2,
-          4.7,
+          4.6,
           0.1
         ]
       },
@@ -245,7 +250,7 @@
       "transform": {
         "position": [
           0,
-          2.35,
+          2.4,
           1.85
         ],
         "rotation": [
@@ -264,7 +269,7 @@
         "kind": "box",
         "size": [
           6.2,
-          4.7,
+          4.6,
           0.1
         ]
       },
@@ -1176,7 +1181,7 @@
           "transform": {
             "position": [
               0,
-              -0.05,
+              0.05,
               0
             ],
             "rotation": [
@@ -1220,7 +1225,7 @@
           "transform": {
             "position": [
               -3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -1242,7 +1247,7 @@
           "transform": {
             "position": [
               3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -1264,7 +1269,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               -1.85
             ],
             "rotation": [
@@ -1286,7 +1291,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               1.85
             ],
             "rotation": [
@@ -1636,7 +1641,7 @@
           "transform": {
             "position": [
               0,
-              -0.05,
+              0.05,
               0
             ],
             "rotation": [
@@ -1680,7 +1685,7 @@
           "transform": {
             "position": [
               -3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -1702,7 +1707,7 @@
           "transform": {
             "position": [
               3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -1724,7 +1729,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               -1.85
             ],
             "rotation": [
@@ -1746,7 +1751,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               1.85
             ],
             "rotation": [
@@ -2096,7 +2101,7 @@
           "transform": {
             "position": [
               0,
-              -0.05,
+              0.05,
               0
             ],
             "rotation": [
@@ -2140,7 +2145,7 @@
           "transform": {
             "position": [
               -3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -2162,7 +2167,7 @@
           "transform": {
             "position": [
               3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -2184,7 +2189,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               -1.85
             ],
             "rotation": [
@@ -2206,7 +2211,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               1.85
             ],
             "rotation": [
@@ -2556,7 +2561,7 @@
           "transform": {
             "position": [
               0,
-              -0.05,
+              0.05,
               0
             ],
             "rotation": [
@@ -2600,7 +2605,7 @@
           "transform": {
             "position": [
               -3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -2622,7 +2627,7 @@
           "transform": {
             "position": [
               3.15,
-              2.35,
+              2.4,
               0
             ],
             "rotation": [
@@ -2644,7 +2649,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               -1.85
             ],
             "rotation": [
@@ -2666,7 +2671,7 @@
           "transform": {
             "position": [
               0,
-              2.35,
+              2.4,
               1.85
             ],
             "rotation": [
