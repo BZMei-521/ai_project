@@ -124,6 +124,12 @@ function validateRequest(value) {
   return value;
 }
 
+function canonicalReferenceSequence(request) {
+  return request.schemaVersion === 2
+    ? [...request.references].sort((left, right) => spatialReferenceRank(left.usage) - spatialReferenceRank(right.usage))
+    : request.references;
+}
+
 function inspectPng(bytes, invalidCode, exitCode) {
   if (bytes.length < 8 || !bytes.subarray(0, 8).equals(PNG_SIGNATURE)) fail(invalidCode, exitCode);
   let offset = 8;
@@ -311,7 +317,7 @@ async function loadPackage(packageArgument) {
   }
   validateRequest(request);
   const snapshots = [];
-  for (const reference of request.references) {
+  for (const reference of canonicalReferenceSequence(request)) {
     const filePath = path.resolve(packagePath, reference.relativePath);
     if (!hasContainedPath(packagePath, filePath)) fail("codex_storyboard_cli_reference_path_invalid", EXIT.path);
     const bytes = await stableRead(filePath, packagePath, "codex_storyboard_cli_reference_missing", EXIT.reference);
@@ -394,9 +400,7 @@ function compilePrompt(request) {
     spatialAuthorityRole ? `- Spatial authority role: ${spatialAuthorityRole}` : "- No pose, composition, camera, framing, projection, or occlusion drift from spatial authority.",
     "- No text, captions, logos, signatures, or watermarks."
   ].join("\n");
-  const references = request.schemaVersion === 2
-    ? [...request.references].sort((left, right) => spatialReferenceRank(left.usage) - spatialReferenceRank(right.usage))
-    : request.references;
+  const references = canonicalReferenceSequence(request);
   const spatialLineage = request.schemaVersion === 2
     ? [
       "SPATIAL LINEAGE (non-visual provenance; do not render):",
@@ -562,8 +566,8 @@ async function main() {
       manifestPath: staged.manifestPath,
       inspectionCleanup: "Delete inspectionRoot after built-in image generation finishes; it contains immutable staged snapshots for this handoff.",
       referencedImagePaths: staged.referencedImagePaths,
-      referenceUsages: job.request.references.map(({ usage }) => usage),
-      referenceInstructions: job.request.references.map(({ instruction }) => instruction),
+      referenceUsages: job.snapshots.map(({ reference }) => reference.usage),
+      referenceInstructions: job.snapshots.map(({ reference }) => reference.instruction),
       compiledPrompt
     }, null, 2)}\n`);
     return;
@@ -575,7 +579,7 @@ async function main() {
     manifestPath = await realpath(manifestArgument);
     manifest = JSON.parse((await stableRead(manifestPath, path.dirname(manifestPath), "codex_storyboard_cli_manifest_invalid", EXIT.request)).toString("utf8"));
   } catch { fail("codex_storyboard_cli_manifest_invalid", EXIT.request); }
-  if (!isPlainObject(manifest) || manifest.schemaVersion !== 1 || manifest.jobId !== job.request.jobId || manifest.packagePath !== job.packagePath || manifest.requestDigest !== job.requestDigest || manifest.compiledPrompt !== compiledPrompt || manifest.promptDigest !== sha256(Buffer.from(compiledPrompt)) || JSON.stringify(manifest.references?.map(({ id, sha256: digest, stagedPath }) => ({ id, sha256: digest, stagedPath }))) !== JSON.stringify(job.request.references.map(({ id, sha256: digest }, index) => ({ id, sha256: digest, stagedPath: manifest.references?.[index]?.stagedPath })))) fail("codex_storyboard_cli_manifest_invalid", EXIT.request);
+  if (!isPlainObject(manifest) || manifest.schemaVersion !== 1 || manifest.jobId !== job.request.jobId || manifest.packagePath !== job.packagePath || manifest.requestDigest !== job.requestDigest || manifest.compiledPrompt !== compiledPrompt || manifest.promptDigest !== sha256(Buffer.from(compiledPrompt)) || JSON.stringify(manifest.references?.map(({ id, sha256: digest, stagedPath }) => ({ id, sha256: digest, stagedPath }))) !== JSON.stringify(job.snapshots.map(({ reference: { id, sha256: digest } }, index) => ({ id, sha256: digest, stagedPath: manifest.references?.[index]?.stagedPath })))) fail("codex_storyboard_cli_manifest_invalid", EXIT.request);
   let candidate;
   let candidatePath;
   try {

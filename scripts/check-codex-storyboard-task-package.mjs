@@ -474,6 +474,41 @@ const writeFixturePackage = async () => {
   await writeFile(path.join(fixturePackage, "request.json"), `${JSON.stringify(request, null, 2)}\n`);
   return request;
 };
+const makeSpatialFixtureRequest = () => {
+  const request = makeFixtureRequest();
+  const canonicalReferences = [
+    ["color", "spatial_authority", "Camera-bound color pass."],
+    ["depth", "spatial_depth", "Camera-bound metric depth pass."],
+    ["normal", "spatial_normal", "Camera-bound world normal pass."],
+    ["character-id", "character_id", "Character segmentation pass."],
+    ["prop-id", "prop_id", "Prop segmentation pass."],
+    ["pose", "pose_reference", "Complete humanoid pose projection."],
+    ["environment", "environment_reference", "Perspective derived from the approved panorama."],
+    ["li", "face_identity", "Li Baozhu identity and costume authority."],
+    ["wei", "face_identity", "Wei Xun identity and costume authority."]
+  ].map(([id, usage, instruction]) => ({
+    id, usage, instruction, relativePath: `references/${id}.png`, sha256: hashBytes(tinyPng), width: 1, height: 1, mimeType: "image/png"
+  }));
+  return {
+    ...request,
+    schemaVersion: 2,
+    jobId: "job-cli-v2",
+    shotId: "E01-S01-C19",
+    references: [...canonicalReferences].reverse(),
+    spatialControl: {
+      stageId: "stage_yingdi_e01_tomb_v2", stageRevision: 2, stageDigest: "a".repeat(64), shotId: "E01-S01-C19",
+      snapshotId: "stage_yingdi_e01_tomb_v2_E01-S01-C19", cameraId: "E01-S01-C19-camera", cameraDigest: "b".repeat(64),
+      panoramaAssetId: "yingdi-e01-tomb-v2-panorama", panoramaSha256: "c".repeat(64),
+      artifacts: [["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]]
+        .map(([kind, referenceId]) => ({ kind, referenceId, sha256: hashBytes(tinyPng) }))
+    }
+  };
+};
+const writeSpatialFixturePackage = async (request) => {
+  await mkdir(path.join(fixturePackage, "references"), { recursive: true });
+  await Promise.all(request.references.map((reference) => writeFile(path.join(fixturePackage, reference.relativePath), tinyPng)));
+  await writeFile(path.join(fixturePackage, "request.json"), `${JSON.stringify(request, null, 2)}\n`);
+};
 let currentInspectionManifest;
 const withManifest = (args) => args[0] === "complete" && currentInspectionManifest && !args.includes("--inspection-manifest") ? [...args, "--inspection-manifest", currentInspectionManifest] : args;
 const runCli = (...args) => spawnSync(process.execPath, [cliPath, ...withManifest(args)], { encoding: "utf8" });
@@ -525,6 +560,37 @@ try {
   assert.deepEqual(inspectionManifest.references.map((reference) => reference.stagedPath), inspection.referencedImagePaths);
   assert.ok(inspection.referencedImagePaths.every((filePath) => filePath.startsWith(inspection.inspectionRoot)), "inspect exposes staged immutable snapshots rather than source paths");
   assert.ok((await Promise.all(inspection.referencedImagePaths.map((filePath) => lstat(filePath)))).every((entry) => !entry.isSymbolicLink()), "inspect never emits a symlink path");
+
+  const reversedSpatialRequest = makeSpatialFixtureRequest();
+  await writeSpatialFixturePackage(reversedSpatialRequest);
+  const reversedSpatialInspection = runCli("inspect", "--package", fixturePackage);
+  assert.equal(reversedSpatialInspection.status, 0, reversedSpatialInspection.stderr);
+  const reversedSpatial = JSON.parse(reversedSpatialInspection.stdout);
+  const spatialReferenceRank = { spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, pose_reference: 5, environment_reference: 6, face_identity: 7, body_costume: 7, prop_detail: 8, style_only: 9, lighting_only: 9, negative_example: 10 };
+  const canonicalSpatialReferences = [...reversedSpatialRequest.references].sort((left, right) => spatialReferenceRank[left.usage] - spatialReferenceRank[right.usage]);
+  for (const [index, reference] of canonicalSpatialReferences.entries()) {
+    assert.equal(reversedSpatial.referenceUsages[index], reference.usage, `Picture ${index + 1} exposes its canonical usage`);
+    assert.equal(reversedSpatial.referenceInstructions[index], reference.instruction, `Picture ${index + 1} exposes its canonical instruction`);
+    assert.equal(path.basename(reversedSpatial.referencedImagePaths[index]), `${String(index + 1).padStart(2, "0")}-${reference.id}.png`, `Picture ${index + 1} stages its matching image`);
+    assert.match(reversedSpatial.compiledPrompt, new RegExp(`Picture ${index + 1} \\[${reference.usage}\\]: ${reference.instruction.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}`));
+  }
+  assert.deepEqual(JSON.parse(await readFile(reversedSpatial.manifestPath, "utf8")).references.map((reference) => reference.id), canonicalSpatialReferences.map((reference) => reference.id), "manifest uses the same canonical handoff order as Picture labels");
+  await writeFile(fixtureCandidate, tinyPng);
+  const reversedSpatialCompletion = runCliWithEnv({ CODEX_STORYBOARD_OPERATOR_BIN: helperPath }, "complete", "--package", fixturePackage, "--candidate", fixtureCandidate, "--inspection-manifest", reversedSpatial.manifestPath);
+  assert.equal(reversedSpatialCompletion.status, 0, reversedSpatialCompletion.stderr);
+  await rm(path.join(fixturePackage, "outputs"), { recursive: true, force: true });
+  const absentSpatialControl = structuredClone(reversedSpatialRequest);
+  delete absentSpatialControl.spatialControl;
+  await writeSpatialFixturePackage(absentSpatialControl);
+  const missingSpatialControl = runCli("inspect", "--package", fixturePackage);
+  assert.equal(missingSpatialControl.status, 10, missingSpatialControl.stderr);
+  const inconsistentSpatialControl = structuredClone(reversedSpatialRequest);
+  inconsistentSpatialControl.spatialControl.shotId = "E01-S01-C20";
+  await writeSpatialFixturePackage(inconsistentSpatialControl);
+  const inconsistentSpatial = runCli("inspect", "--package", fixturePackage);
+  assert.equal(inconsistentSpatial.status, 10, inconsistentSpatial.stderr);
+  await rm(reversedSpatial.inspectionRoot, { recursive: true, force: true });
+  await writeFixturePackage();
 
   await writeFile(path.join(fixturePackage, cliRequest.references[1].relativePath), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==", "base64"));
   const mutated = runCli("inspect", "--package", fixturePackage);

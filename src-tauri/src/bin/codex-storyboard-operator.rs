@@ -864,10 +864,7 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
         .and_then(Value::as_array)
         .ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
     let schema_version = o.get("schemaVersion").and_then(Value::as_u64);
-    let mut ordered_refs = refs.iter().collect::<Vec<_>>();
-    if schema_version == Some(2) {
-        ordered_refs.sort_by_key(|reference| spatial_reference_rank(reference.get("usage").and_then(Value::as_str).unwrap_or_default()));
-    }
+    let ordered_refs = canonical_reference_sequence(refs, schema_version);
     let mut parts = Vec::new();
     for (i, r) in ordered_refs.iter().enumerate() {
         let m = r
@@ -900,6 +897,14 @@ fn compiled_prompt(request: &Value) -> Result<String, String> {
     parts.push(format!("MANDATORY HARD CONSTRAINTS:\n{subject_line}\n- Visible anatomy: {anatomy}. No fused, missing, duplicated, or malformed limbs/hands.\n- Camera and framing lock: {framing}\n{spatial_line}\n- No text, captions, logos, signatures, or watermarks."));
     parts.push(string(prompt, "primaryRequest")?.to_string());
     Ok(parts.join("\n"))
+}
+
+fn canonical_reference_sequence<'a>(references: &'a [Value], schema_version: Option<u64>) -> Vec<&'a Value> {
+    let mut ordered = references.iter().collect::<Vec<_>>();
+    if schema_version == Some(2) {
+        ordered.sort_by_key(|reference| spatial_reference_rank(reference.get("usage").and_then(Value::as_str).unwrap_or_default()));
+    }
+    ordered
 }
 
 fn spatial_reference_rank(usage: &str) -> u8 {
@@ -1013,7 +1018,11 @@ fn checked_manifest(
         .ok_or_else(|| "codex_storyboard_operator_manifest_invalid".to_string())?;
     let canonical_root = fs::canonicalize(manifest_root)
         .map_err(|_| "codex_storyboard_operator_manifest_invalid".to_string())?;
-    for (entry_value, reference_value) in refs.iter().zip(current) {
+    let ordered_current = canonical_reference_sequence(
+        current,
+        o.get("schemaVersion").and_then(Value::as_u64),
+    );
+    for (entry_value, reference_value) in refs.iter().zip(ordered_current) {
         let entry = entry_value
             .as_object()
             .ok_or_else(|| "codex_storyboard_operator_manifest_invalid".to_string())?;
