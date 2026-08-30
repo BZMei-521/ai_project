@@ -9,6 +9,89 @@ import { build } from "esbuild";
 import typescript from "typescript";
 import * as runtime from "../src/services/generation-providers/codexTaskPackageRuntime.mjs";
 
+const spatialReferencesBundle = await build({
+  entryPoints: [path.join(process.cwd(), "src/services/generation-providers/spatialCodexReferences.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const spatialReferenceBuilder = await import(
+  `data:text/javascript;base64,${Buffer.from(spatialReferencesBundle.outputFiles[0].text).toString("base64")}`
+);
+
+const spatialSha = (character) => character.repeat(64);
+const spatialPack = {
+  schemaVersion: 1,
+  stageId: "stage-1",
+  stageRevision: 2,
+  stageDigest: spatialSha("a"),
+  shotId: "shot-1",
+  snapshotId: "snapshot-1",
+  cameraId: "camera-1",
+  cameraDigest: spatialSha("b"),
+  artifacts: [
+    ["color", "C:/controls/color.png"], ["depth", "C:/controls/depth.png"],
+    ["normal", "C:/controls/normal.png"], ["character_id", "C:/controls/characters.png"],
+    ["prop_id", "C:/controls/props.png"], ["pose", "C:/controls/pose.png"]
+  ].map(([kind, filePath], index) => ({ kind, filePath, sha256: spatialSha(String(index + 1)), width: 1920, height: 1080 })),
+  expectedHands: [],
+  expectedProps: [],
+  packDigest: spatialSha("f")
+};
+const spatialInput = () => ({
+  shotId: "shot-1",
+  controlPack: structuredClone(spatialPack),
+  panorama: { assetId: "panorama-1", masterPath: "C:/panorama/master.png", masterSha256: spatialSha("c"), width: 4096, height: 2048 },
+  environmentPerspectivePath: "C:/panorama/perspective.png",
+  identities: [
+    { id: "li", sourcePath: "C:/identities/li.png", instruction: "Li identity and costume authority." },
+    { id: "wei", sourcePath: "C:/identities/wei.png", instruction: "Wei identity and costume authority." }
+  ],
+  props: [{ id: "jade", sourcePath: "C:/props/jade.png", instruction: "Jade prop detail authority." }],
+  isCurrentPack: true
+});
+const buildSpatialSelections = spatialReferenceBuilder.buildSpatialCodexReferenceSelections;
+const selectedSpatial = buildSpatialSelections(spatialInput());
+assert.deepEqual(
+  selectedSpatial.references.map(({ id, usage, sourcePath }) => ({ id, usage, sourcePath })),
+  [
+    { id: "color", usage: "spatial_authority", sourcePath: "C:/controls/color.png" },
+    { id: "depth", usage: "spatial_depth", sourcePath: "C:/controls/depth.png" },
+    { id: "normal", usage: "spatial_normal", sourcePath: "C:/controls/normal.png" },
+    { id: "character-id", usage: "character_id", sourcePath: "C:/controls/characters.png" },
+    { id: "prop-id", usage: "prop_id", sourcePath: "C:/controls/props.png" },
+    { id: "pose", usage: "pose_reference", sourcePath: "C:/controls/pose.png" },
+    { id: "environment", usage: "environment_reference", sourcePath: "C:/panorama/perspective.png" },
+    { id: "li", usage: "face_identity", sourcePath: "C:/identities/li.png" },
+    { id: "wei", usage: "face_identity", sourcePath: "C:/identities/wei.png" },
+    { id: "jade", usage: "prop_detail", sourcePath: "C:/props/jade.png" }
+  ]
+);
+assert.match(selectedSpatial.references[0].instruction, /camera.*projection.*only.*color/i);
+assert.match(selectedSpatial.references[1].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
+assert.match(selectedSpatial.references[6].instruction, /appearance.*panorama-derived perspective/i);
+assert.deepEqual(selectedSpatial.spatialControl, {
+  stageId: "stage-1", stageRevision: 2, stageDigest: spatialSha("a"), shotId: "shot-1", snapshotId: "snapshot-1", cameraId: "camera-1", cameraDigest: spatialSha("b"),
+  panoramaAssetId: "panorama-1", panoramaSha256: spatialSha("c"),
+  artifacts: [
+    ["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]
+  ].map(([kind, referenceId], index) => ({ kind, referenceId, sha256: spatialSha(String(index + 1)) }))
+});
+for (const [name, mutate] of [
+  ["stale pack", (input) => { input.isCurrentPack = false; }],
+  ["missing artifact", (input) => { input.controlPack.artifacts.pop(); }],
+  ["wrong shot", (input) => { input.controlPack.shotId = "shot-2"; }],
+  ["duplicate source", (input) => { input.identities[1].sourcePath = "C:/controls/../controls/color.png"; }],
+  ["non panorama master", (input) => { input.panorama.width = 4000; }],
+  ["old candidate", (input) => { input.environmentPerspectivePath = "C:/old-storyboard-candidate.png"; }]
+]) {
+  const invalid = spatialInput();
+  mutate(invalid);
+  assert.throws(() => buildSpatialSelections(invalid), { message: new RegExp(`spatial_codex_${name.replaceAll(" ", "_")}`) });
+}
+
 const comfyBundle = await build({
   entryPoints: [path.join(process.cwd(), "src/modules/comfy-pipeline/comfyService.ts")],
   bundle: true,

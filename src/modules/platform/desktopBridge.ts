@@ -3,6 +3,9 @@ import {
   CODEX_STORYBOARD_REFERENCE_USAGES,
   type CodexStoryboardExportReceipt as CoreCodexStoryboardExportReceipt,
   type CodexStoryboardImportReceipt as CoreCodexStoryboardImportReceipt,
+  CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS,
+  type CodexStoryboardSpatialArtifactKind,
+  type CodexStoryboardSpatialBinding,
   type CodexStoryboardReferenceUsage,
   type CodexStoryboardRequest
 } from "../../services/generation-providers/codexTaskPackage";
@@ -77,8 +80,7 @@ export type CodexStoryboardReferenceSelection = {
   sourcePath: string;
 };
 
-export type PrepareCodexStoryboardJobRequest = {
-  schemaVersion: 1;
+type PrepareCodexStoryboardJobRequestBase = {
   jobId: string;
   projectId: string;
   episodeId: string;
@@ -90,6 +92,10 @@ export type PrepareCodexStoryboardJobRequest = {
   references: CodexStoryboardReferenceSelection[];
   acceptedImagePath: string | null;
 };
+
+export type PrepareCodexStoryboardJobRequest =
+  | (PrepareCodexStoryboardJobRequestBase & { schemaVersion: 1; spatialControl?: never })
+  | (PrepareCodexStoryboardJobRequestBase & { schemaVersion: 2; spatialControl: CodexStoryboardSpatialBinding });
 
 export type CodexStoryboardTaskStatus =
   | "queued"
@@ -172,7 +178,7 @@ export function createPrepareCodexStoryboardJobRequest(
   request: PrepareCodexStoryboardJobRequest
 ): PrepareCodexStoryboardJobRequest {
   const projectPath = requireCodexAbsolutePath(request.projectPath, "codex_storyboard_project_path_missing");
-  if (request.schemaVersion !== 1 || request.provider !== "codex_task_package") {
+  if ((request.schemaVersion !== 1 && request.schemaVersion !== 2) || request.provider !== "codex_task_package") {
     throw new Error("codex_storyboard_provider_mismatch");
   }
   if (!Array.isArray(request.references) || request.references.length === 0 || request.references.length > 16) {
@@ -219,19 +225,54 @@ export function createPrepareCodexStoryboardJobRequest(
   const acceptedImagePath = request.acceptedImagePath === null
     ? null
     : requireCodexAbsolutePath(request.acceptedImagePath, "codex_storyboard_accepted_path_invalid");
-  return {
-    schemaVersion: 1,
+  const base = {
     jobId: requireCodexIdentifier(request.jobId, "jobId"),
     projectId: requireCodexIdentifier(request.projectId, "projectId"),
     episodeId: requireCodexIdentifier(request.episodeId, "episodeId"),
     shotId: requireCodexIdentifier(request.shotId, "shotId"),
-    provider: "codex_task_package",
+    provider: "codex_task_package" as const,
     createdAt: String(request.createdAt ?? "").trim(),
     projectPath,
     prompt: structuredClone(request.prompt),
     references,
     acceptedImagePath
   };
+  if (request.schemaVersion === 1) return { ...base, schemaVersion: 1 };
+  validateCodexStoryboardSpatialBinding(request.spatialControl, request.shotId, references);
+  return { ...base, schemaVersion: 2, spatialControl: structuredClone(request.spatialControl) };
+}
+
+function validateCodexStoryboardSpatialBinding(
+  binding: CodexStoryboardSpatialBinding,
+  requestShotId: string,
+  references: CodexStoryboardReferenceSelection[]
+): void {
+  if (!binding || binding.shotId !== requestShotId) throw new Error("codex_storyboard_spatial_shot_id_invalid");
+  for (const field of ["stageId", "shotId", "snapshotId", "cameraId", "panoramaAssetId"] as const) {
+    if (!/^[a-zA-Z0-9_-]{1,160}$/.test(binding[field] ?? "")) throw new Error("codex_storyboard_spatial_control_invalid");
+  }
+  if (!Number.isSafeInteger(binding.stageRevision) || binding.stageRevision < 1 || !/^[a-f0-9]{64}$/.test(binding.stageDigest) || !/^[a-f0-9]{64}$/.test(binding.cameraDigest) || !/^[a-f0-9]{64}$/.test(binding.panoramaSha256)) {
+    throw new Error("codex_storyboard_spatial_control_invalid");
+  }
+  if (!Array.isArray(binding.artifacts) || binding.artifacts.length !== CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.length) {
+    throw new Error("codex_storyboard_spatial_artifacts_invalid");
+  }
+  const usages: Record<CodexStoryboardSpatialArtifactKind, CodexStoryboardReferenceSelection["usage"]> = {
+    color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", pose: "pose_reference"
+  };
+  const referencesById = new Map(references.map((reference) => [reference.id, reference]));
+  const kinds = new Set<CodexStoryboardSpatialArtifactKind>();
+  for (const artifact of binding.artifacts) {
+    if (!CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.includes(artifact.kind) || kinds.has(artifact.kind) || !/^[a-f0-9]{64}$/.test(artifact.sha256)) {
+      throw new Error("codex_storyboard_spatial_artifacts_invalid");
+    }
+    const reference = referencesById.get(artifact.referenceId);
+    if (!reference || reference.usage !== usages[artifact.kind]) throw new Error("codex_storyboard_spatial_artifacts_invalid");
+    kinds.add(artifact.kind);
+  }
+  if (CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS.some((kind) => !kinds.has(kind)) || !references.some((reference) => reference.usage === "environment_reference")) {
+    throw new Error("codex_storyboard_spatial_artifacts_invalid");
+  }
 }
 
 export function createImportCodexStoryboardResultRequest(

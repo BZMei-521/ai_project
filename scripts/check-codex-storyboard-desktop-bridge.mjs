@@ -49,6 +49,27 @@ assert.deepEqual(sixteen.references.map(({ id }) => id), Array.from({ length: 16
 expectPrepareError(request(17), "codex_storyboard_references_invalid");
 assert.equal(sixteen.references.filter(({ usage }) => usage === "style_only").length, 14);
 
+const spatialControl = {
+  stageId: "stage-1", stageRevision: 2, stageDigest: "a".repeat(64), shotId: "shot-1", snapshotId: "snapshot-1", cameraId: "camera-1", cameraDigest: "b".repeat(64),
+  panoramaAssetId: "panorama-1", panoramaSha256: "c".repeat(64),
+  artifacts: [
+    ["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]
+  ].map(([kind, referenceId], index) => ({ kind, referenceId, sha256: String(index + 1).repeat(64) }))
+};
+const v2 = {
+  ...request(9),
+  schemaVersion: 2,
+  references: [
+    reference(0, "spatial_authority"), reference(1, "spatial_depth"), reference(2, "spatial_normal"), reference(3, "character_id"), reference(4, "prop_id"), reference(5, "pose_reference"), reference(6, "environment_reference"), reference(7, "face_identity"), reference(8, "face_identity")
+  ].map((item, index) => ({ ...item, id: ["color", "depth", "normal", "character-id", "prop-id", "pose", "environment", "li", "wei"][index], sourcePath: `C:/assets/${["color", "depth", "normal", "character-id", "prop-id", "pose", "environment", "li", "wei"][index]}.png` })),
+  spatialControl
+};
+const preparedV2 = prepare(v2);
+assert.equal(preparedV2.schemaVersion, 2);
+assert.deepEqual(preparedV2.spatialControl, spatialControl, "schema-v2 preserves the explicit spatial binding verbatim");
+expectPrepareError({ ...v2, spatialControl: { ...spatialControl, shotId: "other-shot" } }, "codex_storyboard_spatial_shot_id_invalid");
+expectPrepareError({ ...v2, spatialControl: { ...spatialControl, artifacts: spatialControl.artifacts.slice(1) } }, "codex_storyboard_spatial_artifacts_invalid");
+
 const duplicateId = request(2);
 duplicateId.references[1].id = duplicateId.references[0].id;
 expectPrepareError(duplicateId, "codex_storyboard_reference_id_invalid");
