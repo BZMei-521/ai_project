@@ -12,9 +12,9 @@ import {
 
 const seedPath = "影帝他总想对我图谋不轨_漫剧改编/分镜/work/E01-C19-C22.spatial-stage.seed.json";
 const shots = ["E01-S01-C19", "E01-S01-C20", "E01-S01-C21", "E01-S01-C22"];
-const roomSurfaceIds = ["tomb-room", "tomb-room-ceiling", "tomb-room-wall-west", "tomb-room-wall-east", "tomb-room-wall-north", "tomb-room-wall-south"];
+const roomSurfaceIds = ["tomb-room", "tomb-room-ceiling", "tomb-room-wall-west", "tomb-room-wall-east", "tomb-room-wall-north-left", "tomb-room-wall-north-right", "tomb-room-wall-north-lintel", "tomb-room-wall-south"];
 const coffinSurfaceIds = ["coffin-shell", "coffin-side-north", "coffin-side-south", "coffin-end-head", "coffin-end-foot"];
-const requiredIds = [...roomSurfaceIds, ...coffinSurfaceIds, "coffin-lid", "phoenix-panel", "li-baozhu-full-body", "wei-xun-full-body", "jade-dagger", "grave-shovel"];
+const requiredIds = [...roomSurfaceIds, ...coffinSurfaceIds, "tomb-entrance-threshold", "tomb-entrance-frame-left", "tomb-entrance-frame-right", "tomb-entrance-frame-lintel", "tomb-corridor-floor", "tomb-corridor-end", "coffin-lid", "phoenix-panel", "li-baozhu-full-body", "wei-xun-full-body", "jade-dagger", "grave-shovel"];
 const identity = [0, 0, 0, 1];
 
 function multiply(left, right) { return [left[3] * right[0] + left[0] * right[3] + left[1] * right[2] - left[2] * right[1], left[3] * right[1] - left[0] * right[2] + left[1] * right[3] + left[2] * right[0], left[3] * right[2] + left[0] * right[1] - left[1] * right[0] + left[2] * right[3], left[3] * right[3] - left[0] * right[0] - left[1] * right[1] - left[2] * right[2]]; }
@@ -87,7 +87,7 @@ function buildReadyManifest() {
       cameraId: `E01-S01-${shot.shotId}-camera`,
       cameraSha256: hash("b"),
       panoramaSha256: manifest.panorama.sha256,
-      artifacts: ["color", "depth", "normal", "character_id", "prop_id", "pose"].map((kind, index) => ({ kind, sha256: hash(String(index + 1)) }))
+      artifacts: ["color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"].map((kind, index) => ({ kind, sha256: hash(String(index + 1)) }))
     };
     shot.candidate = { sha256: hash("e") };
     shot.codexJob = { id: `codex-e01-${shot.shotId.toLowerCase()}`, requestSha256: hash("c"), resultSha256: hash("d"), outputSha256: shot.candidate.sha256 };
@@ -188,7 +188,8 @@ assert.doesNotMatch(reviewRendererSource, /\.AddRange\(/, "review renderer must 
 const rawSeed = await readFile(seedPath, "utf8");
 assert.ok(rawSeed.endsWith("\n"), "fixture serialization must end with a newline");
 assert.deepEqual(JSON.parse(rawSeed), stage, "fixture must exactly equal the deterministic builder output");
-assert.equal(stage.id, "stage_yingdi_e01_tomb_v2");
+assert.equal(stage.id, "stage_yingdi_e01_tomb_v3");
+assert.equal(stage.revision, 7);
 assert.deepEqual(stage.coordinateFrame, { handedness: "right", upAxis: "y", unit: "metre", origin: [0, 0, 0], forward: [0, 0, -1], groundY: 0, scaleMode: "metric" });
 assert.deepEqual(stage.snapshots.map((item) => item.shotId), shots);
 assert.equal(stage.cameras.length, 4);

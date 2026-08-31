@@ -40,7 +40,7 @@ function collection(value, field, errors, entity) {
 export function validateExchange(scene) {
   const errors = [];
   if (!scene || typeof scene !== "object" || Array.isArray(scene)) return { valid: false, errors: [{ entity: "scene", field: "scene", message: "must be an object" }] };
-  unknown(scene, new Set(["schemaVersion", "coordinateSystem", "id", "label", "source", "camera", "entities", "relations"]), "scene", errors, "scene");
+  unknown(scene, new Set(["schemaVersion", "coordinateSystem", "id", "label", "source", "camera", "environment", "entities", "relations"]), "scene", errors, "scene");
   if (scene.schemaVersion !== 1) issue(errors, "schemaVersion", "must equal 1");
   if (scene.coordinateSystem !== "RH_Y_UP_METRES") issue(errors, "coordinateSystem", "must equal RH_Y_UP_METRES");
   if (!safeId(scene.id)) issue(errors, "id", "must be an ASCII-safe identifier of at most 128 characters");
@@ -52,6 +52,17 @@ export function validateExchange(scene) {
     for (const field of ["stageId", "shotId", "snapshotId", "cameraId"]) if (!safeId(scene.source[field])) issue(errors, `source.${field}`, "must be an ASCII-safe identifier of at most 128 characters");
     if (!Number.isInteger(scene.source.stageRevision) || scene.source.stageRevision < 0) issue(errors, "source.stageRevision", "must be a non-negative integer");
     if (!HEX64.test(scene.source.stageDigest)) issue(errors, "source.stageDigest", "must be a SHA-256 hex digest");
+  }
+  const environmentKeys = new Set(["panoramaPath", "panoramaSha256", "projection", "anchor", "yawDegrees", "geometryAuthority"]);
+  if (scene.environment !== undefined && (!scene.environment || typeof scene.environment !== "object" || Array.isArray(scene.environment))) issue(errors, "environment", "must be an object");
+  else if (scene.environment) {
+    unknown(scene.environment, environmentKeys, "environment", errors, "scene");
+    if (!text(scene.environment.panoramaPath)) issue(errors, "environment.panoramaPath", "must be a non-empty path");
+    if (!HEX64.test(scene.environment.panoramaSha256)) issue(errors, "environment.panoramaSha256", "must be a SHA-256 hex digest");
+    if (scene.environment.projection !== "equirectangular_world_anchor") issue(errors, "environment.projection", "must equal equirectangular_world_anchor");
+    vector(scene.environment.anchor, "environment.anchor", errors, "environment");
+    if (!finite(scene.environment.yawDegrees) || Math.abs(scene.environment.yawDegrees) > 360) issue(errors, "environment.yawDegrees", "must be within -360 and 360");
+    if (scene.environment.geometryAuthority !== false) issue(errors, "environment.geometryAuthority", "must remain false");
   }
   const cameraKeys = new Set(["position", "target", "up", "fov", "near", "far", "width", "height"]);
   if (!scene.camera || typeof scene.camera !== "object" || Array.isArray(scene.camera)) issue(errors, "camera", "must be an object");

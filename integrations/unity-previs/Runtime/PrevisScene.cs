@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
 using UnityEngine;
 
 namespace StoryboardPrevis {
@@ -14,10 +16,12 @@ public sealed class PrevisScene : IDisposable {
     public readonly Dictionary<Renderer,float> GeometryScales=new Dictionary<Renderer,float>();
     readonly List<Material> materials=new List<Material>();
     readonly List<Action> updateBones=new List<Action>();
+    Texture2D panoramaTexture;
     public void Load(ExchangeScene input) {
         var errors=SpaceMap.Validate(input); if(errors.Length>0) throw new Exception(string.Join("; ",errors));
         Dispose(); OriginalJson=JsonUtility.ToJson(input,true); Data=JsonUtility.FromJson<ExchangeScene>(OriginalJson);
         Root=new GameObject("Previs stage");
+        LoadEnvironment();
         foreach(var e in Data.entities) {
             var go=new GameObject(e.label??e.id);go.transform.SetParent(Root.transform,false);
             go.transform.localPosition=SpaceMap.Position(e.position);go.transform.localRotation=SpaceMap.Rotation(e.rotation);go.transform.localScale=e.scale;Entities.Add(e.id,go);
@@ -40,6 +44,21 @@ public sealed class PrevisScene : IDisposable {
         var cameraObject=new GameObject("Shot camera");cameraObject.transform.SetParent(Root.transform,false);Camera=cameraObject.AddComponent<Camera>();Camera.enabled=false;Camera.clearFlags=CameraClearFlags.SolidColor;Camera.backgroundColor=new Color(.055f,.07f,.09f);Camera.allowHDR=false;Camera.allowMSAA=false;
         ApplyCamera();UpdateGeometry();
     }
+    void LoadEnvironment() {
+        var environment=Data.environment;if(environment==null)return;
+        if(!File.Exists(environment.panoramaPath))throw new Exception("fixed environment panorama missing: "+environment.panoramaPath);
+        var bytes=File.ReadAllBytes(environment.panoramaPath);string digest;
+        using(var sha=SHA256.Create())digest=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-","").ToLowerInvariant();
+        if(digest!=environment.panoramaSha256.ToLowerInvariant())throw new Exception("fixed environment panorama hash mismatch");
+        panoramaTexture=new Texture2D(2,2,TextureFormat.RGB24,false,true){wrapMode=TextureWrapMode.Repeat,filterMode=FilterMode.Bilinear};
+        if(!panoramaTexture.LoadImage(bytes,false))throw new Exception("fixed environment panorama decode failed");
+    }
+    void ApplyEnvironmentMaterial(Material material,string entityId) {
+        var entity=Array.Find(Data.entities,item=>item.id==entityId);
+        if(entity?.role!="environment"||panoramaTexture==null)return;
+        material.SetFloat("_UsePanorama",1);material.SetTexture("_PanoramaTex",panoramaTexture);
+        material.SetVector("_PanoramaAnchor",SpaceMap.Position(Data.environment.anchor));material.SetFloat("_PanoramaYaw",Data.environment.yawDegrees*Mathf.Deg2Rad);
+    }
     public void LoadJson(string json) {Load(JsonUtility.FromJson<ExchangeScene>(json));OriginalJson=json;}
     public void LoadFile(string path) {
         var raw=System.IO.File.ReadAllText(path);var parsed=JsonUtility.FromJson<ExchangeScene>(raw);
@@ -51,7 +70,7 @@ public sealed class PrevisScene : IDisposable {
     GameObject Primitive(string entityId,string kind,float[] tint) {
         var shape=kind=="box"?PrimitiveType.Cube:kind=="sphere"?PrimitiveType.Sphere:kind=="cylinder"?PrimitiveType.Cylinder:PrimitiveType.Capsule;
         var obj=GameObject.CreatePrimitive(shape); var shader=Resources.Load<Shader>("Control"); if(shader==null) throw new Exception("Previs Control shader missing");
-        var mat=new Material(shader);mat.SetColor("_Color",new Color(tint[0],tint[1],tint[2],1));materials.Add(mat);var renderer=obj.GetComponent<Renderer>();renderer.sharedMaterial=mat;Renderers.Add(renderer,entityId);return obj;
+        var mat=new Material(shader);mat.SetColor("_Color",new Color(tint[0],tint[1],tint[2],1));ApplyEnvironmentMaterial(mat,entityId);materials.Add(mat);var renderer=obj.GetComponent<Renderer>();renderer.sharedMaterial=mat;Renderers.Add(renderer,entityId);return obj;
     }
     public void ApplyCamera() {var c=Data.camera;Camera.transform.position=SpaceMap.Position(c.position);Camera.transform.rotation=Quaternion.LookRotation(SpaceMap.Position(c.target-c.position),SpaceMap.Position(c.up));Camera.fieldOfView=c.fov;Camera.nearClipPlane=c.near;Camera.farClipPlane=c.far;Camera.aspect=(float)c.width/c.height;}
     public void UpdateGeometry() {foreach(var update in updateBones) update();Physics.SyncTransforms();}
@@ -100,6 +119,6 @@ public sealed class PrevisScene : IDisposable {
         foreach(var e in Data.entities) {var t=Entities[e.id].transform;e.position=SpaceMap.Position(t.localPosition);e.rotation=SpaceMap.Rotation(t.localRotation);e.scale=t.localScale;foreach(var j in e.joints){var jt=Joints[e.id][j.id];j.position=SpaceMap.Position(jt.localPosition);j.rotation=SpaceMap.Rotation(jt.localRotation);}}
         return JsonUtility.FromJson<ExchangeScene>(JsonUtility.ToJson(Data));
     }
-    public void Dispose() {if(Root!=null)UnityEngine.Object.DestroyImmediate(Root);foreach(var m in materials)if(m!=null)UnityEngine.Object.DestroyImmediate(m);materials.Clear();Entities.Clear();Joints.Clear();Renderers.Clear();GeometryScales.Clear();updateBones.Clear();Root=null;}
+    public void Dispose() {if(Root!=null)UnityEngine.Object.DestroyImmediate(Root);foreach(var m in materials)if(m!=null)UnityEngine.Object.DestroyImmediate(m);if(panoramaTexture!=null)UnityEngine.Object.DestroyImmediate(panoramaTexture);panoramaTexture=null;materials.Clear();Entities.Clear();Joints.Clear();Renderers.Clear();GeometryScales.Clear();updateBones.Clear();Root=null;}
 }
 }

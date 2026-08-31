@@ -25,7 +25,7 @@ const { computeSpatialCameraDigest, exportShotControlPack, validateSpatialContro
   `data:text/javascript;base64,${Buffer.from(bundle).toString("base64")}`
 );
 
-const kinds = ["color", "depth", "normal", "character_id", "prop_id", "pose"];
+const kinds = ["color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"];
 const hash = (digit) => digit.repeat(64);
 const camera = {
   id: "E01-01-C03-camera",
@@ -104,7 +104,7 @@ const pack = await exportShotControlPack({
 });
 
 assert.equal(renderCalls, 1);
-assert.equal(writerCalls, 6);
+assert.equal(writerCalls, 7);
 assert.deepEqual(writtenKinds, kinds);
 assert.deepEqual(pack.artifacts.map((item) => item.kind), kinds);
 assert.equal(pack.shotId, snapshot.shotId);

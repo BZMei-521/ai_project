@@ -3,19 +3,21 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ID = "stage_yingdi_e01_tomb_v2";
+const ID = "stage_yingdi_e01_tomb_v3";
 const CREATED_AT = "2026-08-30T00:00:00.000Z";
 const SHOTS = ["E01-S01-C19", "E01-S01-C20", "E01-S01-C21", "E01-S01-C22"];
 const IDENTITY = [0, 0, 0, 1];
 const UNIT_SCALE = [1, 1, 1];
-const ROOM_SURFACES = ["tomb-room", "tomb-room-ceiling", "tomb-room-wall-west", "tomb-room-wall-east", "tomb-room-wall-north", "tomb-room-wall-south"];
+const ROOM_SURFACES = ["tomb-room", "tomb-room-ceiling", "tomb-room-wall-west", "tomb-room-wall-east", "tomb-room-wall-north-left", "tomb-room-wall-north-right", "tomb-room-wall-north-lintel", "tomb-room-wall-south"];
 const COFFIN_SURFACES = ["coffin-shell", "coffin-side-north", "coffin-side-south", "coffin-end-head", "coffin-end-foot"];
 const ROOM_ASSEMBLY = {
   "tomb-room": { position: [0, 0.05, 0], size: [6.4, 0.1, 3.8] },
   "tomb-room-ceiling": { position: [0, 4.75, 0], size: [6.4, 0.1, 3.8] },
   "tomb-room-wall-west": { position: [-3.15, 2.4, 0], size: [0.1, 4.6, 3.8] },
   "tomb-room-wall-east": { position: [3.15, 2.4, 0], size: [0.1, 4.6, 3.8] },
-  "tomb-room-wall-north": { position: [0, 2.4, -1.85], size: [6.2, 4.6, 0.1] },
+  "tomb-room-wall-north-left": { position: [-1.85, 2.4, -1.85], size: [2.5, 4.6, 0.1] },
+  "tomb-room-wall-north-right": { position: [1.85, 2.4, -1.85], size: [2.5, 4.6, 0.1] },
+  "tomb-room-wall-north-lintel": { position: [0, 3.8, -1.85], size: [1.2, 1.8, 0.1] },
   "tomb-room-wall-south": { position: [0, 2.4, 1.85], size: [6.2, 4.6, 0.1] }
 };
 const COFFIN_ASSEMBLY = {
@@ -26,7 +28,7 @@ const COFFIN_ASSEMBLY = {
   "coffin-end-foot": { position: [1.035, 0.68, 0], size: [0.08, 0.4, 0.62] }
 };
 const REVIEW_SHOTS = ["C19", "C20", "C21", "C22"];
-const CONTROL_ARTIFACT_KINDS = ["color", "depth", "normal", "character_id", "prop_id", "pose"];
+const CONTROL_ARTIFACT_KINDS = ["color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"];
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 function transform(position, rotation = IDENTITY, scale = UNIT_SCALE) { return { position, rotation, scale }; }
@@ -91,7 +93,7 @@ function roomInterior(entities) {
   const ceiling = entities.get("tomb-room-ceiling");
   const west = entities.get("tomb-room-wall-west");
   const east = entities.get("tomb-room-wall-east");
-  const north = entities.get("tomb-room-wall-north");
+  const north = entities.get("tomb-room-wall-north-left");
   const south = entities.get("tomb-room-wall-south");
   if (![floor, ceiling, west, east, north, south].every(Boolean)) return null;
   return { min: [geometryAabb(west).max[0], geometryAabb(floor).max[1], geometryAabb(north).max[2]], max: [geometryAabb(east).min[0], geometryAabb(ceiling).min[1], geometryAabb(south).min[2]] };
@@ -114,10 +116,21 @@ export function buildYingdiTombStage() {
   const entities = [
     box("tomb-room", "Tomb room stone floor", [0, 0.05, 0], [6.4, 0.1, 3.8], ["environment", "room", "surface"], { surface: "floor", dimensionsMetres: [6.4, 4.8, 3.8], exteriorDimensionsMetres: [6.4, 4.8, 3.8] }),
     box("tomb-room-ceiling", "Tomb room stone ceiling", [0, 4.75, 0], [6.4, 0.1, 3.8], ["environment", "room", "surface"], { surface: "ceiling" }),
-    box("tomb-room-wall-west", "Tomb room west wall", [-3.15, 2.4, 0], [0.1, 4.6, 3.8], ["environment", "room", "surface"], { surface: "wall" }),
-    box("tomb-room-wall-east", "Tomb room east wall", [3.15, 2.4, 0], [0.1, 4.6, 3.8], ["environment", "room", "surface"], { surface: "wall" }),
-    box("tomb-room-wall-north", "Tomb room north wall", [0, 2.4, -1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
-    box("tomb-room-wall-south", "Tomb room south wall", [0, 2.4, 1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
+    box("tomb-room-wall-west", "Tomb room west wall", [-3.15, 2.4, 0], [0.1, 4.6, 3.8], ["environment", "room", "surface", "room-wall"], { surface: "wall" }),
+    box("tomb-room-wall-east", "Tomb room east wall", [3.15, 2.4, 0], [0.1, 4.6, 3.8], ["environment", "room", "surface", "room-wall"], { surface: "wall" }),
+    box("tomb-room-wall-north-left", "Tomb room north wall left of entrance", [-1.85, 2.4, -1.85], [2.5, 4.6, 0.1], ["environment", "room", "surface", "room-wall"], { surface: "wall", entranceSide: "left" }),
+    box("tomb-room-wall-north-right", "Tomb room north wall right of entrance", [1.85, 2.4, -1.85], [2.5, 4.6, 0.1], ["environment", "room", "surface", "room-wall"], { surface: "wall", entranceSide: "right" }),
+    box("tomb-room-wall-north-lintel", "Tomb room north wall above entrance", [0, 3.8, -1.85], [1.2, 1.8, 0.1], ["environment", "room", "surface", "room-wall"], { surface: "wall", entranceSide: "lintel" }),
+    box("tomb-room-wall-south", "Tomb room south wall", [0, 2.4, 1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface", "room-wall"], { surface: "wall" }),
+    box("tomb-entrance-threshold", "Single north entrance threshold", [0, 0.12, -1.78], [1.2, 0.04, 0.22], ["environment", "entrance", "threshold"], { worldAnchor: { wall: "north", position: [0, 0.1, -1.85], width: 1.2, height: 2.8 } }),
+    box("tomb-entrance-frame-left", "North entrance frame left", [-0.65, 1.5, -1.76], [0.1, 2.8, 0.12], ["environment", "entrance-frame"], { surface: "door-frame" }),
+    box("tomb-entrance-frame-right", "North entrance frame right", [0.65, 1.5, -1.76], [0.1, 2.8, 0.12], ["environment", "entrance-frame"], { surface: "door-frame" }),
+    box("tomb-entrance-frame-lintel", "North entrance frame lintel", [0, 2.95, -1.76], [1.4, 0.1, 0.12], ["environment", "entrance-frame"], { surface: "door-frame" }),
+    box("tomb-corridor-floor", "Entrance corridor floor", [0, 0.05, -2.9], [1.4, 0.1, 2.0], ["environment", "corridor", "surface"], { surface: "floor" }),
+    box("tomb-corridor-ceiling", "Entrance corridor ceiling", [0, 3.0, -2.9], [1.4, 0.1, 2.0], ["environment", "corridor", "surface"], { surface: "ceiling" }),
+    box("tomb-corridor-wall-west", "Entrance corridor west wall", [-0.7, 1.5, -2.9], [0.1, 3.0, 2.0], ["environment", "corridor", "surface"], { surface: "wall" }),
+    box("tomb-corridor-wall-east", "Entrance corridor east wall", [0.7, 1.5, -2.9], [0.1, 3.0, 2.0], ["environment", "corridor", "surface"], { surface: "wall" }),
+    box("tomb-corridor-end", "Warm entrance corridor end", [0, 1.5, -3.85], [1.4, 3.0, 0.1], ["environment", "corridor", "warm-anchor"], { surface: "wall", lightingAnchor: "warm" }),
     box("stone-plinth", "Central stone plinth", [0, 0.2, 0], [2.6, 0.4, 1.25], ["environment", "collider"]),
     box("coffin-shell", "Hollow coffin bottom", [0, 0.44, 0], [2.15, 0.08, 0.78], ["prop", "coffin", "surface"], { dimensionsMetres: [2.15, 0.78, 0.48] }, [attachment("lid_hinge", "Lid hinge", [0, 0.44, -0.35])]),
     box("coffin-side-north", "Hollow coffin north side", [0, 0.68, -0.35], [2.15, 0.4, 0.08], ["prop", "coffin", "surface"]),
@@ -134,8 +147,8 @@ export function buildYingdiTombStage() {
   const cameras = [
     { id: "E01-S01-C19-camera", label: "C19 low coffin threshold", position: [-2.45, 1.1, -1.35], rotation: IDENTITY, target: [0, 0.7, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 44, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
     { id: "E01-S01-C20-camera", label: "C20 coffin interior reverse", position: [0, 1.5, 1.4], rotation: IDENTITY, target: [0, 0.68, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 48, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
-    { id: "E01-S01-C21-camera", label: "C21 gaze to panel", position: [2.25, 1.55, 1.32], rotation: IDENTITY, target: [0, 0.52, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 46, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
-    { id: "E01-S01-C22-camera", label: "C22 shoulder insert", position: [2.02, 1.52, 0.95], rotation: IDENTITY, target: [1.72, 1.3, 0.22], panoramaYaw: 0, panoramaPitch: 0, fov: 52, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" }
+    { id: "E01-S01-C21-camera", label: "C21 protected full-body two-shot", position: [-2.4, 2.45, 1.45], rotation: IDENTITY, target: [0.15, 0.72, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 58, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
+    { id: "E01-S01-C22-camera", label: "C22 protected full-body over-shoulder", position: [-2.25, 2.2, 1.35], rotation: IDENTITY, target: [0.2, 0.74, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 60, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" }
   ];
   const constraints = [
     { id: "coffin-containment", kind: "axis_limit", subjectEntityId: "li-baozhu-full-body", targetEntityId: "coffin-shell", parameters: { boundsMin: [-0.995, 0.48, -0.31], boundsMax: [0.995, 0.88, 0.31] }, enabled: true },
@@ -144,7 +157,7 @@ export function buildYingdiTombStage() {
     { id: "panel-horizontal", kind: "orientation", subjectEntityId: "phoenix-panel", parameters: { normal: [0, 1, 0], maxDeviationDegrees: 0 }, enabled: true }
   ];
   const snapshots = SHOTS.map((shotId, index) => ({ id: `${ID}_${shotId}`, shotId, beatId: shotId.split("-").at(-1), ...(index ? { previousSnapshotId: `${ID}_${SHOTS[index - 1]}` } : {}), cameraId: `${shotId}-camera`, entityStates: entities.map(stateFor), constraintIds: constraints.map((constraint) => constraint.id), createdAt: `2026-08-30T00:00:0${index}.000Z` }));
-  return { schemaVersion: 2, id: ID, sceneId: "yingdi_e01_tomb_c19_c22", revision: 4, coordinateFrame: { handedness: "right", upAxis: "y", unit: "metre", origin: [0, 0, 0], forward: [0, 0, -1], groundY: 0, scaleMode: "metric" }, environment: { sources: [{ kind: "procedural", primitive: "room" }] }, entities, constraints, cameras, snapshots, capabilities: manualCapabilities(), sourceDigest: "", updatedAt: CREATED_AT };
+  return { schemaVersion: 2, id: ID, sceneId: "yingdi_e01_tomb_c19_c22", revision: 7, coordinateFrame: { handedness: "right", upAxis: "y", unit: "metre", origin: [0, 0, 0], forward: [0, 0, -1], groundY: 0, scaleMode: "metric" }, environment: { sources: [{ kind: "panorama", role: "fixed_world_material", projection: "equirectangular_world_anchor", anchor: [0, 1.55, 0], yawDegrees: 0, geometryAuthority: false }] }, entities, constraints, cameras, snapshots, capabilities: manualCapabilities(), sourceDigest: "", updatedAt: CREATED_AT };
 }
 
 export function auditYingdiTombStage(stage) {
@@ -155,6 +168,9 @@ export function auditYingdiTombStage(stage) {
   if (!frame || frame.handedness !== "right" || frame.upAxis !== "y" || frame.unit !== "metre" || frame.scaleMode !== "metric") errors.push("coordinate_frame_invalid");
   if (JSON.stringify((stage?.snapshots ?? []).map((snapshot) => snapshot.shotId)) !== JSON.stringify(SHOTS)) errors.push("snapshot_order_invalid");
   if (stage?.cameras?.length !== 4) errors.push("camera_count_invalid");
+  const panoramaSource = stage?.environment?.sources?.[0];
+  if (stage?.environment?.sources?.length !== 1 || panoramaSource?.kind !== "panorama" || panoramaSource?.role !== "fixed_world_material" || panoramaSource?.projection !== "equirectangular_world_anchor" || panoramaSource?.geometryAuthority !== false || JSON.stringify(panoramaSource?.anchor) !== "[0,1.55,0]" || panoramaSource?.yawDegrees !== 0) errors.push("fixed_environment_binding_invalid");
+  if ((stage?.entities ?? []).filter((entity) => entity.tags?.includes("entrance")).length !== 1) errors.push("single_entrance_invalid");
   const roomBounds = ROOM_SURFACES.every((id) => entities.has(id)) ? { min: [-3.2, 0, -1.9], max: [3.2, 4.8, 1.9] } : null;
   const actualRoomBounds = ROOM_SURFACES.every((id) => entities.has(id)) ? (() => { const values = ROOM_SURFACES.map((id) => geometryAabb(entities.get(id))); return { min: values[0].min.map((_, axis) => Math.min(...values.map((value) => value.min[axis]))), max: values[0].max.map((_, axis) => Math.max(...values.map((value) => value.max[axis]))) }; })() : null;
   const coffinBounds = COFFIN_SURFACES.every((id) => entities.has(id)) ? { min: [-1.075, 0.4, -0.39], max: [1.075, 0.88, 0.39] } : null;
@@ -203,7 +219,7 @@ export function buildYingdiInitialManifest(stage = buildYingdiTombStage()) {
     videoProvider: "DaSiWa_MiniMaxH3Video",
     videoGate: "blocked",
     stage: { id: stage.id, revision: stage.revision, sha256: sha256Json(stage) },
-    panorama: { assetId: "yingdi-e01-tomb-v2-panorama", sha256: null },
+    panorama: { assetId: "yingdi-e01-tomb-v3-panorama", sha256: null },
     shots: REVIEW_SHOTS.map((shotId) => ({
       shotId,
       controlState: "pending",

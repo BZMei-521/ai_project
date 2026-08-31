@@ -53,15 +53,15 @@ const spatialControl = {
   stageId: "stage-1", stageRevision: 2, stageDigest: "a".repeat(64), shotId: "shot-1", snapshotId: "snapshot-1", cameraId: "camera-1", cameraDigest: "b".repeat(64),
   panoramaAssetId: "panorama-1", panoramaSha256: "c".repeat(64),
   artifacts: [
-    ["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]
+    ["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["environment_id", "environment-id"], ["pose", "pose"]
   ].map(([kind, referenceId], index) => ({ kind, referenceId, sha256: String(index + 1).repeat(64) }))
 };
 const v2 = {
-  ...request(9),
+  ...request(10),
   schemaVersion: 2,
   references: [
-    reference(0, "spatial_authority"), reference(1, "spatial_depth"), reference(2, "spatial_normal"), reference(3, "character_id"), reference(4, "prop_id"), reference(5, "pose_reference"), reference(6, "environment_reference"), reference(7, "face_identity"), reference(8, "face_identity")
-  ].map((item, index) => ({ ...item, id: ["color", "depth", "normal", "character-id", "prop-id", "pose", "environment", "li", "wei"][index], sourcePath: `C:/assets/${["color", "depth", "normal", "character-id", "prop-id", "pose", "environment", "li", "wei"][index]}.png` })),
+    reference(0, "spatial_authority"), reference(1, "spatial_depth"), reference(2, "spatial_normal"), reference(3, "character_id"), reference(4, "prop_id"), reference(5, "environment_id"), reference(6, "pose_reference"), reference(7, "environment_reference"), reference(8, "face_identity"), reference(9, "face_identity")
+  ].map((item, index) => ({ ...item, id: ["color", "depth", "normal", "character-id", "prop-id", "environment-id", "pose", "environment", "li", "wei"][index], sourcePath: `C:/assets/${["color", "depth", "normal", "character-id", "prop-id", "environment-id", "pose", "environment", "li", "wei"][index]}.png` })),
   spatialControl
 };
 const preparedV2 = prepare(v2);

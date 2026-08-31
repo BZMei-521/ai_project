@@ -402,6 +402,7 @@ fn usage(value: &str) -> bool {
             | "spatial_normal"
             | "character_id"
             | "prop_id"
+            | "environment_id"
             | "environment_reference"
     )
 }
@@ -415,12 +416,13 @@ fn spatial_artifact_usage(kind: &str) -> Option<&'static str> {
         "normal" => Some("spatial_normal"),
         "character_id" => Some("character_id"),
         "prop_id" => Some("prop_id"),
+        "environment_id" => Some("environment_id"),
         "pose" => Some("pose_reference"),
         _ => None,
     }
 }
 fn spatial_reference_usage(value: &str) -> bool {
-    matches!(value, "spatial_authority" | "spatial_depth" | "spatial_normal" | "character_id" | "prop_id" | "pose_reference" | "environment_reference")
+    matches!(value, "spatial_authority" | "spatial_depth" | "spatial_normal" | "character_id" | "prop_id" | "environment_id" | "pose_reference" | "environment_reference")
 }
 fn old_candidate_instruction(value: &str) -> bool {
     let normalized = value.to_ascii_lowercase();
@@ -447,7 +449,7 @@ fn validate_spatial_control(
     {
         return fail("codex_storyboard_operator_request_invalid");
     }
-    let artifacts = spatial.get("artifacts").and_then(Value::as_array).filter(|items| items.len() == 6).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
+    let artifacts = spatial.get("artifacts").and_then(Value::as_array).filter(|items| items.len() == 7).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
     let mut kinds = HashSet::new();
     for artifact in artifacts {
         let binding = artifact.as_object().ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
@@ -461,7 +463,7 @@ fn validate_spatial_control(
         let (usage, reference_digest) = references.get(reference_id).ok_or_else(|| "codex_storyboard_operator_request_invalid".to_string())?;
         if usage != expected_usage || reference_digest != digest { return fail("codex_storyboard_operator_request_invalid"); }
     }
-    if kinds.len() != 6 { return fail("codex_storyboard_operator_request_invalid"); }
+    if kinds.len() != 7 { return fail("codex_storyboard_operator_request_invalid"); }
     Ok(())
 }
 fn inspect_image(bytes: &[u8], expected: Option<&str>) -> Result<(u32, u32, String), String> {
@@ -914,13 +916,14 @@ fn spatial_reference_rank(usage: &str) -> u8 {
         "spatial_normal" => 2,
         "character_id" => 3,
         "prop_id" => 4,
-        "pose_reference" => 5,
-        "environment_reference" => 6,
-        "face_identity" | "body_costume" => 7,
-        "prop_detail" => 8,
-        "style_only" | "lighting_only" => 9,
-        "negative_example" => 10,
-        _ => 11,
+        "environment_id" => 5,
+        "pose_reference" => 6,
+        "environment_reference" => 7,
+        "face_identity" | "body_costume" => 8,
+        "prop_detail" => 9,
+        "style_only" | "lighting_only" => 10,
+        "negative_example" => 11,
+        _ => 12,
     }
 }
 
@@ -1395,6 +1398,7 @@ mod tests {
             ("normal", "spatial_normal", "Camera-bound world normal pass."),
             ("character-id", "character_id", "Character segmentation pass."),
             ("prop-id", "prop_id", "Prop segmentation pass."),
+            ("environment-id", "environment_id", "Immutable environment segmentation pass."),
             ("pose", "pose_reference", "Complete humanoid pose projection."),
             ("environment", "environment_reference", "Perspective derived from the approved panorama."),
             ("li", "face_identity", "Li Baozhu identity and costume authority."),
@@ -1408,7 +1412,7 @@ mod tests {
             "expectedOutput":{"candidatePath":"outputs/candidate.png","resultPath":"outputs/result.json","mimeTypes":["image/png"]},
             "spatialControl":{"stageId":"stage_yingdi_e01_tomb_v2","stageRevision":2,"stageDigest":"a".repeat(64),"shotId":"E01-S01-C19","snapshotId":"stage_yingdi_e01_tomb_v2_E01-S01-C19","cameraId":"E01-S01-C19-camera","cameraDigest":"b".repeat(64),"panoramaAssetId":"yingdi-e01-tomb-v2-panorama","panoramaSha256":"c".repeat(64),"artifacts":[
                 {"kind":"color","referenceId":"color","sha256":reference_sha},{"kind":"depth","referenceId":"depth","sha256":reference_sha},{"kind":"normal","referenceId":"normal","sha256":reference_sha},
-                {"kind":"character_id","referenceId":"character-id","sha256":reference_sha},{"kind":"prop_id","referenceId":"prop-id","sha256":reference_sha},{"kind":"pose","referenceId":"pose","sha256":reference_sha}
+                {"kind":"character_id","referenceId":"character-id","sha256":reference_sha},{"kind":"prop_id","referenceId":"prop-id","sha256":reference_sha},{"kind":"environment_id","referenceId":"environment-id","sha256":reference_sha},{"kind":"pose","referenceId":"pose","sha256":reference_sha}
             ]}
         })
     }
@@ -1421,7 +1425,7 @@ mod tests {
         fs::create_dir_all(root.join("references")).unwrap();
         let bytes = png(RgbaImage::new(1, 1));
         let digest = sha(&bytes);
-        for id in ["color", "depth", "normal", "character-id", "prop-id", "pose", "environment", "li", "wei"] {
+        for id in ["color", "depth", "normal", "character-id", "prop-id", "environment-id", "pose", "environment", "li", "wei"] {
             fs::write(root.join("references").join(format!("{id}.png")), &bytes).unwrap();
         }
         let mut request = spatial_v2_request(&digest);
@@ -1433,7 +1437,8 @@ mod tests {
         assert!(compiled.find("[spatial_depth]").unwrap() < compiled.find("[spatial_normal]").unwrap());
         assert!(compiled.find("[spatial_normal]").unwrap() < compiled.find("[character_id]").unwrap());
         assert!(compiled.find("[character_id]").unwrap() < compiled.find("[prop_id]").unwrap());
-        assert!(compiled.find("[prop_id]").unwrap() < compiled.find("[pose_reference]").unwrap());
+        assert!(compiled.find("[prop_id]").unwrap() < compiled.find("[environment_id]").unwrap());
+        assert!(compiled.find("[environment_id]").unwrap() < compiled.find("[pose_reference]").unwrap());
         assert!(compiled.find("[pose_reference]").unwrap() < compiled.find("[environment_reference]").unwrap());
         assert!(compiled.contains("SPATIAL LINEAGE (non-visual provenance; do not render):"));
         assert!(compiled.contains("stage_yingdi_e01_tomb_v2"));

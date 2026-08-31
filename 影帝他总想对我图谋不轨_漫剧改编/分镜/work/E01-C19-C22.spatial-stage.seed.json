@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "id": "stage_yingdi_e01_tomb_v2",
+  "id": "stage_yingdi_e01_tomb_v3",
   "sceneId": "yingdi_e01_tomb_c19_c22",
-  "revision": 4,
+  "revision": 7,
   "coordinateFrame": {
     "handedness": "right",
     "upAxis": "y",
@@ -23,8 +23,16 @@
   "environment": {
     "sources": [
       {
-        "kind": "procedural",
-        "primitive": "room"
+        "kind": "panorama",
+        "role": "fixed_world_material",
+        "projection": "equirectangular_world_anchor",
+        "anchor": [
+          0,
+          1.55,
+          0
+        ],
+        "yawDegrees": 0,
+        "geometryAuthority": false
       }
     ]
   },
@@ -125,7 +133,8 @@
       "tags": [
         "environment",
         "room",
-        "surface"
+        "surface",
+        "room-wall"
       ],
       "transform": {
         "position": [
@@ -165,7 +174,8 @@
       "tags": [
         "environment",
         "room",
-        "surface"
+        "surface",
+        "room-wall"
       ],
       "transform": {
         "position": [
@@ -200,16 +210,17 @@
       }
     },
     {
-      "id": "tomb-room-wall-north",
-      "label": "Tomb room north wall",
+      "id": "tomb-room-wall-north-left",
+      "label": "Tomb room north wall left of entrance",
       "tags": [
         "environment",
         "room",
-        "surface"
+        "surface",
+        "room-wall"
       ],
       "transform": {
         "position": [
-          0,
+          -1.85,
           2.4,
           -1.85
         ],
@@ -228,7 +239,7 @@
       "geometry": {
         "kind": "box",
         "size": [
-          6.2,
+          2.5,
           4.6,
           0.1
         ]
@@ -236,7 +247,92 @@
       "visibility": "visible",
       "metadata": {
         "collider": true,
-        "surface": "wall"
+        "surface": "wall",
+        "entranceSide": "left"
+      }
+    },
+    {
+      "id": "tomb-room-wall-north-right",
+      "label": "Tomb room north wall right of entrance",
+      "tags": [
+        "environment",
+        "room",
+        "surface",
+        "room-wall"
+      ],
+      "transform": {
+        "position": [
+          1.85,
+          2.4,
+          -1.85
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          2.5,
+          4.6,
+          0.1
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall",
+        "entranceSide": "right"
+      }
+    },
+    {
+      "id": "tomb-room-wall-north-lintel",
+      "label": "Tomb room north wall above entrance",
+      "tags": [
+        "environment",
+        "room",
+        "surface",
+        "room-wall"
+      ],
+      "transform": {
+        "position": [
+          0,
+          3.8,
+          -1.85
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          1.2,
+          1.8,
+          0.1
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall",
+        "entranceSide": "lintel"
       }
     },
     {
@@ -245,7 +341,8 @@
       "tags": [
         "environment",
         "room",
-        "surface"
+        "surface",
+        "room-wall"
       ],
       "transform": {
         "position": [
@@ -277,6 +374,373 @@
       "metadata": {
         "collider": true,
         "surface": "wall"
+      }
+    },
+    {
+      "id": "tomb-entrance-threshold",
+      "label": "Single north entrance threshold",
+      "tags": [
+        "environment",
+        "entrance",
+        "threshold"
+      ],
+      "transform": {
+        "position": [
+          0,
+          0.12,
+          -1.78
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          1.2,
+          0.04,
+          0.22
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "worldAnchor": {
+          "wall": "north",
+          "position": [
+            0,
+            0.1,
+            -1.85
+          ],
+          "width": 1.2,
+          "height": 2.8
+        }
+      }
+    },
+    {
+      "id": "tomb-entrance-frame-left",
+      "label": "North entrance frame left",
+      "tags": [
+        "environment",
+        "entrance-frame"
+      ],
+      "transform": {
+        "position": [
+          -0.65,
+          1.5,
+          -1.76
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.1,
+          2.8,
+          0.12
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "door-frame"
+      }
+    },
+    {
+      "id": "tomb-entrance-frame-right",
+      "label": "North entrance frame right",
+      "tags": [
+        "environment",
+        "entrance-frame"
+      ],
+      "transform": {
+        "position": [
+          0.65,
+          1.5,
+          -1.76
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.1,
+          2.8,
+          0.12
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "door-frame"
+      }
+    },
+    {
+      "id": "tomb-entrance-frame-lintel",
+      "label": "North entrance frame lintel",
+      "tags": [
+        "environment",
+        "entrance-frame"
+      ],
+      "transform": {
+        "position": [
+          0,
+          2.95,
+          -1.76
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          1.4,
+          0.1,
+          0.12
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "door-frame"
+      }
+    },
+    {
+      "id": "tomb-corridor-floor",
+      "label": "Entrance corridor floor",
+      "tags": [
+        "environment",
+        "corridor",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          0.05,
+          -2.9
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          1.4,
+          0.1,
+          2
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "floor"
+      }
+    },
+    {
+      "id": "tomb-corridor-ceiling",
+      "label": "Entrance corridor ceiling",
+      "tags": [
+        "environment",
+        "corridor",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0,
+          3,
+          -2.9
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          1.4,
+          0.1,
+          2
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "ceiling"
+      }
+    },
+    {
+      "id": "tomb-corridor-wall-west",
+      "label": "Entrance corridor west wall",
+      "tags": [
+        "environment",
+        "corridor",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          -0.7,
+          1.5,
+          -2.9
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.1,
+          3,
+          2
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall"
+      }
+    },
+    {
+      "id": "tomb-corridor-wall-east",
+      "label": "Entrance corridor east wall",
+      "tags": [
+        "environment",
+        "corridor",
+        "surface"
+      ],
+      "transform": {
+        "position": [
+          0.7,
+          1.5,
+          -2.9
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          0.1,
+          3,
+          2
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall"
+      }
+    },
+    {
+      "id": "tomb-corridor-end",
+      "label": "Warm entrance corridor end",
+      "tags": [
+        "environment",
+        "corridor",
+        "warm-anchor"
+      ],
+      "transform": {
+        "position": [
+          0,
+          1.5,
+          -3.85
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "geometry": {
+        "kind": "box",
+        "size": [
+          1.4,
+          3,
+          0.1
+        ]
+      },
+      "visibility": "visible",
+      "metadata": {
+        "collider": true,
+        "surface": "wall",
+        "lightingAnchor": "warm"
       }
     },
     {
@@ -1118,11 +1582,11 @@
     },
     {
       "id": "E01-S01-C21-camera",
-      "label": "C21 gaze to panel",
+      "label": "C21 protected full-body two-shot",
       "position": [
-        2.25,
-        1.55,
-        1.32
+        -2.4,
+        2.45,
+        1.45
       ],
       "rotation": [
         0,
@@ -1131,24 +1595,24 @@
         1
       ],
       "target": [
-        0,
-        0.52,
+        0.15,
+        0.72,
         0
       ],
       "panoramaYaw": 0,
       "panoramaPitch": 0,
-      "fov": 46,
+      "fov": 58,
       "near": 0.01,
       "far": 12,
       "continuityGroup": "E01-C19-C22-tomb"
     },
     {
       "id": "E01-S01-C22-camera",
-      "label": "C22 shoulder insert",
+      "label": "C22 protected full-body over-shoulder",
       "position": [
-        2.02,
-        1.52,
-        0.95
+        -2.25,
+        2.2,
+        1.35
       ],
       "rotation": [
         0,
@@ -1157,13 +1621,13 @@
         1
       ],
       "target": [
-        1.72,
-        1.3,
-        0.22
+        0.2,
+        0.74,
+        0
       ],
       "panoramaYaw": 0,
       "panoramaPitch": 0,
-      "fov": 52,
+      "fov": 60,
       "near": 0.01,
       "far": 12,
       "continuityGroup": "E01-C19-C22-tomb"
@@ -1171,7 +1635,7 @@
   ],
   "snapshots": [
     {
-      "id": "stage_yingdi_e01_tomb_v2_E01-S01-C19",
+      "id": "stage_yingdi_e01_tomb_v3_E01-S01-C19",
       "shotId": "E01-S01-C19",
       "beatId": "C19",
       "cameraId": "E01-S01-C19-camera",
@@ -1265,11 +1729,55 @@
           "visibility": "visible"
         },
         {
-          "entityId": "tomb-room-wall-north",
+          "entityId": "tomb-room-wall-north-left",
+          "transform": {
+            "position": [
+              -1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-right",
+          "transform": {
+            "position": [
+              1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-lintel",
           "transform": {
             "position": [
               0,
-              2.4,
+              3.8,
               -1.85
             ],
             "rotation": [
@@ -1293,6 +1801,204 @@
               0,
               2.4,
               1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-threshold",
+          "transform": {
+            "position": [
+              0,
+              0.12,
+              -1.78
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-left",
+          "transform": {
+            "position": [
+              -0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-right",
+          "transform": {
+            "position": [
+              0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-lintel",
+          "transform": {
+            "position": [
+              0,
+              2.95,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-floor",
+          "transform": {
+            "position": [
+              0,
+              0.05,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-ceiling",
+          "transform": {
+            "position": [
+              0,
+              3,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-west",
+          "transform": {
+            "position": [
+              -0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-east",
+          "transform": {
+            "position": [
+              0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-end",
+          "transform": {
+            "position": [
+              0,
+              1.5,
+              -3.85
             ],
             "rotation": [
               0,
@@ -1630,10 +2336,10 @@
       "createdAt": "2026-08-30T00:00:00.000Z"
     },
     {
-      "id": "stage_yingdi_e01_tomb_v2_E01-S01-C20",
+      "id": "stage_yingdi_e01_tomb_v3_E01-S01-C20",
       "shotId": "E01-S01-C20",
       "beatId": "C20",
-      "previousSnapshotId": "stage_yingdi_e01_tomb_v2_E01-S01-C19",
+      "previousSnapshotId": "stage_yingdi_e01_tomb_v3_E01-S01-C19",
       "cameraId": "E01-S01-C20-camera",
       "entityStates": [
         {
@@ -1725,11 +2431,55 @@
           "visibility": "visible"
         },
         {
-          "entityId": "tomb-room-wall-north",
+          "entityId": "tomb-room-wall-north-left",
+          "transform": {
+            "position": [
+              -1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-right",
+          "transform": {
+            "position": [
+              1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-lintel",
           "transform": {
             "position": [
               0,
-              2.4,
+              3.8,
               -1.85
             ],
             "rotation": [
@@ -1753,6 +2503,204 @@
               0,
               2.4,
               1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-threshold",
+          "transform": {
+            "position": [
+              0,
+              0.12,
+              -1.78
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-left",
+          "transform": {
+            "position": [
+              -0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-right",
+          "transform": {
+            "position": [
+              0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-lintel",
+          "transform": {
+            "position": [
+              0,
+              2.95,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-floor",
+          "transform": {
+            "position": [
+              0,
+              0.05,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-ceiling",
+          "transform": {
+            "position": [
+              0,
+              3,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-west",
+          "transform": {
+            "position": [
+              -0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-east",
+          "transform": {
+            "position": [
+              0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-end",
+          "transform": {
+            "position": [
+              0,
+              1.5,
+              -3.85
             ],
             "rotation": [
               0,
@@ -2090,10 +3038,10 @@
       "createdAt": "2026-08-30T00:00:01.000Z"
     },
     {
-      "id": "stage_yingdi_e01_tomb_v2_E01-S01-C21",
+      "id": "stage_yingdi_e01_tomb_v3_E01-S01-C21",
       "shotId": "E01-S01-C21",
       "beatId": "C21",
-      "previousSnapshotId": "stage_yingdi_e01_tomb_v2_E01-S01-C20",
+      "previousSnapshotId": "stage_yingdi_e01_tomb_v3_E01-S01-C20",
       "cameraId": "E01-S01-C21-camera",
       "entityStates": [
         {
@@ -2185,11 +3133,55 @@
           "visibility": "visible"
         },
         {
-          "entityId": "tomb-room-wall-north",
+          "entityId": "tomb-room-wall-north-left",
+          "transform": {
+            "position": [
+              -1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-right",
+          "transform": {
+            "position": [
+              1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-lintel",
           "transform": {
             "position": [
               0,
-              2.4,
+              3.8,
               -1.85
             ],
             "rotation": [
@@ -2213,6 +3205,204 @@
               0,
               2.4,
               1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-threshold",
+          "transform": {
+            "position": [
+              0,
+              0.12,
+              -1.78
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-left",
+          "transform": {
+            "position": [
+              -0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-right",
+          "transform": {
+            "position": [
+              0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-lintel",
+          "transform": {
+            "position": [
+              0,
+              2.95,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-floor",
+          "transform": {
+            "position": [
+              0,
+              0.05,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-ceiling",
+          "transform": {
+            "position": [
+              0,
+              3,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-west",
+          "transform": {
+            "position": [
+              -0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-east",
+          "transform": {
+            "position": [
+              0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-end",
+          "transform": {
+            "position": [
+              0,
+              1.5,
+              -3.85
             ],
             "rotation": [
               0,
@@ -2550,10 +3740,10 @@
       "createdAt": "2026-08-30T00:00:02.000Z"
     },
     {
-      "id": "stage_yingdi_e01_tomb_v2_E01-S01-C22",
+      "id": "stage_yingdi_e01_tomb_v3_E01-S01-C22",
       "shotId": "E01-S01-C22",
       "beatId": "C22",
-      "previousSnapshotId": "stage_yingdi_e01_tomb_v2_E01-S01-C21",
+      "previousSnapshotId": "stage_yingdi_e01_tomb_v3_E01-S01-C21",
       "cameraId": "E01-S01-C22-camera",
       "entityStates": [
         {
@@ -2645,11 +3835,55 @@
           "visibility": "visible"
         },
         {
-          "entityId": "tomb-room-wall-north",
+          "entityId": "tomb-room-wall-north-left",
+          "transform": {
+            "position": [
+              -1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-right",
+          "transform": {
+            "position": [
+              1.85,
+              2.4,
+              -1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-room-wall-north-lintel",
           "transform": {
             "position": [
               0,
-              2.4,
+              3.8,
               -1.85
             ],
             "rotation": [
@@ -2673,6 +3907,204 @@
               0,
               2.4,
               1.85
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-threshold",
+          "transform": {
+            "position": [
+              0,
+              0.12,
+              -1.78
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-left",
+          "transform": {
+            "position": [
+              -0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-right",
+          "transform": {
+            "position": [
+              0.65,
+              1.5,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-entrance-frame-lintel",
+          "transform": {
+            "position": [
+              0,
+              2.95,
+              -1.76
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-floor",
+          "transform": {
+            "position": [
+              0,
+              0.05,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-ceiling",
+          "transform": {
+            "position": [
+              0,
+              3,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-west",
+          "transform": {
+            "position": [
+              -0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-wall-east",
+          "transform": {
+            "position": [
+              0.7,
+              1.5,
+              -2.9
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "visibility": "visible"
+        },
+        {
+          "entityId": "tomb-corridor-end",
+          "transform": {
+            "position": [
+              0,
+              1.5,
+              -3.85
             ],
             "rotation": [
               0,

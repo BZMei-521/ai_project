@@ -15,7 +15,10 @@ const runs = required("--runs").split(",").map((value) => resolve(value));
 if (runs.length !== SHOTS.length) throw new TypeError("runs_must_match_four_shots");
 const inputsDir = resolve(required("--inputs"));
 const outputRoot = resolve(required("--output"));
-const ffmpeg = required("--ffmpeg");
+const ffmpeg = args.get("--ffmpeg");
+const python = args.get("--python");
+if (!ffmpeg && !python) throw new TypeError("missing_argument:--ffmpeg_or_--python");
+const pillowComposer = resolve(new URL("./compose-unity-control-images.py", import.meta.url).pathname.replace(/^\/(.:)/, "$1"));
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 function pngDimensions(bytes, path) {
@@ -51,6 +54,15 @@ function runFfmpeg(inputPaths, filters, output) {
       if (code !== 0) return reject(new Error(`ffmpeg_failed:${code}:${error.trim()}`));
       try { await rename(temporary, output); accept(); } catch (reason) { reject(reason); }
     });
+  });
+}
+function runPillow(mode, inputArguments, output) {
+  return new Promise((accept, reject) => {
+    const child = spawn(python, [pillowComposer, mode, output, ...inputArguments], { stdio: ["ignore", "ignore", "pipe"] });
+    let error = "";
+    child.stderr.on("data", (chunk) => { error += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? accept() : reject(new Error(`pillow_composer_failed:${code}:${error.trim()}`)));
   });
 }
 function idFilters(entities) {
@@ -106,16 +118,19 @@ for (let index = 0; index < SHOTS.length; index += 1) {
   }
   const subjects = source.entities.filter((entity) => entity.role === "subject");
   const props = source.entities.filter((entity) => entity.role === "interaction" || entity.role === "foreground_occluder");
-  for (const [kind, entities] of [["character_id", subjects], ["prop_id", props]]) {
+  const environments = source.entities.filter((entity) => entity.role === "environment");
+  for (const [kind, entities] of [["character_id", subjects], ["prop_id", props], ["environment_id", environments]]) {
     const masks = await Promise.all(entities.map((entity) => checkedArtifact(run, by("visible_mask", entity.id))));
     const target = join(outputDir, `${kind}.png`);
-    await runFfmpeg(masks, idFilters(entities), target);
+    if (ffmpeg) await runFfmpeg(masks, idFilters(entities), target);
+    else await runPillow("ids", entities.map((entity, entityIndex) => `${palette(entity.id).join(",")}=${masks[entityIndex]}`), target);
     canonical.push({ kind, path: target, encoding: "stable_entity_id_rgb8", palette: Object.fromEntries(entities.map((entity) => [entity.id, palette(entity.id)])) });
   }
   const poses = [];
   for (const subject of subjects) for (const kind of ["openpose", "hand_pose"]) poses.push(await checkedArtifact(run, by(kind, subject.id)));
   const posePath = join(outputDir, "pose.png");
-  await runFfmpeg(poses, poseFilters(poses.length), posePath);
+  if (ffmpeg) await runFfmpeg(poses, poseFilters(poses.length), posePath);
+  else await runPillow("pose", poses, posePath);
   canonical.push({ kind: "pose", path: posePath, encoding: "openpose_body18_and_hand21_rgb8" });
   const artifacts = [];
   for (const item of canonical) {
@@ -126,12 +141,12 @@ for (let index = 0; index < SHOTS.length; index += 1) {
   }
   const controlPack = {
     schemaVersion: 1,
-    workflow: "unity_previs_canonical_six_control_v1",
+    workflow: "unity_previs_canonical_seven_control_v2",
     state: "validated",
     shotId,
     stage: source.source,
     geometryAuthority: "unity",
-    panoramaRole: "appearance_reference_only",
+    panoramaRole: "fixed_world_material",
     unityExport: run.replaceAll("\\", "/"),
     artifacts,
     generatedAt: new Date().toISOString()
@@ -140,5 +155,5 @@ for (let index = 0; index < SHOTS.length; index += 1) {
   await atomicJson(manifestPath, controlPack);
   bundles.push({ shotId, manifestPath: manifestPath.replaceAll("\\", "/"), manifestSha256: digest(await readFile(manifestPath)) });
 }
-await atomicJson(join(outputRoot, "control-pack-bundle.json"), { schemaVersion: 1, workflow: "unity_previs_canonical_six_control_v1", state: "validated", bundles, generatedAt: new Date().toISOString() });
+await atomicJson(join(outputRoot, "control-pack-bundle.json"), { schemaVersion: 1, workflow: "unity_previs_canonical_seven_control_v2", state: "validated", bundles, generatedAt: new Date().toISOString() });
 console.log(JSON.stringify({ valid: true, outputRoot, shots: bundles.length }));

@@ -15,6 +15,7 @@
     "test:spatial-stage-state": "node scripts/check-spatial-stage-state.mjs",
     "test:yingdi-e01-c19-c22-spatial": "node scripts/check-yingdi-e01-c19-c22-spatial-stage.mjs",
     "test:yingdi-e01-c19-c22-unity": "node scripts/check-yingdi-unity-previs.mjs",
+    "test:yingdi-e01-tomb-v3": "node scripts/check-yingdi-e01-tomb-v3-contract.mjs",
     "build:yingdi-e01-c19-c22-unity-inputs": "node scripts/build-yingdi-e01-c19-c22-unity-exchange.mjs",
     "build:yingdi-e01-c19-c22-unity-controls": "node scripts/build-yingdi-e01-c19-c22-unity-controls.mjs",
     "build:yingdi-e01-tomb-codex-panorama-manifest": "node scripts/build-yingdi-e01-tomb-codex-panorama-manifest.mjs",

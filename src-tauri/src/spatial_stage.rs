@@ -40,7 +40,7 @@ fn safe_identifier(value: &str) -> bool {
 }
 
 fn safe_kind(value: &str) -> bool {
-    matches!(value, "color" | "depth" | "normal" | "character_id" | "prop_id" | "pose")
+    matches!(value, "color" | "depth" | "normal" | "character_id" | "prop_id" | "environment_id" | "pose")
 }
 
 fn canonical_directory(value: &str) -> Result<PathBuf, String> {

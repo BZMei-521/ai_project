@@ -81,7 +81,16 @@ export function createStageOverrideMaterial(
   if (kind === "normal") return new THREE.MeshNormalMaterial();
   const isCharacter = entity.tags.includes("character") || entity.tags.includes("lead");
   const isProp = entity.tags.includes("prop");
-  const visibleForPass = kind === "character_id" ? isCharacter : kind === "prop_id" ? isProp : isCharacter;
+  const isEnvironment = entity.tags.some((tag) =>
+    ["environment", "room", "surface", "entrance", "corridor"].includes(tag)
+  );
+  const visibleForPass = kind === "character_id"
+    ? isCharacter
+    : kind === "prop_id"
+      ? isProp
+      : kind === "environment_id"
+        ? isEnvironment
+        : isCharacter;
   return new THREE.MeshBasicMaterial({
     color: visibleForPass ? stableEntityColor(entity.id) : 0x000000,
     transparent: !visibleForPass,

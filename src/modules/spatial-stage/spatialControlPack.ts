@@ -1,4 +1,4 @@
-export type StageRenderKind = "color" | "depth" | "normal" | "character_id" | "prop_id" | "pose";
+export type StageRenderKind = "color" | "depth" | "normal" | "character_id" | "prop_id" | "environment_id" | "pose";
 export type StageRenderArtifact = {
   kind: StageRenderKind;
   filePath: string;
@@ -26,7 +26,7 @@ export type ControlPackValidation = { valid: true } | { valid: false; reason: st
 export type AnySpatialControlPack = SpatialControlPack | import("./layeredSpatialControlPack").LayeredSpatialControlPack;
 
 export const STAGE_RENDER_KINDS: readonly StageRenderKind[] = [
-  "color", "depth", "normal", "character_id", "prop_id", "pose"
+  "color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"
 ];
 const HEX64 = /^[a-f0-9]{64}$/;
 

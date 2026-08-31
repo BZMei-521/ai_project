@@ -34,7 +34,8 @@ const spatialPack = {
   artifacts: [
     ["color", "C:/controls/color.png"], ["depth", "C:/controls/depth.png"],
     ["normal", "C:/controls/normal.png"], ["character_id", "C:/controls/characters.png"],
-    ["prop_id", "C:/controls/props.png"], ["pose", "C:/controls/pose.png"]
+    ["prop_id", "C:/controls/props.png"], ["environment_id", "C:/controls/environment.png"],
+    ["pose", "C:/controls/pose.png"]
   ].map(([kind, filePath], index) => ({ kind, filePath, sha256: spatialSha(String(index + 1)), width: 1920, height: 1080 })),
   expectedHands: [],
   expectedProps: [],
@@ -63,6 +64,7 @@ assert.deepEqual(
     { id: "normal", usage: "spatial_normal", sourcePath: "C:/controls/normal.png" },
     { id: "character-id", usage: "character_id", sourcePath: "C:/controls/characters.png" },
     { id: "prop-id", usage: "prop_id", sourcePath: "C:/controls/props.png" },
+    { id: "environment-id", usage: "environment_id", sourcePath: "C:/controls/environment.png" },
     { id: "pose", usage: "pose_reference", sourcePath: "C:/controls/pose.png" },
     { id: "environment", usage: "environment_reference", sourcePath: "C:/panorama/perspective.png" },
     { id: "li", usage: "face_identity", sourcePath: "C:/identities/li.png" },
@@ -76,12 +78,13 @@ assert.match(selectedSpatial.references[2].instruction, /geometry.*depth.*normal
 assert.match(selectedSpatial.references[3].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
 assert.match(selectedSpatial.references[4].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
 assert.match(selectedSpatial.references[5].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
-assert.match(selectedSpatial.references[6].instruction, /appearance.*panorama-derived perspective/i);
+assert.match(selectedSpatial.references[6].instruction, /geometry.*depth.*normal.*IDs.*pose/i);
+assert.match(selectedSpatial.references[7].instruction, /appearance.*panorama-derived perspective/i);
 assert.deepEqual(selectedSpatial.spatialControl, {
   stageId: "stage-1", stageRevision: 2, stageDigest: spatialSha("a"), shotId: "shot-1", snapshotId: "snapshot-1", cameraId: "camera-1", cameraDigest: spatialSha("b"),
   panoramaAssetId: "panorama-1", panoramaSha256: spatialSha("c"),
   artifacts: [
-    ["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]
+    ["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["environment_id", "environment-id"], ["pose", "pose"]
   ].map(([kind, referenceId], index) => ({ kind, referenceId, sha256: spatialSha(String(index + 1)) }))
 });
 for (const [name, mutate] of [
@@ -438,7 +441,7 @@ assert.match(mandatoryPrompt, /No pose, composition, camera, framing, projection
 assert.match(mandatoryPrompt, /No text, captions, logos, signatures, or watermarks/);
 
 const spatialReferenceHash = Object.freeze({
-  color: "1", depth: "2", normal: "3", "character-id": "4", "prop-id": "5", pose: "6", environment: "7", li: "8", wei: "9"
+  color: "1", depth: "2", normal: "3", "character-id": "4", "prop-id": "5", "environment-id": "6", pose: "7", environment: "8", li: "9", wei: "a"
 });
 const reference = (id, usage, instruction) => ({
   id, usage, instruction, relativePath: `references/${id}.png`, sha256: sha(spatialReferenceHash[id]), width: 512, height: 512, mimeType: "image/png"
@@ -449,6 +452,7 @@ const spatialReferences = [
   reference("normal", "spatial_normal", "Camera-bound world normal pass."),
   reference("character-id", "character_id", "Character segmentation pass."),
   reference("prop-id", "prop_id", "Prop segmentation pass."),
+  reference("environment-id", "environment_id", "Immutable environment segmentation pass."),
   reference("pose", "pose_reference", "Complete humanoid pose projection."),
   reference("environment", "environment_reference", "Perspective derived from the approved panorama."),
   reference("li", "face_identity", "Li Baozhu identity and costume authority."),
@@ -466,7 +470,7 @@ const spatialControl = {
   panoramaSha256: "c".repeat(64),
   artifacts: [
     ["color", "color"], ["depth", "depth"], ["normal", "normal"],
-    ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]
+    ["character_id", "character-id"], ["prop_id", "prop-id"], ["environment_id", "environment-id"], ["pose", "pose"]
   ].map(([kind, referenceId], index) => ({ kind, referenceId, sha256: String(index + 1).repeat(64) }))
 };
 const spatialRequest = {
@@ -485,7 +489,7 @@ assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, 
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, references: spatialReferences.filter((item) => item.usage !== "environment_reference") }), /required_reference_usage_missing/);
 assert.throws(() => runtime.validateCodexStoryboardRequest({ ...spatialRequest, references: spatialReferences.map((item) => item.id === "color" ? { ...item, instruction: "Use the prior storyboard candidate for framing." } : item) }), /spatial_instruction_invalid/);
 const reorderedSpatialPrompt = runtime.compileCodexStoryboardImageSpec({ ...spatialRequest, references: [...spatialReferences].reverse() }).compiledPrompt;
-const spatialPictureOrder = ["spatial_authority", "spatial_depth", "spatial_normal", "character_id", "prop_id", "pose_reference", "environment_reference", "face_identity", "face_identity"];
+const spatialPictureOrder = ["spatial_authority", "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_id", "pose_reference", "environment_reference", "face_identity", "face_identity"];
 let priorPicture = -1;
 for (const usage of spatialPictureOrder) {
   const picture = reorderedSpatialPrompt.indexOf(`[${usage}]`, priorPicture + 1);
@@ -577,6 +581,7 @@ const makeSpatialFixtureRequest = () => {
     ["normal", "spatial_normal", "Camera-bound world normal pass."],
     ["character-id", "character_id", "Character segmentation pass."],
     ["prop-id", "prop_id", "Prop segmentation pass."],
+    ["environment-id", "environment_id", "Immutable environment segmentation pass."],
     ["pose", "pose_reference", "Complete humanoid pose projection."],
     ["environment", "environment_reference", "Perspective derived from the approved panorama."],
     ["li", "face_identity", "Li Baozhu identity and costume authority."],
@@ -594,7 +599,7 @@ const makeSpatialFixtureRequest = () => {
       stageId: "stage_yingdi_e01_tomb_v2", stageRevision: 2, stageDigest: "a".repeat(64), shotId: "E01-S01-C19",
       snapshotId: "stage_yingdi_e01_tomb_v2_E01-S01-C19", cameraId: "E01-S01-C19-camera", cameraDigest: "b".repeat(64),
       panoramaAssetId: "yingdi-e01-tomb-v2-panorama", panoramaSha256: "c".repeat(64),
-      artifacts: [["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["pose", "pose"]]
+      artifacts: [["color", "color"], ["depth", "depth"], ["normal", "normal"], ["character_id", "character-id"], ["prop_id", "prop-id"], ["environment_id", "environment-id"], ["pose", "pose"]]
         .map(([kind, referenceId]) => ({ kind, referenceId, sha256: hashBytes(tinyPng) }))
     }
   };
@@ -661,7 +666,7 @@ try {
   const reversedSpatialInspection = runCli("inspect", "--package", fixturePackage);
   assert.equal(reversedSpatialInspection.status, 0, reversedSpatialInspection.stderr);
   const reversedSpatial = JSON.parse(reversedSpatialInspection.stdout);
-  const spatialReferenceRank = { spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, pose_reference: 5, environment_reference: 6, face_identity: 7, body_costume: 7, prop_detail: 8, style_only: 9, lighting_only: 9, negative_example: 10 };
+  const spatialReferenceRank = { spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, environment_id: 5, pose_reference: 6, environment_reference: 7, face_identity: 8, body_costume: 8, prop_detail: 9, style_only: 10, lighting_only: 10, negative_example: 11 };
   const canonicalSpatialReferences = [...reversedSpatialRequest.references].sort((left, right) => spatialReferenceRank[left.usage] - spatialReferenceRank[right.usage]);
   for (const [index, reference] of canonicalSpatialReferences.entries()) {
     assert.equal(reversedSpatial.referenceUsages[index], reference.usage, `Picture ${index + 1} exposes its canonical usage`);

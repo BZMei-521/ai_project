@@ -50,7 +50,7 @@ for (const snapshot of stage.snapshots.filter((item) => item.shotId !== "E01-01-
   assert.equal(snapshot.entityStates.some((state) => state.pose?.contacts?.some((contact) => contact.targetEntityId === "E01-01-nail")), false);
 }
 
-const kinds = ["color", "depth", "normal", "character_id", "prop_id", "pose"];
+const kinds = ["color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"];
 const stageDigest = runtime.computeStageSourceDigest(stage);
 for (const [index, snapshot] of stage.snapshots.entries()) {
   const cameraDigest = String(index + 1).repeat(64);

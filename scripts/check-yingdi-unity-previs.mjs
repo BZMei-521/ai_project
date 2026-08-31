@@ -7,13 +7,15 @@ const stage = JSON.parse(await readFile("影帝他总想对我图谋不轨_漫�
 const panorama = { assetId: "yingdi-e01-tomb-codex-v1", path: "C:/production/master-codex-v1-2x1.png", sha256: "e".repeat(64), width: 1774, height: 887 };
 const result = buildYingdiUnityExchanges(stage, panorama);
 assert.equal(result.exchanges.length, 4);
-assert.equal(result.panorama.role, "appearance_reference_only");
+assert.equal(result.panorama.role, "fixed_world_material");
 assert.equal(result.sourceAudit.unityGeometryAuthority, true);
 assert.equal(result.sourceAudit.codexPanoramaGeometryAuthority, false);
 assert.match(result.stageDigest, /^[a-f0-9]{64}$/);
 assert.deepEqual(result.exchanges.map((item) => item.shotId), ["E01-S01-C19", "E01-S01-C20", "E01-S01-C21", "E01-S01-C22"]);
 for (const item of result.exchanges) {
   assert.equal(validateExchange(item.exchange).valid, true);
+  assert.equal(item.exchange.environment.projection, "equirectangular_world_anchor");
+  assert.equal(item.exchange.environment.geometryAuthority, false);
   assert.equal(item.exchange.entities.length, stage.entities.length);
   assert.equal(item.exchange.relations.length, 1);
   assert.equal(item.exchange.relations[0].kind, "inside");

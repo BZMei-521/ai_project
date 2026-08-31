@@ -14,11 +14,11 @@ const HELPER_BASENAME = process.platform === "win32" ? "codex-storyboard-operato
 const USAGES = new Set([
   "spatial_authority", "pose_reference", "face_identity", "body_costume",
   "prop_detail", "style_only", "lighting_only", "negative_example",
-  "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_reference"
+  "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_id", "environment_reference"
 ]);
-const SPATIAL_ARTIFACT_KINDS = new Set(["color", "depth", "normal", "character_id", "prop_id", "pose"]);
+const SPATIAL_ARTIFACT_KINDS = new Set(["color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"]);
 const SPATIAL_ARTIFACT_USAGE = Object.freeze({
-  color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", pose: "pose_reference"
+  color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", environment_id: "environment_id", pose: "pose_reference"
 });
 const SPATIAL_REFERENCE_USAGES = new Set([...Object.values(SPATIAL_ARTIFACT_USAGE), "environment_reference"]);
 const OLD_CANDIDATE_INSTRUCTION = /prior storyboard candidate|old storyboard candidate|previous storyboard candidate/i;
@@ -414,7 +414,7 @@ function compilePrompt(request) {
 }
 
 function spatialReferenceRank(usage) {
-  return ({ spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, pose_reference: 5, environment_reference: 6, face_identity: 7, body_costume: 7, prop_detail: 8, style_only: 9, lighting_only: 9, negative_example: 10 })[usage] ?? 11;
+  return ({ spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, environment_id: 5, pose_reference: 6, environment_reference: 7, face_identity: 8, body_costume: 8, prop_detail: 9, style_only: 10, lighting_only: 10, negative_example: 11 })[usage] ?? 12;
 }
 
 async function pathExists(filePath) {

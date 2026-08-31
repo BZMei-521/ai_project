@@ -275,7 +275,7 @@ function validateCodexStoryboardSpatialBinding(
     throw new Error("codex_storyboard_spatial_artifacts_invalid");
   }
   const usages: Record<CodexStoryboardSpatialArtifactKind, CodexStoryboardReferenceSelection["usage"]> = {
-    color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", pose: "pose_reference"
+    color: "spatial_authority", depth: "spatial_depth", normal: "spatial_normal", character_id: "character_id", prop_id: "prop_id", environment_id: "environment_id", pose: "pose_reference"
   };
   const referencesById = new Map(references.map((reference) => [reference.id, reference]));
   if (
@@ -285,7 +285,7 @@ function validateCodexStoryboardSpatialBinding(
     throw new Error("codex_storyboard_required_reference_usage_missing");
   }
   const spatialReferenceUsages = new Set<CodexStoryboardReferenceSelection["usage"]>([
-    "spatial_authority", "spatial_depth", "spatial_normal", "character_id", "prop_id", "pose_reference", "environment_reference"
+    "spatial_authority", "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_id", "pose_reference", "environment_reference"
   ]);
   if (references.some((reference) => spatialReferenceUsages.has(reference.usage) && OLD_CANDIDATE_INSTRUCTION.test(reference.instruction))) {
     throw new Error("codex_storyboard_spatial_instruction_invalid");
@@ -384,7 +384,7 @@ export async function verifyCharacterEvidenceReceipt(evidence: { trustedReceipt?
     return { valid: false, reason: "receipt_backend_unavailable" };
   }
 }
-export type SpatialControlArtifactKind = "color" | "depth" | "normal" | "character_id" | "prop_id" | "pose";
+export type SpatialControlArtifactKind = "color" | "depth" | "normal" | "character_id" | "prop_id" | "environment_id" | "pose";
 export type WriteSpatialControlArtifactRequest = {
   projectAssetsDir: string;
   stageId: string;

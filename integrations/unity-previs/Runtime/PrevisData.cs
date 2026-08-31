@@ -4,6 +4,7 @@ using UnityEngine;
 
 namespace StoryboardPrevis {
 [Serializable] public class ExchangeSource { public string stageId, stageDigest, shotId, snapshotId, cameraId; public int stageRevision; }
+[Serializable] public class EnvironmentMaterialData { public string panoramaPath,panoramaSha256,projection="equirectangular_world_anchor"; public Vector3 anchor; public float yawDegrees; public bool geometryAuthority; }
 [Serializable] public class ShotCamera { public Vector3 position,target,up=Vector3.up; public float fov=50,near=.01f,far=20; public int width=960,height=540; }
 [Serializable] public class PartData { public string id,kind; public Vector3 position,size=Vector3.one; public Quaternion rotation=Quaternion.identity; public float[] color={.55f,.65f,.75f}; }
 [Serializable] public class JointData { public string id,parentId="",hand=""; public Vector3 position; public Quaternion rotation=Quaternion.identity; public float radius=.025f; public int openPoseIndex=-1,handIndex=-1; }
@@ -11,7 +12,7 @@ namespace StoryboardPrevis {
 [Serializable] public class AttachmentData { public string id,jointId=""; public Vector3 position; }
 [Serializable] public class EntityData { public string id,label,role; public Vector3 position,scale=Vector3.one; public Quaternion rotation=Quaternion.identity; public PartData[] parts=Array.Empty<PartData>(); public JointData[] joints=Array.Empty<JointData>(); public BoneData[] bones=Array.Empty<BoneData>(); public AttachmentData[] attachments=Array.Empty<AttachmentData>(); }
 [Serializable] public class RelationData { public string kind,subjectId,targetId,attachmentId=""; public Vector3 targetPoint,interiorMin,interiorMax; public float tolerance=.025f; }
-[Serializable] public class ExchangeScene { public int schemaVersion=1; public string coordinateSystem="RH_Y_UP_METRES",id,label; public ExchangeSource source; public ShotCamera camera=new ShotCamera(); public EntityData[] entities; public RelationData[] relations=Array.Empty<RelationData>(); }
+[Serializable] public class ExchangeScene { public int schemaVersion=1; public string coordinateSystem="RH_Y_UP_METRES",id,label; public ExchangeSource source; public ShotCamera camera=new ShotCamera(); public EnvironmentMaterialData environment; public EntityData[] entities; public RelationData[] relations=Array.Empty<RelationData>(); }
 [Serializable] public class CheckResult { public string kind,subjectId,targetId,attachmentId,message; public float distance,tolerance; public bool valid; }
 [Serializable] public class PreflightReport { public bool valid; public string[] errors; public CheckResult[] checks; public string collisionScope="proxy bounds and declared attachment distances; not arbitrary mesh collision or automatic IK"; }
 public static class SpaceMap {
@@ -51,6 +52,8 @@ public static class SpaceMap {
         var c=s.camera;
         if(c==null) errors.Add("missing camera");
         else if(!Bounded(c.position)||!Bounded(c.target)||!Bounded(c.up)||Vector3.Cross(c.target-c.position,c.up).sqrMagnitude<1e-10f||!Finite(c.fov)||c.fov<=1||c.fov>=179||!Finite(c.near)||!Finite(c.far)||c.near<=0||c.far<=c.near||c.far>100000||c.width<16||c.width>4096||c.height<16||c.height>4096) errors.Add("invalid shot camera");
+        var environment=s.environment;
+        if(environment!=null&&(string.IsNullOrWhiteSpace(environment.panoramaPath)||!Digest(environment.panoramaSha256)||environment.projection!="equirectangular_world_anchor"||!Bounded(environment.anchor)||!Finite(environment.yawDegrees)||Mathf.Abs(environment.yawDegrees)>360||environment.geometryAuthority)) errors.Add("invalid fixed environment material");
         bool entitiesValid=Collection(s.entities,256,"entities",errors);
         bool relationsValid=Collection(s.relations,4096,"relations",errors);
         if(!entitiesValid||!relationsValid) return errors.ToArray();

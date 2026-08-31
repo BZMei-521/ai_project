@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { validateExchange } from "./exchange.mjs";
 
-const TOMB_STAGE_ID = "stage_yingdi_e01_tomb_v2";
+const TOMB_STAGE_ID = "stage_yingdi_e01_tomb_v3";
 const SHOTS = ["E01-S01-C19", "E01-S01-C20", "E01-S01-C21", "E01-S01-C22"];
 const vector = ([x, y, z]) => ({ x, y, z });
 const quaternion = ([x, y, z, w]) => ({ x, y, z, w });
@@ -122,7 +122,7 @@ function exchangeEntity(entity, state) {
 }
 
 function assertProductionStage(stage) {
-  if (stage?.id !== TOMB_STAGE_ID || stage?.schemaVersion !== 2 || stage?.revision !== 4) throw new TypeError("yingdi_unity_stage_invalid");
+  if (stage?.id !== TOMB_STAGE_ID || stage?.schemaVersion !== 2 || stage?.revision !== 7) throw new TypeError("yingdi_unity_stage_invalid");
   if (JSON.stringify(stage.snapshots?.map((item) => item.shotId)) !== JSON.stringify(SHOTS)) throw new TypeError("yingdi_unity_shots_invalid");
   if (!stage.entities?.every((entity) => ["box", "capsule"].includes(entity.geometry?.kind))) throw new TypeError("yingdi_unity_geometry_invalid");
 }
@@ -147,6 +147,7 @@ export function buildYingdiUnityExchanges(stage, panorama) {
       label: `Yingdi ${snapshot.shotId} tomb Unity previs`,
       source: { stageId: stage.id, stageRevision: stage.revision, stageDigest, shotId: snapshot.shotId, snapshotId: snapshot.id, cameraId: camera.id },
       camera: { position: vector(camera.position), target: vector(camera.target), up: { x: 0, y: 1, z: 0 }, fov: camera.fov, near: camera.near, far: camera.far, width: 1280, height: 720 },
+      environment: { panoramaPath: panorama.path, panoramaSha256: panorama.sha256.toLowerCase(), projection: "equirectangular_world_anchor", anchor: vector(stage.environment.sources[0].anchor), yawDegrees: stage.environment.sources[0].yawDegrees, geometryAuthority: false },
       entities: stage.entities.map((entity) => exchangeEntity(entity, states.get(entity.id))),
       relations: [{
         kind: "inside",
@@ -165,11 +166,11 @@ export function buildYingdiUnityExchanges(stage, panorama) {
   });
   return {
     schemaVersion: 1,
-    workflow: "unity_previs_with_codex_panorama_appearance_v1",
+    workflow: "unity_previs_fixed_environment_v2",
     stageId: stage.id,
     stageRevision: stage.revision,
     stageDigest,
-    panorama: { role: "appearance_reference_only", ...panorama, sha256: panorama.sha256.toLowerCase() },
+    panorama: { role: "fixed_world_material", ...panorama, sha256: panorama.sha256.toLowerCase() },
     sourceAudit: { physicalStageRequired: true, unityGeometryAuthority: true, codexPanoramaGeometryAuthority: false },
     exchanges
   };

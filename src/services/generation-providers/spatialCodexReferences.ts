@@ -23,6 +23,7 @@ const CONTROL_REFERENCE_IDS: Record<CodexStoryboardSpatialArtifactKind, string> 
   normal: "normal",
   character_id: "character-id",
   prop_id: "prop-id",
+  environment_id: "environment-id",
   pose: "pose"
 };
 
@@ -32,6 +33,7 @@ const CONTROL_USAGES: Record<CodexStoryboardSpatialArtifactKind, CodexStoryboard
   normal: "spatial_normal",
   character_id: "character_id",
   prop_id: "prop_id",
+  environment_id: "environment_id",
   pose: "pose_reference"
 };
 
@@ -41,6 +43,7 @@ const CONTROL_INSTRUCTIONS: Record<CodexStoryboardSpatialArtifactKind, string> =
   normal: "Geometry comes from depth, normal, IDs, and pose controls; this normal pass is geometry authority only.",
   character_id: "Geometry comes from depth, normal, IDs, and pose controls; this character-ID pass locks character regions only.",
   prop_id: "Geometry comes from depth, normal, IDs, and pose controls; this prop-ID pass locks prop regions only.",
+  environment_id: "Geometry comes from depth, normal, IDs, and pose controls; this environment-ID pass locks immutable walls, entrance, corridor, floor, ceiling, and plinth regions.",
   pose: "Geometry comes from depth, normal, IDs, and pose controls; this pose pass locks projected humanoid pose only."
 };
 

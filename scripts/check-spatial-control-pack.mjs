@@ -26,7 +26,7 @@ const { createSpatialControlPack, renderStagePasses, validateSpatialControlPack 
 );
 
 const hash = (digit) => digit.repeat(64);
-const kinds = ["color", "depth", "normal", "character_id", "prop_id", "pose"];
+const kinds = ["color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"];
 const artifacts = kinds.map((kind, index) => ({
   kind,
   filePath: `C:\\project\\assets\\spatial-control\\stage-1\\C01\\${kind}.png`,

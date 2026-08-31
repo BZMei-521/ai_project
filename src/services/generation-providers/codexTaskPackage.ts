@@ -1,13 +1,13 @@
 export const CODEX_STORYBOARD_REFERENCE_USAGES = [
   "spatial_authority", "pose_reference", "face_identity", "body_costume",
   "prop_detail", "style_only", "lighting_only", "negative_example",
-  "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_reference"
+  "spatial_depth", "spatial_normal", "character_id", "prop_id", "environment_id", "environment_reference"
 ] as const;
 
 export type CodexStoryboardReferenceUsage = typeof CODEX_STORYBOARD_REFERENCE_USAGES[number];
 export type CodexStoryboardReference = { id: string; usage: CodexStoryboardReferenceUsage; instruction: string; relativePath: string; sha256: string; width: number; height: number; mimeType: "image/png" | "image/jpeg" };
 export const CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS = [
-  "color", "depth", "normal", "character_id", "prop_id", "pose"
+  "color", "depth", "normal", "character_id", "prop_id", "environment_id", "pose"
 ] as const;
 export type CodexStoryboardSpatialArtifactKind = typeof CODEX_STORYBOARD_SPATIAL_ARTIFACT_KINDS[number];
 export type CodexStoryboardSpatialBinding = {
