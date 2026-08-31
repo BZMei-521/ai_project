@@ -199,7 +199,7 @@ assert.equal(entities.get("tomb-room").geometry.size.join(","), "6.4,0.1,3.8", "
 assert.equal(entities.get("coffin-shell").geometry.size.join(","), "2.15,0.08,0.78", "coffin-shell is its physical bottom surface");
 assert.equal(entities.get("coffin-shell").metadata.hollow, undefined, "coffin hollow volume must come from wall geometry, not metadata");
 assert.deepEqual(roundedBounds(assembledBounds(entities, roomSurfaceIds)), { min: [-3.2, 0, -1.9], max: [3.2, 4.8, 1.9] }, "assembled room exterior must be exactly 6.4m x 4.8m x 3.8m");
-assert.deepEqual(roundedBounds(assembledBounds(entities, coffinSurfaceIds)), { min: [-1.075, 0.4, -0.39], max: [1.075, 0.84, 0.39] }, "assembled coffin exterior must be exactly 2.15m x 0.44m x 0.78m");
+assert.deepEqual(roundedBounds(assembledBounds(entities, coffinSurfaceIds)), { min: [-1.075, 0.4, -0.39], max: [1.075, 0.88, 0.39] }, "assembled coffin exterior must be exactly 2.15m x 0.48m x 0.78m");
 
 const panel = entities.get("phoenix-panel");
 const shovel = entities.get("grave-shovel");

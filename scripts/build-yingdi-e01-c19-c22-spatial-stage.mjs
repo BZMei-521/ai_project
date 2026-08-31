@@ -20,10 +20,10 @@ const ROOM_ASSEMBLY = {
 };
 const COFFIN_ASSEMBLY = {
   "coffin-shell": { position: [0, 0.44, 0], size: [2.15, 0.08, 0.78] },
-  "coffin-side-north": { position: [0, 0.66, -0.35], size: [2.15, 0.36, 0.08] },
-  "coffin-side-south": { position: [0, 0.66, 0.35], size: [2.15, 0.36, 0.08] },
-  "coffin-end-head": { position: [-1.035, 0.66, 0], size: [0.08, 0.36, 0.62] },
-  "coffin-end-foot": { position: [1.035, 0.66, 0], size: [0.08, 0.36, 0.62] }
+  "coffin-side-north": { position: [0, 0.68, -0.35], size: [2.15, 0.4, 0.08] },
+  "coffin-side-south": { position: [0, 0.68, 0.35], size: [2.15, 0.4, 0.08] },
+  "coffin-end-head": { position: [-1.035, 0.68, 0], size: [0.08, 0.4, 0.62] },
+  "coffin-end-foot": { position: [1.035, 0.68, 0], size: [0.08, 0.4, 0.62] }
 };
 const REVIEW_SHOTS = ["C19", "C20", "C21", "C22"];
 const CONTROL_ARTIFACT_KINDS = ["color", "depth", "normal", "character_id", "prop_id", "pose"];
@@ -107,7 +107,7 @@ function coffinInterior(entities) {
 }
 
 export function buildYingdiTombStage() {
-  const hingeWorld = [0, 0.84, -0.35];
+  const hingeWorld = [0, 0.88, -0.35];
   const lidRotation = [-0.17364818, 0, 0, 0.98480775];
   const lidPinLocal = [0, -0.06, -0.39];
   const lidPosition = subtract(hingeWorld, rotate(lidPinLocal, lidRotation));
@@ -119,32 +119,32 @@ export function buildYingdiTombStage() {
     box("tomb-room-wall-north", "Tomb room north wall", [0, 2.4, -1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
     box("tomb-room-wall-south", "Tomb room south wall", [0, 2.4, 1.85], [6.2, 4.6, 0.1], ["environment", "room", "surface"], { surface: "wall" }),
     box("stone-plinth", "Central stone plinth", [0, 0.2, 0], [2.6, 0.4, 1.25], ["environment", "collider"]),
-    box("coffin-shell", "Hollow coffin bottom", [0, 0.44, 0], [2.15, 0.08, 0.78], ["prop", "coffin", "surface"], { dimensionsMetres: [2.15, 0.78, 0.44] }, [attachment("lid_hinge", "Lid hinge", [0, 0.4, -0.35])]),
-    box("coffin-side-north", "Hollow coffin north side", [0, 0.66, -0.35], [2.15, 0.36, 0.08], ["prop", "coffin", "surface"]),
-    box("coffin-side-south", "Hollow coffin south side", [0, 0.66, 0.35], [2.15, 0.36, 0.08], ["prop", "coffin", "surface"]),
-    box("coffin-end-head", "Hollow coffin head wall", [-1.035, 0.66, 0], [0.08, 0.36, 0.62], ["prop", "coffin", "surface"]),
-    box("coffin-end-foot", "Hollow coffin foot wall", [1.035, 0.66, 0], [0.08, 0.36, 0.62], ["prop", "coffin", "surface"]),
+    box("coffin-shell", "Hollow coffin bottom", [0, 0.44, 0], [2.15, 0.08, 0.78], ["prop", "coffin", "surface"], { dimensionsMetres: [2.15, 0.78, 0.48] }, [attachment("lid_hinge", "Lid hinge", [0, 0.44, -0.35])]),
+    box("coffin-side-north", "Hollow coffin north side", [0, 0.68, -0.35], [2.15, 0.4, 0.08], ["prop", "coffin", "surface"]),
+    box("coffin-side-south", "Hollow coffin south side", [0, 0.68, 0.35], [2.15, 0.4, 0.08], ["prop", "coffin", "surface"]),
+    box("coffin-end-head", "Hollow coffin head wall", [-1.035, 0.68, 0], [0.08, 0.4, 0.62], ["prop", "coffin", "surface"]),
+    box("coffin-end-foot", "Hollow coffin foot wall", [1.035, 0.68, 0], [0.08, 0.4, 0.62], ["prop", "coffin", "surface"]),
     { ...box("coffin-lid", "Separate hinged coffin lid", lidPosition, [2.15, 0.12, 0.78], ["prop", "coffin-lid", "collider"], { hinge: "coffin-shell:lid_hinge" }, [attachment("hinge_pin", "Hinge pin", lidPinLocal)]), transform: transform(lidPosition, lidRotation) },
     box("phoenix-panel", "Horizontal phoenix relief panel", [0, 0.52, 0], [1.5, 0.02, 0.5], ["prop", "panel", "collider"], { normal: [0, 1, 0], floorClearanceMetres: 0.04 }),
-    humanoid("li-baozhu-full-body", "Li Baozhu full-body proxy", [0, 0.66, 0], [0, 0, 0.70710678, 0.70710678], "li-baozhu", 0.18, 1.42),
+    humanoid("li-baozhu-full-body", "Li Baozhu full-body proxy", [0, 0.68, 0], [0, 0, 0.70710678, 0.70710678], "li-baozhu", 0.18, 1.42),
     humanoid("wei-xun-full-body", "Wei Xun full-body proxy", [1.72, 1.2, 0.22], IDENTITY, "wei-xun", 0.25, 1.4),
     box("jade-dagger", "Separate jade dagger", [0.34, 0.58, -0.1], [0.46, 0.04, 0.07], ["prop", "dagger", "collider"], { propKind: "dagger" }),
     { ...box("grave-shovel", "Separate grave shovel", [1.72, 0.1, -0.95], [1.15, 0.08, 0.16], ["prop", "shovel", "collider"], { propKind: "shovel", panelClearanceMetres: 0.08 }), transform: transform([1.72, 0.1, -0.95], [0, 0, -0.25881905, 0.96592583]) }
   ];
   const cameras = [
     { id: "E01-S01-C19-camera", label: "C19 low coffin threshold", position: [-2.45, 1.1, -1.35], rotation: IDENTITY, target: [0, 0.7, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 44, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
-    { id: "E01-S01-C20-camera", label: "C20 coffin interior reverse", position: [0, 1.5, -1.4], rotation: IDENTITY, target: [0, 0.66, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 48, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
-    { id: "E01-S01-C21-camera", label: "C21 gaze to panel", position: [2.25, 1.55, -1.32], rotation: IDENTITY, target: [0, 0.52, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 46, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
+    { id: "E01-S01-C20-camera", label: "C20 coffin interior reverse", position: [0, 1.5, 1.4], rotation: IDENTITY, target: [0, 0.68, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 48, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
+    { id: "E01-S01-C21-camera", label: "C21 gaze to panel", position: [2.25, 1.55, 1.32], rotation: IDENTITY, target: [0, 0.52, 0], panoramaYaw: 0, panoramaPitch: 0, fov: 46, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" },
     { id: "E01-S01-C22-camera", label: "C22 shoulder insert", position: [2.02, 1.52, 0.95], rotation: IDENTITY, target: [1.72, 1.3, 0.22], panoramaYaw: 0, panoramaPitch: 0, fov: 52, near: 0.01, far: 12, continuityGroup: "E01-C19-C22-tomb" }
   ];
   const constraints = [
-    { id: "coffin-containment", kind: "axis_limit", subjectEntityId: "li-baozhu-full-body", targetEntityId: "coffin-shell", parameters: { boundsMin: [-0.995, 0.48, -0.31], boundsMax: [0.995, 0.84, 0.31] }, enabled: true },
+    { id: "coffin-containment", kind: "axis_limit", subjectEntityId: "li-baozhu-full-body", targetEntityId: "coffin-shell", parameters: { boundsMin: [-0.995, 0.48, -0.31], boundsMax: [0.995, 0.88, 0.31] }, enabled: true },
     { id: "lid-hinge-contact", kind: "attachment", subjectEntityId: "coffin-lid", targetEntityId: "coffin-shell", subjectAttachmentId: "hinge_pin", targetAttachmentId: "lid_hinge", parameters: { maxDistance: 0.02 }, enabled: true },
     { id: "shovel-panel-clearance", kind: "distance", subjectEntityId: "grave-shovel", targetEntityId: "phoenix-panel", parameters: { minDistance: 0.08 }, enabled: true },
     { id: "panel-horizontal", kind: "orientation", subjectEntityId: "phoenix-panel", parameters: { normal: [0, 1, 0], maxDeviationDegrees: 0 }, enabled: true }
   ];
   const snapshots = SHOTS.map((shotId, index) => ({ id: `${ID}_${shotId}`, shotId, beatId: shotId.split("-").at(-1), ...(index ? { previousSnapshotId: `${ID}_${SHOTS[index - 1]}` } : {}), cameraId: `${shotId}-camera`, entityStates: entities.map(stateFor), constraintIds: constraints.map((constraint) => constraint.id), createdAt: `2026-08-30T00:00:0${index}.000Z` }));
-  return { schemaVersion: 2, id: ID, sceneId: "yingdi_e01_tomb_c19_c22", revision: 2, coordinateFrame: { handedness: "right", upAxis: "y", unit: "metre", origin: [0, 0, 0], forward: [0, 0, -1], groundY: 0, scaleMode: "metric" }, environment: { sources: [{ kind: "procedural", primitive: "room" }] }, entities, constraints, cameras, snapshots, capabilities: manualCapabilities(), sourceDigest: "", updatedAt: CREATED_AT };
+  return { schemaVersion: 2, id: ID, sceneId: "yingdi_e01_tomb_c19_c22", revision: 4, coordinateFrame: { handedness: "right", upAxis: "y", unit: "metre", origin: [0, 0, 0], forward: [0, 0, -1], groundY: 0, scaleMode: "metric" }, environment: { sources: [{ kind: "procedural", primitive: "room" }] }, entities, constraints, cameras, snapshots, capabilities: manualCapabilities(), sourceDigest: "", updatedAt: CREATED_AT };
 }
 
 export function auditYingdiTombStage(stage) {
@@ -157,7 +157,7 @@ export function auditYingdiTombStage(stage) {
   if (stage?.cameras?.length !== 4) errors.push("camera_count_invalid");
   const roomBounds = ROOM_SURFACES.every((id) => entities.has(id)) ? { min: [-3.2, 0, -1.9], max: [3.2, 4.8, 1.9] } : null;
   const actualRoomBounds = ROOM_SURFACES.every((id) => entities.has(id)) ? (() => { const values = ROOM_SURFACES.map((id) => geometryAabb(entities.get(id))); return { min: values[0].min.map((_, axis) => Math.min(...values.map((value) => value.min[axis]))), max: values[0].max.map((_, axis) => Math.max(...values.map((value) => value.max[axis]))) }; })() : null;
-  const coffinBounds = COFFIN_SURFACES.every((id) => entities.has(id)) ? { min: [-1.075, 0.4, -0.39], max: [1.075, 0.84, 0.39] } : null;
+  const coffinBounds = COFFIN_SURFACES.every((id) => entities.has(id)) ? { min: [-1.075, 0.4, -0.39], max: [1.075, 0.88, 0.39] } : null;
   const actualCoffinBounds = COFFIN_SURFACES.every((id) => entities.has(id)) ? (() => { const values = COFFIN_SURFACES.map((id) => geometryAabb(entities.get(id))); return { min: values[0].min.map((_, axis) => Math.min(...values.map((value) => value.min[axis]))), max: values[0].max.map((_, axis) => Math.max(...values.map((value) => value.max[axis]))) }; })() : null;
   if (!roomBounds || !roomInterior(entities)) errors.push("room_enclosure_invalid");
   else if (!assemblyMatches(entities, ROOM_ASSEMBLY) || !boundsMatch(actualRoomBounds, roomBounds)) errors.push("room_assembly_invalid");

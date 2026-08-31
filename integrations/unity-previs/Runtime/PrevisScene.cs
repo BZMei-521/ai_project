@@ -11,6 +11,7 @@ public sealed class PrevisScene : IDisposable {
     public readonly Dictionary<string,GameObject> Entities=new Dictionary<string,GameObject>();
     public readonly Dictionary<string,Dictionary<string,Transform>> Joints=new Dictionary<string,Dictionary<string,Transform>>();
     public readonly Dictionary<Renderer,string> Renderers=new Dictionary<Renderer,string>();
+    public readonly Dictionary<Renderer,float> GeometryScales=new Dictionary<Renderer,float>();
     readonly List<Material> materials=new List<Material>();
     readonly List<Action> updateBones=new List<Action>();
     public void Load(ExchangeScene input) {
@@ -54,6 +55,24 @@ public sealed class PrevisScene : IDisposable {
     }
     public void ApplyCamera() {var c=Data.camera;Camera.transform.position=SpaceMap.Position(c.position);Camera.transform.rotation=Quaternion.LookRotation(SpaceMap.Position(c.target-c.position),SpaceMap.Position(c.up));Camera.fieldOfView=c.fov;Camera.nearClipPlane=c.near;Camera.farClipPlane=c.far;Camera.aspect=(float)c.width/c.height;}
     public void UpdateGeometry() {foreach(var update in updateBones) update();Physics.SyncTransforms();}
+    public Bounds GeometryBounds(Renderer renderer) {
+        var skinned=renderer as SkinnedMeshRenderer;if(skinned==null)return renderer.bounds;
+        var baked=new Mesh();try{skinned.BakeMesh(baked);var vertices=baked.vertices;if(vertices.Length==0)return renderer.bounds;float scale;GeometryScales.TryGetValue(renderer,out scale);if(scale<=0)scale=1;var bounds=new Bounds(renderer.transform.TransformPoint(vertices[0]*scale),Vector3.zero);for(var i=1;i<vertices.Length;i++)bounds.Encapsulate(renderer.transform.TransformPoint(vertices[i]*scale));return bounds;}finally{UnityEngine.Object.DestroyImmediate(baked);}
+    }
+    public void ReplaceEntityVisual(string entityId,GameObject visual,Vector3 localPosition,Quaternion localRotation,Color tint,float bakedVertexScale=1) {
+        if(!Entities.ContainsKey(entityId)||visual==null)throw new Exception("replacement visual invalid: "+entityId);
+        var obsolete=new List<Renderer>();foreach(var kv in Renderers)if(kv.Value==entityId)obsolete.Add(kv.Key);
+        foreach(var renderer in obsolete){renderer.enabled=false;Renderers.Remove(renderer);}
+        var holder=new GameObject(entityId+" approved character holder");holder.transform.SetParent(Entities[entityId].transform,false);holder.transform.localPosition=localPosition;holder.transform.localRotation=localRotation;holder.transform.localScale=Vector3.one;
+        visual.name=entityId+" approved character mesh";visual.transform.SetParent(holder.transform,false);
+        var shader=Resources.Load<Shader>("Control");if(shader==null)throw new Exception("Previs Control shader missing");
+        var replacements=visual.GetComponentsInChildren<Renderer>(true);if(replacements.Length==0)throw new Exception("replacement visual has no renderers: "+entityId);
+        foreach(var renderer in replacements){
+            var skinned=renderer as SkinnedMeshRenderer;if(skinned!=null)skinned.updateWhenOffscreen=true;
+            var mat=new Material(shader);mat.SetColor("_Color",tint);materials.Add(mat);renderer.sharedMaterial=mat;renderer.enabled=true;Renderers.Add(renderer,entityId);GeometryScales.Add(renderer,bakedVertexScale);
+        }
+        UpdateGeometry();
+    }
     public Vector3 Attachment(string entityId,string attachmentId) {var e=Array.Find(Data.entities,x=>x.id==entityId);var a=Array.Find(e.attachments,x=>x.id==attachmentId);if(a==null)throw new Exception("attachment missing: "+attachmentId);var t=string.IsNullOrEmpty(a.jointId)?Entities[entityId].transform:Joints[entityId][a.jointId];return t.TransformPoint(SpaceMap.Position(a.position));}
     public PreflightReport Preflight() {
         UpdateGeometry(); var errors=new List<string>(SpaceMap.Validate(Capture()));var checks=new List<CheckResult>();
@@ -67,7 +86,7 @@ public sealed class PrevisScene : IDisposable {
             else {
                 var target=Entities[r.targetId].transform;
                 foreach(var kv in Renderers) if(kv.Value==r.subjectId) {
-                    var b=kv.Key.bounds;
+                    var b=GeometryBounds(kv.Key);
                     for(int i=0;i<8;i++) {var corner=b.center+Vector3.Scale(b.extents,new Vector3((i&1)==0?-1:1,(i&2)==0?-1:1,(i&4)==0?-1:1));var v=SpaceMap.Position(target.InverseTransformPoint(corner));
                         if(v.x<r.interiorMin.x-r.tolerance||v.y<r.interiorMin.y-r.tolerance||v.z<r.interiorMin.z-r.tolerance||v.x>r.interiorMax.x+r.tolerance||v.y>r.interiorMax.y+r.tolerance||v.z>r.interiorMax.z+r.tolerance) check.valid=false;
                     }
@@ -81,6 +100,6 @@ public sealed class PrevisScene : IDisposable {
         foreach(var e in Data.entities) {var t=Entities[e.id].transform;e.position=SpaceMap.Position(t.localPosition);e.rotation=SpaceMap.Rotation(t.localRotation);e.scale=t.localScale;foreach(var j in e.joints){var jt=Joints[e.id][j.id];j.position=SpaceMap.Position(jt.localPosition);j.rotation=SpaceMap.Rotation(jt.localRotation);}}
         return JsonUtility.FromJson<ExchangeScene>(JsonUtility.ToJson(Data));
     }
-    public void Dispose() {if(Root!=null)UnityEngine.Object.DestroyImmediate(Root);foreach(var m in materials)if(m!=null)UnityEngine.Object.DestroyImmediate(m);materials.Clear();Entities.Clear();Joints.Clear();Renderers.Clear();updateBones.Clear();Root=null;}
+    public void Dispose() {if(Root!=null)UnityEngine.Object.DestroyImmediate(Root);foreach(var m in materials)if(m!=null)UnityEngine.Object.DestroyImmediate(m);materials.Clear();Entities.Clear();Joints.Clear();Renderers.Clear();GeometryScales.Clear();updateBones.Clear();Root=null;}
 }
 }

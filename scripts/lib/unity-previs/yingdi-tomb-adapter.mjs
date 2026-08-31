@@ -122,7 +122,7 @@ function exchangeEntity(entity, state) {
 }
 
 function assertProductionStage(stage) {
-  if (stage?.id !== TOMB_STAGE_ID || stage?.schemaVersion !== 2 || stage?.revision !== 2) throw new TypeError("yingdi_unity_stage_invalid");
+  if (stage?.id !== TOMB_STAGE_ID || stage?.schemaVersion !== 2 || stage?.revision !== 4) throw new TypeError("yingdi_unity_stage_invalid");
   if (JSON.stringify(stage.snapshots?.map((item) => item.shotId)) !== JSON.stringify(SHOTS)) throw new TypeError("yingdi_unity_shots_invalid");
   if (!stage.entities?.every((entity) => ["box", "capsule"].includes(entity.geometry?.kind))) throw new TypeError("yingdi_unity_geometry_invalid");
 }

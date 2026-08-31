@@ -16,7 +16,7 @@ public static class PrevisBatch {
         if(!Directory.Exists(inputDir))throw new DirectoryNotFoundException(inputDir);
         var files=Directory.GetFiles(inputDir,"*.unity-exchange.json",SearchOption.TopDirectoryOnly);Array.Sort(files,StringComparer.Ordinal);
         if(files.Length==0)throw new InvalidOperationException("No exchange JSON files in "+inputDir);
-        foreach(var input in files)using(var stage=new PrevisScene()){stage.LoadFile(input);var output=PrevisExport.Export(stage);Debug.Log("PREVIS_INPUT_EXPORT="+input+"|"+output);}
+        foreach(var input in files)using(var stage=new PrevisScene()){stage.LoadFile(input);PrevisCharacterModels.AttachApproved(stage);var output=PrevisExport.Export(stage);Debug.Log("PREVIS_INPUT_EXPORT="+input+"|"+output);}
         Debug.Log("PREVIS_INPUT_EXPORTS_PASS="+files.Length);EditorApplication.Exit(0);
     }catch(Exception e){Debug.LogException(e);EditorApplication.Exit(1);}}
     public static void VerifyAndBuild(){try{PrevisChecks.RunCore();PrevisRenderChecks.RunCore();foreach(var fixture in PrevisFixtures.All())using(var stage=new PrevisScene()){stage.Load(fixture);Debug.Log("PREVIS_EDITOR_EXPORT="+PrevisExport.Export(stage));}Build();}catch(Exception e){Debug.LogException(e);EditorApplication.Exit(1);}}

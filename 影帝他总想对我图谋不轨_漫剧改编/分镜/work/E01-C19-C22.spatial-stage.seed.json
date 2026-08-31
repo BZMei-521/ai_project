@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "stage_yingdi_e01_tomb_v2",
   "sceneId": "yingdi_e01_tomb_c19_c22",
-  "revision": 2,
+  "revision": 4,
   "coordinateFrame": {
     "handedness": "right",
     "upAxis": "y",
@@ -358,7 +358,7 @@
           "localTransform": {
             "position": [
               0,
-              0.4,
+              0.44,
               -0.35
             ],
             "rotation": [
@@ -381,7 +381,7 @@
         "dimensionsMetres": [
           2.15,
           0.78,
-          0.44
+          0.48
         ]
       }
     },
@@ -396,7 +396,7 @@
       "transform": {
         "position": [
           0,
-          0.66,
+          0.68,
           -0.35
         ],
         "rotation": [
@@ -415,7 +415,7 @@
         "kind": "box",
         "size": [
           2.15,
-          0.36,
+          0.4,
           0.08
         ]
       },
@@ -435,7 +435,7 @@
       "transform": {
         "position": [
           0,
-          0.66,
+          0.68,
           0.35
         ],
         "rotation": [
@@ -454,7 +454,7 @@
         "kind": "box",
         "size": [
           2.15,
-          0.36,
+          0.4,
           0.08
         ]
       },
@@ -474,7 +474,7 @@
       "transform": {
         "position": [
           -1.035,
-          0.66,
+          0.68,
           0
         ],
         "rotation": [
@@ -493,7 +493,7 @@
         "kind": "box",
         "size": [
           0.08,
-          0.36,
+          0.4,
           0.62
         ]
       },
@@ -513,7 +513,7 @@
       "transform": {
         "position": [
           1.035,
-          0.66,
+          0.68,
           0
         ],
         "rotation": [
@@ -532,7 +532,7 @@
         "kind": "box",
         "size": [
           0.08,
-          0.36,
+          0.4,
           0.62
         ]
       },
@@ -552,7 +552,7 @@
       "transform": {
         "position": [
           0,
-          1.029769414123733,
+          1.069769414123733,
           -0.004041089335814818
         ],
         "rotation": [
@@ -662,7 +662,7 @@
       "transform": {
         "position": [
           0,
-          0.66,
+          0.68,
           0
         ],
         "rotation": [
@@ -1020,7 +1020,7 @@
         ],
         "boundsMax": [
           0.995,
-          0.84,
+          0.88,
           0.31
         ]
       },
@@ -1096,7 +1096,7 @@
       "position": [
         0,
         1.5,
-        -1.4
+        1.4
       ],
       "rotation": [
         0,
@@ -1106,7 +1106,7 @@
       ],
       "target": [
         0,
-        0.66,
+        0.68,
         0
       ],
       "panoramaYaw": 0,
@@ -1122,7 +1122,7 @@
       "position": [
         2.25,
         1.55,
-        -1.32
+        1.32
       ],
       "rotation": [
         0,
@@ -1357,7 +1357,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               -0.35
             ],
             "rotation": [
@@ -1379,7 +1379,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0.35
             ],
             "rotation": [
@@ -1401,7 +1401,7 @@
           "transform": {
             "position": [
               -1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -1423,7 +1423,7 @@
           "transform": {
             "position": [
               1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -1445,7 +1445,7 @@
           "transform": {
             "position": [
               0,
-              1.029769414123733,
+              1.069769414123733,
               -0.004041089335814818
             ],
             "rotation": [
@@ -1489,7 +1489,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -1509,7 +1509,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.66,
+                0.68,
                 0
               ],
               "rotation": [
@@ -1817,7 +1817,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               -0.35
             ],
             "rotation": [
@@ -1839,7 +1839,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0.35
             ],
             "rotation": [
@@ -1861,7 +1861,7 @@
           "transform": {
             "position": [
               -1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -1883,7 +1883,7 @@
           "transform": {
             "position": [
               1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -1905,7 +1905,7 @@
           "transform": {
             "position": [
               0,
-              1.029769414123733,
+              1.069769414123733,
               -0.004041089335814818
             ],
             "rotation": [
@@ -1949,7 +1949,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -1969,7 +1969,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.66,
+                0.68,
                 0
               ],
               "rotation": [
@@ -2277,7 +2277,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               -0.35
             ],
             "rotation": [
@@ -2299,7 +2299,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0.35
             ],
             "rotation": [
@@ -2321,7 +2321,7 @@
           "transform": {
             "position": [
               -1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -2343,7 +2343,7 @@
           "transform": {
             "position": [
               1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -2365,7 +2365,7 @@
           "transform": {
             "position": [
               0,
-              1.029769414123733,
+              1.069769414123733,
               -0.004041089335814818
             ],
             "rotation": [
@@ -2409,7 +2409,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -2429,7 +2429,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.66,
+                0.68,
                 0
               ],
               "rotation": [
@@ -2737,7 +2737,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               -0.35
             ],
             "rotation": [
@@ -2759,7 +2759,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0.35
             ],
             "rotation": [
@@ -2781,7 +2781,7 @@
           "transform": {
             "position": [
               -1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -2803,7 +2803,7 @@
           "transform": {
             "position": [
               1.035,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -2825,7 +2825,7 @@
           "transform": {
             "position": [
               0,
-              1.029769414123733,
+              1.069769414123733,
               -0.004041089335814818
             ],
             "rotation": [
@@ -2869,7 +2869,7 @@
           "transform": {
             "position": [
               0,
-              0.66,
+              0.68,
               0
             ],
             "rotation": [
@@ -2889,7 +2889,7 @@
             "rootTransform": {
               "position": [
                 0,
-                0.66,
+                0.68,
                 0
               ],
               "rotation": [
