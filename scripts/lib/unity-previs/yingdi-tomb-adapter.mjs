@@ -158,6 +158,15 @@ export function buildYingdiUnityExchanges(stage, panorama) {
         tolerance: 0.005,
         interiorMin: vector(worldMin.map((value, index) => value - coffin.position[index])),
         interiorMax: vector(worldMax.map((value, index) => value - coffin.position[index]))
+      }, {
+        kind: "gaze",
+        subjectId: "li-baozhu-full-body",
+        targetId: "wei-xun-full-body",
+        attachmentId: "",
+        targetPoint: zero,
+        tolerance: 0,
+        interiorMin: zero,
+        interiorMax: zero
       }]
     };
     const checked = validateExchange(exchange);

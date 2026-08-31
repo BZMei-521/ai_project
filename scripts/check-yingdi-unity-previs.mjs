@@ -17,8 +17,13 @@ for (const item of result.exchanges) {
   assert.equal(item.exchange.environment.projection, "equirectangular_world_anchor");
   assert.equal(item.exchange.environment.geometryAuthority, false);
   assert.equal(item.exchange.entities.length, stage.entities.length);
-  assert.equal(item.exchange.relations.length, 1);
+  assert.equal(item.exchange.relations.length, 2);
   assert.equal(item.exchange.relations[0].kind, "inside");
+  assert.deepEqual(item.exchange.relations[1], {
+    kind: "gaze", subjectId: "li-baozhu-full-body", targetId: "wei-xun-full-body",
+    attachmentId: "", targetPoint: { x: 0, y: 0, z: 0 }, tolerance: 0,
+    interiorMin: { x: 0, y: 0, z: 0 }, interiorMax: { x: 0, y: 0, z: 0 }
+  });
   for (const subject of item.exchange.entities.filter((entity) => entity.role === "subject")) {
     assert.equal(subject.joints.filter((joint) => joint.openPoseIndex >= 0).length, 18);
     assert.deepEqual([...new Set(subject.joints.filter((joint) => joint.hand === "left").map((joint) => joint.handIndex))].sort((a, b) => a - b), Array.from({ length: 21 }, (_, index) => index));

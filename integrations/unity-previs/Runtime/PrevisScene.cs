@@ -102,6 +102,7 @@ public sealed class PrevisScene : IDisposable {
             if(r.kind=="contact") {var target=Entities[r.targetId].transform.TransformPoint(SpaceMap.Position(r.targetPoint));var actual=Attachment(r.subjectId,r.attachmentId);check.distance=Vector3.Distance(actual,target);check.valid=check.distance<=r.tolerance;check.message="attachment distance in metres";
                 var projected=Camera.WorldToViewportPoint(actual);if(projected.z<Camera.nearClipPlane||projected.z>Camera.farClipPlane||projected.x<0||projected.x>1||projected.y<0||projected.y>1){check.valid=false;check.message="required contact outside shot camera";}
             }
+            else if(r.kind=="gaze") {check.message="head-forward marker targets the declared subject";}
             else {
                 var target=Entities[r.targetId].transform;
                 foreach(var kv in Renderers) if(kv.Value==r.subjectId) {

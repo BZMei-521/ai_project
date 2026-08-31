@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using UnityEngine;
 namespace StoryboardPrevis {
 [Serializable] public class ProjectedJoint {public string entityId,jointId,hand;public int bodyIndex,handIndex;public float x,y,eyeDepth;public bool inFrame,occludedByOtherEntity;}
-[Serializable] public class ProjectedJoints {public string coordinates="pixels, origin top-left";public string occlusionPolicy="all joints within clip volume are projected; other-entity occlusion annotated, not culled";public ProjectedJoint[] joints;}
+[Serializable] public class ProjectedJoints {public string coordinates="pixels, origin top-left";public string occlusionPolicy="all joints within clip volume are projected; other-entity occlusion annotated, not culled";public string orientationSemantic=PrevisPose.OrientationSemantic;public ProjectedJoint[] joints;}
 public static class PrevisPose {
+    public const string OrientationEncoding="head_forward_orientation_rgb8";
+    public const string OrientationSemantic="head-forward";
     static readonly int[,] BodyEdges={{1,2},{2,3},{3,4},{1,5},{5,6},{6,7},{1,8},{8,9},{9,10},{1,11},{11,12},{12,13},{1,0},{0,14},{14,16},{0,15},{15,17}};
     static Color32 Hue(int i,int count){return Color.HSVToRGB((float)i/count,1,1);}
     static bool Pixel(Camera c,Vector3 p,int width,int height,out Vector2 point){var v=c.WorldToViewportPoint(p);point=new Vector2(v.x*width,v.y*height);return v.z>=c.nearClipPlane&&v.z<=c.farClipPlane&&v.x>=0&&v.x<1&&v.y>=0&&v.y<1;}
@@ -21,6 +23,11 @@ public static class PrevisPose {
             foreach(var hand in new[]{"right","left"})for(int finger=0;finger<5;finger++)for(int segment=0;segment<4;segment++){
                 int aIndex=segment==0?0:1+finger*4+segment-1,bIndex=1+finger*4+segment;var a=Array.Find(entity.joints,j=>j.hand==hand&&j.handIndex==aIndex);var b=Array.Find(entity.joints,j=>j.hand==hand&&j.handIndex==bIndex);if(a!=null&&b!=null)edge(a.id,b.id,Hue(finger,5));
             }
+        } else if(channel=="orientation") {
+            Transform head,nose;if(map.TryGetValue("head",out head)&&map.TryGetValue("nose",out nose)){Vector2 a=default,b=default;var found=false;
+                foreach(var r in stage.Data.relations)if(r.kind=="gaze"&&r.subjectId==entity.id){Dictionary<string,Transform> targetJoints;Transform targetHead;var target=stage.Entities[r.targetId].transform.position;if(stage.Joints.TryGetValue(r.targetId,out targetJoints)&&targetJoints.TryGetValue("head",out targetHead))target=targetHead.position;Vector2 targetPixel;if(Pixel(stage.Camera,head.position,w,h,out a)&&Pixel(stage.Camera,target,w,h,out targetPixel)){var direction=(targetPixel-a).normalized;b=a+direction*Mathf.Max(48,h/10);found=true;}break;}
+                if(!found&&Pixel(stage.Camera,head.position,w,h,out a)&&Pixel(stage.Camera,nose.position,w,h,out b))found=true;
+                if(found){Line(pixels,w,h,a,b,radius+1,new Color32(255,0,255,255));Dot(pixels,w,h,a,radius+3,new Color32(255,255,0,255));Dot(pixels,w,h,b,radius+5,new Color32(0,255,255,255));}}
         } else if(channel=="contacts") {
             foreach(var r in stage.Data.relations)if(r.kind=="contact"&&r.subjectId==entity.id){Vector2 a,b;var actual=stage.Attachment(entity.id,r.attachmentId);var target=stage.Entities[r.targetId].transform.TransformPoint(SpaceMap.Position(r.targetPoint));if(Pixel(stage.Camera,actual,w,h,out a)&&Pixel(stage.Camera,target,w,h,out b)){Line(pixels,w,h,a,b,radius,Color.yellow);Dot(pixels,w,h,b,radius+5,Color.cyan);Dot(pixels,w,h,a,radius+2,Color.green);}}
         }

@@ -19,7 +19,8 @@ public static class PrevisExport {
     public static void Json(string path,object value){File.WriteAllText(path,JsonUtility.ToJson(value,true),Utf8);}
     public static Texture2D Render(PrevisScene stage,string kind,string entityId) {
         stage.UpdateGeometry();stage.ApplyCamera();var c=stage.Data.camera;
-        bool isolated=kind.StartsWith("isolated_",StringComparison.Ordinal);var pass=isolated?kind.Substring(9):kind;
+        bool spatial=kind.StartsWith("spatial_",StringComparison.Ordinal);var spatialPass=spatial?kind.Substring(8):kind;
+        bool isolated=spatialPass.StartsWith("isolated_",StringComparison.Ordinal);var pass=isolated?spatialPass.Substring(9):spatialPass;
         var mode=pass=="depth"?1:pass=="normal"?2:pass=="visible_mask"||pass=="mask"?3:0;
         var oldMode=Shader.GetGlobalFloat("_PrevisMode");var oldActive=RenderTexture.active;var oldTarget=stage.Camera.targetTexture;var oldBackground=stage.Camera.backgroundColor;
         var enabled=new Dictionary<Renderer,bool>();var oldMasks=new Dictionary<Material,float>();
@@ -27,7 +28,8 @@ public static class PrevisExport {
         Texture2D image=null;
         try {
             Shader.SetGlobalFloat("_PrevisMode",mode);Shader.SetGlobalFloat("_PrevisNear",c.near);Shader.SetGlobalFloat("_PrevisFar",c.far);
-            foreach(var kv in stage.Renderers) {enabled.Add(kv.Key,kv.Key.enabled);var mat=kv.Key.sharedMaterial;oldMasks[mat]=mat.GetFloat("_MaskValue");mat.SetFloat("_MaskValue",kv.Value==entityId?1:0);if(isolated)kv.Key.enabled=kv.Value==entityId;}
+            var subjects=new HashSet<string>();if(spatial)foreach(var entity in stage.Data.entities)if(entity.role=="subject")subjects.Add(entity.id);
+            foreach(var kv in stage.Renderers) {enabled.Add(kv.Key,kv.Key.enabled);var mat=kv.Key.sharedMaterial;oldMasks[mat]=mat.GetFloat("_MaskValue");mat.SetFloat("_MaskValue",kv.Value==entityId?1:0);if(spatial&&subjects.Contains(kv.Value))kv.Key.enabled=false;else if(isolated)kv.Key.enabled=kv.Value==entityId;}
             stage.Camera.backgroundColor=mode==0&&!isolated?new Color(.055f,.07f,.09f):Color.black;stage.Camera.targetTexture=rt;stage.Camera.Render();RenderTexture.active=rt;
             image=new Texture2D(c.width,c.height,TextureFormat.RGB24,false,true);image.ReadPixels(new Rect(0,0,c.width,c.height),0,0);image.Apply();return image;
         } catch {if(image!=null)UnityEngine.Object.DestroyImmediate(image);throw;}
@@ -39,7 +41,7 @@ public static class PrevisExport {
         if(!string.IsNullOrEmpty(stage.OriginalJson))File.WriteAllText(Path.Combine(dir,"source-input.json"),stage.OriginalJson,Utf8);
         var artifacts=new List<ExportArtifact>();var index=0;
         Action<string,string,string,Texture2D> write=(kind,id,encoding,img)=>{try{var name=(index++).ToString("D3")+"-"+kind+".png";var bytes=img.EncodeToPNG();File.WriteAllBytes(Path.Combine(dir,name),bytes);artifacts.Add(new ExportArtifact{kind=kind,entityId=id,filePath=name,width=img.width,height=img.height,sha256=Hash(bytes),encoding=encoding});}finally{UnityEngine.Object.DestroyImmediate(img);}};
-        write("color","","srgb_rgb8",Render(stage,"color",""));write("depth","","linear_eye_near_white_8bit",Render(stage,"depth",""));write("normal","","rh_view_normal_rgb8",Render(stage,"normal",""));
+        write("color","","srgb_rgb8",Render(stage,"spatial_color",""));write("depth","","linear_eye_near_white_8bit",Render(stage,"spatial_depth",""));write("normal","","rh_view_normal_rgb8",Render(stage,"spatial_normal",""));
         foreach(var entity in data.entities) {
             write("color",entity.id,"srgb_rgb8",Render(stage,"isolated_color",entity.id));
             write("depth",entity.id,"linear_eye_near_white_8bit",Render(stage,"isolated_depth",entity.id));
@@ -49,6 +51,7 @@ public static class PrevisExport {
                 write("isolated_mask",entity.id,"binary_isolated_8bit",Render(stage,"isolated_mask",entity.id));
                 write("openpose",entity.id,"openpose_body18_rgb8",PrevisPose.Render(stage,entity,"body"));
                 write("hand_pose",entity.id,"openpose_hand21_rgb8",PrevisPose.Render(stage,entity,"hands"));
+                write("orientation",entity.id,PrevisPose.OrientationEncoding,PrevisPose.Render(stage,entity,"orientation"));
                 write("contact_map",entity.id,"contact_diagnostic_rgb8",PrevisPose.Render(stage,entity,"contacts"));
             }
         }

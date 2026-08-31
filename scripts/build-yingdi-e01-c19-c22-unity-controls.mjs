@@ -127,7 +127,7 @@ for (let index = 0; index < SHOTS.length; index += 1) {
     canonical.push({ kind, path: target, encoding: "stable_entity_id_rgb8", palette: Object.fromEntries(entities.map((entity) => [entity.id, palette(entity.id)])) });
   }
   const poses = [];
-  for (const subject of subjects) for (const kind of ["openpose", "hand_pose"]) poses.push(await checkedArtifact(run, by(kind, subject.id)));
+  for (const subject of subjects) for (const kind of ["openpose", "hand_pose", "orientation"]) poses.push(await checkedArtifact(run, by(kind, subject.id)));
   const posePath = join(outputDir, "pose.png");
   if (ffmpeg) await runFfmpeg(poses, poseFilters(poses.length), posePath);
   else await runPillow("pose", poses, posePath);
@@ -141,7 +141,7 @@ for (let index = 0; index < SHOTS.length; index += 1) {
   }
   const controlPack = {
     schemaVersion: 1,
-    workflow: "unity_previs_canonical_seven_control_v2",
+    workflow: "unity_previs_identity_isolated_controls_v3",
     state: "validated",
     shotId,
     stage: source.source,
@@ -155,5 +155,5 @@ for (let index = 0; index < SHOTS.length; index += 1) {
   await atomicJson(manifestPath, controlPack);
   bundles.push({ shotId, manifestPath: manifestPath.replaceAll("\\", "/"), manifestSha256: digest(await readFile(manifestPath)) });
 }
-await atomicJson(join(outputRoot, "control-pack-bundle.json"), { schemaVersion: 1, workflow: "unity_previs_canonical_seven_control_v2", state: "validated", bundles, generatedAt: new Date().toISOString() });
+await atomicJson(join(outputRoot, "control-pack-bundle.json"), { schemaVersion: 1, workflow: "unity_previs_identity_isolated_controls_v3", state: "validated", bundles, generatedAt: new Date().toISOString() });
 console.log(JSON.stringify({ valid: true, outputRoot, shots: bundles.length }));

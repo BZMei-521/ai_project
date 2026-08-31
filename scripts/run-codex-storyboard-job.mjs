@@ -414,7 +414,7 @@ function compilePrompt(request) {
 }
 
 function spatialReferenceRank(usage) {
-  return ({ spatial_authority: 0, spatial_depth: 1, spatial_normal: 2, character_id: 3, prop_id: 4, environment_id: 5, pose_reference: 6, environment_reference: 7, face_identity: 8, body_costume: 8, prop_detail: 9, style_only: 10, lighting_only: 10, negative_example: 11 })[usage] ?? 12;
+  return ({ face_identity: 0, body_costume: 0, prop_detail: 1, spatial_authority: 2, pose_reference: 3, character_id: 4, environment_reference: 5, prop_id: 6, environment_id: 7, spatial_depth: 8, spatial_normal: 9, style_only: 10, lighting_only: 10, negative_example: 11 })[usage] ?? 12;
 }
 
 async function pathExists(filePath) {

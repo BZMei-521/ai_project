@@ -65,7 +65,7 @@ public static class SpaceMap {
             ValidateEntity(e,errors);
         }
         foreach(var r in s.relations) {
-            if(r==null||!SafeId(r.subjectId)||!SafeId(r.targetId)||!entities.ContainsKey(r.subjectId)||!entities.ContainsKey(r.targetId)||r.subjectId==r.targetId||!(r.kind=="inside"||r.kind=="contact")||!Finite(r.tolerance)||r.tolerance<0||r.tolerance>10) {errors.Add("unsupported or invalid relation");continue;}
+            if(r==null||!SafeId(r.subjectId)||!SafeId(r.targetId)||!entities.ContainsKey(r.subjectId)||!entities.ContainsKey(r.targetId)||r.subjectId==r.targetId||!(r.kind=="inside"||r.kind=="contact"||r.kind=="gaze")||!Finite(r.tolerance)||r.tolerance<0||r.tolerance>10) {errors.Add("unsupported or invalid relation");continue;}
             var subject=entities[r.subjectId];
             if(r.kind=="contact"&&(!SafeId(r.attachmentId)||!Bounded(r.targetPoint)||subject.attachments==null||!Array.Exists(subject.attachments,a=>a!=null&&a.id==r.attachmentId))) errors.Add(r.subjectId+": invalid contact point or missing contact attachment");
             if(r.kind=="inside"&&(!Bounded(r.interiorMin)||!Bounded(r.interiorMax)||r.interiorMin.x>=r.interiorMax.x||r.interiorMin.y>=r.interiorMax.y||r.interiorMin.z>=r.interiorMax.z)) errors.Add(r.targetId+": invalid interior bounds");

@@ -911,16 +911,16 @@ fn canonical_reference_sequence<'a>(references: &'a [Value], schema_version: Opt
 
 fn spatial_reference_rank(usage: &str) -> u8 {
     match usage {
-        "spatial_authority" => 0,
-        "spatial_depth" => 1,
-        "spatial_normal" => 2,
-        "character_id" => 3,
-        "prop_id" => 4,
-        "environment_id" => 5,
-        "pose_reference" => 6,
-        "environment_reference" => 7,
-        "face_identity" | "body_costume" => 8,
-        "prop_detail" => 9,
+        "face_identity" | "body_costume" => 0,
+        "prop_detail" => 1,
+        "spatial_authority" => 2,
+        "pose_reference" => 3,
+        "character_id" => 4,
+        "environment_reference" => 5,
+        "prop_id" => 6,
+        "environment_id" => 7,
+        "spatial_depth" => 8,
+        "spatial_normal" => 9,
         "style_only" | "lighting_only" => 10,
         "negative_example" => 11,
         _ => 12,
@@ -1403,6 +1403,7 @@ mod tests {
             ("environment", "environment_reference", "Perspective derived from the approved panorama."),
             ("li", "face_identity", "Li Baozhu identity and costume authority."),
             ("wei", "face_identity", "Wei Xun identity and costume authority."),
+            ("coffin", "prop_detail", "Coffin appearance and hardware identity authority."),
         ].into_iter().map(|(id, usage, instruction)| json!({
             "id":id,"usage":usage,"instruction":instruction,"relativePath":format!("references/{id}.png"),"sha256":reference_sha,"width":1,"height":1,"mimeType":"image/png"
         })).collect::<Vec<_>>();
@@ -1425,7 +1426,7 @@ mod tests {
         fs::create_dir_all(root.join("references")).unwrap();
         let bytes = png(RgbaImage::new(1, 1));
         let digest = sha(&bytes);
-        for id in ["color", "depth", "normal", "character-id", "prop-id", "environment-id", "pose", "environment", "li", "wei"] {
+        for id in ["color", "depth", "normal", "character-id", "prop-id", "environment-id", "pose", "environment", "li", "wei", "coffin"] {
             fs::write(root.join("references").join(format!("{id}.png")), &bytes).unwrap();
         }
         let mut request = spatial_v2_request(&digest);
@@ -1433,13 +1434,15 @@ mod tests {
         let package = acquire_package(&root).unwrap();
         assert!(request_and_digest(&package.dir, &root).is_ok(), "valid schema-v2 spatial package is accepted");
         let compiled = compiled_prompt(&request).unwrap();
-        assert!(compiled.find("[spatial_authority]").unwrap() < compiled.find("[spatial_depth]").unwrap());
-        assert!(compiled.find("[spatial_depth]").unwrap() < compiled.find("[spatial_normal]").unwrap());
-        assert!(compiled.find("[spatial_normal]").unwrap() < compiled.find("[character_id]").unwrap());
-        assert!(compiled.find("[character_id]").unwrap() < compiled.find("[prop_id]").unwrap());
+        assert!(compiled.find("[face_identity]").unwrap() < compiled.find("[prop_detail]").unwrap());
+        assert!(compiled.find("[prop_detail]").unwrap() < compiled.find("[spatial_authority]").unwrap());
+        assert!(compiled.find("[spatial_authority]").unwrap() < compiled.find("[pose_reference]").unwrap());
+        assert!(compiled.find("[pose_reference]").unwrap() < compiled.find("[character_id]").unwrap());
+        assert!(compiled.find("[character_id]").unwrap() < compiled.find("[environment_reference]").unwrap());
+        assert!(compiled.find("[environment_reference]").unwrap() < compiled.find("[prop_id]").unwrap());
         assert!(compiled.find("[prop_id]").unwrap() < compiled.find("[environment_id]").unwrap());
-        assert!(compiled.find("[environment_id]").unwrap() < compiled.find("[pose_reference]").unwrap());
-        assert!(compiled.find("[pose_reference]").unwrap() < compiled.find("[environment_reference]").unwrap());
+        assert!(compiled.find("[environment_id]").unwrap() < compiled.find("[spatial_depth]").unwrap());
+        assert!(compiled.find("[spatial_depth]").unwrap() < compiled.find("[spatial_normal]").unwrap());
         assert!(compiled.contains("SPATIAL LINEAGE (non-visual provenance; do not render):"));
         assert!(compiled.contains("stage_yingdi_e01_tomb_v2"));
         assert!(compiled.contains("E01-S01-C19-camera"));

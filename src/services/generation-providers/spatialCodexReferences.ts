@@ -38,13 +38,13 @@ const CONTROL_USAGES: Record<CodexStoryboardSpatialArtifactKind, CodexStoryboard
 };
 
 const CONTROL_INSTRUCTIONS: Record<CodexStoryboardSpatialArtifactKind, string> = {
-  color: "Camera and projection come only from this color control pass; do not derive camera or projection from any other reference.",
-  depth: "Geometry comes from depth, normal, IDs, and pose controls; this depth pass is geometry authority only.",
-  normal: "Geometry comes from depth, normal, IDs, and pose controls; this normal pass is geometry authority only.",
-  character_id: "Geometry comes from depth, normal, IDs, and pose controls; this character-ID pass locks character regions only.",
+  color: "Camera and projection come only from this subject-free color control pass. It contains no character appearance; identity references are the only appearance authority.",
+  depth: "Environment and prop geometry comes from this subject-free depth pass. It contains no character body shape; identity references are the only appearance authority.",
+  normal: "Environment and prop geometry comes from this subject-free normal pass. It contains no character body shape; identity references are the only appearance authority.",
+  character_id: "This character-ID pass locks position and occupancy only. Never derive face, costume, body shape, or facing from its colored regions; identity references are the only appearance authority.",
   prop_id: "Geometry comes from depth, normal, IDs, and pose controls; this prop-ID pass locks prop regions only.",
   environment_id: "Geometry comes from depth, normal, IDs, and pose controls; this environment-ID pass locks immutable walls, entrance, corridor, floor, ceiling, and plinth regions.",
-  pose: "Geometry comes from depth, normal, IDs, and pose controls; this pose pass locks projected humanoid pose only."
+  pose: "This pose pass locks projected joints, hands, and the explicit head-forward orientation marker only. It never controls face, costume, or body appearance; identity references are the only appearance authority."
 };
 
 const HEX64 = /^[a-f0-9]{64}$/;
